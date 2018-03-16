@@ -116,12 +116,6 @@ void DialogClientView::SetButtonRowInsets(const gfx::Insets& insets) {
     UpdateDialogButtons();
 }
 
-void DialogClientView::SetButtonRowInsets(const gfx::Insets& insets) {
-  button_row_insets_ = insets;
-  if (GetWidget())
-    UpdateDialogButtons();
-}
-
 ///////////////////////////////////////////////////////////////////////////////
 // DialogClientView, ClientView overrides:
 

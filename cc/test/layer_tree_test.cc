@@ -462,8 +462,6 @@ class LayerTreeHostClientForTesting : public LayerTreeHostClient,
 
   bool IsForSubframe() override { return false; }
 
-  bool IsForSubframe() override { return false; }
-
  private:
   explicit LayerTreeHostClientForTesting(TestHooks* test_hooks)
       : test_hooks_(test_hooks) {}

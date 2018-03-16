@@ -33,6 +33,9 @@ bool LibraryLoaded(JNIEnv* env, jclass clazz) {
                        false,    // Thread ID
                        false,    // Timestamp
                        false);   // Tick count
+  VLOG(0) << "Chromium logging enabled: level = " << logging::GetMinLogLevel()
+          << ", default verbosity = " << logging::GetVlogVerbosity();
+
   return true;
 }
 

@@ -519,10 +519,6 @@ bool CompositorImpl::IsForSubframe() {
   return false;
 }
 
-bool CompositorImpl::IsForSubframe() {
-  return false;
-}
-
 ui::UIResourceProvider& CompositorImpl::GetUIResourceProvider() {
   return *this;
 }
