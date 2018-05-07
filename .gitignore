@@ -306,3 +306,4 @@ vs-chromium-project.txt
 /xcodebuild
 /xwalk
 /third_party/libpxc
+/bin/

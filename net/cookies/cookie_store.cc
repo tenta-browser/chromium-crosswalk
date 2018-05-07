@@ -76,6 +76,9 @@ int CookieStore::GetChannelIDServiceID() {
   return channel_id_service_id_;
 }
 
+void CookieStore::TriggerCookieFetch() {
+}
+
 CookieStore::CookieStore() : channel_id_service_id_(-1) {}
 
 }  // namespace net

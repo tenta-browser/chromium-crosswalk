@@ -216,6 +216,8 @@ class NET_EXPORT CookieMonster : public CookieStore {
 
   bool IsEphemeral() override;
 
+  void TriggerCookieFetch() override;
+
  private:
   // For queueing the cookie monster calls.
   class CookieMonsterTask;

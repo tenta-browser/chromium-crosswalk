@@ -67,7 +67,16 @@ class NET_EXPORT CookieOptions {
   SameSiteCookieMode same_site_cookie_mode_;
   bool update_access_time_;
   base::Time server_time_;
+
+  friend std::ostream & operator<<(std::ostream & ostr, const CookieOptions& p);
 };
+
+inline std::ostream & operator<<(std::ostream & ostr, const CookieOptions& p) {
+  ostr << "CookieOptions[exclude_httponly_=" << p.exclude_httponly_ << ",same_site_cookie_mode_="
+       << (int) p.same_site_cookie_mode_ << ",update_access_time_=" << p.update_access_time_ << ",server_time_="
+       << p.server_time_ << "]";
+  return ostr;
+}
 
 }  // namespace net
 
