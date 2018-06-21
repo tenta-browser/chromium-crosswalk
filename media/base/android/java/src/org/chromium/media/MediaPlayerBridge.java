@@ -4,6 +4,7 @@
 
 package org.chromium.media;
 
+import android.content.Context;
 import android.media.MediaPlayer;
 import android.media.MediaPlayer.TrackInfo;
 import android.net.Uri;
@@ -38,6 +39,19 @@ import java.util.HashMap;
 public class MediaPlayerBridge {
 
     private static final String TAG = "cr.media";
+
+    public static class ResourceLoadingFilter {
+        public boolean shouldOverrideResourceLoading(
+                MediaPlayer mediaPlayer, Context context, Uri uri) {
+            return false;
+        }
+    }
+
+    private static ResourceLoadingFilter sResourceLoadFilter = null;
+
+    public static void setResourceLoadingFilter(ResourceLoadingFilter filter) {
+        sResourceLoadFilter = filter;
+    }
 
     // Local player to forward this to. We don't initialize it here since the subclass might not
     // want it.
@@ -188,6 +202,12 @@ public class MediaPlayerBridge {
             headersMap.put("allow-cross-domain-redirect", "false");
         }
         try {
+            // TODO(iotto) : 
+            if (sResourceLoadFilter != null &&
+                    sResourceLoadFilter.shouldOverrideResourceLoading(
+                            getLocalPlayer(), ContextUtils.getApplicationContext(), uri)) {
+                return true;
+            }
             getLocalPlayer().setDataSource(ContextUtils.getApplicationContext(), uri, headersMap);
             return true;
         } catch (Exception e) {

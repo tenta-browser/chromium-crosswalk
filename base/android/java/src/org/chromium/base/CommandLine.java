@@ -159,7 +159,7 @@ public abstract class CommandLine {
      * @return the tokenized arguments, suitable for passing to init().
      */
     @VisibleForTesting
-    static String[] tokenizeQuotedArguments(char[] buffer) {
+    public static String[] tokenizeQuotedArguments(char[] buffer) {
         ArrayList<String> args = new ArrayList<String>();
         StringBuilder arg = null;
         final char noQuote = '\0';

@@ -244,6 +244,7 @@ class NET_EXPORT CookieStore {
   virtual bool IsEphemeral() = 0;
   void SetChannelIDServiceID(int id);
   int GetChannelIDServiceID();
+  virtual void TriggerCookieFetch();
 
  protected:
   CookieStore();

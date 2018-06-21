@@ -213,6 +213,8 @@ class NET_EXPORT CookieMonster : public CookieStore {
 
   bool IsEphemeral() override;
 
+  void TriggerCookieFetch() override;
+
   void SetCookieWithCreationTimeForTesting(const GURL& url,
                                            const std::string& cookie_line,
                                            const base::Time& creation_time,
