@@ -123,7 +123,6 @@ public abstract class PathUtils {
      * @see Context#getDir(String, int)
      */
     public static void setPrivateDataDirectorySuffix(String suffix) {
-        Log.i("iotto", "setPrivateDataDirectorySuffix %s", suffix);
         // This method should only be called once, but many tests end up calling it multiple times,
         // so adding a guard here.
         if (!sInitializationStarted.getAndSet(true)) {
