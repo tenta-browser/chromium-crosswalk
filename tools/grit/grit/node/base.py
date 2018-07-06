@@ -116,7 +116,7 @@ class Node(object):
     assert isinstance(child, Node)
     if (not self._IsValidChild(child) or
         self._ContentType() == self._CONTENT_TYPE_CDATA):
-      explanation = 'invalid child %s for parent %s' % (str(child), self.name)
+      explanation = 'invalid child %s for parent %s' % (str(child.FormatXml()), self.FormatXml())
       raise exception.UnexpectedChild(explanation)
     self.children.append(child)
     self.mixed_content.append(child)
