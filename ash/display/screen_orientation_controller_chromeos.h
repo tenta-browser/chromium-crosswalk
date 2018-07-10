@@ -225,6 +225,10 @@ class ASH_EXPORT ScreenOrientationController
   // restored upon exiting tablet mode.
   display::Display::Rotation user_rotation_;
 
+  // The orientation of the device locked by the user.
+  blink::WebScreenOrientationLockType user_locked_orientation_ =
+      blink::kWebScreenOrientationLockAny;
+
   // The current rotation set by ScreenOrientationController for the internal
   // display.
   display::Display::Rotation current_rotation_;

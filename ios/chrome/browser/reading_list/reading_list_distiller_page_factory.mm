@@ -37,8 +37,4 @@ void ReadingListDistillerPageFactory::ReleaseAllRetainedWebState() {
   web_state_dispatcher_->ReleaseAll();
 }
 
-void ReadingListDistillerPageFactory::ReleaseAllRetainedWebState() {
-  web_state_dispatcher_->ReleaseAll();
-}
-
 }  // namespace reading_list

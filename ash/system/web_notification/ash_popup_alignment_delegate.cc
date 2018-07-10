@@ -124,11 +124,6 @@ bool AshPopupAlignmentDelegate::IsPrimaryDisplayForNotification() const {
          GetCurrentDisplay().id() == screen_->GetPrimaryDisplay().id();
 }
 
-bool AshPopupAlignmentDelegate::IsPrimaryDisplayForNotification() const {
-  return screen_ &&
-         GetCurrentDisplay().id() == screen_->GetPrimaryDisplay().id();
-}
-
 ShelfAlignment AshPopupAlignmentDelegate::GetAlignment() const {
   return shelf_->alignment();
 }

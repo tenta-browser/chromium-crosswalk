@@ -9,7 +9,6 @@ import android.content.pm.ApplicationInfo;
 import android.os.AsyncTask;
 import android.os.Environment;
 import android.os.SystemClock;
-import org.chromium.base.Log;
 
 import org.chromium.base.annotations.CalledByNative;
 import org.chromium.base.annotations.MainDex;
@@ -122,7 +121,6 @@ public abstract class PathUtils {
      * @see Context#getDir(String, int)
      */
     public static void setPrivateDataDirectorySuffix(String suffix) {
-        Log.i("iotto", "setPrivateDataDirectorySuffix %s", suffix);
         // This method should only be called once, but many tests end up calling it multiple times,
         // so adding a guard here.
         if (!sInitializationStarted.getAndSet(true)) {
