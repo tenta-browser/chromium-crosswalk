@@ -89,6 +89,7 @@ enum IPCMessageStart {
   SurfaceViewManagerMsgStart,
   ExtensionWorkerMsgStart,
   SubresourceFilterMsgStart,
+  TentaMsgStart,  // For tenta extensions
   LastIPCMsgStart  // Must come last.
 };
 
