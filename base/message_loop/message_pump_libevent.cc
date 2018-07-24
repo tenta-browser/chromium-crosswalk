@@ -153,12 +153,12 @@ bool MessagePumpLibevent::WatchFileDescriptor(int fd,
   }
 
   std::unique_ptr<event> evt(controller->ReleaseEvent());
-  if (!evt) {
+  if (evt.get() == nullptr) {
     // Ownership is transferred to the controller.
     evt.reset(new event);
   } else {
     // Make sure we don't pick up any funky internal libevent masks.
-    int old_interest_mask = evt->ev_events & (EV_READ | EV_WRITE | EV_PERSIST);
+    int old_interest_mask = evt.get()->ev_events & (EV_READ | EV_WRITE | EV_PERSIST);
 
     // Combine old/new event masks.
     event_mask |= old_interest_mask;

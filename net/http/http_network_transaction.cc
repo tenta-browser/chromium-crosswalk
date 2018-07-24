@@ -850,7 +850,6 @@ int HttpNetworkTransaction::DoNotifyBeforeCreateStream() {
 int HttpNetworkTransaction::DoCreateStream() {
   response_.network_accessed = true;
 
-  next_state_ = STATE_CREATE_STREAM_COMPLETE;
   // IP based pooling is only enabled on a retry after 421 Misdirected Request
   // is received. Alternative Services are also disabled in this case (though
   // they can also be disabled when retrying after a QUIC error).
@@ -869,6 +868,9 @@ int HttpNetworkTransaction::DoCreateStream() {
         *request_, priority_, server_ssl_config_, proxy_ssl_config_, this,
         enable_ip_based_pooling_, enable_alternative_services_, net_log_);
   }
+
+  next_state_ = STATE_CREATE_STREAM_COMPLETE;
+
   DCHECK(stream_request_.get());
   return ERR_IO_PENDING;
 }
