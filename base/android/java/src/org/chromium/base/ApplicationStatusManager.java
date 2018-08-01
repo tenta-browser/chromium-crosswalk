@@ -89,7 +89,7 @@ public class ApplicationStatusManager {
         }
     }
 
-    public static void init(BaseChromiumApplication app) {
+    public static void init(Application app) {
         ApplicationStatus.initialize(app);
 
         app.registerActivityLifecycleCallbacks(new Application.ActivityLifecycleCallbacks() {
