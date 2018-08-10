@@ -942,7 +942,11 @@ void ClientSocketPoolBaseHelper::OnConnectJobComplete(
   DCHECK_NE(ERR_IO_PENDING, result);
   const std::string group_name = job->group_name();
   GroupMap::iterator group_it = group_map_.find(group_name);
-  CHECK(group_it != group_map_.end());
+//  CHECK(group_it != group_map_.end());
+  if ( group_it == group_map_.end() ) {
+    LOG(ERROR) << __func__ << " job_already_cancelled group_name=" << group_name;
+    return;
+  }
   Group* group = group_it->second;
 
   std::unique_ptr<StreamSocket> socket = job->PassSocket();
