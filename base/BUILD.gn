@@ -53,6 +53,10 @@ declare_args() {
 
   # Set to true to disable COM init check hooks.
   com_init_check_hook_disabled = false
+  
+  #set to true to enable log messages to be also sent to stderr
+  enable_stderr_log = false
+
 }
 
 if (is_android) {
@@ -66,6 +70,10 @@ config("base_flags") {
       # This is required solely for base/third_party/dmg_fp/dtoa_wrapper.cc.
       "-Wno-char-subscripts",
     ]
+  }
+  
+  if ( enable_stderr_log ) {
+    defines = [ "ENABLE_STDERR_LOG" ]
   }
 }
 
