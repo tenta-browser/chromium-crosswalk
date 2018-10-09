@@ -34,6 +34,7 @@ import org.chromium.base.ApplicationState;
 import org.chromium.base.ApplicationStatus;
 import org.chromium.base.BuildConfig;
 import org.chromium.base.ContextUtils;
+import org.chromium.base.Log;
 import org.chromium.base.VisibleForTesting;
 
 import java.io.IOException;
@@ -149,6 +150,29 @@ public class NetworkChangeNotifierAutoDetect extends BroadcastReceiver {
                 default:
                     return ConnectionSubtype.SUBTYPE_UNKNOWN;
             }
+        }
+
+        @Override
+        public String toString() {
+            StringBuilder builder = new StringBuilder();
+            builder.append("NetworkState [mConnected=");
+            builder.append(mConnected);
+            builder.append(", mType=");
+            builder.append(mType);
+            builder.append(", mSubtype=");
+            builder.append(mSubtype);
+            builder.append(", mWifiSsid=");
+            builder.append(mWifiSsid);
+            builder.append(", getNetworkType()=");
+            builder.append(getNetworkType());
+            builder.append(", getNetworkSubType()=");
+            builder.append(getNetworkSubType());
+            builder.append(", getConnectionType()=");
+            builder.append(getConnectionType());
+            builder.append(", getConnectionSubtype()=");
+            builder.append(getConnectionSubtype());
+            builder.append("]");
+            return builder.toString();
         }
     }
 
@@ -857,7 +881,11 @@ public class NetworkChangeNotifierAutoDetect extends BroadcastReceiver {
     public void unregister() {
         assertOnThread();
         if (!mRegistered) return;
-        ContextUtils.getApplicationContext().unregisterReceiver(this);
+        try {
+            ContextUtils.getApplicationContext().unregisterReceiver(this);
+        } catch (Exception e) {
+            Log.e("context_error", "unregisterReceiver Error: %s", e);
+        }
         mRegistered = false;
         if (mNetworkCallback != null) {
             mConnectivityManagerDelegate.unregisterNetworkCallback(mNetworkCallback);
