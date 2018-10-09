@@ -35,6 +35,7 @@ public class LollipopWebContentsAccessibility extends KitKatWebContentsAccessibi
     private String mSystemLanguageTag;
     private BroadcastReceiver mBroadcastReceiver;
     private Context mContext;
+    private boolean isRegistered = false;
 
     LollipopWebContentsAccessibility(Context context, ViewGroup containerView,
             WebContents webContents, boolean shouldFocusOnPageLoad) {
@@ -153,7 +154,16 @@ public class LollipopWebContentsAccessibility extends KitKatWebContentsAccessibi
 
     @Override
     public void onDetachedFromWindow() {
-        mContext.unregisterReceiver(mBroadcastReceiver);
+        if (isRegistered) {
+            try {
+                mContext.unregisterReceiver(mBroadcastReceiver);
+            } catch (Exception e) {
+                // WebView may be running inside a BroadcastReceiver, in which case registerReceiver
+                // is
+                // not allowed.
+            }
+        }
+        isRegistered = false;
     }
 
     @Override
@@ -161,6 +171,7 @@ public class LollipopWebContentsAccessibility extends KitKatWebContentsAccessibi
         try {
             IntentFilter filter = new IntentFilter(Intent.ACTION_LOCALE_CHANGED);
             mContext.registerReceiver(mBroadcastReceiver, filter);
+            isRegistered = true;
         } catch (ReceiverCallNotAllowedException e) {
             // WebView may be running inside a BroadcastReceiver, in which case registerReceiver is
             // not allowed.
