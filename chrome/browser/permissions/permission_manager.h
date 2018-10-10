@@ -126,9 +126,6 @@ class PermissionManager : public KeyedService,
   // KeyedService implementation
   void Shutdown() override;
 
-  // KeyedService implementation
-  void Shutdown() override;
-
   PermissionContextBase* GetPermissionContext(ContentSettingsType type);
 
   // Called when a permission was decided for a given PendingRequest. The

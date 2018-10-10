@@ -217,13 +217,6 @@ stage_install_common() {
     done
   fi
 
-  # SwiftShader
-  if [ -f "${BUILDDIR}/swiftshader/libEGL.so" ]; then
-    install -m 755 -d "${STAGEDIR}/${INSTALLDIR}/swiftshader/"
-    install -m 644 "${BUILDDIR}/swiftshader/libEGL.so" "${STAGEDIR}/${INSTALLDIR}/swiftshader/"
-    install -m 644 "${BUILDDIR}/swiftshader/libGLESv2.so" "${STAGEDIR}/${INSTALLDIR}/swiftshader/"
-  fi
-
   # libc++
   if [ -f "${BUILDDIR}/lib/libc++.so" ]; then
     install -m 755 -d "${STAGEDIR}/${INSTALLDIR}/lib/"
