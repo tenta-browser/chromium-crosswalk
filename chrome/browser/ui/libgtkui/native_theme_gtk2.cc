@@ -346,6 +346,16 @@ SkColor NativeThemeGtk2::GetSystemColor(ColorId color_id) const {
               : ui::NativeThemeDarkAura::instance();
       return fallback_theme->GetSystemColor(color_id);
     }
+    case kColorId_TabTitleColorActive:
+      return GetFgColor(GetTooltip(), NORMAL);
+//      return GetFgColor("GtkLabel");
+    case kColorId_TabTitleColorInactive:
+      return GetFgColor(GetTooltip(), NORMAL);
+//      return GetFgColor("GtkLabel:disabled");
+    case kColorId_TabBottomBorder:
+      return GetBgColor(GetEntry(), SELECTED);
+//      return GetBorderColor(GtkVersionCheck(3, 20) ? "GtkFrame#frame #border"
+//                                                   : "GtkFrame#frame");
 
     case kColorId_NumColors:
       NOTREACHED();
