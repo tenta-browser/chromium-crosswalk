@@ -56,7 +56,7 @@ void FinishAccessibilityInitOnMainThread(
   init_func();
 }
 
-bool AtkUtilAuraLinux::PlatformShouldEnableAccessibility() {
+bool ui::AtkUtilAuraLinux::PlatformShouldEnableAccessibility() {
   std::unique_ptr<base::Environment> env(base::Environment::Create());
   std::string gtk_modules;
   if (!env->GetVar(kGtkModules, &gtk_modules))
@@ -71,7 +71,7 @@ bool AtkUtilAuraLinux::PlatformShouldEnableAccessibility() {
   return false;
 }
 
-void AtkUtilAuraLinux::PlatformInitializeAsync() {
+void ui::AtkUtilAuraLinux::PlatformInitializeAsync() {
   base::PostTaskWithTraitsAndReplyWithResult(
       FROM_HERE,
       {base::MayBlock(), base::TaskShutdownBehavior::CONTINUE_ON_SHUTDOWN},

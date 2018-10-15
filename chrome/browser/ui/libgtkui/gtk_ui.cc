@@ -402,14 +402,14 @@ SkColor GetToolbarTopSeparatorColor(SkColor header_fg,
   border.l = l;
   return HSLToSkColor(border, a * 0xff);
 }
-#endif
+//#endif
 
 using GdkSetAllowedBackendsFn = void (*)(const gchar*);
 // Place this function pointers in read-only memory after being resolved to
 // prevent it being tampered with. See crbug.com/771365 for details.
 PROTECTED_MEMORY_SECTION base::ProtectedMemory<GdkSetAllowedBackendsFn>
     g_gdk_set_allowed_backends;
-
+#endif
 }  // namespace
 
 GtkUi::GtkUi() : middle_click_action_(GetDefaultMiddleClickAction()) {

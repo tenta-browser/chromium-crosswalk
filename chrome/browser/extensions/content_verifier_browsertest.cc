@@ -552,51 +552,6 @@ class ContentVerifierTest : public ExtensionBrowserTest {
     EXPECT_TRUE(job_observer.WaitForExpectedJobs());
   }
 
-  void TestContentScriptExtension(const std::string& crx_relpath,
-                                  const std::string& id,
-                                  const std::string& script_relpath) {
-    VerifierObserver verifier_observer;
-
-    // Install the extension with content scripts. The initial read of the
-    // content scripts will fail verification because they are read before the
-    // content verification system has completed a one-time processing of the
-    // expected hashes. (The extension only contains the root level hashes of
-    // the merkle tree, but the content verification system builds the entire
-    // tree and caches it in the extension install directory - see
-    // ContentHashFetcher for more details).
-    const Extension* extension = InstallExtensionFromWebstore(
-        test_data_dir_.AppendASCII(crx_relpath), 1);
-    ASSERT_TRUE(extension);
-    EXPECT_EQ(id, extension->id());
-
-    // Wait for the content verification code to finish processing the hashes.
-    if (!base::ContainsKey(verifier_observer.completed_fetches(), id))
-      verifier_observer.WaitForFetchComplete(id);
-
-    // Now disable the extension, since content scripts are read at enable time,
-    // set up our job observer, and re-enable, expecting a success this time.
-    DisableExtension(id);
-    JobObserver job_observer;
-    base::FilePath script_relfilepath =
-        base::FilePath().AppendASCII(script_relpath);
-    job_observer.ExpectJobResult(id, script_relfilepath,
-                                 JobObserver::Result::SUCCESS);
-    EnableExtension(id);
-    EXPECT_TRUE(job_observer.WaitForExpectedJobs());
-
-    // Now alter the contents of the content script, reload the extension, and
-    // expect to see a job failure due to the content script content hash not
-    // being what was signed by the webstore.
-    base::FilePath scriptfile = extension->path().AppendASCII(script_relpath);
-    std::string extra = "some_extra_function_call();";
-    ASSERT_TRUE(base::AppendToFile(scriptfile, extra.data(), extra.size()));
-    DisableExtension(id);
-    job_observer.ExpectJobResult(id, script_relfilepath,
-                                 JobObserver::Result::FAILURE);
-    EnableExtension(id);
-    EXPECT_TRUE(job_observer.WaitForExpectedJobs());
-  }
-
  protected:
   JobDelegate delegate_;
   GURL page_url_;

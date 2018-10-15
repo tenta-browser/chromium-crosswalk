@@ -143,10 +143,6 @@ aggregate_vector_icons("chrome_vector_icons") {
       "warning_badge_circle.icon",
     ]
   }
-
-  if (is_chromeos) {
-    icons += [ "arc_migrate_encryption_notification.icon" ]
-  }
 }
 
 source_set("vector_icons") {

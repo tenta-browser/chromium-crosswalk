@@ -3325,15 +3325,4 @@ TEST_F(PasswordAutofillAgentTest, SuggestLatestCredentials) {
   EXPECT_EQ(1, fake_driver_.show_pw_suggestions_key());
 }
 
-// Tests that username/password are autofilled when JavaScript is changing url
-// between discovering a form and receving credentials from the browser process.
-TEST_F(PasswordAutofillAgentTest, AutocompleteWhenPageUrlIsChanged) {
-  // Simulate that JavaScript changes url.
-  fill_data_.origin = GURL(fill_data_.origin.possibly_invalid_spec() + "/path");
-
-  SimulateOnFillPasswordForm(fill_data_);
-
-  // The username and password should have been autocompleted.
-  CheckTextFieldsState(kAliceUsername, true, kAlicePassword, true);
-}
 }  // namespace autofill

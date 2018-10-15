@@ -172,8 +172,6 @@ class AutomationWebContentsObserver
       params.id = event.id;
       params.event_type = event.event_type;
       params.update = event.update;
-      params.location_offset =
-          web_contents()->GetContainerBounds().OffsetFromOrigin();
       params.event_from = event.event_from;
 #if defined(USE_AURA)
       params.mouse_location = aura::Env::GetInstance()->last_mouse_location();

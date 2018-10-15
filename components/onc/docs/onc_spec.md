@@ -1182,11 +1182,6 @@ type exists to configure the authentication.
     * Non-empty list of CA certificates in PEM format, If this field is set,
       **ServerCARef** and **ServerCARefs** must be unset.
 
-* **ServerCAPEMs**
-    * (optional) - **array of string**
-    * Non-empty list of CA certificates in PEM format, If this field is set,
-      **ServerCARef** and **ServerCARefs** must be unset.
-
 * **ServerCARefs**
     * (optional) - **array of string**
     * Non-empty list of references to CA certificates in **Certificates** to be
