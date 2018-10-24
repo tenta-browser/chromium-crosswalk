@@ -9,9 +9,9 @@
 #include "extensions/browser/api/device_permissions_prompt.h"
 #include "extensions/browser/api/virtual_keyboard_private/virtual_keyboard_delegate.h"
 #include "extensions/browser/api/web_request/web_request_event_router_delegate.h"
-#include "extensions/browser/guest_view/extensions_guest_view_manager_delegate.h"
-#include "extensions/browser/guest_view/mime_handler_view/mime_handler_view_guest_delegate.h"
-#include "extensions/browser/guest_view/web_view/web_view_permission_helper_delegate.h"
+//#include "extensions/browser/guest_view/extensions_guest_view_manager_delegate.h"
+//#include "extensions/browser/guest_view/mime_handler_view/mime_handler_view_guest_delegate.h"
+//#include "extensions/browser/guest_view/web_view/web_view_permission_helper_delegate.h"
 
 namespace extensions {
 class AppViewGuestDelegate;
@@ -59,28 +59,28 @@ ExtensionsAPIClient::CreateExtensionOptionsGuestDelegate(
   return NULL;
 }
 
-std::unique_ptr<guest_view::GuestViewManagerDelegate>
-ExtensionsAPIClient::CreateGuestViewManagerDelegate(
-    content::BrowserContext* context) const {
-  return std::make_unique<ExtensionsGuestViewManagerDelegate>(context);
-}
+//std::unique_ptr<guest_view::GuestViewManagerDelegate>
+//ExtensionsAPIClient::CreateGuestViewManagerDelegate(
+//    content::BrowserContext* context) const {
+//  return std::make_unique<ExtensionsGuestViewManagerDelegate>(context);
+//}
 
-std::unique_ptr<MimeHandlerViewGuestDelegate>
-ExtensionsAPIClient::CreateMimeHandlerViewGuestDelegate(
-    MimeHandlerViewGuest* guest) const {
-  return std::unique_ptr<MimeHandlerViewGuestDelegate>();
-}
+//std::unique_ptr<MimeHandlerViewGuestDelegate>
+//ExtensionsAPIClient::CreateMimeHandlerViewGuestDelegate(
+//    MimeHandlerViewGuest* guest) const {
+//  return std::unique_ptr<MimeHandlerViewGuestDelegate>();
+//}
 
-WebViewGuestDelegate* ExtensionsAPIClient::CreateWebViewGuestDelegate(
-    WebViewGuest* web_view_guest) const {
-  return NULL;
-}
+//WebViewGuestDelegate* ExtensionsAPIClient::CreateWebViewGuestDelegate(
+//    WebViewGuest* web_view_guest) const {
+//  return NULL;
+//}
 
-WebViewPermissionHelperDelegate* ExtensionsAPIClient::
-    CreateWebViewPermissionHelperDelegate(
-        WebViewPermissionHelper* web_view_permission_helper) const {
-  return new WebViewPermissionHelperDelegate(web_view_permission_helper);
-}
+//WebViewPermissionHelperDelegate* ExtensionsAPIClient::
+//    CreateWebViewPermissionHelperDelegate(
+//        WebViewPermissionHelper* web_view_permission_helper) const {
+//  return new WebViewPermissionHelperDelegate(web_view_permission_helper);
+//}
 
 std::unique_ptr<WebRequestEventRouterDelegate>
 ExtensionsAPIClient::CreateWebRequestEventRouterDelegate() const {
@@ -128,9 +128,9 @@ MessagingDelegate* ExtensionsAPIClient::GetMessagingDelegate() {
   return nullptr;
 }
 
-FeedbackPrivateDelegate* ExtensionsAPIClient::GetFeedbackPrivateDelegate() {
-  return nullptr;
-}
+//FeedbackPrivateDelegate* ExtensionsAPIClient::GetFeedbackPrivateDelegate() {
+//  return nullptr;
+//}
 
 #if defined(OS_CHROMEOS)
 NonNativeFileSystemDelegate*

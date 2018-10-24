@@ -275,6 +275,7 @@ bool BackgroundManifestHandler::Validate(
     const Extension* extension,
     std::string* error,
     std::vector<InstallWarning>* warnings) const {
+  LOG(INFO) << "iotto " << __func__;
   // Validate that background scripts exist.
   const std::vector<std::string>& background_scripts =
       BackgroundInfo::GetBackgroundScripts(extension);

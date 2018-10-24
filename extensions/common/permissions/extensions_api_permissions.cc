@@ -14,7 +14,7 @@
 #include "extensions/common/api/declarative_net_request/constants.h"
 #include "extensions/common/permissions/api_permission.h"
 #include "extensions/common/permissions/socket_permission.h"
-#include "extensions/common/permissions/usb_device_permission.h"
+//#include "extensions/common/permissions/usb_device_permission.h"
 #include "extensions/strings/grit/extensions_strings.h"
 
 namespace extensions {
@@ -109,8 +109,8 @@ ExtensionsAPIPermissions::GetAllPermissions() const {
        APIPermissionInfo::kFlagCannotBeOptional |
            APIPermissionInfo::kFlagSupportsContentCapabilities},
       {APIPermission::kUsb, "usb", APIPermissionInfo::kFlagNone},
-      {APIPermission::kUsbDevice, "usbDevices", APIPermissionInfo::kFlagNone,
-       &CreateAPIPermission<UsbDevicePermission>},
+//      {APIPermission::kUsbDevice, "usbDevices", APIPermissionInfo::kFlagNone,
+//       &CreateAPIPermission<UsbDevicePermission>},
       {APIPermission::kVideoCapture, "videoCapture"},
       {APIPermission::kVirtualKeyboard, "virtualKeyboard"},
       {APIPermission::kVpnProvider, "vpnProvider",

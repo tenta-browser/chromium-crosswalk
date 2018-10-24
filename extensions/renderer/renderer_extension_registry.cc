@@ -69,6 +69,7 @@ bool RendererExtensionRegistry::Remove(const std::string& id) {
 
 std::string RendererExtensionRegistry::GetExtensionOrAppIDByURL(
     const GURL& url) const {
+  LOG(INFO) << "iotto " << __func__ << " url=" << url.spec();
   base::AutoLock lock(lock_);
   return extensions_.GetExtensionOrAppIDByURL(url);
 }
@@ -76,19 +77,25 @@ std::string RendererExtensionRegistry::GetExtensionOrAppIDByURL(
 const Extension* RendererExtensionRegistry::GetExtensionOrAppByURL(
     const GURL& url) const {
   base::AutoLock lock(lock_);
-  return extensions_.GetExtensionOrAppByURL(url);
+  const Extension* ret_val = extensions_.GetExtensionOrAppByURL(url);
+  LOG(INFO) << "iotto " << __func__ << " url=" << url.spec() << " ext=" << ret_val;
+  return ret_val;
 }
 
 const Extension* RendererExtensionRegistry::GetHostedAppByURL(
     const GURL& url) const {
+  LOG(INFO) << "iotto " << __func__ << " url=" << url.spec();
   base::AutoLock lock(lock_);
   return extensions_.GetHostedAppByURL(url);
 }
 
 const Extension* RendererExtensionRegistry::GetByID(
     const std::string& id) const {
+
   base::AutoLock lock(lock_);
-  return extensions_.GetByID(id);
+  const Extension* ret_val = extensions_.GetByID(id);
+  LOG(INFO) << "iotto " << __func__ << " id=" << id << " ext=" << ret_val;
+  return ret_val;
 }
 
 ExtensionIdSet RendererExtensionRegistry::GetIDs() const {
@@ -98,6 +105,7 @@ ExtensionIdSet RendererExtensionRegistry::GetIDs() const {
 
 bool RendererExtensionRegistry::ExtensionBindingsAllowed(
     const GURL& url) const {
+  LOG(INFO) << "iotto " << __func__ << " url=" << url.spec();
   base::AutoLock lock(lock_);
   return extensions_.ExtensionBindingsAllowed(url);
 }

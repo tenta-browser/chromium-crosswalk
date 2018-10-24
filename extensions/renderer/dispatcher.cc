@@ -278,6 +278,7 @@ Dispatcher::~Dispatcher() {
 }
 
 void Dispatcher::OnRenderFrameCreated(content::RenderFrame* render_frame) {
+  LOG(INFO) << "iotto " << __func__;
   script_injection_manager_->OnRenderFrameCreated(render_frame);
   content_watcher_->OnRenderFrameCreated(render_frame);
 }
@@ -574,8 +575,10 @@ void Dispatcher::DidCreateDocumentElement(blink::WebLocalFrame* frame) {
 
 void Dispatcher::RunScriptsAtDocumentStart(content::RenderFrame* render_frame) {
   ExtensionFrameHelper* frame_helper = ExtensionFrameHelper::Get(render_frame);
-  if (!frame_helper)
+  if (!frame_helper) {
+    LOG(INFO) << "iotto " << __func__ << " null_frame_helper";
     return;  // The frame is invisible to extensions.
+  }
 
   frame_helper->RunScriptsAtDocumentStart();
   // |frame_helper| and |render_frame| might be dead by now.
@@ -583,8 +586,10 @@ void Dispatcher::RunScriptsAtDocumentStart(content::RenderFrame* render_frame) {
 
 void Dispatcher::RunScriptsAtDocumentEnd(content::RenderFrame* render_frame) {
   ExtensionFrameHelper* frame_helper = ExtensionFrameHelper::Get(render_frame);
-  if (!frame_helper)
+  if (!frame_helper) {
+    LOG(INFO) << "iotto " << __func__ << " null_frame_helper";
     return;  // The frame is invisible to extensions.
+  }
 
   frame_helper->RunScriptsAtDocumentEnd();
   // |frame_helper| and |render_frame| might be dead by now.
@@ -592,8 +597,10 @@ void Dispatcher::RunScriptsAtDocumentEnd(content::RenderFrame* render_frame) {
 
 void Dispatcher::RunScriptsAtDocumentIdle(content::RenderFrame* render_frame) {
   ExtensionFrameHelper* frame_helper = ExtensionFrameHelper::Get(render_frame);
-  if (!frame_helper)
+  if (!frame_helper){
+    LOG(INFO) << "iotto " << __func__ << " null_frame_helper";
     return;  // The frame is invisible to extensions.
+  }
 
   frame_helper->RunScriptsAtDocumentIdle();
   // |frame_helper| and |render_frame| might be dead by now.
@@ -603,6 +610,7 @@ void Dispatcher::OnExtensionResponse(int request_id,
                                      bool success,
                                      const base::ListValue& response,
                                      const std::string& error) {
+  LOG(INFO) << "iotto " << __func__;
   bindings_system_->HandleResponse(request_id, success, response, error);
 }
 
@@ -834,9 +842,9 @@ void Dispatcher::RegisterNativeHandlers(
   module_system->RegisterNativeHandler(
       "document_natives",
       std::unique_ptr<NativeHandler>(new DocumentCustomBindings(context)));
-  module_system->RegisterNativeHandler(
-      "guest_view_internal", std::unique_ptr<NativeHandler>(
-                                 new GuestViewInternalCustomBindings(context)));
+//  module_system->RegisterNativeHandler(
+//      "guest_view_internal", std::unique_ptr<NativeHandler>(
+//                                 new GuestViewInternalCustomBindings(context)));
   module_system->RegisterNativeHandler(
       "id_generator",
       std::unique_ptr<NativeHandler>(new IdGeneratorCustomBindings(context)));
@@ -906,6 +914,7 @@ void Dispatcher::IdleNotification() {
 }
 
 void Dispatcher::OnActivateExtension(const std::string& extension_id) {
+  LOG(INFO) << "iotto " << __func__ << " ext_id=" << extension_id;
   const Extension* extension =
       RendererExtensionRegistry::Get()->GetByID(extension_id);
   if (!extension) {
@@ -967,6 +976,7 @@ void Dispatcher::OnDispatchOnConnect(
     const ExtensionMsg_TabConnectionInfo& source,
     const ExtensionMsg_ExternalConnectionInfo& info,
     const std::string& tls_channel_id) {
+  LOG(INFO) << "iotto " << __func__;
   DCHECK(!target_port_id.is_opener);
 
   bindings_system_->GetMessagingService()->DispatchOnConnect(
@@ -977,6 +987,7 @@ void Dispatcher::OnDispatchOnConnect(
 
 void Dispatcher::OnDispatchOnDisconnect(const PortId& port_id,
                                         const std::string& error_message) {
+  LOG(INFO) << "iotto " << __func__;
   bindings_system_->GetMessagingService()->DispatchOnDisconnect(
       *script_context_set_, port_id, error_message,
       NULL);  // All render frames.
@@ -984,6 +995,7 @@ void Dispatcher::OnDispatchOnDisconnect(const PortId& port_id,
 
 void Dispatcher::OnLoaded(
     const std::vector<ExtensionMsg_Loaded_Params>& loaded_extensions) {
+  LOG(INFO) << "iotto " << __func__;
   for (const auto& param : loaded_extensions) {
     std::string error;
     scoped_refptr<const Extension> extension = param.ConvertToExtension(&error);
@@ -1030,6 +1042,7 @@ void Dispatcher::OnMessageInvoke(const std::string& extension_id,
                                  const std::string& module_name,
                                  const std::string& function_name,
                                  const base::ListValue& args) {
+  LOG(INFO) << "iotto " << __func__;
   InvokeModuleSystemMethod(nullptr, extension_id, module_name, function_name,
                            args);
 }
@@ -1037,6 +1050,7 @@ void Dispatcher::OnMessageInvoke(const std::string& extension_id,
 void Dispatcher::OnDispatchEvent(
     const ExtensionMsg_DispatchEvent_Params& params,
     const base::ListValue& event_args) {
+  LOG(INFO) << "iotto " << __func__;
   std::unique_ptr<WebScopedUserGesture> web_user_gesture;
   if (params.is_user_gesture)
     web_user_gesture.reset(new WebScopedUserGesture(nullptr));
@@ -1061,6 +1075,7 @@ void Dispatcher::OnDispatchEvent(
 void Dispatcher::OnSetSessionInfo(version_info::Channel channel,
                                   FeatureSessionType session_type,
                                   bool is_lock_screen_context) {
+  LOG(INFO) << "iotto " << __func__;
   SetCurrentChannel(channel);
   SetCurrentFeatureSessionType(session_type);
   script_context_set_->set_is_lock_screen_context(is_lock_screen_context);
@@ -1082,11 +1097,13 @@ void Dispatcher::OnSetScriptingWhitelist(
 
 void Dispatcher::OnSetSystemFont(const std::string& font_family,
                                  const std::string& font_size) {
+  LOG(INFO) << "iotto " << __func__;
   system_font_family_ = font_family;
   system_font_size_ = font_size;
 }
 
 void Dispatcher::OnSetWebViewPartitionID(const std::string& partition_id) {
+  LOG(INFO) << "iotto " << __func__;
   // |webview_partition_id_| cannot be changed once set.
   CHECK(webview_partition_id_.empty() || webview_partition_id_ == partition_id);
   webview_partition_id_ = partition_id;
@@ -1094,11 +1111,13 @@ void Dispatcher::OnSetWebViewPartitionID(const std::string& partition_id) {
 
 void Dispatcher::OnShouldSuspend(const std::string& extension_id,
                                  uint64_t sequence_id) {
+  LOG(INFO) << "iotto " << __func__;
   RenderThread::Get()->Send(
       new ExtensionHostMsg_ShouldSuspendAck(extension_id, sequence_id));
 }
 
 void Dispatcher::OnSuspend(const std::string& extension_id) {
+  LOG(INFO) << "iotto " << __func__;
   // Dispatch the suspend event. This doesn't go through the standard event
   // dispatch machinery because it requires special handling. We need to let
   // the browser know when we are starting and stopping the event dispatch, so
@@ -1109,10 +1128,12 @@ void Dispatcher::OnSuspend(const std::string& extension_id) {
 }
 
 void Dispatcher::OnTransferBlobs(const std::vector<std::string>& blob_uuids) {
+  LOG(INFO) << "iotto " << __func__;
   RenderThread::Get()->Send(new ExtensionHostMsg_TransferBlobsAck(blob_uuids));
 }
 
 void Dispatcher::OnUnloaded(const std::string& id) {
+  LOG(INFO) << "iotto " << __func__;
   // See comment in OnLoaded for why it would be nice, but perhaps incorrect,
   // to CHECK here rather than guarding.
   // TODO(devlin): This may be fixed by crbug.com/528026. Monitor, and
@@ -1160,6 +1181,7 @@ void Dispatcher::OnUnloaded(const std::string& id) {
 
 void Dispatcher::OnUpdateDefaultPolicyHostRestrictions(
     const ExtensionMsg_UpdateDefaultPolicyHostRestrictions_Params& params) {
+  LOG(INFO) << "iotto " << __func__;
   PermissionsData::SetDefaultPolicyHostRestrictions(
       params.default_policy_blocked_hosts, params.default_policy_allowed_hosts);
   UpdateBindings(std::string());
@@ -1167,6 +1189,7 @@ void Dispatcher::OnUpdateDefaultPolicyHostRestrictions(
 
 void Dispatcher::OnUpdatePermissions(
     const ExtensionMsg_UpdatePermissions_Params& params) {
+  LOG(INFO) << "iotto " << __func__;
   const Extension* extension =
       RendererExtensionRegistry::Get()->GetByID(params.extension_id);
   if (!extension)
@@ -1200,6 +1223,7 @@ void Dispatcher::OnUpdateTabSpecificPermissions(const GURL& visible_url,
                                                 const URLPatternSet& new_hosts,
                                                 bool update_origin_whitelist,
                                                 int tab_id) {
+  LOG(INFO) << "iotto " << __func__;
   const Extension* extension =
       RendererExtensionRegistry::Get()->GetByID(extension_id);
   if (!extension)
@@ -1242,6 +1266,7 @@ void Dispatcher::OnClearTabSpecificPermissions(
 }
 
 void Dispatcher::OnSetActivityLoggingEnabled(bool enabled) {
+  LOG(INFO) << "iotto " << __func__;
   activity_logging_enabled_ = enabled;
   if (enabled) {
     for (const std::string& id : active_extension_ids_)
@@ -1252,6 +1277,7 @@ void Dispatcher::OnSetActivityLoggingEnabled(bool enabled) {
 }
 
 void Dispatcher::OnUserScriptsUpdated(const std::set<HostID>& changed_hosts) {
+  LOG(INFO) << "iotto " << __func__;
   UpdateActiveExtensions();
 }
 

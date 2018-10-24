@@ -32,14 +32,14 @@ class ShellExtensionsAPIClient : public ExtensionsAPIClient {
   FileSystemDelegate* GetFileSystemDelegate() override;
 #endif
   MessagingDelegate* GetMessagingDelegate() override;
-  FeedbackPrivateDelegate* GetFeedbackPrivateDelegate() override;
+//  FeedbackPrivateDelegate* GetFeedbackPrivateDelegate() override;
 
  private:
 #if defined(OS_LINUX) && !defined(OS_CHROMEOS)
   std::unique_ptr<FileSystemDelegate> file_system_delegate_;
 #endif
   std::unique_ptr<MessagingDelegate> messaging_delegate_;
-  std::unique_ptr<FeedbackPrivateDelegate> feedback_private_delegate_;
+//  std::unique_ptr<FeedbackPrivateDelegate> feedback_private_delegate_;
 
   DISALLOW_COPY_AND_ASSIGN(ShellExtensionsAPIClient);
 };

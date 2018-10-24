@@ -263,6 +263,7 @@ void ModuleSystem::RequireForJs(
 v8::Local<v8::Value> ModuleSystem::RequireForJsInner(
     v8::Local<v8::String> module_name,
     bool create) {
+  LOG(INFO) << "iotto " << __func__ << " module_name=" << *v8::String::Utf8Value(module_name);
   v8::EscapableHandleScope handle_scope(GetIsolate());
   v8::Local<v8::Context> v8_context = context()->v8_context();
   v8::Context::Scope context_scope(v8_context);
@@ -282,11 +283,17 @@ v8::Local<v8::Value> ModuleSystem::RequireForJsInner(
   v8::Local<v8::Object> modules(v8::Local<v8::Object>::Cast(modules_value));
   v8::Local<v8::Value> exports;
   if (!GetPrivateProperty(v8_context, modules, module_name, &exports) ||
-      !exports->IsUndefined())
+      !exports->IsUndefined()) {
+    LOG(INFO) << "iotto " << __func__ << " exports_is_undefined=" << exports->IsUndefined();
     return handle_scope.Escape(exports);
+  }
 
-  if (!create)
+  if (!create) {
+    LOG(INFO) << "iotto " << __func__ << " dont_create";
     return v8::Undefined(GetIsolate());
+  }
+
+  LOG(INFO) << "iotto " << __func__ << " create_module_name=" << *v8::String::Utf8Value(module_name);
 
   exports = LoadModule(*v8::String::Utf8Value(module_name));
   SetPrivateProperty(v8_context, modules, module_name, exports);
@@ -354,6 +361,7 @@ void ModuleSystem::CallModuleMethodSafe(
 void ModuleSystem::RegisterNativeHandler(
     const std::string& name,
     std::unique_ptr<NativeHandler> native_handler) {
+  LOG(INFO) << "iotto " << __func__ << " name=" << name;
   ClobberExistingNativeHandler(name);
   native_handler_map_[name] = std::move(native_handler);
 }
@@ -548,6 +556,8 @@ void ModuleSystem::SetNativeLazyField(v8::Local<v8::Object> object,
 void ModuleSystem::OnNativeBindingCreated(
     const std::string& api_name,
     v8::Local<v8::Value> api_bridge_value) {
+  LOG(INFO) << "iotto " << __func__ << " api_name=" << api_name;
+
   DCHECK(!get_internal_api_.IsEmpty());
   v8::HandleScope scope(GetIsolate());
   if (source_map_->Contains(api_name)) {
@@ -601,7 +611,9 @@ void ModuleSystem::RequireNative(
 
 v8::MaybeLocal<v8::Object> ModuleSystem::RequireNativeFromString(
     const std::string& native_name) {
+  LOG(INFO) << "iotto " << __func__ << " native_name=" << native_name;
   if (natives_enabled_ == 0) {
+    LOG(INFO) << "iotto " << __func__ << " natives_disabled!";
     // HACK: if in test throw exception so that we can test the natives-disabled
     // logic; however, under normal circumstances, this is programmer error so
     // we could crash.
@@ -624,6 +636,7 @@ v8::MaybeLocal<v8::Object> ModuleSystem::RequireNativeFromString(
 
   NativeHandlerMap::iterator i = native_handler_map_.find(native_name);
   if (i == native_handler_map_.end()) {
+    LOG(INFO) << "iotto " << __func__ << " native_not_found!";
     Fatal(context_,
           "Couldn't find native for requireNative(" + native_name + ")");
     return v8::MaybeLocal<v8::Object>();
@@ -733,6 +746,8 @@ v8::Local<v8::Value> ModuleSystem::LoadModule(const std::string& module_name) {
 v8::Local<v8::Value> ModuleSystem::LoadModuleWithNativeAPIBridge(
     const std::string& module_name,
     v8::Local<v8::Value> api_bridge) {
+  LOG(INFO) << "iotto " << __func__ << " module_name=" << module_name;
+
   v8::EscapableHandleScope handle_scope(GetIsolate());
   v8::Local<v8::Context> v8_context = context()->v8_context();
   v8::Context::Scope context_scope(v8_context);
@@ -740,12 +755,14 @@ v8::Local<v8::Value> ModuleSystem::LoadModuleWithNativeAPIBridge(
   v8::Local<v8::String> source =
       source_map_->GetSource(GetIsolate(), module_name);
   if (source.IsEmpty()) {
+    LOG(ERROR) << "iotto " << __func__ << " no_source module_name=" << module_name;
     Fatal(context_, "No source for require(" + module_name + ")");
     return v8::Undefined(GetIsolate());
   }
   v8::Local<v8::String> wrapped_source(WrapSource(source));
   v8::Local<v8::String> v8_module_name;
   if (!ToV8String(GetIsolate(), module_name.c_str(), &v8_module_name)) {
+    LOG(ERROR) << "iotto " << __func__ << " name_too_long module_name=" << module_name;
     NOTREACHED() << "module_name is too long";
     return v8::Undefined(GetIsolate());
   }
@@ -753,6 +770,7 @@ v8::Local<v8::Value> ModuleSystem::LoadModuleWithNativeAPIBridge(
   v8::Local<v8::Value> func_as_value =
       RunString(wrapped_source, v8_module_name);
   if (func_as_value.IsEmpty() || func_as_value->IsUndefined()) {
+    LOG(ERROR) << "iotto " << __func__ << " bad_source module_name=" << module_name;
     Fatal(context_, "Bad source for require(" + module_name + ")");
     return v8::Undefined(GetIsolate());
   }
@@ -770,12 +788,14 @@ v8::Local<v8::Value> ModuleSystem::LoadModuleWithNativeAPIBridge(
   tmpl->RemovePrototype();
   v8::Local<v8::String> v8_key;
   if (!v8_helpers::ToV8String(GetIsolate(), "$set", &v8_key)) {
+    LOG(ERROR) << "iotto " << __func__ << " $set_not_found module_name=" << module_name;
     NOTREACHED();
     return v8::Undefined(GetIsolate());
   }
 
   v8::Local<v8::Function> function;
   if (!tmpl->GetFunction(v8_context).ToLocal(&function)) {
+    LOG(ERROR) << "iotto " << __func__ << " get_function module_name=" << module_name;
     NOTREACHED();
     return v8::Undefined(GetIsolate());
   }
@@ -788,6 +808,7 @@ v8::Local<v8::Value> ModuleSystem::LoadModuleWithNativeAPIBridge(
 
   v8::Local<v8::Value> get_internal_api;
   if (get_internal_api_.IsEmpty()) {
+    LOG(ERROR) << "iotto " << __func__ << " get_internal_api_empty module_name=" << module_name;
     get_internal_api = v8::Undefined(GetIsolate());
   } else {
     get_internal_api = get_internal_api_.Get(GetIsolate())
@@ -799,6 +820,7 @@ v8::Local<v8::Value> ModuleSystem::LoadModuleWithNativeAPIBridge(
   if (!js_binding_util_getter_.is_null()) {
     js_binding_util_getter_.Run(v8_context, &binding_util);
     if (binding_util.IsEmpty()) {
+      LOG(ERROR) << "iotto " << __func__ << " binding_util_empty module_name=" << module_name;
       // The NativeExtensionBindingsSystem was destroyed. This shouldn't happen,
       // but JS makes the impossible possible!
       NOTREACHED();
@@ -843,6 +865,7 @@ v8::Local<v8::Value> ModuleSystem::LoadModuleWithNativeAPIBridge(
     try_catch.SetCaptureMessage(true);
     context_->SafeCallFunction(func, arraysize(args), args);
     if (try_catch.HasCaught()) {
+      LOG(ERROR) << "iotto " << __func__ << " exception module_name=" << module_name;
       HandleException(try_catch);
       return v8::Undefined(GetIsolate());
     }

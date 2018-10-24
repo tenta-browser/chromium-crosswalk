@@ -5,10 +5,10 @@
 #include "extensions/common/common_manifest_handlers.h"
 
 #include "components/nacl/common/features.h"
-#include "extensions/common/api/bluetooth/bluetooth_manifest_handler.h"
+//#include "extensions/common/api/bluetooth/bluetooth_manifest_handler.h"
 #include "extensions/common/api/declarative/declarative_manifest_handler.h"
 #include "extensions/common/api/declarative_net_request/dnr_manifest_handler.h"
-#include "extensions/common/api/printer_provider/usb_printer_manifest_handler.h"
+//#include "extensions/common/api/printer_provider/usb_printer_manifest_handler.h"
 #include "extensions/common/api/sockets/sockets_manifest_handler.h"
 #include "extensions/common/manifest_handler.h"
 #include "extensions/common/manifest_handlers/background_info.h"
@@ -44,7 +44,7 @@ void RegisterCommonManifestHandlers() {
   (new ActionHandlersHandler)->Register();
 #endif
   (new BackgroundManifestHandler)->Register();
-  (new BluetoothManifestHandler)->Register();
+//  (new BluetoothManifestHandler)->Register();
   (new ContentCapabilitiesHandler)->Register();
   (new CSPHandler(false))->Register();
   (new CSPHandler(true))->Register();
@@ -68,7 +68,7 @@ void RegisterCommonManifestHandlers() {
   (new SandboxedPageHandler)->Register();
   (new SharedModuleHandler)->Register();
   (new SocketsManifestHandler)->Register();
-  (new UsbPrinterManifestHandler)->Register();
+//  (new UsbPrinterManifestHandler)->Register();
   (new WebAccessibleResourcesHandler)->Register();
   (new WebviewHandler)->Register();
 }

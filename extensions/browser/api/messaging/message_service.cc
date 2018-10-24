@@ -39,7 +39,7 @@
 #include "extensions/browser/extension_util.h"
 #include "extensions/browser/extension_web_contents_observer.h"
 #include "extensions/browser/extensions_browser_client.h"
-#include "extensions/browser/guest_view/web_view/web_view_guest.h"
+//#include "extensions/browser/guest_view/web_view/web_view_guest.h"
 #include "extensions/browser/lazy_background_task_queue.h"
 #include "extensions/browser/process_manager.h"
 #include "extensions/common/extension.h"
@@ -59,7 +59,7 @@ namespace extensions {
 
 const char kReceivingEndDoesntExistError[] =
     "Could not establish connection. Receiving end does not exist.";
-#if defined(OS_WIN) || defined(OS_MACOSX) || defined(OS_LINUX)
+#if defined(OS_WIN) || defined(OS_MACOSX) || defined(OS_LINUX) || defined(OS_ANDROID)
 const char kMissingPermissionError[] =
     "Access to native messaging requires nativeMessaging permission.";
 const char kProhibitedByPoliciesError[] =
@@ -185,6 +185,7 @@ void MessageService::OpenChannelToExtension(
   PortId receiver_port_id(source_port_id.context_id, source_port_id.port_number,
                           false);
   if (!target_extension) {
+    LOG(WARNING) << "iotto " << __func__ << " false_target_extension";
     DispatchOnDisconnect(
         source, receiver_port_id, kReceivingEndDoesntExistError);
     return;
@@ -225,6 +226,7 @@ void MessageService::OpenChannelToExtension(
     }
 
     if (!is_externally_connectable) {
+      LOG(WARNING) << "iotto " << __func__ << " false_is_externally_connectable";
       // Important: use kReceivingEndDoesntExistError here so that we don't
       // leak information about this extension to callers. This way it's
       // indistinguishable from the extension just not existing.
@@ -250,18 +252,21 @@ void MessageService::OpenChannelToExtension(
       messaging_delegate_->MaybeGetTabInfo(source_contents);
 
   if (source_tab.get()) {
+    LOG(INFO) << "iotto " << __func__ << " ok_source_tab";
     DCHECK(source_render_frame_host);
     source_frame_id =
         ExtensionApiFrameIdMap::GetFrameId(source_render_frame_host);
   } else {
+    LOG(WARNING) << "iotto " << __func__ << " null_source_tab";
     // Check to see if it was a WebView making the request.
     // Sending messages from WebViews to extensions breaks webview isolation,
     // so only allow component extensions to receive messages from WebViews.
-    bool is_web_view = !!WebViewGuest::FromWebContents(source_contents);
-    if (is_web_view &&
-        Manifest::IsComponentLocation(target_extension->location())) {
-      include_guest_process_info = true;
-    }
+    // TODO(iotto): Removed
+//    bool is_web_view = !!WebViewGuest::FromWebContents(source_contents);
+//    if (is_web_view &&
+//        Manifest::IsComponentLocation(target_extension->location())) {
+//      include_guest_process_info = true;
+//    }
   }
 
   std::unique_ptr<OpenChannelParams> params(new OpenChannelParams(
@@ -284,6 +289,7 @@ void MessageService::OpenChannelToExtension(
     //   enabling in incognito. In practice this means platform apps only.
     if (!is_web_connection || IncognitoInfo::IsSplitMode(target_extension) ||
         util::CanBeIncognitoEnabled(target_extension)) {
+      LOG(WARNING) << "iotto " << __func__ << " false_OnOpenChannelAllowed";
       OnOpenChannelAllowed(std::move(params), false);
       return;
     }
@@ -302,6 +308,7 @@ void MessageService::OpenChannelToExtension(
           event_router->ExtensionHasEventListener(target_extension_id, *event);
     }
     if (!has_event_listener) {
+      LOG(WARNING) << "iotto " << __func__ << " false_OnOpenChannelAllowed";
       OnOpenChannelAllowed(std::move(params), false);
       return;
     }
@@ -314,6 +321,7 @@ void MessageService::OpenChannelToExtension(
     return;
   }
 
+  LOG(INFO) << "iotto " << __func__ << " OK_OnOpenChannelAllowed";
   OnOpenChannelAllowed(std::move(params), true);
 }
 
@@ -330,7 +338,7 @@ void MessageService::OpenChannelToNativeApp(
   if (!source)
     return;
 
-#if defined(OS_WIN) || defined(OS_MACOSX) || defined(OS_LINUX)
+#if defined(OS_WIN) || defined(OS_MACOSX) || defined(OS_LINUX) || defined(OS_ANDROID)
   content::WebContents* web_contents =
       content::WebContents::FromRenderFrameHost(source);
   ExtensionWebContentsObserver* extension_web_contents_observer =
@@ -507,9 +515,9 @@ void MessageService::OpenChannelImpl(BrowserContext* browser_context,
   if (params->include_guest_process_info) {
     guest_process_id = params->source_process_id;
     guest_render_frame_routing_id = params->source_routing_id;
-
-    DCHECK(WebViewGuest::FromWebContents(
-            WebContents::FromRenderFrameHost(source)));
+    LOG(ERROR) << "iotto " << __func__ << " include_guest_process_info";
+//    DCHECK(WebViewGuest::FromWebContents(
+//            WebContents::FromRenderFrameHost(source)));
   }
 
   // Send the connect event to the receiver.  Give it the opener's port ID (the

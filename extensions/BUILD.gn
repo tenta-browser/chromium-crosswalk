@@ -132,7 +132,7 @@ static_library("test_support") {
     "//base",
     "//components/cast_certificate:test_support",
     "//components/cast_channel:test_support",
-    "//components/guest_view/browser:test_support",
+#     "//components/guest_view/browser:test_support",
     "//components/prefs:test_support",
     "//components/sync_preferences:test_support",
     "//content/public/common",
@@ -205,7 +205,7 @@ test("extensions_unittests") {
   ]
 
   deps = [
-    ":extensions_resources",
+#     ":extensions_resources",
     ":shell_and_test_pak",
     ":test_support",
     "//base/test:test_support",
@@ -284,7 +284,7 @@ source_set("chrome_extensions_browsertests") {
     "//components/captive_portal:test_support",
     "//components/dom_distiller/content/browser",
     "//components/dom_distiller/core:test_support",
-    "//components/guest_view/browser:test_support",
+#     "//components/guest_view/browser:test_support",
     "//components/resources",
     "//components/strings",
     "//components/sync",

@@ -198,28 +198,35 @@ std::unique_ptr<ScriptInjection> UserScriptSet::GetInjectionForScript(
     const GURL& document_url,
     bool is_declarative,
     bool log_activity) {
+  LOG(INFO) << "iotto " << __func__ << " name=" << script->name() << " js_scripts=" << script->js_scripts().size();
   std::unique_ptr<ScriptInjection> injection;
   std::unique_ptr<const InjectionHost> injection_host;
   blink::WebLocalFrame* web_frame = render_frame->GetWebFrame();
 
   const HostID& host_id = script->host_id();
   if (host_id.type() == HostID::EXTENSIONS) {
+    LOG(INFO) << "iotto " << __func__ << " host_id_type=EXTENSIONS host_id=" << host_id.id();
     injection_host = ExtensionInjectionHost::Create(host_id.id());
     if (!injection_host)
       return injection;
   } else {
+    LOG(INFO) << "iotto " << __func__ << " host_id=WEBUI";
     DCHECK_EQ(host_id.type(), HostID::WEBUI);
     injection_host.reset(new WebUIInjectionHost(host_id));
   }
 
-  if (web_frame->Parent() && !script->match_all_frames())
+  if (web_frame->Parent() && !script->match_all_frames()) {
+    LOG(ERROR) << "iotto " << __func__ << " not_match_all_frames";
     return injection;  // Only match subframes if the script declared it.
+  }
 
   GURL effective_document_url = ScriptContext::GetEffectiveDocumentURL(
       web_frame, document_url, script->match_about_blank());
 
-  if (!script->MatchesURL(effective_document_url))
+  if (!script->MatchesURL(effective_document_url)) {
+    LOG(ERROR) << "iotto " << __func__ << " no_match_url=" << effective_document_url.spec();
     return injection;
+  }
 
   std::unique_ptr<ScriptInjector> injector(
       new UserScriptInjector(script, this, is_declarative));
@@ -229,6 +236,7 @@ std::unique_ptr<ScriptInjection> UserScriptSet::GetInjectionForScript(
           web_frame,
           tab_id) ==
       PermissionsData::ACCESS_DENIED) {
+    LOG(ERROR) << "iotto " << __func__ << " ACCESS_DENIED";
     return injection;
   }
 
@@ -237,6 +245,7 @@ std::unique_ptr<ScriptInjection> UserScriptSet::GetInjectionForScript(
   bool inject_js =
       !script->js_scripts().empty() && script->run_location() == run_location;
   if (inject_css || inject_js) {
+    LOG(INFO) << "iotto " << __func__ << " OK";
     injection.reset(new ScriptInjection(std::move(injector), render_frame,
                                         std::move(injection_host), run_location,
                                         log_activity));

@@ -526,6 +526,7 @@ void EventRouter::DispatchEventImpl(const std::string& restrict_to_extension_id,
   // the event we are dispatching here, we dispatch to the lazy listeners here
   // first.
   for (const EventListener* listener : listeners) {
+    LOG(INFO) << "iotto " << __func__;
     if (!restrict_to_extension_id.empty() &&
         restrict_to_extension_id != listener->extension_id()) {
       continue;
@@ -543,6 +544,7 @@ void EventRouter::DispatchEventImpl(const std::string& restrict_to_extension_id,
   }
 
   for (const EventListener* listener : listeners) {
+    LOG(INFO) << "iotto " << __func__;
     if (!restrict_to_extension_id.empty() &&
         restrict_to_extension_id != listener->extension_id()) {
       continue;

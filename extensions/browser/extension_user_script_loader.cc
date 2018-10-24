@@ -183,6 +183,7 @@ ExtensionUserScriptLoader::ExtensionUserScriptLoader(
           ExtensionSystem::Get(browser_context)->content_verifier()),
       extension_registry_observer_(this),
       weak_factory_(this) {
+  LOG(INFO) << "iotto " << __func__;
   extension_registry_observer_.Add(ExtensionRegistry::Get(browser_context));
   if (listen_for_extension_system_loaded) {
     ExtensionSystem::Get(browser_context)
@@ -214,6 +215,7 @@ void ExtensionUserScriptLoader::LoadScripts(
     const std::set<HostID>& changed_hosts,
     const std::set<int>& added_script_ids,
     LoadScriptsCallback callback) {
+  LOG(INFO) << "iotto " << __func__;
   UpdateHostsInfo(changed_hosts);
 
   GetExtensionFileTaskRunner()->PostTask(
@@ -225,6 +227,7 @@ void ExtensionUserScriptLoader::LoadScripts(
 
 void ExtensionUserScriptLoader::UpdateHostsInfo(
     const std::set<HostID>& changed_hosts) {
+  LOG(INFO) << "iotto " << __func__;
   ExtensionRegistry* registry = ExtensionRegistry::Get(browser_context());
   for (const HostID& host_id : changed_hosts) {
     const Extension* extension =
@@ -248,6 +251,7 @@ void ExtensionUserScriptLoader::OnExtensionUnloaded(
 }
 
 void ExtensionUserScriptLoader::OnExtensionSystemReady() {
+  LOG(INFO) << "iotto " << __func__;
   SetReady(true);
 }
 

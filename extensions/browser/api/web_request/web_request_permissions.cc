@@ -13,7 +13,7 @@
 #include "extensions/browser/api/extensions_api_client.h"
 #include "extensions/browser/api/web_request/web_request_api_constants.h"
 #include "extensions/browser/extension_navigation_ui_data.h"
-#include "extensions/browser/guest_view/web_view/web_view_renderer_state.h"
+//#include "extensions/browser/guest_view/web_view/web_view_renderer_state.h"
 #include "extensions/browser/info_map.h"
 #include "extensions/common/constants.h"
 #include "extensions/common/extension.h"
@@ -123,11 +123,12 @@ bool WebRequestPermissions::HideRequest(
   bool is_request_from_webui_renderer = false;
   if (info) {
     int process_id = info->GetChildID();
-    // Never hide requests from guest processes.
-    if (extensions::WebViewRendererState::GetInstance()->IsGuest(process_id) ||
-        (navigation_ui_data && navigation_ui_data->is_web_view())) {
-      return false;
-    }
+    // TODO(iotto) : Removed
+//    // Never hide requests from guest processes.
+//    if (extensions::WebViewRendererState::GetInstance()->IsGuest(process_id) ||
+//        (navigation_ui_data && navigation_ui_data->is_web_view())) {
+//      return false;
+//    }
 
     if (extension_info_map &&
         extension_info_map->process_map().Contains(extensions::kWebStoreAppId,

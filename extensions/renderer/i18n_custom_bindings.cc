@@ -162,6 +162,7 @@ I18NCustomBindings::I18NCustomBindings(ScriptContext* context)
 
 void I18NCustomBindings::GetL10nMessage(
     const v8::FunctionCallbackInfo<v8::Value>& args) {
+  LOG(INFO) << "iotto " << __func__;
   if (args.Length() != 3 || !args[0]->IsString()) {
     NOTREACHED() << "Bad arguments";
     return;
@@ -226,12 +227,14 @@ void I18NCustomBindings::GetL10nMessage(
 
 void I18NCustomBindings::GetL10nUILanguage(
     const v8::FunctionCallbackInfo<v8::Value>& args) {
+  LOG(INFO) << "iotto " << __func__;
   args.GetReturnValue().Set(v8::String::NewFromUtf8(
       args.GetIsolate(), content::RenderThread::Get()->GetLocale().c_str()));
 }
 
 void I18NCustomBindings::DetectTextLanguage(
     const v8::FunctionCallbackInfo<v8::Value>& args) {
+  LOG(INFO) << "iotto " << __func__;
   CHECK(args.Length() == 1);
   CHECK(args[0]->IsString());
 

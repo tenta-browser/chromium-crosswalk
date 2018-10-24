@@ -175,6 +175,7 @@ UserScriptLoader::~UserScriptLoader() {
 }
 
 void UserScriptLoader::AddScripts(std::unique_ptr<UserScriptList> scripts) {
+  LOG(INFO) << "iotto " << __func__;
 #if DCHECK_IS_ON()
   // |scripts| with non-unique IDs will work, but that would indicate we are
   // doing something wrong somewhere, so DCHECK that.
@@ -193,11 +194,13 @@ void UserScriptLoader::AddScripts(std::unique_ptr<UserScriptList> scripts) {
 void UserScriptLoader::AddScripts(std::unique_ptr<UserScriptList> scripts,
                                   int render_process_id,
                                   int render_frame_id) {
+  LOG(INFO) << "iotto " << __func__;
   AddScripts(std::move(scripts));
 }
 
 void UserScriptLoader::RemoveScripts(
     const std::set<UserScriptIDPair>& scripts) {
+  LOG(INFO) << "iotto " << __func__;
   for (const UserScriptIDPair& id_pair : scripts) {
     removed_script_hosts_.insert(UserScriptIDPair(id_pair.id, id_pair.host_id));
     // TODO(lazyboy): We shouldn't be trying to remove scripts that were never
@@ -250,6 +253,7 @@ void UserScriptLoader::AttemptLoad() {
 }
 
 void UserScriptLoader::StartLoad() {
+  LOG(INFO) << "iotto " << __func__;
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   DCHECK(!is_loading());
 
@@ -358,6 +362,7 @@ void UserScriptLoader::SetReady(bool ready) {
 void UserScriptLoader::OnScriptsLoaded(
     std::unique_ptr<UserScriptList> user_scripts,
     std::unique_ptr<base::SharedMemory> shared_memory) {
+  LOG(INFO) << "iotto " << __func__;
   user_scripts_ = std::move(user_scripts);
   if (pending_load_) {
     // While we were loading, there were further changes. Don't bother
@@ -401,6 +406,7 @@ void UserScriptLoader::OnScriptsLoaded(
 void UserScriptLoader::SendUpdate(content::RenderProcessHost* process,
                                   base::SharedMemory* shared_memory,
                                   const std::set<HostID>& changed_hosts) {
+  LOG(INFO) << "iotto " << __func__;
   // Don't allow injection of non-whitelisted extensions' content scripts
   // into <webview>.
   bool whitelisted_only = process->IsForGuestsOnly() && host_id().id().empty();

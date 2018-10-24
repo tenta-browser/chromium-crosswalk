@@ -3464,13 +3464,13 @@ split_static_library("ui") {
 
   if (enable_extensions) {
     deps += [
-      "//apps",
+      #"//apps",
       "//chrome/browser/apps",
       "//chrome/browser/extensions",
       "//chrome/common/extensions/api",
       "//chrome/common/extensions/api:api_registration",
       "//components/drive",
-      "//components/guest_view/browser",
+#      "//components/guest_view/browser",
       "//extensions/browser",
       "//extensions/common:mojo",
       "//extensions/components/native_app_window",

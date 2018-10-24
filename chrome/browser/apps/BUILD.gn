@@ -31,7 +31,7 @@ source_set("apps") {
   configs += [ "//build/config/compiler:wexit_time_destructors" ]
 
   public_deps = [
-    "//apps",
+#    "//apps",
   ]
 
   deps = [

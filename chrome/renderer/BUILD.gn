@@ -323,7 +323,7 @@ static_library("renderer") {
       # TODO(hclam): See crbug.com/298380 for details.
       # We should isolate the APIs needed by the renderer.
       "//chrome/common/extensions/api",
-      "//components/guest_view/renderer",
+#      "//components/guest_view/renderer",
       "//extensions:extensions_resources",
       "//extensions/renderer",
       "//media/cast:net",

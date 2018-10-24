@@ -241,9 +241,11 @@ bool URLPatternSet::Populate(const std::vector<std::string>& patterns,
                              int valid_schemes,
                              bool allow_file_access,
                              std::string* error) {
+  LOG(INFO) << "iotto " << __func__;
   ClearPatterns();
   for (size_t i = 0; i < patterns.size(); ++i) {
     URLPattern pattern(valid_schemes);
+    LOG(INFO) << "iotto " << __func__ << " pattern=" << patterns[i];
     if (pattern.Parse(patterns[i]) != URLPattern::PARSE_SUCCESS) {
       if (error) {
         *error = ErrorUtils::FormatErrorMessage(kInvalidURLPatternError,

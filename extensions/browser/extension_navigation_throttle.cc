@@ -4,7 +4,7 @@
 
 #include "extensions/browser/extension_navigation_throttle.h"
 
-#include "components/guest_view/browser/guest_view_base.h"
+//#include "components/guest_view/browser/guest_view_base.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/navigation_handle.h"
 #include "content/public/browser/render_frame_host.h"
@@ -12,7 +12,7 @@
 #include "content/public/common/browser_side_navigation_policy.h"
 #include "content/public/common/url_constants.h"
 #include "extensions/browser/extension_registry.h"
-#include "extensions/browser/guest_view/web_view/web_view_guest.h"
+//#include "extensions/browser/guest_view/web_view/web_view_guest.h"
 #include "extensions/browser/url_request_util.h"
 #include "extensions/common/constants.h"
 #include "extensions/common/extension.h"
@@ -95,31 +95,32 @@ ExtensionNavigationThrottle::WillStartOrRedirectRequest() {
         return content::NavigationThrottle::CANCEL;
     }
 
-    guest_view::GuestViewBase* guest =
-        guest_view::GuestViewBase::FromWebContents(web_contents);
-    if (content::IsBrowserSideNavigationEnabled() && url_has_extension_scheme &&
-        guest) {
-      // This variant of this logic applies to PlzNavigate top-level
-      // navigations. It is performed for subresources, and for non-PlzNavigate
-      // top navigations, in url_request_util::AllowCrossRendererResourceLoad.
-      const std::string& owner_extension_id = guest->owner_host();
-      const Extension* owner_extension =
-          registry->enabled_extensions().GetByID(owner_extension_id);
-
-      std::string partition_domain;
-      std::string partition_id;
-      bool in_memory = false;
-      bool is_guest = WebViewGuest::GetGuestPartitionConfigForSite(
-          navigation_handle()->GetStartingSiteInstance()->GetSiteURL(),
-          &partition_domain, &partition_id, &in_memory);
-
-      bool allowed = true;
-      url_request_util::AllowCrossRendererResourceLoadHelper(
-          is_guest, target_extension, owner_extension, partition_id, url.path(),
-          navigation_handle()->GetPageTransition(), &allowed);
-      if (!allowed)
-        return content::NavigationThrottle::BLOCK_REQUEST;
-    }
+    // TODO(iotto): Removed
+//    guest_view::GuestViewBase* guest =
+//        guest_view::GuestViewBase::FromWebContents(web_contents);
+//    if (content::IsBrowserSideNavigationEnabled() && url_has_extension_scheme &&
+//        guest) {
+//      // This variant of this logic applies to PlzNavigate top-level
+//      // navigations. It is performed for subresources, and for non-PlzNavigate
+//      // top navigations, in url_request_util::AllowCrossRendererResourceLoad.
+//      const std::string& owner_extension_id = guest->owner_host();
+//      const Extension* owner_extension =
+//          registry->enabled_extensions().GetByID(owner_extension_id);
+//
+//      std::string partition_domain;
+//      std::string partition_id;
+//      bool in_memory = false;
+//      bool is_guest = WebViewGuest::GetGuestPartitionConfigForSite(
+//          navigation_handle()->GetStartingSiteInstance()->GetSiteURL(),
+//          &partition_domain, &partition_id, &in_memory);
+//
+//      bool allowed = true;
+//      url_request_util::AllowCrossRendererResourceLoadHelper(
+//          is_guest, target_extension, owner_extension, partition_id, url.path(),
+//          navigation_handle()->GetPageTransition(), &allowed);
+//      if (!allowed)
+//        return content::NavigationThrottle::BLOCK_REQUEST;
+//    }
 
     return content::NavigationThrottle::PROCEED;
   }

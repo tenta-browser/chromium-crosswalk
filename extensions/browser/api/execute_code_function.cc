@@ -194,6 +194,7 @@ bool ExecuteCodeFunction::RunAsync() {
 }
 
 bool ExecuteCodeFunction::LoadFile(const std::string& file) {
+  LOG(INFO) << "iotto " << __func__ << " file=" << file;
   resource_ = extension()->GetResource(file);
 
   if (resource_.extension_root().empty() || resource_.relative_path().empty()) {

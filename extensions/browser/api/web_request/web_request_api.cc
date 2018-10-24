@@ -51,9 +51,9 @@
 #include "extensions/browser/extension_registry.h"
 #include "extensions/browser/extension_system.h"
 #include "extensions/browser/extensions_browser_client.h"
-#include "extensions/browser/guest_view/guest_view_events.h"
-#include "extensions/browser/guest_view/web_view/web_view_constants.h"
-#include "extensions/browser/guest_view/web_view/web_view_renderer_state.h"
+//#include "extensions/browser/guest_view/guest_view_events.h"
+//#include "extensions/browser/guest_view/web_view/web_view_constants.h"
+//#include "extensions/browser/guest_view/web_view/web_view_renderer_state.h"
 #include "extensions/browser/info_map.h"
 #include "extensions/browser/io_thread_extension_message_filter.h"
 #include "extensions/browser/runtime_data.h"
@@ -106,7 +106,7 @@ enum RequestAction {
   MAX
 };
 
-const char kWebRequestEventPrefix[] = "webRequest.";
+//const char kWebRequestEventPrefix[] = "webRequest.";
 
 // List of all the webRequest events.
 const char* const kWebRequestEvents[] = {
@@ -157,12 +157,12 @@ void LogRequestAction(RequestAction action) {
 
 bool IsWebRequestEvent(const std::string& event_name) {
   std::string web_request_event_name(event_name);
-  if (base::StartsWith(web_request_event_name,
-                       webview::kWebViewEventPrefix,
-                       base::CompareCase::SENSITIVE)) {
-    web_request_event_name.replace(
-        0, strlen(webview::kWebViewEventPrefix), kWebRequestEventPrefix);
-  }
+//  if (base::StartsWith(web_request_event_name,
+//                       webview::kWebViewEventPrefix,
+//                       base::CompareCase::SENSITIVE)) {
+//    web_request_event_name.replace(
+//        0, strlen(webview::kWebViewEventPrefix), kWebRequestEventPrefix);
+//  }
   auto* const* web_request_events_end =
       kWebRequestEvents + arraysize(kWebRequestEvents);
   return std::find(kWebRequestEvents, web_request_events_end,
@@ -222,13 +222,13 @@ bool GetWebViewInfo(const net::URLRequest* request,
   int render_process_host_id = -1;
   int routing_id = -1;
   ExtractRequestRoutingInfo(request, &render_process_host_id, &routing_id);
-  WebViewRendererState::WebViewInfo web_view_info;
-  if (WebViewRendererState::GetInstance()->GetInfo(
-          render_process_host_id, routing_id, &web_view_info)) {
-    *web_view_instance_id = web_view_info.instance_id;
-    *web_view_rules_registry_id = web_view_info.rules_registry_id;
-    return true;
-  }
+//  WebViewRendererState::WebViewInfo web_view_info;
+//  if (WebViewRendererState::GetInstance()->GetInfo(
+//          render_process_host_id, routing_id, &web_view_info)) {
+//    *web_view_instance_id = web_view_info.instance_id;
+//    *web_view_rules_registry_id = web_view_info.rules_registry_id;
+//    return true;
+//  }
 
   // PlzNavigate main frame request.
   if (navigation_ui_data && navigation_ui_data->is_web_view()) {
@@ -305,9 +305,9 @@ void SendOnMessageEventOnUI(
   // process. We use a filter here so that only event listeners for a particular
   // <webview> will fire.
   if (is_web_view_guest) {
-    event_filtering_info.instance_id = web_view_instance_id;
-    histogram_value = events::WEB_VIEW_INTERNAL_ON_MESSAGE;
-    event_name = webview::kEventMessage;
+//    event_filtering_info.instance_id = web_view_instance_id;
+//    histogram_value = events::WEB_VIEW_INTERNAL_ON_MESSAGE;
+//    event_name = webview::kEventMessage;
   } else {
     histogram_value = events::DECLARATIVE_WEB_REQUEST_ON_MESSAGE;
     event_name = declarative_keys::kOnMessage;
@@ -346,10 +346,10 @@ events::HistogramValue GetEventHistogramValue(const std::string& event_name) {
   }
 
   // If there is no webRequest event, it might be a guest view webRequest event.
-  events::HistogramValue guest_view_histogram_value =
-      guest_view_events::GetEventHistogramValue(event_name);
-  if (guest_view_histogram_value != events::UNKNOWN)
-    return guest_view_histogram_value;
+//  events::HistogramValue guest_view_histogram_value =
+//      guest_view_events::GetEventHistogramValue(event_name);
+//  if (guest_view_histogram_value != events::UNKNOWN)
+//    return guest_view_histogram_value;
 
   // There is no histogram value for this event name. It should be added to
   // either the mapping here, or in guest_view_events.
@@ -395,9 +395,9 @@ WebRequestAPI::WebRequestAPI(content::BrowserContext* context)
     event_router->RegisterObserver(this, event_name);
 
     // Also observe the corresponding webview event.
-    event_name.replace(
-        0, sizeof(kWebRequestEventPrefix) - 1, webview::kWebViewEventPrefix);
-    event_router->RegisterObserver(this, event_name);
+//    event_name.replace(
+//        0, sizeof(kWebRequestEventPrefix) - 1, webview::kWebViewEventPrefix);
+//    event_router->RegisterObserver(this, event_name);
   }
 }
 
@@ -1459,15 +1459,17 @@ void ExtensionWebRequestEventRouter::GetMatchingListenersImpl(
     int* extra_info_spec,
     RawListeners* matching_listeners) {
   std::string web_request_event_name(event_name);
-  WebViewRendererState::WebViewInfo web_view_info;
-  bool is_web_view_guest =
-      WebViewRendererState::GetInstance()->GetInfo(
-          render_process_host_id, routing_id, &web_view_info) ||
-      (navigation_ui_data && navigation_ui_data->is_web_view());
-  if (is_web_view_guest) {
-    web_request_event_name.replace(
-        0, sizeof(kWebRequestEventPrefix) - 1, webview::kWebViewEventPrefix);
-  }
+  bool is_web_view_guest = false;
+  //TODO(iotto)
+//  WebViewRendererState::WebViewInfo web_view_info;
+//  bool is_web_view_guest =
+//      WebViewRendererState::GetInstance()->GetInfo(
+//          render_process_host_id, routing_id, &web_view_info) ||
+//      (navigation_ui_data && navigation_ui_data->is_web_view());
+//  if (is_web_view_guest) {
+//    web_request_event_name.replace(
+//        0, sizeof(kWebRequestEventPrefix) - 1, webview::kWebViewEventPrefix);
+//  }
 
   Listeners& listeners = listeners_[browser_context][web_request_event_name];
   for (std::unique_ptr<EventListener>& listener : listeners) {
@@ -1477,22 +1479,22 @@ void ExtensionWebRequestEventRouter::GetMatchingListenersImpl(
       continue;
     }
 
-    if (is_web_view_guest) {
-      // If this is a PlzNavigate request, then |navigation_ui_data| will be
-      // valid and the IDs will be -1. We can skip this verification since
-      // |navigation_ui_data| was created and set in the browser so it's
-      // trusted.
-      if (!navigation_ui_data && (listener->id.embedder_process_id !=
-                                  web_view_info.embedder_process_id)) {
-        continue;
-      }
-
-      int instance_id = navigation_ui_data
-                            ? navigation_ui_data->web_view_instance_id()
-                            : web_view_info.instance_id;
-      if (listener->id.web_view_instance_id != instance_id)
-        continue;
-    }
+//    if (is_web_view_guest) {
+//      // If this is a PlzNavigate request, then |navigation_ui_data| will be
+//      // valid and the IDs will be -1. We can skip this verification since
+//      // |navigation_ui_data| was created and set in the browser so it's
+//      // trusted.
+//      if (!navigation_ui_data && (listener->id.embedder_process_id !=
+//                                  web_view_info.embedder_process_id)) {
+//        continue;
+//      }
+//
+//      int instance_id = navigation_ui_data
+//                            ? navigation_ui_data->web_view_instance_id()
+//                            : web_view_info.instance_id;
+//      if (listener->id.web_view_instance_id != instance_id)
+//        continue;
+//    }
 
     // Filter requests from other extensions / apps. This does not work for
     // content scripts, or extension pages in non-extension processes.

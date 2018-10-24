@@ -25,8 +25,8 @@
 #include "extensions/browser/api/declarative/rules_registry_service.h"
 #include "extensions/browser/api/extensions_api_client.h"
 #include "extensions/browser/extension_system.h"
-#include "extensions/browser/guest_view/web_view/web_view_constants.h"
-#include "extensions/browser/guest_view/web_view/web_view_guest.h"
+//#include "extensions/browser/guest_view/web_view/web_view_constants.h"
+//#include "extensions/browser/guest_view/web_view/web_view_guest.h"
 #include "extensions/common/api/events.h"
 #include "extensions/common/extension_api.h"
 #include "extensions/common/permissions/permissions_data.h"
@@ -41,7 +41,7 @@ namespace extensions {
 
 namespace {
 
-constexpr char kDeclarativeEventPrefix[] = "declarative";
+//constexpr char kDeclarativeEventPrefix[] = "declarative";
 constexpr char kDeclarativeContentEventPrefix[] = "declarativeContent.";
 constexpr char kDeclarativeWebRequestEventPrefix[] = "declarativeWebRequest.";
 constexpr char kDeclarativeWebRequestWebViewEventPrefix[] =
@@ -160,25 +160,25 @@ bool RulesFunction::RunAsync() {
 
   int web_view_instance_id = 0;
   EXTENSION_FUNCTION_VALIDATE(args_->GetInteger(1, &web_view_instance_id));
-  int embedder_process_id = render_frame_host()->GetProcess()->GetID();
+//  int embedder_process_id = render_frame_host()->GetProcess()->GetID();
 
   RecordUMA(event_name);
 
-  bool from_web_view = web_view_instance_id != 0;
+//  bool from_web_view = web_view_instance_id != 0;
   // If we are not operating on a particular <webview>, then the key is 0.
   int rules_registry_id = RulesRegistryService::kDefaultRulesRegistryID;
-  if (from_web_view) {
-    // Sample event names:
-    // webViewInternal.declarativeWebRequest.onRequest.
-    // webViewInternal.declarativeWebRequest.onMessage.
-    // The "webViewInternal." prefix is removed from the event name.
-    std::size_t found = event_name.find(kDeclarativeEventPrefix);
-    EXTENSION_FUNCTION_VALIDATE(found != std::string::npos);
-    event_name = event_name.substr(found);
-
-    rules_registry_id = WebViewGuest::GetOrGenerateRulesRegistryID(
-        embedder_process_id, web_view_instance_id);
-  }
+//  if (from_web_view) {
+//    // Sample event names:
+//    // webViewInternal.declarativeWebRequest.onRequest.
+//    // webViewInternal.declarativeWebRequest.onMessage.
+//    // The "webViewInternal." prefix is removed from the event name.
+//    std::size_t found = event_name.find(kDeclarativeEventPrefix);
+//    EXTENSION_FUNCTION_VALIDATE(found != std::string::npos);
+//    event_name = event_name.substr(found);
+//
+//    rules_registry_id = WebViewGuest::GetOrGenerateRulesRegistryID(
+//        embedder_process_id, web_view_instance_id);
+//  }
 
   // The following call will return a NULL pointer for apps_shell, but should
   // never be called there anyways.

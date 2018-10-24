@@ -167,6 +167,7 @@ void ExtensionMessageFilter::OnExtensionAddListener(
     const GURL& listener_or_worker_scope_url,
     const std::string& event_name,
     int worker_thread_id) {
+  LOG(INFO) << "iotto " << __func__;
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   if (!browser_context_)
     return;
@@ -200,6 +201,7 @@ void ExtensionMessageFilter::OnExtensionRemoveListener(
     const GURL& listener_or_worker_scope_url,
     const std::string& event_name,
     int worker_thread_id) {
+  LOG(INFO) << "iotto " << __func__;
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   if (!browser_context_)
     return;
@@ -230,6 +232,7 @@ void ExtensionMessageFilter::OnExtensionRemoveListener(
 void ExtensionMessageFilter::OnExtensionAddLazyListener(
     const std::string& extension_id,
     const std::string& event_name) {
+  LOG(INFO) << "iotto " << __func__;
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   if (!browser_context_)
     return;
@@ -240,6 +243,7 @@ void ExtensionMessageFilter::OnExtensionAddLazyServiceWorkerListener(
     const std::string& extension_id,
     const std::string& event_name,
     const GURL& service_worker_scope) {
+  LOG(INFO) << "iotto " << __func__;
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   if (!browser_context_)
     return;
@@ -251,6 +255,7 @@ void ExtensionMessageFilter::OnExtensionAddLazyServiceWorkerListener(
 void ExtensionMessageFilter::OnExtensionRemoveLazyListener(
     const std::string& extension_id,
     const std::string& event_name) {
+  LOG(INFO) << "iotto " << __func__;
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   if (!browser_context_)
     return;
@@ -262,6 +267,7 @@ void ExtensionMessageFilter::OnExtensionRemoveLazyServiceWorkerListener(
     const std::string& extension_id,
     const std::string& event_name,
     const GURL& worker_scope_url) {
+  LOG(INFO) << "iotto " << __func__;
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   if (!browser_context_)
     return;
@@ -276,6 +282,7 @@ void ExtensionMessageFilter::OnExtensionAddFilteredListener(
     base::Optional<ServiceWorkerIdentifier> sw_identifier,
     const base::DictionaryValue& filter,
     bool lazy) {
+  LOG(INFO) << "iotto " << __func__;
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   if (!browser_context_)
     return;
@@ -294,6 +301,7 @@ void ExtensionMessageFilter::OnExtensionRemoveFilteredListener(
     base::Optional<ServiceWorkerIdentifier> sw_identifier,
     const base::DictionaryValue& filter,
     bool lazy) {
+  LOG(INFO) << "iotto " << __func__;
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   if (!browser_context_)
     return;
@@ -308,6 +316,7 @@ void ExtensionMessageFilter::OnExtensionRemoveFilteredListener(
 
 void ExtensionMessageFilter::OnExtensionShouldSuspendAck(
      const std::string& extension_id, int sequence_id) {
+  LOG(INFO) << "iotto " << __func__;
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   if (!browser_context_)
     return;
@@ -318,6 +327,7 @@ void ExtensionMessageFilter::OnExtensionShouldSuspendAck(
 
 void ExtensionMessageFilter::OnExtensionSuspendAck(
      const std::string& extension_id) {
+  LOG(INFO) << "iotto " << __func__;
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   if (!browser_context_)
     return;
@@ -327,6 +337,7 @@ void ExtensionMessageFilter::OnExtensionSuspendAck(
 
 void ExtensionMessageFilter::OnExtensionTransferBlobsAck(
     const std::vector<std::string>& blob_uuids) {
+  LOG(INFO) << "iotto " << __func__;
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   if (!browser_context_)
     return;
@@ -341,6 +352,7 @@ void ExtensionMessageFilter::OnExtensionTransferBlobsAck(
 void ExtensionMessageFilter::OnExtensionWakeEventPage(
     int request_id,
     const std::string& extension_id) {
+  LOG(INFO) << "iotto " << __func__;
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   if (!browser_context_)
     return;
@@ -389,6 +401,7 @@ void ExtensionMessageFilter::OnOpenChannelToExtension(
     const std::string& channel_name,
     bool include_tls_channel_id,
     const PortId& port_id) {
+  LOG(INFO) << "iotto " << __func__;
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   if (browser_context_) {
     MessageService::Get(browser_context_)
@@ -403,6 +416,7 @@ void ExtensionMessageFilter::OnOpenChannelToNativeApp(
     int routing_id,
     const std::string& native_app_name,
     const PortId& port_id) {
+  LOG(INFO) << "iotto " << __func__;
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   if (!browser_context_)
     return;
@@ -418,6 +432,7 @@ void ExtensionMessageFilter::OnOpenChannelToTab(
     const std::string& extension_id,
     const std::string& channel_name,
     const PortId& port_id) {
+  LOG(INFO) << "iotto " << __func__;
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   if (!browser_context_)
     return;
@@ -430,6 +445,7 @@ void ExtensionMessageFilter::OnOpenChannelToTab(
 void ExtensionMessageFilter::OnOpenMessagePort(
     int routing_id,
     const PortId& port_id) {
+  LOG(INFO) << "iotto " << __func__;
   if (!browser_context_)
     return;
 
@@ -441,6 +457,7 @@ void ExtensionMessageFilter::OnCloseMessagePort(
     int routing_id,
     const PortId& port_id,
     bool force_close) {
+  LOG(INFO) << "iotto " << __func__;
   if (!browser_context_)
     return;
 
@@ -450,6 +467,7 @@ void ExtensionMessageFilter::OnCloseMessagePort(
 
 void ExtensionMessageFilter::OnPostMessage(const PortId& port_id,
                                            const Message& message) {
+  LOG(INFO) << "iotto " << __func__;
   if (!browser_context_)
     return;
 

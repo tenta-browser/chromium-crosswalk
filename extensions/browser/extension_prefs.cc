@@ -1246,6 +1246,7 @@ ExtensionPrefs::GetInstalledExtensionsInfo() const {
 
   const base::DictionaryValue* extensions =
       prefs_->GetDictionary(pref_names::kExtensions);
+  LOG(INFO) << "iotto " << __func__ << " extensions=" << extensions;
   for (base::DictionaryValue::Iterator extension_id(*extensions);
        !extension_id.IsAtEnd(); extension_id.Advance()) {
     if (!crx_file::id_util::IdIsValid(extension_id.key()))

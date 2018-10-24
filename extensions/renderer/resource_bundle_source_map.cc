@@ -46,14 +46,17 @@ ResourceBundleSourceMap::~ResourceBundleSourceMap() {
 void ResourceBundleSourceMap::RegisterSource(const char* const name,
                                              int resource_id,
                                              bool gzipped) {
+  LOG(INFO) << "iotto " << __func__ << " name=" << name << " resource_id=" << resource_id;
   resource_map_[name] = {resource_id, gzipped};
 }
 
 v8::Local<v8::String> ResourceBundleSourceMap::GetSource(
     v8::Isolate* isolate,
     const std::string& name) const {
+  LOG(INFO) << "iotto " << __func__ << " name=" << name;
   auto resource_iter = resource_map_.find(name);
   if (resource_iter == resource_map_.end()) {
+    LOG(ERROR) << "iotto " << __func__ << " No module is registered with name \"" << name << "\"";
     NOTREACHED() << "No module is registered with name \"" << name << "\"";
     return v8::Local<v8::String>();
   }
@@ -64,6 +67,7 @@ v8::Local<v8::String> ResourceBundleSourceMap::GetSource(
 
   base::StringPiece resource = resource_bundle_->GetRawDataResource(info.id);
   if (resource.empty()) {
+    LOG(ERROR) << "iotto " << __func__ << " Module resource registered as \"" << name << "\" not found";
     NOTREACHED()
         << "Module resource registered as \"" << name << "\" not found";
     return v8::Local<v8::String>();

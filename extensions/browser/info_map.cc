@@ -144,6 +144,7 @@ void InfoMap::UnregisterAllExtensionsInProcess(int process_id) {
 bool InfoMap::MapUrlToLocalFilePath(const GURL& file_url,
                                     bool use_blocking_api,
                                     base::FilePath* file_path) {
+  LOG(INFO) << "iotto " << __func__ << " url=" << file_url.spec();
   // Check that the URL is recognized by the extension system.
   const Extension* extension = extensions_.GetExtensionOrAppByURL(file_url);
   if (!extension)

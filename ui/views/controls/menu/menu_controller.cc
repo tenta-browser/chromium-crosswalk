@@ -1273,8 +1273,9 @@ void MenuController::StartDrag(SubmenuView* source,
 
   OSExchangeData data;
   item->GetDelegate()->WriteDragData(item, &data);
+#if defined(USE_AURA) || defined(OS_MACOSX)
   data.provider().SetDragImage(image, press_loc.OffsetFromOrigin());
-
+#endif
   StopScrolling();
   int drag_ops = item->GetDelegate()->GetDragOperations(item);
   did_initiate_drag_ = true;

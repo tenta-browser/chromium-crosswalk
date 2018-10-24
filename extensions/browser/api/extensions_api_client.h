@@ -39,14 +39,14 @@ class ContentRulesRegistry;
 class DevicePermissionsPrompt;
 class ExtensionOptionsGuest;
 class ExtensionOptionsGuestDelegate;
-class FeedbackPrivateDelegate;
+//class FeedbackPrivateDelegate;
 class FileSystemDelegate;
 class ManagementAPIDelegate;
 class MediaPerceptionAPIDelegate;
 class MessagingDelegate;
 class MetricsPrivateDelegate;
-class MimeHandlerViewGuest;
-class MimeHandlerViewGuestDelegate;
+//class MimeHandlerViewGuest;
+//class MimeHandlerViewGuestDelegate;
 class NetworkingCastPrivateDelegate;
 class NonNativeFileSystemDelegate;
 class RulesCacheDelegate;
@@ -55,10 +55,10 @@ class ValueStoreCache;
 class ValueStoreFactory;
 class VirtualKeyboardDelegate;
 class WebRequestEventRouterDelegate;
-class WebViewGuest;
-class WebViewGuestDelegate;
-class WebViewPermissionHelper;
-class WebViewPermissionHelperDelegate;
+//class WebViewGuest;
+//class WebViewGuestDelegate;
+//class WebViewPermissionHelper;
+//class WebViewPermissionHelperDelegate;
 
 // Allows the embedder of the extensions module to customize its support for
 // API features. The embedder must create a single instance in the browser
@@ -107,23 +107,23 @@ class ExtensionsAPIClient {
       ExtensionOptionsGuest* guest) const;
 
   // Returns a delegate for GuestViewManagerDelegate.
-  virtual std::unique_ptr<guest_view::GuestViewManagerDelegate>
-  CreateGuestViewManagerDelegate(content::BrowserContext* context) const;
+//  virtual std::unique_ptr<guest_view::GuestViewManagerDelegate>
+//  CreateGuestViewManagerDelegate(content::BrowserContext* context) const;
 
   // Creates a delegate for MimeHandlerViewGuest.
-  virtual std::unique_ptr<MimeHandlerViewGuestDelegate>
-  CreateMimeHandlerViewGuestDelegate(MimeHandlerViewGuest* guest) const;
+//  virtual std::unique_ptr<MimeHandlerViewGuestDelegate>
+//  CreateMimeHandlerViewGuestDelegate(MimeHandlerViewGuest* guest) const;
 
   // Returns a delegate for some of WebViewGuest's behavior. The caller owns the
   // returned WebViewGuestDelegate.
-  virtual WebViewGuestDelegate* CreateWebViewGuestDelegate(
-      WebViewGuest* web_view_guest) const;
+//  virtual WebViewGuestDelegate* CreateWebViewGuestDelegate(
+//      WebViewGuest* web_view_guest) const;
 
   // Returns a delegate for some of WebViewPermissionHelper's behavior. The
   // caller owns the returned WebViewPermissionHelperDelegate.
-  virtual WebViewPermissionHelperDelegate*
-  CreateWebViewPermissionHelperDelegate(
-      WebViewPermissionHelper* web_view_permission_helper) const;
+//  virtual WebViewPermissionHelperDelegate*
+//  CreateWebViewPermissionHelperDelegate(
+//      WebViewPermissionHelper* web_view_permission_helper) const;
 
   // Creates a delegate for WebRequestEventRouter.
   virtual std::unique_ptr<WebRequestEventRouterDelegate>
@@ -159,8 +159,8 @@ class ExtensionsAPIClient {
   // Returns a delegate for embedder-specific extension messaging.
   virtual MessagingDelegate* GetMessagingDelegate();
 
-  // Returns a delegate for the chrome.feedbackPrivate API.
-  virtual FeedbackPrivateDelegate* GetFeedbackPrivateDelegate();
+//  // Returns a delegate for the chrome.feedbackPrivate API.
+//  virtual FeedbackPrivateDelegate* GetFeedbackPrivateDelegate();
 
 #if defined(OS_CHROMEOS)
   // If supported by the embedder, returns a delegate for querying non-native

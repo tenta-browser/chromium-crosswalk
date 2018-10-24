@@ -89,8 +89,10 @@ void SetDragImage(const GURL& url,
                         widget.GetCompositor()->is_pixel_canvas())
           .context(),
       size));
+#if defined(USE_AURA) || defined(OS_MACOSX)
   gfx::ImageSkia image(gfx::ImageSkiaRep(bitmap, raster_scale));
   data->provider().SetDragImage(image, press_point);
+#endif
 }
 
 }  // namespace button_drag_utils

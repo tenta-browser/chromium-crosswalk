@@ -24,9 +24,9 @@
 #include "extensions/features/features.h"
 #include "url/gurl.h"
 
-#if !BUILDFLAG(ENABLE_EXTENSIONS)
-#error "Extensions must be enabled"
-#endif
+//#if !BUILDFLAG(ENABLE_EXTENSIONS)
+//#error "Extensions must be enabled"
+//#endif
 
 namespace base {
 class DictionaryValue;

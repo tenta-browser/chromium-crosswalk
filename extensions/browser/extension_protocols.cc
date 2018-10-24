@@ -51,8 +51,8 @@
 #include "extensions/browser/extension_registry.h"
 #include "extensions/browser/extension_util.h"
 #include "extensions/browser/extensions_browser_client.h"
-#include "extensions/browser/guest_view/web_view/web_view_guest.h"
-#include "extensions/browser/guest_view/web_view/web_view_renderer_state.h"
+//#include "extensions/browser/guest_view/web_view/web_view_guest.h"
+//#include "extensions/browser/guest_view/web_view/web_view_renderer_state.h"
 #include "extensions/browser/info_map.h"
 #include "extensions/browser/url_request_util.h"
 #include "extensions/common/constants.h"
@@ -464,8 +464,9 @@ bool IsWebViewRequest(net::URLRequest* request) {
   // |info| can be null sometimes: http://crbug.com/370070.
   if (!info)
     return false;
-  if (WebViewRendererState::GetInstance()->IsGuest(info->GetChildID()))
-    return true;
+  // TODO(iotto): Removed! see how to implement!
+//  if (WebViewRendererState::GetInstance()->IsGuest(info->GetChildID()))
+//    return true;
 
   // GetChildId() is -1 with PlzNavigate for navigation requests, so also try
   // the ExtensionNavigationUIData data.
@@ -721,10 +722,11 @@ class ExtensionURLLoaderFactory : public content::mojom::URLLoaderFactory {
     bool send_cors_header = false;
     bool follow_symlinks_anywhere = false;
     if (extension) {
-      const bool is_web_view_request =
-          WebViewGuest::FromWebContents(
-              content::WebContents::FromRenderFrameHost(frame_host_)) !=
-          nullptr;
+      const bool is_web_view_request = false;
+      // TODO(iotto): removed see how to implement
+//          WebViewGuest::FromWebContents(
+//              content::WebContents::FromRenderFrameHost(frame_host_)) !=
+//          nullptr;
       GetSecurityPolicyForURL(request.url, extension, is_web_view_request,
                               &content_security_policy, &send_cors_header,
                               &follow_symlinks_anywhere);

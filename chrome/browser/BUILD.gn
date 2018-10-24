@@ -3533,13 +3533,13 @@ split_static_library("browser") {
       "//chrome/browser/extensions",
     ]
     deps += [
-      "//apps",
+#      "//apps",
       "//chrome/browser/sync_file_system/drive_backend:sync_file_system_drive_proto",
       "//chrome/common/extensions/api",
       "//chrome/common/extensions/api:api_registration",
       "//chrome/common/extensions/api:extensions_features",
       "//components/drive",
-      "//components/guest_view/browser",
+#      "//components/guest_view/browser",
       "//extensions/components/javascript_dialog_extensions_client",
       "//media/cast:net",
       "//services/device/public/interfaces",

@@ -26,6 +26,7 @@ class LoadWatcher : public content::RenderFrameObserver {
       : content::RenderFrameObserver(frame), callback_(callback) {}
 
   void DidCreateDocumentElement() override {
+    LOG(INFO) << "iotto " << __func__;
     // Defer the callback instead of running it now to avoid re-entrancy caused
     // by the JavaScript callback.
     ExtensionFrameHelper::Get(render_frame())

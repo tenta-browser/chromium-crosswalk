@@ -1140,8 +1140,10 @@ void Textfield::WriteDragDataForView(View* sender,
           .context(),
       label.size()));
   const gfx::Vector2d kOffset(-15, 0);
+#if defined(USE_AURA) || defined(OS_MACOSX)
   gfx::ImageSkia image(gfx::ImageSkiaRep(bitmap, raster_scale));
   data->provider().SetDragImage(image, kOffset);
+#endif
   if (controller_)
     controller_->OnWriteDragData(data);
 }

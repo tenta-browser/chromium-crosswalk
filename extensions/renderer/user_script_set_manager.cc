@@ -64,6 +64,12 @@ void UserScriptSetManager::GetAllInjections(
     content::RenderFrame* render_frame,
     int tab_id,
     UserScript::RunLocation run_location) {
+  LOG(INFO) << "iotto " << __func__ << " tab_id=" << tab_id;
+  {
+    std::set<std::string> extension_ids;
+    GetAllActiveExtensionIds(&extension_ids);
+    LOG(INFO) << "iotto " << __func__ << " tab_id=" << tab_id << " active_extension_ids=" << extension_ids.size();
+  }
   static_scripts_.GetInjections(injections, render_frame, tab_id, run_location,
                                 activity_logging_enabled_);
   for (UserScriptSetMap::iterator it = programmatic_scripts_.begin();
@@ -96,6 +102,7 @@ void UserScriptSetManager::OnUpdateUserScripts(
     const HostID& host_id,
     const std::set<HostID>& changed_hosts,
     bool whitelisted_only) {
+  LOG(INFO) << "iotto " << __func__;
   if (!base::SharedMemory::IsHandleValid(shared_memory)) {
     NOTREACHED() << "Bad scripts handle";
     return;

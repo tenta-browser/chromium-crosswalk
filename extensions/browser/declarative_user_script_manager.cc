@@ -15,6 +15,7 @@ namespace extensions {
 DeclarativeUserScriptManager::DeclarativeUserScriptManager(
     content::BrowserContext* browser_context)
     : browser_context_(browser_context), extension_registry_observer_(this) {
+  LOG(INFO) << "iotto " << __func__;
   extension_registry_observer_.Add(ExtensionRegistry::Get(browser_context));
 }
 
@@ -43,6 +44,7 @@ DeclarativeUserScriptManager::GetDeclarativeUserScriptMasterByID(
 DeclarativeUserScriptMaster*
 DeclarativeUserScriptManager::CreateDeclarativeUserScriptMaster(
     const HostID& host_id) {
+  LOG(INFO) << "iotto " << __func__;
   // Inserts a new DeclarativeUserScriptManager and returns a ptr to it.
   return declarative_user_script_masters_
       .insert(

@@ -383,6 +383,7 @@ NativeExtensionBindingsSystem::~NativeExtensionBindingsSystem() {}
 
 void NativeExtensionBindingsSystem::DidCreateScriptContext(
     ScriptContext* context) {
+  LOG(INFO) << "iotto " << __func__;
   v8::Isolate* isolate = context->isolate();
   v8::HandleScope handle_scope(isolate);
   v8::Local<v8::Context> v8_context = context->v8_context();
@@ -663,6 +664,7 @@ v8::Local<v8::Object> NativeExtensionBindingsSystem::GetLastErrorParents(
 // static
 void NativeExtensionBindingsSystem::GetInternalAPI(
     const v8::FunctionCallbackInfo<v8::Value>& info) {
+  LOG(INFO) << "iotto " << __func__;
   CHECK_EQ(1, info.Length());
   CHECK(info[0]->IsString());
 

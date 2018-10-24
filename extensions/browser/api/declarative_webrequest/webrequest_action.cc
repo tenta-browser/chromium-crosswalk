@@ -22,7 +22,7 @@
 #include "extensions/browser/api/web_request/web_request_api_helpers.h"
 #include "extensions/browser/api/web_request/web_request_permissions.h"
 #include "extensions/browser/extension_navigation_ui_data.h"
-#include "extensions/browser/guest_view/web_view/web_view_renderer_state.h"
+//#include "extensions/browser/guest_view/web_view/web_view_renderer_state.h"
 #include "extensions/browser/info_map.h"
 #include "extensions/common/error_utils.h"
 #include "extensions/common/extension.h"
@@ -492,14 +492,15 @@ bool WebRequestAction::HasPermission(ApplyInfo* apply_info,
   if (!extension_info_map)
     return true;
 
-  const ResourceRequestInfo* info = ResourceRequestInfo::ForRequest(request);
-  int process_id = info ? info->GetChildID() : 0;
-
-  // The embedder can always access all hosts from within a <webview>.
-  // The same is not true of extensions.
-  if (WebViewRendererState::GetInstance()->IsGuest(process_id) ||
-      (navigation_ui_data && navigation_ui_data->is_web_view()))
-    return true;
+  // TODO(iotto): Removed
+//  const ResourceRequestInfo* info = ResourceRequestInfo::ForRequest(request);
+//  int process_id = info ? info->GetChildID() : 0;
+//
+//  // The embedder can always access all hosts from within a <webview>.
+//  // The same is not true of extensions.
+//  if (WebViewRendererState::GetInstance()->IsGuest(process_id) ||
+//      (navigation_ui_data && navigation_ui_data->is_web_view()))
+//    return true;
 
   WebRequestPermissions::HostPermissionsCheck permission_check =
       WebRequestPermissions::REQUIRE_ALL_URLS;

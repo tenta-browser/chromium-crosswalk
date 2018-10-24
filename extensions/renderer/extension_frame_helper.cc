@@ -219,6 +219,7 @@ void ExtensionFrameHelper::RunScriptsAtDocumentIdle() {
 
 void ExtensionFrameHelper::ScheduleAtDocumentStart(
     const base::Closure& callback) {
+  LOG(INFO) << "iotto " << __func__;
   document_element_created_callbacks_.push_back(callback);
 }
 
@@ -250,6 +251,7 @@ void ExtensionFrameHelper::DidStartProvisionalLoad(
 void ExtensionFrameHelper::DidCreateScriptContext(
     v8::Local<v8::Context> context,
     int world_id) {
+  LOG(INFO) << "iotto " << __func__;
   if (world_id == kMainWorldId &&
       render_frame()->IsBrowserSideNavigationPending()) {
     DCHECK(!delayed_main_world_script_initialization_);
@@ -266,6 +268,7 @@ void ExtensionFrameHelper::DidCreateScriptContext(
 void ExtensionFrameHelper::WillReleaseScriptContext(
     v8::Local<v8::Context> context,
     int world_id) {
+  LOG(INFO) << "iotto " << __func__;
   extension_dispatcher_->WillReleaseScriptContext(
       render_frame()->GetWebFrame(), context, world_id);
 }
@@ -295,6 +298,7 @@ bool ExtensionFrameHelper::OnMessageReceived(const IPC::Message& message) {
 }
 
 void ExtensionFrameHelper::OnExtensionValidateMessagePort(const PortId& id) {
+  LOG(INFO) << "iotto " << __func__;
   extension_dispatcher_->bindings_system()
       ->GetMessagingService()
       ->ValidateMessagePort(extension_dispatcher_->script_context_set(), id,
@@ -307,6 +311,7 @@ void ExtensionFrameHelper::OnExtensionDispatchOnConnect(
     const ExtensionMsg_TabConnectionInfo& source,
     const ExtensionMsg_ExternalConnectionInfo& info,
     const std::string& tls_channel_id) {
+  LOG(INFO) << "iotto " << __func__;
   extension_dispatcher_->bindings_system()
       ->GetMessagingService()
       ->DispatchOnConnect(extension_dispatcher_->script_context_set(),
@@ -316,6 +321,7 @@ void ExtensionFrameHelper::OnExtensionDispatchOnConnect(
 
 void ExtensionFrameHelper::OnExtensionDeliverMessage(const PortId& target_id,
                                                      const Message& message) {
+  LOG(INFO) << "iotto " << __func__;
   extension_dispatcher_->bindings_system()
       ->GetMessagingService()
       ->DeliverMessage(extension_dispatcher_->script_context_set(), target_id,
@@ -325,6 +331,7 @@ void ExtensionFrameHelper::OnExtensionDeliverMessage(const PortId& target_id,
 void ExtensionFrameHelper::OnExtensionDispatchOnDisconnect(
     const PortId& id,
     const std::string& error_message) {
+  LOG(INFO) << "iotto " << __func__;
   extension_dispatcher_->bindings_system()
       ->GetMessagingService()
       ->DispatchOnDisconnect(extension_dispatcher_->script_context_set(), id,
@@ -342,6 +349,7 @@ void ExtensionFrameHelper::OnUpdateBrowserWindowId(int browser_window_id) {
 }
 
 void ExtensionFrameHelper::OnNotifyRendererViewType(ViewType type) {
+  LOG(INFO) << "iotto " << __func__;
   // TODO(devlin): It'd be really nice to be able to
   // DCHECK_EQ(VIEW_TYPE_INVALID, view_type_) here.
   view_type_ = type;
@@ -351,6 +359,7 @@ void ExtensionFrameHelper::OnExtensionResponse(int request_id,
                                                bool success,
                                                const base::ListValue& response,
                                                const std::string& error) {
+  LOG(INFO) << "iotto " << __func__;
   extension_dispatcher_->OnExtensionResponse(request_id,
                                              success,
                                              response,
@@ -362,11 +371,13 @@ void ExtensionFrameHelper::OnExtensionMessageInvoke(
     const std::string& module_name,
     const std::string& function_name,
     const base::ListValue& args) {
+  LOG(INFO) << "iotto " << __func__;
   extension_dispatcher_->InvokeModuleSystemMethod(
       render_frame(), extension_id, module_name, function_name, args);
 }
 
 void ExtensionFrameHelper::OnSetFrameName(const std::string& name) {
+  LOG(INFO) << "iotto " << __func__;
   render_frame()->GetWebFrame()->SetName(blink::WebString::FromUTF8(name));
 }
 

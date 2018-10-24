@@ -114,6 +114,7 @@ void EventBindings::DispatchEventInContext(
     const base::ListValue* event_args,
     const EventFilteringInfo* filtering_info,
     ScriptContext* context) {
+  LOG(INFO) << "iotto " << __func__ << " event_name=" << event_name;
   v8::HandleScope handle_scope(context->isolate());
   v8::Context::Scope context_scope(context->v8_context());
 
@@ -144,6 +145,7 @@ void EventBindings::AttachEventHandler(
 
 void EventBindings::AttachEvent(const std::string& event_name,
                                 bool supports_lazy_listeners) {
+  LOG(INFO) << "iotto " << __func__ << " event_name=" << event_name;
   if (!context()->HasAccessOrThrowError(event_name))
     return;
 
@@ -186,6 +188,7 @@ void EventBindings::DetachEventHandler(
 
 void EventBindings::DetachEvent(const std::string& event_name,
                                 bool remove_lazy_listener) {
+  LOG(INFO) << "iotto " << __func__ << " event_name=" << event_name;
   // See comment in AttachEvent().
   attached_event_names_.erase(event_name);
 
@@ -219,6 +222,7 @@ void EventBindings::AttachFilteredEvent(
   CHECK(args[2]->IsBoolean());
 
   std::string event_name = *v8::String::Utf8Value(args[0]);
+  LOG(INFO) << "iotto " << __func__ << " event_name=" << event_name;
   if (!context()->HasAccessOrThrowError(event_name))
     return;
 
@@ -283,6 +287,7 @@ void EventBindings::DetachFilteredEvent(int matcher_id,
   EventMatcher* event_matcher = event_filter.GetEventMatcher(matcher_id);
 
   const std::string& event_name = event_filter.GetEventName(matcher_id);
+  LOG(INFO) << "iotto " << __func__ << " event_name=" << event_name;
 
   // Only send IPCs the last time a filter gets removed.
   const ExtensionId& extension_id = context()->GetExtensionID();
@@ -304,6 +309,7 @@ void EventBindings::AttachUnmanagedEvent(
   CHECK_EQ(1, args.Length());
   CHECK(args[0]->IsString());
   std::string event_name = gin::V8ToString(args[0]);
+  LOG(INFO) << "iotto " << __func__ << " event_name=" << event_name;
   EventBookkeeper::Get()->AddUnmanagedEvent(context(), event_name);
 }
 
@@ -314,6 +320,7 @@ void EventBindings::DetachUnmanagedEvent(
   CHECK_EQ(1, args.Length());
   CHECK(args[0]->IsString());
   std::string event_name = gin::V8ToString(args[0]);
+  LOG(INFO) << "iotto " << __func__ << " event_name=" << event_name;
   EventBookkeeper::Get()->RemoveUnmanagedEvent(context(), event_name);
 }
 
@@ -322,6 +329,7 @@ void EventBindings::OnInvalidated() {
   // because it will be mutated.
   std::set<std::string> attached_event_names_safe = attached_event_names_;
   for (const std::string& event_name : attached_event_names_safe) {
+    LOG(INFO) << "iotto " << __func__ << " event_name=" << event_name;
     DetachEvent(event_name, false /* is_manual */);
   }
   DCHECK(attached_event_names_.empty())

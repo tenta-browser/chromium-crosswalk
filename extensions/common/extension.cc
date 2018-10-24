@@ -199,6 +199,7 @@ bool Extension::ResourceMatches(const URLPatternSet& pattern_set,
 
 ExtensionResource Extension::GetResource(
     const std::string& relative_path) const {
+  LOG(INFO) << "iotto " << __func__ << " path=" << relative_path;
   std::string new_path = relative_path;
   // We have some legacy data where resources have leading slashes.
   // See: http://crbug.com/121164
@@ -211,17 +212,20 @@ ExtensionResource Extension::GetResource(
   if ((creation_flags() & Extension::FOLLOW_SYMLINKS_ANYWHERE)) {
     r.set_follow_symlinks_anywhere();
   }
+  LOG(INFO) << "iotto " << __func__ << " path=" << relative_path << " SERVED";
   return r;
 }
 
 ExtensionResource Extension::GetResource(
     const base::FilePath& relative_file_path) const {
+  LOG(INFO) << "iotto " << __func__ << " path=" << relative_file_path;
   if (ContainsReservedCharacters(relative_file_path))
     return ExtensionResource();
   ExtensionResource r(id(), path(), relative_file_path);
   if ((creation_flags() & Extension::FOLLOW_SYMLINKS_ANYWHERE)) {
     r.set_follow_symlinks_anywhere();
   }
+  LOG(INFO) << "iotto " << __func__ << " path=" << relative_file_path << " SERVED";
   return r;
 }
 

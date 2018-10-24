@@ -49,6 +49,7 @@ extensions::ExtensionResource GetExtensionIconResource(
     const ExtensionIconSet& icons,
     int size,
     ExtensionIconSet::MatchType match_type) {
+  LOG(INFO) << "iotto " << __func__;
   const std::string& path = icons.Get(size, match_type);
   return path.empty() ? extensions::ExtensionResource()
                       : extension.GetResource(path);

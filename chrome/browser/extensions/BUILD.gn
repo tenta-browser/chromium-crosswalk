@@ -785,7 +785,7 @@ static_library("extensions") {
     "//content/public/browser",
   ]
   deps = [
-    "//apps",
+    #"//apps",
     "//chrome:extra_resources",
     "//chrome:resources",
     "//chrome:strings",
@@ -822,7 +822,7 @@ static_library("extensions") {
     "//components/favicon/content",
     "//components/feedback",
     "//components/gcm_driver",
-    "//components/guest_view/browser",
+#    "//components/guest_view/browser",
     "//components/history/core/browser",
     "//components/infobars/core",
     "//components/keyed_service/content",
@@ -859,8 +859,8 @@ static_library("extensions") {
     "//components/url_matcher",
     "//components/user_prefs",
     "//components/vector_icons",
-    "//components/web_modal",
-    "//components/zoom",
+    #"//components/web_modal",
+    #"//components/zoom",
     "//content/app/resources",
     "//content/public/common",
     "//crypto",

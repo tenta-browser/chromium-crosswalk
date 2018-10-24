@@ -145,6 +145,7 @@ void ScriptInjectionManager::RFOHelper::DidCreateNewDocument() {
 }
 
 void ScriptInjectionManager::RFOHelper::DidCreateDocumentElement() {
+  LOG(INFO) << "iotto " << __func__;
   ExtensionFrameHelper::Get(render_frame())
       ->ScheduleAtDocumentStart(
           base::Bind(&ScriptInjectionManager::RFOHelper::StartInjectScripts,
@@ -362,6 +363,7 @@ void ScriptInjectionManager::InvalidateForFrame(content::RenderFrame* frame) {
 void ScriptInjectionManager::StartInjectScripts(
     content::RenderFrame* frame,
     UserScript::RunLocation run_location) {
+  LOG(INFO) << "iotto " << __func__;
   FrameStatusMap::iterator iter = frame_statuses_.find(frame);
   // We also don't execute if we detect that the run location is somehow out of
   // order. This can happen if:
@@ -380,11 +382,13 @@ void ScriptInjectionManager::StartInjectScripts(
            run_location > NextRunLocation(iter->second))) {
     // We also invalidate the frame, because the run order of pending injections
     // may also be bad.
+    LOG(WARNING) << "iotto " << __func__ << " invalidate_for_frame";
     InvalidateForFrame(frame);
     return;
   } else if (iter != frame_statuses_.end() && iter->second >= run_location) {
     // Certain run location signals (like DidCreateDocumentElement) can happen
     // multiple times. Ignore the subsequent signals.
+    LOG(WARNING) << "iotto " << __func__ << " multiple_triggered";
     return;
   }
 
@@ -397,6 +401,7 @@ void ScriptInjectionManager::StartInjectScripts(
 void ScriptInjectionManager::InjectScripts(
     content::RenderFrame* frame,
     UserScript::RunLocation run_location) {
+  LOG(INFO) << "iotto " << __func__;
   // Find any injections that want to run on the given frame.
   ScriptInjectionVector frame_injections;
   for (auto iter = pending_injections_.begin();

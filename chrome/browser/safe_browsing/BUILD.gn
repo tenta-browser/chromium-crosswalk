@@ -71,7 +71,7 @@ static_library("safe_browsing") {
       "settings_reset_prompt/settings_reset_prompt_util_win.cc",
       "settings_reset_prompt/settings_reset_prompt_util_win.h",
     ]
-    deps += [ "//components/keep_alive_registry" ]
+    #deps += [ "//components/keep_alive_registry" ]
   }
 
   if (safe_browsing_mode != 0) {

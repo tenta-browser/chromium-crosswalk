@@ -17,6 +17,7 @@ DeclarativeUserScriptMaster::DeclarativeUserScriptMaster(
     content::BrowserContext* browser_context,
     const HostID& host_id)
     : host_id_(host_id) {
+  LOG(INFO) << "iotto " << __func__;
   switch (host_id_.type()) {
     case HostID::EXTENSIONS:
       loader_.reset(new ExtensionUserScriptLoader(

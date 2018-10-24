@@ -464,6 +464,7 @@ bool ValidateExtensionIconSet(const ExtensionIconSet& icon_set,
                               const Extension* extension,
                               int error_message_id,
                               std::string* error) {
+  LOG(INFO) << "iotto " << __func__;
   for (ExtensionIconSet::IconMap::const_iterator iter = icon_set.map().begin();
        iter != icon_set.map().end();
        ++iter) {
