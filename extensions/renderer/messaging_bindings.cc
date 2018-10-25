@@ -165,6 +165,7 @@ void MessagingBindings::BindToGC(
 
 void MessagingBindings::OpenChannelToExtension(
     const v8::FunctionCallbackInfo<v8::Value>& args) {
+  LOG(INFO) << "iotto " << __func__;
   content::RenderFrame* render_frame = context()->GetRenderFrame();
   if (!render_frame)
     return;

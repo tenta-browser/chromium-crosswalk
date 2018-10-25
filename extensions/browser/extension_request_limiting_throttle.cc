@@ -24,6 +24,7 @@ ExtensionRequestLimitingThrottle::~ExtensionRequestLimitingThrottle() {
 }
 
 void ExtensionRequestLimitingThrottle::WillStartRequest(bool* defer) {
+  LOG(INFO) << "iotto " << __func__ << " url=" << request_->url().spec();
   throttling_entry_ = manager_->RegisterRequestUrl(request_->url());
   if (throttling_entry_->ShouldRejectRequest(*request_))
     CancelWithError(net::ERR_TEMPORARILY_THROTTLED);

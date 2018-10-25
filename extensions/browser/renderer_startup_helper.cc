@@ -53,6 +53,7 @@ bool IsExtensionVisibleToContext(const Extension& extension,
 
 RendererStartupHelper::RendererStartupHelper(BrowserContext* browser_context)
     : browser_context_(browser_context) {
+  LOG(INFO) << "iotto " << __func__;
   DCHECK(browser_context);
   registrar_.Add(this, content::NOTIFICATION_RENDERER_PROCESS_CREATED,
                  content::NotificationService::AllBrowserContextsAndSources());
@@ -87,6 +88,7 @@ void RendererStartupHelper::Observe(
 
 void RendererStartupHelper::InitializeProcess(
     content::RenderProcessHost* process) {
+  LOG(INFO) << "iotto " << __func__;
   ExtensionsBrowserClient* client = ExtensionsBrowserClient::Get();
   if (!client->IsSameContext(browser_context_, process->GetBrowserContext()))
     return;
