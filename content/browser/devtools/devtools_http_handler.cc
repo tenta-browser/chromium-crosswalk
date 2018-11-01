@@ -246,7 +246,9 @@ void StartServerOnHandlerThread(
       }
     }
   } else {
+#ifndef OS_ANDROID
     LOG(ERROR) << "Cannot start http server for devtools. Stop devtools.";
+#endif
   }
 
   BrowserThread::PostTask(
