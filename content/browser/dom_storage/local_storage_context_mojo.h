@@ -15,6 +15,7 @@
 #include "base/files/file_path.h"
 #include "base/memory/ref_counted.h"
 #include "base/trace_event/memory_dump_provider.h"
+#include "content/browser/dom_storage/level_db_prefixed_key.h"
 #include "content/common/content_export.h"
 #include "content/common/leveldb_wrapper.mojom.h"
 #include "content/public/browser/browser_thread.h"
@@ -178,8 +179,7 @@ class CONTENT_EXPORT LocalStorageContextMojo
   std::vector<base::OnceClosure> on_database_opened_callbacks_;
 
   // Maps between an origin and its prefixed LevelDB view.
-  std::map<url::Origin, std::unique_ptr<LevelDBWrapperHolder>>
-      level_db_wrappers_;
+  std::map<LevelDBPrefixedKey, std::unique_ptr<LevelDBWrapperHolder>> level_db_wrappers_;
 
   // Used to access old data for migration.
   scoped_refptr<DOMStorageTaskRunner> task_runner_;

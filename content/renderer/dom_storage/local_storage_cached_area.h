@@ -80,6 +80,8 @@ class CONTENT_EXPORT LocalStorageCachedArea
 
   size_t memory_used() const { return map_ ? map_->memory_used() : 0; }
 
+  void Purge();
+
  private:
   friend class base::RefCounted<LocalStorageCachedArea>;
   ~LocalStorageCachedArea() override;

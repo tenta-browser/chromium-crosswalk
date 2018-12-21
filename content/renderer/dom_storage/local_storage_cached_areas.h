@@ -49,6 +49,8 @@ class CONTENT_EXPORT LocalStorageCachedAreas {
 
   void set_cache_limit_for_testing(size_t limit) { total_cache_limit_ = limit; }
 
+  void Purge();
+
  private:
   void ClearAreasIfNeeded();
 

@@ -214,6 +214,10 @@ std::unique_ptr<WebStorageNamespace> Platform::CreateSessionStorageNamespace(
   return nullptr;
 }
 
+void Platform::PurgeLocalStorage() {
+
+}
+
 std::unique_ptr<WebServiceWorkerCacheStorage> Platform::CreateCacheStorage(
     const WebSecurityOrigin&) {
   return nullptr;

@@ -1442,4 +1442,10 @@ mojom::ClipboardHost& RendererBlinkPlatformImpl::GetClipboardHost() {
   return *clipboard_host_;
 }
 
+void RendererBlinkPlatformImpl::PurgeLocalStorage() {
+  if (local_storage_cached_areas_) {
+    local_storage_cached_areas_->Purge();
+  }
+}
+
 }  // namespace content
