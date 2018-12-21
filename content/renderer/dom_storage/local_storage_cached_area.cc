@@ -105,7 +105,8 @@ LocalStorageCachedArea::LocalStorageCachedArea(
   leveldb_->AddObserver(std::move(ptr_info));
 }
 
-LocalStorageCachedArea::~LocalStorageCachedArea() {}
+LocalStorageCachedArea::~LocalStorageCachedArea() {
+}
 
 unsigned LocalStorageCachedArea::GetLength() {
   EnsureLoaded();
@@ -211,6 +212,11 @@ void LocalStorageCachedArea::AreaCreated(LocalStorageArea* area) {
 
 void LocalStorageCachedArea::AreaDestroyed(LocalStorageArea* area) {
   areas_.erase(area->id());
+}
+
+void LocalStorageCachedArea::Purge() {
+  Reset();
+  areas_.clear();
 }
 
 // static

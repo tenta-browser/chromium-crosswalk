@@ -38,4 +38,12 @@ void SpecialStoragePolicy::NotifyCleared() {
     observer.OnCleared();
 }
 
+const std::string& SpecialStoragePolicy::GetEmbedderPrefix() {
+  return _embedder_prefix;
+}
+
+void SpecialStoragePolicy::SetEmbedderPrefix(const std::string& prefix) {
+  _embedder_prefix = prefix;
+}
+
 }  // namespace storage

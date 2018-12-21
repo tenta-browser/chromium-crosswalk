@@ -266,6 +266,7 @@ class BLINK_PLATFORM_EXPORT Platform {
   virtual std::unique_ptr<WebStorageNamespace> CreateSessionStorageNamespace(
       int64_t namespace_id);
 
+  virtual void PurgeLocalStorage();
   // FileSystem ----------------------------------------------------------
 
   // Must return non-null.

@@ -49,8 +49,8 @@ namespace content {
 namespace {
 
 const char kVersionKey[] = "VERSION";
-const char kOriginSeparator = '\x00';
-const char kDataPrefix[] = "_";
+//const char kOriginSeparator = '\x00';
+//const char kDataPrefix[] = "_";
 const uint8_t kMetaPrefix[] = {'M', 'E', 'T', 'A', ':'};
 const int64_t kMinSchemaVersion = 1;
 const int64_t kCurrentLocalStorageSchemaVersion = 1;
@@ -72,8 +72,8 @@ const size_t kMaxLocalStorageCacheSize = 20 * 1024 * 1024;
 static const uint8_t kUTF16Format = 0;
 static const uint8_t kLatin1Format = 1;
 
-std::vector<uint8_t> CreateMetaDataKey(const url::Origin& origin) {
-  auto serialized_origin = leveldb::StdStringToUint8Vector(origin.Serialize());
+std::vector<uint8_t> CreateMetaDataKey(const LevelDBPrefixedKey& keyPrefix) {
+  auto serialized_origin = leveldb::StdStringToUint8Vector(keyPrefix.GetPrefix());
   std::vector<uint8_t> key;
   key.reserve(arraysize(kMetaPrefix) + serialized_origin.size());
   key.insert(key.end(), kMetaPrefix, kMetaPrefix + arraysize(kMetaPrefix));
@@ -109,17 +109,18 @@ void CallMigrationCalback(LevelDBWrapperImpl::ValueMapCallback callback,
 
 void AddDeleteOriginOperations(
     std::vector<leveldb::mojom::BatchedOperationPtr>* operations,
-    const url::Origin& origin) {
+    const LevelDBPrefixedKey& prefixedKey) {
   leveldb::mojom::BatchedOperationPtr item =
       leveldb::mojom::BatchedOperation::New();
   item->type = leveldb::mojom::BatchOperationType::DELETE_PREFIXED_KEY;
-  item->key = leveldb::StdStringToUint8Vector(kDataPrefix + origin.Serialize() +
-                                              kOriginSeparator);
+//  item->key = leveldb::StdStringToUint8Vector(kDataPrefix + origin.Serialize() +
+//                                              kOriginSeparator);
+  item->key = leveldb::StdStringToUint8Vector(prefixedKey.GetPrefix());
   operations->push_back(std::move(item));
 
   item = leveldb::mojom::BatchedOperation::New();
   item->type = leveldb::mojom::BatchOperationType::DELETE_KEY;
-  item->key = CreateMetaDataKey(origin);
+  item->key = CreateMetaDataKey(prefixedKey);
   operations->push_back(std::move(item));
 }
 
@@ -168,8 +169,8 @@ class LocalStorageContextMojo::LevelDBWrapperHolder final
     : public LevelDBWrapperImpl::Delegate {
  public:
   LevelDBWrapperHolder(LocalStorageContextMojo* context,
-                       const url::Origin& origin)
-      : context_(context), origin_(origin) {
+                       const LevelDBPrefixedKey& keyPrefix)
+      : context_(context), _key_prefix(keyPrefix) {
     // Delay for a moment after a value is set in anticipation
     // of other values being set, so changes are batched.
     constexpr base::TimeDelta kCommitDefaultDelaySecs =
@@ -195,8 +196,9 @@ class LocalStorageContextMojo::LevelDBWrapperHolder final
     }
 #endif
     level_db_wrapper_ = std::make_unique<LevelDBWrapperImpl>(
-        context_->database_.get(),
-        kDataPrefix + origin_.Serialize() + kOriginSeparator, this, options);
+        context_->database_.get(), _key_prefix.GetPrefix(),
+//        kDataPrefix + origin_.Serialize() + kOriginSeparator,
+        this, options);
     level_db_wrapper_ptr_ = level_db_wrapper_.get();
   }
 
@@ -228,7 +230,7 @@ class LocalStorageContextMojo::LevelDBWrapperHolder final
     leveldb::mojom::BatchedOperationPtr item =
         leveldb::mojom::BatchedOperation::New();
     item->type = leveldb::mojom::BatchOperationType::PUT_KEY;
-    item->key = CreateMetaDataKey(origin_);
+    item->key = CreateMetaDataKey(_key_prefix);
     if (level_db_wrapper()->empty()) {
       item->type = leveldb::mojom::BatchOperationType::DELETE_KEY;
     } else {
@@ -346,12 +348,14 @@ class LocalStorageContextMojo::LevelDBWrapperHolder final
   base::FilePath sql_db_path() const {
     if (context_->old_localstorage_path_.empty())
       return base::FilePath();
+    //TODO(iotto): Make sure this is valid!
     return context_->old_localstorage_path_.Append(
-        DOMStorageArea::DatabaseFileNameFromOrigin(origin_.GetURL()));
+        DOMStorageArea::DatabaseFileNameFromOrigin(_key_prefix.origin().GetURL()));
   }
 
   LocalStorageContextMojo* context_;
-  url::Origin origin_;
+//  url::Origin origin_;
+  LevelDBPrefixedKey _key_prefix;
   std::unique_ptr<LevelDBWrapperImpl> level_db_wrapper_;
   // Holds the same value as |level_db_wrapper_|. The reason for this is that
   // during destruction of the LevelDBWrapperImpl instance we might still get
@@ -404,7 +408,11 @@ void LocalStorageContextMojo::DeleteStorage(const url::Origin& origin) {
     return;
   }
 
-  auto found = level_db_wrappers_.find(origin);
+  // TODO(iotto): Have prefix as parameter
+  std::string prefix(special_storage_policy_ ? special_storage_policy_->GetEmbedderPrefix() : "");
+  LevelDBPrefixedKey prefixed_key(prefix, origin);
+
+  auto found = level_db_wrappers_.find(prefixed_key);
   if (found != level_db_wrappers_.end()) {
     // Renderer process expects |source| to always be two newline separated
     // strings.
@@ -413,7 +421,7 @@ void LocalStorageContextMojo::DeleteStorage(const url::Origin& origin) {
     found->second->level_db_wrapper()->ScheduleImmediateCommit();
   } else if (database_) {
     std::vector<leveldb::mojom::BatchedOperationPtr> operations;
-    AddDeleteOriginOperations(&operations, origin);
+    AddDeleteOriginOperations(&operations, prefixed_key);
     database_->Write(std::move(operations), base::BindOnce(&NoOpDatabaseError));
   }
 }
@@ -438,7 +446,12 @@ void LocalStorageContextMojo::Flush() {
 void LocalStorageContextMojo::FlushOriginForTesting(const url::Origin& origin) {
   if (connection_state_ != CONNECTION_FINISHED)
     return;
-  const auto& it = level_db_wrappers_.find(origin);
+
+  // TODO(iotto): Have prefix as parameter
+  std::string prefix(special_storage_policy_ ? special_storage_policy_->GetEmbedderPrefix() : "");
+  LevelDBPrefixedKey prefixed_key(prefix, origin);
+
+  const auto& it = level_db_wrappers_.find(prefixed_key);
   if (it == level_db_wrappers_.end())
     return;
   it->second->level_db_wrapper()->ScheduleImmediateCommit();
@@ -584,7 +597,8 @@ bool LocalStorageContextMojo::OnMemoryDump(
   }
   for (const auto& it : level_db_wrappers_) {
     // Limit the url length to 50 and strip special characters.
-    std::string url = it.first.Serialize().substr(0, 50);
+//    std::string url = it.first.Serialize().substr(0, 50);
+    std::string url = it.first.origin().Serialize().substr(0, 50);
     for (size_t index = 0; index < url.size(); ++index) {
       if (!std::isalnum(url[index]))
         url[index] = '_';
@@ -873,7 +887,12 @@ void LocalStorageContextMojo::BindLocalStorage(
 LocalStorageContextMojo::LevelDBWrapperHolder*
 LocalStorageContextMojo::GetOrCreateDBWrapper(const url::Origin& origin) {
   DCHECK_EQ(connection_state_, CONNECTION_FINISHED);
-  auto found = level_db_wrappers_.find(origin);
+
+  // TODO(iotto): Have prefix as parameter
+  std::string prefix(special_storage_policy_ ? special_storage_policy_->GetEmbedderPrefix() : "");
+  LevelDBPrefixedKey prefixed_key(prefix, origin);
+
+  auto found = level_db_wrappers_.find(prefixed_key);
   if (found != level_db_wrappers_.end()) {
     return found->second.get();
   }
@@ -887,9 +906,9 @@ LocalStorageContextMojo::GetOrCreateDBWrapper(const url::Origin& origin) {
 
   PurgeUnusedWrappersIfNeeded();
 
-  auto holder = std::make_unique<LevelDBWrapperHolder>(this, origin);
+  auto holder = std::make_unique<LevelDBWrapperHolder>(this, prefixed_key);
   LevelDBWrapperHolder* holder_ptr = holder.get();
-  level_db_wrappers_[origin] = std::move(holder);
+  level_db_wrappers_[prefixed_key] = std::move(holder);
   return holder_ptr;
 }
 
@@ -902,7 +921,8 @@ void LocalStorageContextMojo::RetrieveStorageUsage(
     base::Time now = base::Time::Now();
     for (const auto& it : level_db_wrappers_) {
       LocalStorageUsageInfo info;
-      info.origin = it.first.GetURL();
+      info.embedder_prefix = it.first.embedder_prefix();
+      info.origin = it.first.origin().GetURL();
       info.last_modified = now;
       result.push_back(std::move(info));
     }
@@ -921,14 +941,33 @@ void LocalStorageContextMojo::OnGotMetaData(
     leveldb::mojom::DatabaseError status,
     std::vector<leveldb::mojom::KeyValuePtr> data) {
   std::vector<LocalStorageUsageInfo> result;
-  std::set<url::Origin> origins;
+//  std::set<url::Origin> origins;
+  std::set<LevelDBPrefixedKey> origins;
+
   for (const auto& row : data) {
     DCHECK_GT(row->key.size(), arraysize(kMetaPrefix));
+    LevelDBPrefixedKey prefixed_key;
+    std::string key_str(leveldb::Uint8VectorToStdString(row->key));
+
+    if (prefixed_key.ParsePrefix(key_str.substr(arraysize(kMetaPrefix))) != 0) {
+      // TODO(iotto): Deal with database corruption.
+      LOG(ERROR) << __func__ << " unrecognized_key=" << key_str;
+      continue;
+    }
+
     LocalStorageUsageInfo info;
-    info.origin = GURL(leveldb::Uint8VectorToStdString(row->key).substr(
-        arraysize(kMetaPrefix)));
-    origins.insert(url::Origin::Create(info.origin));
-    if (!info.origin.is_valid()) {
+    info.embedder_prefix = prefixed_key.embedder_prefix();
+    info.origin = prefixed_key.origin().GetURL();
+
+//    info.origin = GURL(leveldb::Uint8VectorToStdString(row->key).substr(
+//        arraysize(kMetaPrefix)));
+//    origins.insert(url::Origin::Create(info.origin));
+    origins.insert(prefixed_key);
+//    if (!info.origin.is_valid()) {
+//      // TODO(mek): Deal with database corruption.
+//      continue;
+//    }
+    if (!prefixed_key.origin().GetURL().is_valid()) {
       // TODO(mek): Deal with database corruption.
       continue;
     }
@@ -954,7 +993,9 @@ void LocalStorageContextMojo::OnGotMetaData(
       continue;
     }
     LocalStorageUsageInfo info;
-    info.origin = it.first.GetURL();
+    info.embedder_prefix = it.first.embedder_prefix();
+//    info.origin = it.first.GetURL();
+    info.origin = it.first.origin().GetURL();
     info.last_modified = now;
     result.push_back(std::move(info));
   }
@@ -982,8 +1023,11 @@ void LocalStorageContextMojo::OnGotStorageUsageForShutdown(
     if (!special_storage_policy_->IsStorageSessionOnly(info.origin))
       continue;
 
-    AddDeleteOriginOperations(&operations, url::Origin::Create(info.origin));
+    LevelDBPrefixedKey prefixed_key(info.embedder_prefix, url::Origin::Create(info.origin));
+//    AddDeleteOriginOperations(&operations, url::Origin::Create(info.origin));
+    AddDeleteOriginOperations(&operations, prefixed_key);
   }
+
 
   if (!operations.empty()) {
     database_->Write(

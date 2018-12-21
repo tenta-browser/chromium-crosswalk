@@ -107,4 +107,11 @@ scoped_refptr<LocalStorageCachedArea> LocalStorageCachedAreas::GetCachedArea(
   return it->second;
 }
 
+void LocalStorageCachedAreas::Purge() {
+  auto it = cached_areas_.begin();
+  while (it != cached_areas_.end()) {
+    it->second->Purge();
+    it = cached_areas_.erase(it);
+  }
+  }
 }  // namespace content

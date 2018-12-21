@@ -271,6 +271,8 @@ class CONTENT_EXPORT RendererBlinkPlatformImpl : public BlinkPlatformImpl {
   // Return the mojo interface for making ClipboardHost calls.
   mojom::ClipboardHost& GetClipboardHost();
 
+  void PurgeLocalStorage() override;
+
  private:
   PossiblyAssociatedInterfacePtr<mojom::URLLoaderFactory>
   CreateNetworkURLLoaderFactory();
