@@ -17,7 +17,7 @@ namespace content {
 struct CONTENT_EXPORT LocalStorageUsageInfo {
   LocalStorageUsageInfo() {}
 
-  std::string embedder_prefix;
+  std::string dom_key;
   GURL origin;
   size_t data_size = 0;
   base::Time last_modified;

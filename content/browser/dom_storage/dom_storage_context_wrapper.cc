@@ -23,6 +23,7 @@
 #include "base/threading/thread_task_runner_handle.h"
 #include "content/browser/dom_storage/dom_storage_area.h"
 #include "content/browser/dom_storage/dom_storage_context_impl.h"
+#include "content/browser/dom_storage/dom_storage_embedder.h"
 #include "content/browser/dom_storage/dom_storage_task_runner.h"
 #include "content/browser/dom_storage/local_storage_context_mojo.h"
 #include "content/browser/dom_storage/session_storage_context_mojo.h"
@@ -97,7 +98,8 @@ DOMStorageContextWrapper::DOMStorageContextWrapper(
     service_manager::Connector* connector,
     const base::FilePath& profile_path,
     const base::FilePath& local_partition_path,
-    storage::SpecialStoragePolicy* special_storage_policy) {
+    storage::SpecialStoragePolicy* special_storage_policy,
+    DOMStorageEmbedder* dom_storage_embedder) {
   base::FilePath data_path;
   if (!profile_path.empty())
     data_path = profile_path.Append(local_partition_path);
@@ -133,7 +135,7 @@ DOMStorageContextWrapper::DOMStorageContextWrapper(
         mojo_task_runner_, connector, context_->task_runner(),
         data_path.empty() ? data_path
                           : data_path.AppendASCII(kLocalStorageDirectory),
-        storage_dir, special_storage_policy);
+        storage_dir, special_storage_policy, dom_storage_embedder);
   }
 
   if (base::FeatureList::IsEnabled(features::kMojoSessionStorage)) {

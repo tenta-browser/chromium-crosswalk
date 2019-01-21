@@ -34,6 +34,7 @@ class SpecialStoragePolicy;
 namespace content {
 
 class DOMStorageContextImpl;
+class DOMStorageEmbedder;
 class LocalStorageContextMojo;
 class SessionStorageContextMojo;
 
@@ -49,7 +50,8 @@ class CONTENT_EXPORT DOMStorageContextWrapper
       service_manager::Connector* connector,
       const base::FilePath& data_path,
       const base::FilePath& local_partition_path,
-      storage::SpecialStoragePolicy* special_storage_policy);
+      storage::SpecialStoragePolicy* special_storage_policy,
+      DOMStorageEmbedder* dom_storage_embedder);
 
   // DOMStorageContext implementation.
   void GetLocalStorageUsage(

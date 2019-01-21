@@ -501,7 +501,8 @@ std::unique_ptr<StoragePartitionImpl> StoragePartitionImpl::Create(
   partition->dom_storage_context_ = new DOMStorageContextWrapper(
       BrowserContext::GetConnectorFor(context),
       in_memory ? base::FilePath() : context->GetPath(),
-      relative_partition_path, context->GetSpecialStoragePolicy());
+      relative_partition_path, context->GetSpecialStoragePolicy(),
+      context->GetDomStorageEmbedder());
 
   base::FilePath path = in_memory ? base::FilePath() : partition_path;
   partition->indexed_db_context_ = new IndexedDBContextImpl(
