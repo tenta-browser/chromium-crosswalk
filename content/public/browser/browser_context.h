@@ -65,6 +65,7 @@ class BlobHandle;
 class BrowserPluginGuestManager;
 class BrowsingDataRemover;
 class BrowsingDataRemoverDelegate;
+class DOMStorageEmbedder;
 class DownloadManager;
 class DownloadManagerDelegate;
 class PermissionManager;
@@ -239,6 +240,8 @@ class CONTENT_EXPORT BrowserContext : public base::SupportsUserData {
   // Returns a special storage policy implementation, or nullptr.
   virtual storage::SpecialStoragePolicy* GetSpecialStoragePolicy() = 0;
 
+  // Returns dom storage embedder or null
+  virtual content::DOMStorageEmbedder* GetDomStorageEmbedder() = 0;
   // Returns a push messaging service. The embedder owns the service, and is
   // responsible for ensuring that it outlives RenderProcessHost. It's valid to
   // return nullptr.

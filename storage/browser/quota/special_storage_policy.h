@@ -67,10 +67,6 @@ class STORAGE_EXPORT SpecialStoragePolicy
   // Returns true if some origins are only allowed session-only storage.
   virtual bool HasSessionOnlyOrigins() = 0;
 
-  // Returns further prefix from embedder (mainly for DOMStorage)
-  virtual const std::string& GetEmbedderPrefix();
-  virtual void SetEmbedderPrefix(const std::string& prefix);
-
   // Adds/removes an observer, the policy does not take
   // ownership of the observer. Should only be called on the IO thread.
   void AddObserver(Observer* observer);
@@ -84,7 +80,6 @@ class STORAGE_EXPORT SpecialStoragePolicy
   void NotifyCleared();
 
   base::ObserverList<Observer> observers_;
-  std::string _embedder_prefix;
 };
 
 }  // namespace storage
