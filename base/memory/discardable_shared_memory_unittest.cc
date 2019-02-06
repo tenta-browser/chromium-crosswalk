@@ -245,9 +245,20 @@ TEST(DiscardableSharedMemoryTest, LockShouldAlwaysFailAfterSuccessfulPurge) {
 TEST(DiscardableSharedMemoryTest, LockShouldFailIfPlatformLockPagesFails) {
   const uint32_t kDataSize = 1024;
 
-  DiscardableSharedMemory memory;
-  bool rv = memory.CreateAndMap(kDataSize);
-  ASSERT_TRUE(rv);
+  // This test cannot succeed on devices without a proper ashmem device
+  // because Lock() will always succeed.
+  if (!DiscardableSharedMemory::IsAshmemDeviceSupportedForTesting())
+    return;
+
+  DiscardableSharedMemory memory1;
+  bool rv1 = memory1.CreateAndMap(kDataSize);
+  ASSERT_TRUE(rv1);
+
+  base::UnsafeSharedMemoryRegion region = memory1.DuplicateRegion();
+  int fd = region.GetPlatformHandle();
+  DiscardableSharedMemory memory2(std::move(region));
+  bool rv2 = memory2.Map(kDataSize);
+  ASSERT_TRUE(rv2);
 
   // Unlock() the first page of memory, so we can test Lock()ing it.
   memory.Unlock(0, base::GetPageSize());

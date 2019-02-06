@@ -146,6 +146,12 @@ class BASE_EXPORT DiscardableSharedMemory {
       trace_event::ProcessMemoryDump* pmd,
       bool is_owned) const;
 
+#if defined(OS_ANDROID)
+  // Returns true if the Ashmem device is supported on this system.
+  // Only use this for unit-testing.
+  static bool IsAshmemDeviceSupportedForTesting();
+#endif
+
  private:
   // Virtual for tests.
   virtual Time Now() const;
