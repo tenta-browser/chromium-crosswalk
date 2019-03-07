@@ -496,14 +496,24 @@ DOMArrayBuffer* FileReaderLoader::ArrayBufferResult() {
   if (!raw_data_ || error_code_)
     return nullptr;
 
-  DOMArrayBuffer* result = DOMArrayBuffer::Create(raw_data_->ToArrayBuffer());
-  if (finished_loading_) {
-    array_buffer_result_ = result;
-    AdjustReportedMemoryUsageToV8(
-        -1 * static_cast<int64_t>(raw_data_->ByteLength()));
-    raw_data_.reset();
+  // bug fix: ba9748e78ec7e9c0d594e7edf7b2c07ea2a90449
+  if (!finished_loading_) {
+    return DOMArrayBuffer::Create(ArrayBuffer::Create(raw_data_->Data(), raw_data_->ByteLength()));
   }
-  return result;
+
+  array_buffer_result_ = DOMArrayBuffer::Create(raw_data_->ToArrayBuffer());
+  AdjustReportedMemoryUsageToV8(-1 * static_cast<int64_t>(raw_data_->ByteLength()));
+  raw_data_.reset();
+  return array_buffer_result_;
+
+//  DOMArrayBuffer* result = DOMArrayBuffer::Create(raw_data_->ToArrayBuffer());
+//  if (finished_loading_) {
+//    array_buffer_result_ = result;
+//    AdjustReportedMemoryUsageToV8(
+//        -1 * static_cast<int64_t>(raw_data_->ByteLength()));
+//    raw_data_.reset();
+//  }
+//  return result;
 }
 
 String FileReaderLoader::StringResult() {
