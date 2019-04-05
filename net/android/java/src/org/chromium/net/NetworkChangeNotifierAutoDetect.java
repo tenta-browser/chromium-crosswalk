@@ -625,7 +625,7 @@ public class NetworkChangeNotifierAutoDetect extends BroadcastReceiver {
      * should listen for network changes.
      */
     public abstract static class RegistrationPolicy {
-        private NetworkChangeNotifierAutoDetect mNotifier;
+        protected NetworkChangeNotifierAutoDetect mNotifier;
 
         /**
          * Start listening for network changes.
@@ -896,6 +896,16 @@ public class NetworkChangeNotifierAutoDetect extends BroadcastReceiver {
         return mConnectivityManagerDelegate.getNetworkState(mWifiManagerDelegate);
     }
 
+    public void setNetworkUsability(boolean usable) {
+        // TODO(iotto): finetune so we don't end up with CONNECTION_UNKNOWN
+        if ( usable) {
+            final NetworkInfo netInfo = mConnectivityManagerDelegate.getActiveNetworkInfo();
+            mObserver.onConnectionTypeChanged(convertToConnectionType(netInfo.getType(), netInfo.getSubtype()));
+        } else {
+            mObserver.onConnectionTypeChanged(ConnectionType.CONNECTION_UNKNOWN);
+        }
+    }
+    
     /**
      * Returns all connected networks that are useful and accessible to Chrome.
      * Only callable on Lollipop and newer releases.
