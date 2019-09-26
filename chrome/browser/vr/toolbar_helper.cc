@@ -4,7 +4,8 @@
 
 #include "chrome/browser/vr/toolbar_helper.h"
 
-#include "base/memory/ptr_util.h"
+#include <memory>
+
 #include "components/toolbar/toolbar_model_impl.h"
 
 class ToolbarModelDelegate;
@@ -23,15 +24,15 @@ ToolbarHelper::ToolbarHelper(BrowserUiInterface* ui,
                              ToolbarModelDelegate* delegate)
     : ui_(ui),
       toolbar_model_(
-          base::MakeUnique<ToolbarModelImpl>(delegate, kMaxURLDisplayChars)) {}
+          std::make_unique<ToolbarModelImpl>(delegate, kMaxURLDisplayChars)) {}
 
 ToolbarHelper::~ToolbarHelper() {}
 
 void ToolbarHelper::Update() {
   ToolbarState state(
       toolbar_model_->GetURL(), toolbar_model_->GetSecurityLevel(true),
-      &toolbar_model_->GetVectorIcon(), toolbar_model_->GetSecureVerboseText(),
-      toolbar_model_->ShouldDisplayURL(), toolbar_model_->IsOfflinePage());
+      &toolbar_model_->GetVectorIcon(), toolbar_model_->ShouldDisplayURL(),
+      toolbar_model_->IsOfflinePage());
 
   if (current_state_ == state)
     return;

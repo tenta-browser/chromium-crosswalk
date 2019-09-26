@@ -18,8 +18,8 @@
 #include "content/browser/renderer_host/input/gesture_event_queue.h"
 #include "content/browser/renderer_host/input/input_router.h"
 #include "content/browser/renderer_host/input/mouse_wheel_event_queue.h"
+#include "content/browser/renderer_host/input/passthrough_touch_event_queue.h"
 #include "content/browser/renderer_host/input/touch_action_filter.h"
-#include "content/browser/renderer_host/input/touch_event_queue.h"
 #include "content/browser/renderer_host/input/touchpad_tap_suppression_controller.h"
 #include "content/common/input/input_event_dispatch_type.h"
 #include "content/common/input/input_event_stream_validator.h"
@@ -40,6 +40,8 @@ class InputDispositionHandler;
 class InputRouterClient;
 struct InputEventAck;
 
+class MockRenderWidgetHost;
+
 // An implementation for browser input event routing based on
 // Chrome IPC. This class is named "legacy" because it is largely tied to
 // Chrome IPC which is deprecated. This class will be replaced with a Mojo
@@ -47,8 +49,9 @@ struct InputEventAck;
 class CONTENT_EXPORT LegacyInputRouterImpl
     : public InputRouter,
       public GestureEventQueueClient,
+      public FlingControllerClient,
       public MouseWheelEventQueueClient,
-      public TouchEventQueueClient,
+      public PassthroughTouchEventQueueClient,
       public TouchpadTapSuppressionControllerClient {
  public:
   LegacyInputRouterImpl(IPC::Sender* sender,
@@ -74,6 +77,10 @@ class CONTENT_EXPORT LegacyInputRouterImpl
   void SetDeviceScaleFactor(float device_scale_factor) override;
   void BindHost(mojom::WidgetInputHandlerHostRequest request,
                 bool frame_handler) override;
+  void ProgressFling(base::TimeTicks current_time) override;
+  void StopFling() override;
+  bool FlingCancellationIsDeferred() override;
+  void DidStopFlingingOnBrowser() override;
 
   // IPC::Listener
   bool OnMessageReceived(const IPC::Message& message) override;
@@ -88,9 +95,11 @@ class CONTENT_EXPORT LegacyInputRouterImpl
 
  private:
   friend class LegacyInputRouterImplTest;
-  FRIEND_TEST_ALL_PREFIXES(SitePerProcessBrowserTest,
+  friend class MockRenderWidgetHost;
+
+  FRIEND_TEST_ALL_PREFIXES(SitePerProcessHitTestBrowserTest,
                            SubframeTouchEventRouting);
-  FRIEND_TEST_ALL_PREFIXES(SitePerProcessBrowserTest,
+  FRIEND_TEST_ALL_PREFIXES(SitePerProcessHitTestBrowserTest,
                            MainframeTouchEventRouting);
 
   // Keeps track of last position of touch points and sets MovementXY for them.
@@ -100,13 +109,14 @@ class CONTENT_EXPORT LegacyInputRouterImpl
   void SendMouseEventImmediately(
       const MouseEventWithLatencyInfo& mouse_event) override;
 
-  // TouchEventQueueClient
+  // PassthroughTouchEventQueueClient
   void SendTouchEventImmediately(
       const TouchEventWithLatencyInfo& touch_event) override;
   void OnTouchEventAck(const TouchEventWithLatencyInfo& event,
                        InputEventAckSource ack_source,
                        InputEventAckState ack_result) override;
   void OnFilteringTouchEvent(const blink::WebTouchEvent& touch_event) override;
+  bool TouchscreenFlingInProgress() override;
 
   // GestureEventFilterClient
   void SendGestureEventImmediately(
@@ -114,6 +124,13 @@ class CONTENT_EXPORT LegacyInputRouterImpl
   void OnGestureEventAck(const GestureEventWithLatencyInfo& event,
                          InputEventAckSource ack_source,
                          InputEventAckState ack_result) override;
+
+  // FlingControllerClient
+  void SendGeneratedWheelEvent(
+      const MouseWheelEventWithLatencyInfo& wheel_event) override;
+  void SendGeneratedGestureScrollEvents(
+      const GestureEventWithLatencyInfo& gesture_event) override;
+  void SetNeedsBeginFrameForFlingProgress() override;
 
   // MouseWheelEventQueueClient
   void SendMouseWheelEventImmediately(
@@ -160,6 +177,7 @@ class CONTENT_EXPORT LegacyInputRouterImpl
                                    uint32_t unique_touch_event_id,
                                    InputEventAckState ack_result);
   void OnDidStopFlinging();
+  void OnDidStartScrollingViewport();
 
   // Note: This function may result in |this| being deleted, and as such
   // should be the last method called in any internal chain of event handling.
@@ -251,7 +269,7 @@ class CONTENT_EXPORT LegacyInputRouterImpl
   bool wheel_scroll_latching_enabled_;
 
   MouseWheelEventQueue wheel_event_queue_;
-  std::unique_ptr<TouchEventQueue> touch_event_queue_;
+  std::unique_ptr<PassthroughTouchEventQueue> touch_event_queue_;
   GestureEventQueue gesture_event_queue_;
   TouchActionFilter touch_action_filter_;
   InputEventStreamValidator input_stream_validator_;
@@ -261,6 +279,8 @@ class CONTENT_EXPORT LegacyInputRouterImpl
 
   // Last touch position relative to screen. Used to compute movementX/Y.
   std::map<int, gfx::Point> global_touch_position_;
+
+  gfx::Vector2dF current_fling_velocity_;
 
   DISALLOW_COPY_AND_ASSIGN(LegacyInputRouterImpl);
 };

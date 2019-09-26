@@ -9,8 +9,11 @@
 #include <wrl/client.h>
 
 #include <algorithm>
+#include <memory>
 #include <set>
 #include <tuple>
+#include <utility>
+#include <vector>
 
 #include "base/bind.h"
 #include "base/files/file_path.h"
@@ -223,6 +226,11 @@ class SelectFileDialogImpl : public ui::SelectFileDialog,
     void* params;
   };
 
+  struct SelectFolderDialogOptions {
+    const wchar_t* default_path;
+    bool is_upload;
+  };
+
   // Shows the file selection dialog modal to |owner| and calls the result
   // back on the ui thread. Run on the dialog thread.
   void ExecuteSelectFile(const ExecuteSelectParams& params);
@@ -265,11 +273,9 @@ class SelectFileDialogImpl : public ui::SelectFileDialog,
 
   // Runs a Folder selection dialog box, passes back the selected folder in
   // |path| and returns true if the user clicks OK. If the user cancels the
-  // dialog box the value in |path| is not modified and returns false. |title|
-  // is the user-supplied title text to show for the dialog box. Run on the
-  // dialog thread.
-  bool RunSelectFolderDialog(const std::wstring& title,
-                             HWND owner,
+  // dialog box the value in |path| is not modified and returns false. Run
+  // on the dialog thread.
+  bool RunSelectFolderDialog(const ExecuteSelectParams& params,
                              base::FilePath* path);
 
   // Runs an Open file dialog box, with similar semantics for input paramaters
@@ -283,6 +289,7 @@ class SelectFileDialogImpl : public ui::SelectFileDialog,
   // semantics for input paramaters as RunOpenFileDialog.
   bool RunOpenMultiFileDialog(const std::wstring& title,
                               const std::wstring& filter,
+                              const base::FilePath& initial_path,
                               HWND owner,
                               std::vector<base::FilePath>* paths);
 
@@ -338,8 +345,8 @@ void SelectFileDialogImpl::SelectFileImpl(
                                      default_extension, BeginRun(owner),
                                      owner, params);
   execute_params.run_state.dialog_thread->task_runner()->PostTask(
-      FROM_HERE, base::Bind(&SelectFileDialogImpl::ExecuteSelectFile, this,
-                            execute_params));
+      FROM_HERE, base::BindOnce(&SelectFileDialogImpl::ExecuteSelectFile, this,
+                                execute_params));
 }
 
 bool SelectFileDialogImpl::HasMultipleFileTypeChoicesImpl() {
@@ -367,15 +374,7 @@ void SelectFileDialogImpl::ExecuteSelectFile(
   bool success = false;
   unsigned filter_index = params.file_type_index;
   if (params.type == SELECT_FOLDER || params.type == SELECT_UPLOAD_FOLDER) {
-    std::wstring title = params.title;
-    if (title.empty() && params.type == SELECT_UPLOAD_FOLDER) {
-      // If it's for uploading don't use default dialog title to
-      // make sure we clearly tell it's for uploading.
-      title = l10n_util::GetStringUTF16(IDS_SELECT_UPLOAD_FOLDER_DIALOG_TITLE);
-    }
-    success = RunSelectFolderDialog(title,
-                                    params.run_state.owner,
-                                    &path);
+    success = RunSelectFolderDialog(params, &path);
   } else if (params.type == SELECT_SAVEAS_FILE) {
     std::wstring path_as_wstring = path.value();
     success = SaveFileAsWithFilter(params.run_state.owner,
@@ -389,23 +388,25 @@ void SelectFileDialogImpl::ExecuteSelectFile(
                                 params.run_state.owner, &path);
   } else if (params.type == SELECT_OPEN_MULTI_FILE) {
     std::vector<base::FilePath> paths;
-    if (RunOpenMultiFileDialog(params.title, filter,
+    if (RunOpenMultiFileDialog(params.title, filter, path,
                                params.run_state.owner, &paths)) {
       params.ui_task_runner->PostTask(
-          FROM_HERE, base::Bind(&SelectFileDialogImpl::MultiFilesSelected, this,
-                                paths, params.params, params.run_state));
+          FROM_HERE,
+          base::BindOnce(&SelectFileDialogImpl::MultiFilesSelected, this, paths,
+                         params.params, params.run_state));
       return;
     }
   }
 
   if (success) {
     params.ui_task_runner->PostTask(
-        FROM_HERE, base::Bind(&SelectFileDialogImpl::FileSelected, this, path,
-                              filter_index, params.params, params.run_state));
+        FROM_HERE,
+        base::BindOnce(&SelectFileDialogImpl::FileSelected, this, path,
+                       filter_index, params.params, params.run_state));
   } else {
     params.ui_task_runner->PostTask(
-        FROM_HERE, base::Bind(&SelectFileDialogImpl::FileNotSelected, this,
-                              params.params, params.run_state));
+        FROM_HERE, base::BindOnce(&SelectFileDialogImpl::FileNotSelected, this,
+                                  params.params, params.run_state));
   }
 }
 
@@ -515,35 +516,60 @@ int CALLBACK SelectFileDialogImpl::BrowseCallbackProc(HWND window,
                                                       LPARAM parameter,
                                                       LPARAM data) {
   if (message == BFFM_INITIALIZED) {
-    // WParam is TRUE since passing a path.
-    // data lParam member of the BROWSEINFO structure.
-    SendMessage(window, BFFM_SETSELECTION, TRUE, (LPARAM)data);
+    SelectFolderDialogOptions* options =
+        reinterpret_cast<SelectFolderDialogOptions*>(data);
+    if (options->is_upload) {
+      SendMessage(window, BFFM_SETOKTEXT, 0,
+                  reinterpret_cast<LPARAM>(
+                      l10n_util::GetStringUTF16(
+                          IDS_SELECT_UPLOAD_FOLDER_DIALOG_UPLOAD_BUTTON)
+                          .c_str()));
+    }
+    if (options->default_path) {
+      SendMessage(window, BFFM_SETSELECTION, TRUE,
+                  reinterpret_cast<LPARAM>(options->default_path));
+    }
   }
   return 0;
 }
 
-bool SelectFileDialogImpl::RunSelectFolderDialog(const std::wstring& title,
-                                                 HWND owner,
-                                                 base::FilePath* path) {
+bool SelectFileDialogImpl::RunSelectFolderDialog(
+    const ExecuteSelectParams& params,
+    base::FilePath* path) {
   DCHECK(path);
+  std::wstring title = params.title;
+  if (title.empty() && params.type == SELECT_UPLOAD_FOLDER) {
+    // If it's for uploading don't use default dialog title to
+    // make sure we clearly tell it's for uploading.
+    title = l10n_util::GetStringUTF16(IDS_SELECT_UPLOAD_FOLDER_DIALOG_TITLE);
+  }
 
   wchar_t dir_buffer[MAX_PATH + 1];
 
   bool result = false;
   BROWSEINFO browse_info = {0};
-  browse_info.hwndOwner = owner;
+  browse_info.hwndOwner = params.run_state.owner;
   browse_info.lpszTitle = title.c_str();
   browse_info.pszDisplayName = dir_buffer;
   browse_info.ulFlags = BIF_USENEWUI | BIF_RETURNONLYFSDIRS;
 
-  if (path->value().length()) {
-    // Highlight the current value.
-    browse_info.lParam = (LPARAM)path->value().c_str();
+  // If uploading or a default path was provided, update the BROWSEINFO
+  // and set the callback function for the dialog so the strings can be set in
+  // the callback.
+  SelectFolderDialogOptions dialog_options = {0};
+  if (path->value().length())
+    dialog_options.default_path = path->value().c_str();
+  if (params.type == SELECT_UPLOAD_FOLDER) {
+    dialog_options.is_upload = true;
+    browse_info.ulFlags |= BIF_NONEWFOLDERBUTTON;
+  }
+  if (dialog_options.is_upload || dialog_options.default_path) {
+    browse_info.lParam = reinterpret_cast<LPARAM>(&dialog_options);
     browse_info.lpfn = &BrowseCallbackProc;
   }
 
   LPITEMIDLIST list = SHBrowseForFolder(&browse_info);
-  DisableOwner(owner);
+  DisableOwner(params.run_state.owner);
   if (list) {
     STRRET out_dir_buffer;
     ZeroMemory(&out_dir_buffer, sizeof(out_dir_buffer));
@@ -574,13 +600,12 @@ bool SelectFileDialogImpl::RunSelectFolderDialog(const std::wstring& title,
   return result;
 }
 
-bool SelectFileDialogImpl::RunOpenFileDialog(
-    const std::wstring& title,
-    const std::wstring& filter,
-    HWND owner,
-    base::FilePath* path) {
-  // We use OFN_NOCHANGEDIR so that the user can rename or delete the directory
-  // without having to close Chrome first.
+bool SelectFileDialogImpl::RunOpenFileDialog(const std::wstring& title,
+                                             const std::wstring& filter,
+                                             HWND owner,
+                                             base::FilePath* path) {
+  // We use OFN_NOCHANGEDIR so that the user can rename or delete the
+  // directory without having to close Chrome first.
   ui::win::OpenFileName ofn(owner, OFN_FILEMUSTEXIST | OFN_NOCHANGEDIR);
   if (!path->empty()) {
     if (IsDirectory(*path))
@@ -602,6 +627,7 @@ bool SelectFileDialogImpl::RunOpenFileDialog(
 bool SelectFileDialogImpl::RunOpenMultiFileDialog(
     const std::wstring& title,
     const std::wstring& filter,
+    const base::FilePath& initial_path,
     HWND owner,
     std::vector<base::FilePath>* paths) {
   // We use OFN_NOCHANGEDIR so that the user can rename or delete the directory
@@ -610,7 +636,12 @@ bool SelectFileDialogImpl::RunOpenMultiFileDialog(
                             OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST |
                                 OFN_EXPLORER | OFN_HIDEREADONLY |
                                 OFN_ALLOWMULTISELECT | OFN_NOCHANGEDIR);
-
+  if (!initial_path.empty()) {
+    if (IsDirectory(initial_path))
+      ofn.SetInitialSelection(initial_path, base::FilePath());
+    else
+      ofn.SetInitialSelection(initial_path.DirName(), base::FilePath());
+  }
   if (!filter.empty())
     ofn.GetOPENFILENAME()->lpstrFilter = filter.c_str();
 

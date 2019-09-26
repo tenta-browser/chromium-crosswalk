@@ -8,7 +8,6 @@
 
 #include "ash/public/cpp/shell_window_ids.h"
 #include "ash/shell.h"
-#include "ash/wm/window_animations.h"
 #include "base/macros.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
@@ -91,7 +90,7 @@ void CreateAndShowWidget(views::WidgetDelegateView* delegate,
   widget->SetBounds(bounds);
 
   // Allow to use the message for spoken feedback.
-  delegate->NotifyAccessibilityEvent(ui::AX_EVENT_ALERT, true);
+  delegate->NotifyAccessibilityEvent(ax::mojom::Event::kAlert, true);
 }
 
 }  // namespace
@@ -118,7 +117,7 @@ class IdleAppNameNotificationDelegateView
     AddLabel(app_name, rb->GetFontList(ui::ResourceBundle::BoldFont),
              error ? kErrorTextColor : kTextColor);
     spoken_text_ = app_name;
-    SetLayoutManager(new views::FillLayout);
+    SetLayoutManager(std::make_unique<views::FillLayout>());
 
     // Set a timer which will trigger to remove the message after the given
     // time.
@@ -175,7 +174,7 @@ class IdleAppNameNotificationDelegateView
 
   void GetAccessibleNodeData(ui::AXNodeData* node_data) override {
     node_data->SetName(spoken_text_);
-    node_data->role = ui::AX_ROLE_ALERT;
+    node_data->role = ax::mojom::Role::kAlert;
   }
 
   // ImplicitAnimationObserver overrides
@@ -239,7 +238,7 @@ base::string16 IdleAppNameNotificationView::GetShownTextForTest() {
   ui::AXNodeData node_data;
   DCHECK(view_);
   view_->GetAccessibleNodeData(&node_data);
-  return node_data.GetString16Attribute(ui::AX_ATTR_NAME);
+  return node_data.GetString16Attribute(ax::mojom::StringAttribute::kName);
 }
 
 void IdleAppNameNotificationView::ShowMessage(

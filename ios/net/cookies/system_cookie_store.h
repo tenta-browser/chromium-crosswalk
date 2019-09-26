@@ -22,6 +22,7 @@ class CookieCreationTimeManager;
 // type of system store (WKHTTPCookieStore, NSHTTPCookieStorage, ..), its main
 // purpose is to interact with the system cookie store, and let the caller use
 // it directly without caring about the type of the underlying cookie store.
+// The class methods should only be called from IO Thread.
 class SystemCookieStore {
  public:
   // Callback definitions.
@@ -74,13 +75,14 @@ class SystemCookieStore {
   base::WeakPtr<SystemCookieStore> GetWeakPtr();
 
  protected:
-  // Compares cookies based on the path lengths and the creation times, as per
-  // RFC6265.
+  // Compares cookies based on the path lengths and the creation times provided
+  // by a non null creation time manager |context|, as per RFC6265.
   static NSInteger CompareCookies(id a, id b, void* context);
 
   // Internal cookie stores doesn't store creation time. This object is used
   // to keep track of the creation time of cookies, this is required for
   // conversion between SystemCookie and Chromium CookieMonster.
+  // TODO(crbug.com/825227): Move this to be private.
   std::unique_ptr<CookieCreationTimeManager> creation_time_manager_;
 
   // Weak Ptr factory.

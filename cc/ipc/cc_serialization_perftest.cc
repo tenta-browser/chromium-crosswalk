@@ -9,11 +9,12 @@
 #include "cc/ipc/cc_param_traits.h"
 #include "components/viz/common/quads/compositor_frame.h"
 #include "components/viz/common/quads/picture_draw_quad.h"
+#include "components/viz/test/compositor_frame_helpers.h"
 #include "gpu/ipc/common/mailbox_holder_struct_traits.h"
 #include "gpu/ipc/common/mailbox_struct_traits.h"
 #include "gpu/ipc/common/sync_token_struct_traits.h"
 #include "ipc/ipc_message.h"
-#include "mojo/common/time_struct_traits.h"
+#include "mojo/public/cpp/base/time_mojom_traits.h"
 #include "mojo/public/cpp/bindings/message.h"
 #include "services/viz/public/cpp/compositing/compositor_frame_metadata_struct_traits.h"
 #include "services/viz/public/cpp/compositing/compositor_frame_struct_traits.h"
@@ -360,10 +361,11 @@ class CCSerializationPerfTest : public testing::Test {
           arbitrary_blend_mode2, arbitrary_context_id2);
       for (uint32_t j = 0; j < 6; ++j) {
         auto* tile_in = pass_in->CreateAndAppendDrawQuad<viz::TileDrawQuad>();
-        tile_in->SetAll(
-            shared_state2_in, arbitrary_rect2, arbitrary_rect1_inside_rect2,
-            arbitrary_bool1, arbitrary_resourceid3, arbitrary_rectf1,
-            arbitrary_size1, arbitrary_bool2, arbitrary_bool3, arbitrary_bool4);
+        tile_in->SetAll(shared_state2_in, arbitrary_rect2,
+                        arbitrary_rect1_inside_rect2, arbitrary_bool1,
+                        arbitrary_resourceid3, arbitrary_rectf1,
+                        arbitrary_size1, arbitrary_bool2, arbitrary_bool3,
+                        arbitrary_bool4, arbitrary_bool5);
       }
     }
 
@@ -392,12 +394,11 @@ class CCSerializationPerfTest : public testing::Test {
                                      uint32_t num_quads,
                                      uint32_t num_passes,
                                      UseSingleSharedQuadState single_sqs) {
-    viz::CompositorFrame frame;
-    frame.metadata.begin_frame_ack = viz::BeginFrameAck(0, 1, true);
+    viz::CompositorFrame frame = viz::MakeEmptyCompositorFrame();
 
     for (uint32_t i = 0; i < num_passes; ++i) {
       std::unique_ptr<viz::RenderPass> render_pass = viz::RenderPass::Create();
-      render_pass->SetNew(1, gfx::Rect(), gfx::Rect(), gfx::Transform());
+      render_pass->SetNew(1, gfx::Rect(20, 20), gfx::Rect(), gfx::Transform());
       for (uint32_t j = 0; j < num_quads; ++j) {
         if (j == 0 || single_sqs == UseSingleSharedQuadState::NO)
           render_pass->CreateAndAppendSharedQuadState();

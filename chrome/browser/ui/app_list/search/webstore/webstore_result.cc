@@ -6,10 +6,10 @@
 
 #include <stddef.h>
 
+#include <algorithm>
 #include <vector>
 
 #include "base/bind.h"
-#include "base/memory/ptr_util.h"
 #include "base/memory/ref_counted.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/extensions/extension_service.h"
@@ -24,6 +24,8 @@
 #include "chrome/grit/chromium_strings.h"
 #include "chrome/grit/generated_resources.h"
 #include "chrome/grit/theme_resources.h"
+#include "content/public/browser/storage_partition.h"
+#include "content/public/browser/web_contents.h"
 #include "extensions/browser/extension_registry.h"
 #include "extensions/browser/extension_system.h"
 #include "extensions/common/extension_urls.h"
@@ -56,12 +58,11 @@ WebstoreResult::WebstoreResult(Profile* profile,
   InitAndStartObserving();
   UpdateActions();
 
-  int icon_dimension = GetPreferredIconDimension(this);
+  int icon_dimension = GetPreferredIconDimension(display_type());
   icon_ = gfx::ImageSkia(
-      base::MakeUnique<UrlIconSource>(
+      std::make_unique<UrlIconSource>(
           base::Bind(&WebstoreResult::OnIconLoaded, weak_factory_.GetWeakPtr()),
-          profile_->GetRequestContext(), icon_url_, icon_dimension,
-          IDR_WEBSTORE_ICON_32),
+          profile_, icon_url_, icon_dimension, IDR_WEBSTORE_ICON_32),
       gfx::Size(icon_dimension, icon_dimension));
   SetIcon(icon_);
 }
@@ -101,8 +102,8 @@ void WebstoreResult::InvokeAction(int action_index, int event_flags) {
   StartInstall();
 }
 
-std::unique_ptr<SearchResult> WebstoreResult::Duplicate() const {
-  std::unique_ptr<SearchResult> copy(new WebstoreResult(
+std::unique_ptr<ChromeSearchResult> WebstoreResult::Duplicate() const {
+  std::unique_ptr<ChromeSearchResult> copy(new WebstoreResult(
       profile_, app_id_, icon_url_, is_paid_, item_type_, controller_));
   copy->set_title(title());
   copy->set_title_tags(title_tags());
@@ -149,7 +150,7 @@ void WebstoreResult::SetDefaultDetails() {
   const base::string16 details =
       l10n_util::GetStringUTF16(IDS_EXTENSION_WEB_STORE_TITLE);
   Tags details_tags;
-  details_tags.push_back(Tag(SearchResult::Tag::DIM, 0, details.length()));
+  details_tags.push_back(Tag(ash::SearchResultTag::DIM, 0, details.length()));
 
   set_details(details);
   set_details_tags(details_tags);
@@ -173,13 +174,9 @@ void WebstoreResult::StartInstall() {
   SetPercentDownloaded(0);
   SetIsInstalling(true);
 
-  scoped_refptr<WebstoreInstaller> installer =
-      new WebstoreInstaller(
-          app_id_,
-          profile_,
-          controller_->GetAppListWindow(),
-          base::Bind(&WebstoreResult::InstallCallback,
-                     weak_factory_.GetWeakPtr()));
+  scoped_refptr<WebstoreInstaller> installer = new WebstoreInstaller(
+      app_id_, profile_,
+      base::Bind(&WebstoreResult::InstallCallback, weak_factory_.GetWeakPtr()));
   installer->BeginInstall();
 }
 

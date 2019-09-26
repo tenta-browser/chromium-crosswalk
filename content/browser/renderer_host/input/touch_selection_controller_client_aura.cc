@@ -174,9 +174,9 @@ void TouchSelectionControllerClientAura::OnScrollCompleted() {
 
 bool TouchSelectionControllerClientAura::HandleContextMenu(
     const ContextMenuParams& params) {
-  if (params.source_type == ui::MENU_SOURCE_LONG_PRESS &&
-      params.is_editable &&
-      params.selection_text.empty() &&
+  if ((params.source_type == ui::MENU_SOURCE_LONG_PRESS ||
+       params.source_type == ui::MENU_SOURCE_LONG_TAP) &&
+      params.is_editable && params.selection_text.empty() &&
       IsQuickMenuAvailable()) {
     quick_menu_requested_ = true;
     UpdateQuickMenu();
@@ -184,6 +184,7 @@ bool TouchSelectionControllerClientAura::HandleContextMenu(
   }
 
   const bool from_touch = params.source_type == ui::MENU_SOURCE_LONG_PRESS ||
+                          params.source_type == ui::MENU_SOURCE_LONG_TAP ||
                           params.source_type == ui::MENU_SOURCE_TOUCH;
   if (from_touch && !params.selection_text.empty())
     return true;
@@ -339,8 +340,7 @@ void TouchSelectionControllerClientAura::MoveCaret(
 
 void TouchSelectionControllerClientAura::InternalClient::MoveCaret(
     const gfx::PointF& position) {
-  RenderWidgetHostDelegate* host_delegate =
-      RenderWidgetHostImpl::From(rwhva_->GetRenderWidgetHost())->delegate();
+  RenderWidgetHostDelegate* host_delegate = rwhva_->host()->delegate();
   if (host_delegate)
     host_delegate->MoveCaret(gfx::ToRoundedPoint(position));
 }
@@ -352,8 +352,7 @@ void TouchSelectionControllerClientAura::MoveRangeSelectionExtent(
 
 void TouchSelectionControllerClientAura::InternalClient::
     MoveRangeSelectionExtent(const gfx::PointF& extent) {
-  RenderWidgetHostDelegate* host_delegate =
-      RenderWidgetHostImpl::From(rwhva_->GetRenderWidgetHost())->delegate();
+  RenderWidgetHostDelegate* host_delegate = rwhva_->host()->delegate();
   if (host_delegate)
     host_delegate->MoveRangeSelectionExtent(gfx::ToRoundedPoint(extent));
 }
@@ -367,8 +366,7 @@ void TouchSelectionControllerClientAura::SelectBetweenCoordinates(
 void TouchSelectionControllerClientAura::InternalClient::
     SelectBetweenCoordinates(const gfx::PointF& base,
                              const gfx::PointF& extent) {
-  RenderWidgetHostDelegate* host_delegate =
-      RenderWidgetHostImpl::From(rwhva_->GetRenderWidgetHost())->delegate();
+  RenderWidgetHostDelegate* host_delegate = rwhva_->host()->delegate();
   if (host_delegate) {
     host_delegate->SelectRange(gfx::ToRoundedPoint(base),
                                gfx::ToRoundedPoint(extent));
@@ -382,7 +380,7 @@ void TouchSelectionControllerClientAura::OnSelectionEvent(
   switch (event) {
     case ui::SELECTION_HANDLES_SHOWN:
       quick_menu_requested_ = true;
-      // Fall through.
+      FALLTHROUGH;
     case ui::INSERTION_HANDLE_SHOWN:
       UpdateQuickMenu();
       env_pre_target_handler_.reset(new EnvPreTargetHandler(
@@ -417,6 +415,14 @@ void TouchSelectionControllerClientAura::OnSelectionEvent(
 
 void TouchSelectionControllerClientAura::InternalClient::OnSelectionEvent(
     ui::SelectionEventType event) {
+  NOTREACHED();
+}
+
+void TouchSelectionControllerClientAura::OnDragUpdate(
+    const gfx::PointF& position) {}
+
+void TouchSelectionControllerClientAura::InternalClient::OnDragUpdate(
+    const gfx::PointF& position) {
   NOTREACHED();
 }
 
@@ -469,8 +475,7 @@ bool TouchSelectionControllerClientAura::IsCommandIdEnabled(
 void TouchSelectionControllerClientAura::ExecuteCommand(int command_id,
                                                         int event_flags) {
   rwhva_->selection_controller()->HideAndDisallowShowingAutomatically();
-  RenderWidgetHostDelegate* host_delegate =
-      RenderWidgetHostImpl::From(rwhva_->GetRenderWidgetHost())->delegate();
+  RenderWidgetHostDelegate* host_delegate = rwhva_->host()->delegate();
   if (!host_delegate)
     return;
 
@@ -495,8 +500,7 @@ void TouchSelectionControllerClientAura::RunContextMenu() {
       rwhva_->selection_controller()->GetRectBetweenBounds();
   gfx::PointF anchor_point =
       gfx::PointF(anchor_rect.CenterPoint().x(), anchor_rect.y());
-  RenderWidgetHostImpl* host =
-      RenderWidgetHostImpl::From(rwhva_->GetRenderWidgetHost());
+  RenderWidgetHostImpl* host = rwhva_->host();
   host->ShowContextMenuAtPoint(gfx::ToRoundedPoint(anchor_point),
                                ui::MENU_SOURCE_TOUCH_EDIT_MENU);
 

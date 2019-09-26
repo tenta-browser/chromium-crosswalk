@@ -11,13 +11,16 @@
 
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
+#include "base/strings/string16.h"
 #include "chrome/browser/engagement/site_engagement_observer.h"
+#include "chrome/browser/installable/installable_ambient_badge_infobar_delegate.h"
 #include "chrome/browser/installable/installable_logging.h"
 #include "chrome/browser/installable/installable_manager.h"
+#include "chrome/browser/installable/installable_metrics.h"
 #include "content/public/browser/web_contents_observer.h"
 #include "mojo/public/cpp/bindings/binding.h"
-#include "third_party/WebKit/public/platform/WebDisplayMode.h"
-#include "third_party/WebKit/public/platform/modules/app_banner/app_banner.mojom.h"
+#include "third_party/blink/public/platform/modules/app_banner/app_banner.mojom.h"
+#include "third_party/blink/public/platform/web_display_mode.h"
 
 class InstallableManager;
 class SkBitmap;
@@ -26,7 +29,7 @@ struct WebApplicationInfo;
 namespace content {
 class RenderFrameHost;
 class WebContents;
-}
+}  // namespace content
 
 // This forward declaration exists solely for the DidFinishCreatingBookmarkApp
 // callback, implemented and called on desktop platforms only.
@@ -52,6 +55,7 @@ namespace banners {
 // web app banner (checking manifest validity, service worker, and icon).
 class AppBannerManager : public content::WebContentsObserver,
                          public blink::mojom::AppBannerService,
+                         public InstallableAmbientBadgeInfoBarDelegate::Client,
                          public SiteEngagementObserver {
  public:
   // A StatusReporter handles the reporting of |InstallableStatusCode|s.
@@ -96,6 +100,10 @@ class AppBannerManager : public content::WebContentsObserver,
     COMPLETE,
   };
 
+  // Installable describes whether a site satisifes the installablity
+  // requirements.
+  enum class Installable { INSTALLABLE_YES, INSTALLABLE_NO, UNKNOWN };
+
   // Returns the current time.
   static base::Time GetCurrentTime();
 
@@ -107,6 +115,11 @@ class AppBannerManager : public content::WebContentsObserver,
 
   // Returns whether the new experimental flow and UI is enabled.
   static bool IsExperimentalAppBannersEnabled();
+
+  // Returns the app name if the current page is installable, otherwise returns
+  // the empty string.
+  static base::string16 GetInstallableAppName(
+      content::WebContents* web_contents);
 
   // Requests an app banner. If |is_debug_mode| is true, any failure in the
   // pipeline will be reported to the devtools console.
@@ -122,7 +135,7 @@ class AppBannerManager : public content::WebContentsObserver,
   void SendBannerAccepted();
 
   // Sends a message to the renderer that the user dismissed the banner.
-  void SendBannerDismissed();
+  virtual void SendBannerDismissed();
 
   // Returns a WeakPtr to this object. Exposed so subclasses/infobars may
   // may bind callbacks without needing their own WeakPtrFactory.
@@ -141,6 +154,10 @@ class AppBannerManager : public content::WebContentsObserver,
   // desktop platforms.
   virtual void OnAppIconFetched(const SkBitmap& bitmap) {}
 
+  // InstallableAmbientBadgeInfoBarDelegate::Client overrides. Further
+  // overridden on Android.
+  void AddToHomescreenFromBadge() override {}
+
  protected:
   explicit AppBannerManager(content::WebContents* web_contents);
   ~AppBannerManager() override;
@@ -150,8 +167,19 @@ class AppBannerManager : public content::WebContentsObserver,
   // GetAppIdentifier() must return a valid value for this method to work.
   bool CheckIfShouldShowBanner();
 
+  // Called when the current site is eligible to show a banner. Returns true if
+  // the banner should not be shown because the site is already installed, and
+  // false if the banner should be shown because the site is not yet installed.
+  // Overridden in platform-specific code to perform actions when it is
+  // guaranteed that a site is banner-eligible, depending on whether the site is
+  // installed (i.e. the ambient badge).
+  virtual bool CheckIfInstalled();
+
   // Return a string identifying this app for metrics.
   virtual std::string GetAppIdentifier();
+
+  // Return the name of the app for this page.
+  virtual base::string16 GetAppName() const;
 
   // Return a string describing what type of banner is being created. Used when
   // alerting websites that a banner is about to be created.
@@ -199,6 +227,9 @@ class AppBannerManager : public content::WebContentsObserver,
   // Reports |code| via a UMA histogram or logs it to the console.
   void ReportStatus(InstallableStatusCode code);
 
+  // Voids all outstanding service pointers.
+  void ResetBindings();
+
   // Resets all fetched data for the current page.
   virtual void ResetCurrentPageData();
 
@@ -232,9 +263,10 @@ class AppBannerManager : public content::WebContentsObserver,
   void WebContentsDestroyed() override;
 
   // SiteEngagementObserver overrides.
-  void OnEngagementIncreased(content::WebContents* web_contents,
-                             const GURL& url,
-                             double score) override;
+  void OnEngagementEvent(content::WebContents* web_contents,
+                         const GURL& url,
+                         double score,
+                         SiteEngagementService::EngagementType type) override;
 
   // Subclass accessors for private fields which should not be changed outside
   // this class.
@@ -267,8 +299,9 @@ class AppBannerManager : public content::WebContentsObserver,
  private:
   friend class AppBannerManagerTest;
 
-  // Voids all outstanding service pointers.
-  void ResetBindings();
+  // Retrieves the platform specific instance of AppBannerManager from
+  // |web_contents|.
+  static AppBannerManager* FromWebContents(content::WebContents* web_contents);
 
   // Record that the banner could be shown at this point, if the triggering
   // heuristic allowed.
@@ -276,13 +309,15 @@ class AppBannerManager : public content::WebContentsObserver,
 
   // Creates the app banner UI. Overridden by subclasses as the infobar is
   // platform-specific.
-  virtual void ShowBannerUi() = 0;
+  virtual void ShowBannerUi(WebappInstallSource install_source) = 0;
 
   // Called after the manager sends a message to the renderer regarding its
   // intention to show a prompt. The renderer will send a message back with the
   // opportunity to cancel.
-  virtual void OnBannerPromptReply(blink::mojom::AppBannerPromptReply reply,
-                                   const std::string& referrer);
+  virtual void OnBannerPromptReply(
+      blink::mojom::AppBannerControllerPtr controller,
+      blink::mojom::AppBannerPromptReply reply,
+      const std::string& referrer);
 
   // Does the non-platform specific parts of showing the app banner.
   void ShowBanner();
@@ -310,7 +345,6 @@ class AppBannerManager : public content::WebContentsObserver,
   // Mojo bindings and interface pointers.
   mojo::Binding<blink::mojom::AppBannerService> binding_;
   blink::mojom::AppBannerEventPtr event_;
-  blink::mojom::AppBannerControllerPtr controller_;
 
   // If a banner is requested before the page has finished loading, defer
   // triggering the pipeline until the load is complete.
@@ -320,8 +354,8 @@ class AppBannerManager : public content::WebContentsObserver,
   // Whether the current flow was begun via devtools.
   bool triggered_by_devtools_;
 
- private:
   std::unique_ptr<StatusReporter> status_reporter_;
+  Installable installable_;
 
   // The concrete subclasses of this class are expected to have their lifetimes
   // scoped to the WebContents which they are observing. This allows us to use

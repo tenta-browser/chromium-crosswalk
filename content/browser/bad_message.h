@@ -5,6 +5,7 @@
 #ifndef CONTENT_BROWSER_BAD_MESSAGE_H_
 #define CONTENT_BROWSER_BAD_MESSAGE_H_
 
+#include "base/debug/crash_logging.h"
 #include "content/common/content_export.h"
 
 namespace content {
@@ -161,7 +162,7 @@ enum BadMessageReason {
   DSH_NOT_CREATED_SESSION_ID = 135,
   DSH_NOT_ALLOCATED_SESSION_ID = 136,
   DSH_DELETED_SESSION_ID = 137,
-  DSH_WRONG_STORAGE_PARTITION = 138,
+  OBSOLETE_DSH_WRONG_STORAGE_PARTITION = 138,
   BDH_DISALLOWED_ORIGIN = 139,
   ARH_CREATED_STREAM_WITHOUT_AUTHORIZATION = 140,
   MDDH_INVALID_DEVICE_TYPE_REQUEST = 141,
@@ -198,9 +199,9 @@ enum BadMessageReason {
   RFPH_ILLEGAL_UPLOAD_PARAMS = 172,
   OBSOLETE_SWDH_PROVIDER_CREATED_ILLEGAL_TYPE = 173,
   SWDH_PROVIDER_CREATED_ILLEGAL_TYPE_NOT_WINDOW = 174,
-  SWDH_PROVIDER_CREATED_ILLEGAL_TYPE_CONTROLLER = 175,
+  SWDH_PROVIDER_CREATED_ILLEGAL_TYPE_SERVICE_WORKER = 175,
   SWDH_PROVIDER_CREATED_DUPLICATE_ID = 176,
-  SWDH_PROVIDER_CREATED_BAD_ID = 177,
+  OBSOLETE_SWDH_PROVIDER_CREATED_BAD_ID = 177,
   RFH_KEEP_ALIVE_HANDLE_REQUESTED_INCORRECTLY = 178,
   BFSI_INVALID_UNIQUE_ID = 179,
   BPE_UNEXPECTED_MESSAGE_BEFORE_BPGM_CREATION = 180,
@@ -211,6 +212,19 @@ enum BadMessageReason {
   WEBUI_BAD_SCHEME_ACCESS = 185,
   CSDH_UNEXPECTED_OPERATION = 186,
   RMF_BAD_URL_CACHEABLE_METADATA = 187,
+  RFH_INTERFACE_PROVIDER_MISSING = 188,
+  OBSOLETE_RFH_INTERFACE_PROVIDER_SUPERFLUOUS = 189,
+  AIRH_UNEXPECTED_BITSTREAM = 190,
+  ARH_UNEXPECTED_BITSTREAM = 191,
+  RDH_NULL_CLIENT = 192,
+  RVH_WEB_UI_BINDINGS_MISMATCH = 193,
+  WCI_NEW_WIDGET_PROCESS_MISMATCH = 194,
+  AUTH_INVALID_EFFECTIVE_DOMAIN = 195,
+  AUTH_INVALID_RELYING_PARTY = 196,
+  RWH_COPY_REQUEST_ATTEMPT = 197,
+  SYNC_COMPOSITOR_NO_FUTURE_FRAME = 198,
+  SYNC_COMPOSITOR_NO_BEGIN_FRAME = 199,
+  WEBUI_BAD_HOST_ACCESS = 200,
 
   // Please add new elements here. The naming convention is abbreviated class
   // name (e.g. RenderFrameHost becomes RFH) plus a unique description of the
@@ -232,6 +246,17 @@ CONTENT_EXPORT void ReceivedBadMessage(int render_process_id,
 // renderer or other child process. Logs the event, records a histogram metric
 // for the |reason|, and terminates the process for |filter|.
 void ReceivedBadMessage(BrowserMessageFilter* filter, BadMessageReason reason);
+
+// Returns a crash key named "mojo-message-error" for storing Mojo error
+// messages.
+base::debug::CrashKeyString* GetMojoErrorCrashKey();
+
+// Site isolation. These keys help debug renderer kills such as
+// https://crbug.com/773140.
+// Returns a key named "killed_process_origin_lock".
+base::debug::CrashKeyString* GetKilledProcessOriginLockKey();
+// Retuns a key named "requested_site_url".
+base::debug::CrashKeyString* GetRequestedSiteURLKey();
 
 }  // namespace bad_message
 }  // namespace content

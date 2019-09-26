@@ -3,7 +3,7 @@
 # found in the LICENSE file.
 
 import("//build/config/features.gni")
-import("//extensions/features/features.gni")
+import("//extensions/buildflags/buildflags.gni")
 import("//tools/json_schema_compiler/json_features.gni")
 import("//tools/json_schema_compiler/json_schema_api.gni")
 
@@ -27,6 +27,7 @@ json_schema_api("api") {
     "idl_object_types.idl",
     "idl_other_namespace.idl",
     "idl_other_namespace_sub_namespace.idl",
+    "idl_properties.idl",
     "objects.json",
     "objects_movable.idl",
     "objects_movable_json.json",
@@ -37,7 +38,7 @@ json_schema_api("api") {
   root_namespace = "test::api::%(namespace)s"
 
   deps = [
-    "//extensions/features",
+    "//extensions/buildflags",
   ]
 }
 

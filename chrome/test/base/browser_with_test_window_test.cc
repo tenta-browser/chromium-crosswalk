@@ -5,7 +5,6 @@
 #include "chrome/test/base/browser_with_test_window_test.h"
 
 #include "base/location.h"
-#include "base/memory/ptr_util.h"
 #include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
 #include "base/threading/thread_task_runner_handle.h"
@@ -22,7 +21,6 @@
 #include "content/public/browser/navigation_controller.h"
 #include "content/public/browser/navigation_entry.h"
 #include "content/public/browser/web_contents.h"
-#include "content/public/common/browser_side_navigation_policy.h"
 #include "content/public/test/browser_side_navigation_test_utils.h"
 #include "content/public/test/test_renderer_host.h"
 #include "ui/base/page_transition_types.h"
@@ -52,9 +50,9 @@ BrowserWithTestWindowTest::BrowserWithTestWindowTest(Browser::Type browser_type,
                                                      bool hosted_app)
     : browser_type_(browser_type), hosted_app_(hosted_app) {
 #if defined(OS_CHROMEOS)
-  ash_test_environment_ = base::MakeUnique<AshTestEnvironmentChrome>();
+  ash_test_environment_ = std::make_unique<AshTestEnvironmentChrome>();
   ash_test_helper_ =
-      base::MakeUnique<ash::AshTestHelper>(ash_test_environment_.get());
+      std::make_unique<ash::AshTestHelper>(ash_test_environment_.get());
 #endif
 }
 
@@ -74,8 +72,7 @@ void BrowserWithTestWindowTest::SetUp() {
       ChromeLayoutProvider::CreateLayoutProvider());
 #endif
 
-  if (content::IsBrowserSideNavigationEnabled())
-    content::BrowserSideNavigationSetUp();
+  content::BrowserSideNavigationSetUp();
 
   profile_manager_ = std::make_unique<TestingProfileManager>(
       TestingBrowserProcess::GetGlobal());
@@ -103,8 +100,7 @@ void BrowserWithTestWindowTest::TearDown() {
   browser_.reset();
   window_.reset();
 
-  if (content::IsBrowserSideNavigationEnabled())
-    content::BrowserSideNavigationTearDown();
+  content::BrowserSideNavigationTearDown();
 
 #if defined(TOOLKIT_VIEWS)
   constrained_window::SetConstrainedWindowViewsClient(nullptr);
@@ -139,10 +135,10 @@ gfx::NativeWindow BrowserWithTestWindowTest::GetContext() {
 }
 
 void BrowserWithTestWindowTest::AddTab(Browser* browser, const GURL& url) {
-  chrome::NavigateParams params(browser, url, ui::PAGE_TRANSITION_TYPED);
+  NavigateParams params(browser, url, ui::PAGE_TRANSITION_TYPED);
   params.tabstrip_index = 0;
   params.disposition = WindowOpenDisposition::NEW_FOREGROUND_TAB;
-  chrome::Navigate(&params);
+  Navigate(&params);
   CommitPendingLoad(&params.target_contents->GetController());
 }
 

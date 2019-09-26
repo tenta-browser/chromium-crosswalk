@@ -6,6 +6,9 @@
 /adobe/flash/binaries
 /adobe/flash/symbols
 /amd/
+/android_ndk/
+/android_sdk/public/
+/android_sdk/sources/
 /android_protobuf/src
 /android_support_test_runner/lib/
 /android_system_sdk/*.jar
@@ -55,14 +58,15 @@
 /errorprone/lib
 /espresso/lib/
 /eyesfree/src
+/feed/src
 /ffmpeg
-/findbugs
 /flac
 /flatbuffers/src
 /fontconfig/src
 /freetype/src
-/fuchsia-sdk
+/fuchsia-sdk/sdk
 /gestures/gestures
+/gles1_conform
 /gles2_conform
 /glslang/src
 /glslang-angle/src
@@ -79,9 +83,11 @@
 /gvr-android-sdk/src
 /gvr-android-sdk/test-apks/daydream_home/*.apk
 /gvr-android-sdk/test-apks/vr_services/*.apk
+/gvr-android-sdk/test-apks/vr_keyboard/*.apk
 /gperf
 /guava/lib/
 /hamcrest/lib/
+/harfbuzz-ng/src
 /hunspell_dictionaries
 /icu
 /icu4j/lib/
@@ -119,7 +125,9 @@
 /llvm
 /llvm-allocated-type
 /llvm-bootstrap
+/llvm-bootstrap-install
 /llvm-build
+/llvm-build-tools
 /lss
 /material_design_icons/src
 /mesa/src
@@ -146,6 +154,7 @@
 /pdfsqueeze
 /pdfium
 /pefile
+/perfetto
 /perl
 /ppapi
 /psyco_win32
@@ -159,8 +168,6 @@
 /python_26
 /pywebsocket/src
 /pywebsocket/src
-/qemu-aarch64
-/qemu-x86_64
 /re2/src
 /requests/src
 /robolectric/lib/

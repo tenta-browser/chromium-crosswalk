@@ -18,10 +18,10 @@
 #include "content/shell/test_runner/test_runner.h"
 #include "content/shell/test_runner/text_input_controller.h"
 #include "content/shell/test_runner/web_view_test_proxy.h"
-#include "third_party/WebKit/public/platform/WebCache.h"
-#include "third_party/WebKit/public/platform/WebURL.h"
-#include "third_party/WebKit/public/web/WebKit.h"
-#include "third_party/WebKit/public/web/WebView.h"
+#include "third_party/blink/public/platform/web_cache.h"
+#include "third_party/blink/public/platform/web_url.h"
+#include "third_party/blink/public/web/blink.h"
+#include "third_party/blink/public/web/web_view.h"
 
 namespace test_runner {
 
@@ -96,7 +96,8 @@ void TestInterfaces::ConfigureForTestWithURL(const blink::WebURL& test_url,
     spec = spec.substr(path_start);
   bool is_devtools_test = spec.find("/devtools/") != std::string::npos;
   test_runner_->setShouldGeneratePixelResults(generate_pixels);
-  if (spec.find("loading/") != std::string::npos)
+  // For http/tests/loading/, which is served via httpd and becomes /loading/.
+  if (spec.find("/loading/") != std::string::npos)
     test_runner_->setShouldDumpFrameLoadCallbacks(true);
   if (spec.find("/dumpAsText/") != std::string::npos) {
     test_runner_->setShouldDumpAsText(true);
@@ -118,23 +119,6 @@ void TestInterfaces::ConfigureForTestWithURL(const blink::WebURL& test_url,
   // The actions below should only be done *once* per test.
   if (!initial_configuration)
     return;
-
-  if (is_devtools_test)
-    test_runner_->ClearDevToolsLocalStorage();
-
-  bool is_legacy_devtools_test =
-      is_devtools_test &&
-      spec.find("integration_test_runner.html") == std::string::npos;
-  if (is_legacy_devtools_test) {
-    // Subfolder name determines default panel to open.
-    std::string folder = "/devtools/";
-    std::string test_path = spec.substr(spec.find(folder) + folder.length());
-    base::DictionaryValue settings;
-    settings.SetString("testPath", base::GetQuotedJSONString(spec));
-    std::string settings_string;
-    base::JSONWriter::Write(settings, &settings_string);
-    test_runner_->ShowDevTools(settings_string, std::string());
-  }
 }
 
 void TestInterfaces::WindowOpened(WebViewTestProxyBase* proxy) {

@@ -19,7 +19,6 @@
 #include "content/browser/gpu/gpu_data_manager_impl.h"
 #include "content/browser/gpu/gpu_process_host.h"
 #include "content/browser/gpu/shader_cache_factory.h"
-#include "content/browser/mus_util.h"
 #include "content/common/child_process_host_impl.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/content_browser_client.h"
@@ -27,9 +26,9 @@
 #include "content/public/common/content_client.h"
 #include "content/public/common/content_switches.h"
 #include "gpu/command_buffer/service/gpu_switches.h"
-#include "services/resource_coordinator/public/interfaces/memory_instrumentation/constants.mojom.h"
+#include "services/resource_coordinator/public/mojom/memory_instrumentation/constants.mojom.h"
 #include "services/service_manager/runner/common/client_util.h"
-#include "ui/base/ui_base_switches_util.h"
+#include "ui/base/ui_base_features.h"
 
 namespace content {
 
@@ -51,12 +50,12 @@ class BrowserGpuChannelHostFactory::EstablishRequest
   void Wait();
   void Cancel();
 
-  mojo::ScopedMessagePipeHandle TakeChannelHandle() {
-    return std::move(channel_handle_);
+  void AddCallback(gpu::GpuChannelEstablishedCallback callback) {
+    established_callbacks_.push_back(std::move(callback));
   }
-  const gpu::GPUInfo& gpu_info() const { return gpu_info_; }
-  const gpu::GpuFeatureInfo& gpu_feature_info() const {
-    return gpu_feature_info_;
+
+  const scoped_refptr<gpu::GpuChannelHost>& gpu_channel() {
+    return gpu_channel_;
   }
 
  private:
@@ -70,14 +69,15 @@ class BrowserGpuChannelHostFactory::EstablishRequest
                          const gpu::GpuFeatureInfo& gpu_feature_info,
                          GpuProcessHost::EstablishChannelStatus status);
   void FinishOnIO();
+  void FinishAndRunCallbacksOnMain();
   void FinishOnMain();
+  void RunCallbacksOnMain();
 
+  std::vector<gpu::GpuChannelEstablishedCallback> established_callbacks_;
   base::WaitableEvent event_;
   const int gpu_client_id_;
   const uint64_t gpu_client_tracing_id_;
-  mojo::ScopedMessagePipeHandle channel_handle_;
-  gpu::GPUInfo gpu_info_;
-  gpu::GpuFeatureInfo gpu_feature_info_;
+  scoped_refptr<gpu::GpuChannelHost> gpu_channel_;
   bool finished_;
   scoped_refptr<base::SingleThreadTaskRunner> main_task_runner_;
 };
@@ -88,11 +88,9 @@ BrowserGpuChannelHostFactory::EstablishRequest::Create(
     uint64_t gpu_client_tracing_id) {
   scoped_refptr<EstablishRequest> establish_request =
       new EstablishRequest(gpu_client_id, gpu_client_tracing_id);
-  scoped_refptr<base::SingleThreadTaskRunner> task_runner =
-      BrowserThread::GetTaskRunnerForThread(BrowserThread::IO);
   // PostTask outside the constructor to ensure at least one reference exists.
-  task_runner->PostTask(
-      FROM_HERE,
+  BrowserThread::PostTask(
+      BrowserThread::IO, FROM_HERE,
       base::BindOnce(
           &BrowserGpuChannelHostFactory::EstablishRequest::EstablishOnIO,
           establish_request));
@@ -151,12 +149,18 @@ void BrowserGpuChannelHostFactory::EstablishRequest::OnEstablishedOnIO(
         base::BindOnce(
             &BrowserGpuChannelHostFactory::EstablishRequest::RestartTimeout,
             this));
-    EstablishOnIO();
+    BrowserThread::PostTask(
+        BrowserThread::IO, FROM_HERE,
+        base::BindOnce(
+            &BrowserGpuChannelHostFactory::EstablishRequest::EstablishOnIO,
+            this));
     return;
   }
-  channel_handle_ = std::move(channel_handle);
-  gpu_info_ = gpu_info;
-  gpu_feature_info_ = gpu_feature_info;
+
+  if (channel_handle.is_valid()) {
+    gpu_channel_ = base::MakeRefCounted<gpu::GpuChannelHost>(
+        gpu_client_id_, gpu_info, gpu_feature_info, std::move(channel_handle));
+  }
   FinishOnIO();
 }
 
@@ -164,8 +168,15 @@ void BrowserGpuChannelHostFactory::EstablishRequest::FinishOnIO() {
   event_.Signal();
   main_task_runner_->PostTask(
       FROM_HERE,
-      base::BindOnce(
-          &BrowserGpuChannelHostFactory::EstablishRequest::FinishOnMain, this));
+      base::BindOnce(&BrowserGpuChannelHostFactory::EstablishRequest::
+                         FinishAndRunCallbacksOnMain,
+                     this));
+}
+
+void BrowserGpuChannelHostFactory::EstablishRequest::
+    FinishAndRunCallbacksOnMain() {
+  FinishOnMain();
+  RunCallbacksOnMain();
 }
 
 void BrowserGpuChannelHostFactory::EstablishRequest::FinishOnMain() {
@@ -175,6 +186,13 @@ void BrowserGpuChannelHostFactory::EstablishRequest::FinishOnMain() {
     factory->GpuChannelEstablished();
     finished_ = true;
   }
+}
+
+void BrowserGpuChannelHostFactory::EstablishRequest::RunCallbacksOnMain() {
+  std::vector<gpu::GpuChannelEstablishedCallback> established_callbacks;
+  established_callbacks_.swap(established_callbacks);
+  for (auto&& callback : std::move(established_callbacks))
+    std::move(callback).Run(gpu_channel_);
 }
 
 void BrowserGpuChannelHostFactory::EstablishRequest::Wait() {
@@ -195,6 +213,7 @@ void BrowserGpuChannelHostFactory::EstablishRequest::Wait() {
 void BrowserGpuChannelHostFactory::EstablishRequest::Cancel() {
   DCHECK(main_task_runner_->BelongsToCurrentThread());
   finished_ = true;
+  established_callbacks_.clear();
 }
 
 void BrowserGpuChannelHostFactory::CloseChannel() {
@@ -252,9 +271,9 @@ BrowserGpuChannelHostFactory::~BrowserGpuChannelHostFactory() {
 }
 
 void BrowserGpuChannelHostFactory::EstablishGpuChannel(
-    const gpu::GpuChannelEstablishedCallback& callback) {
+    gpu::GpuChannelEstablishedCallback callback) {
 #if defined(USE_AURA)
-  DCHECK(!switches::IsMusHostingViz());
+  DCHECK(!base::FeatureList::IsEnabled(::features::kMash));
 #endif
   DCHECK(BrowserThread::CurrentlyOn(BrowserThread::UI));
   if (gpu_channel_.get() && gpu_channel_->IsLost()) {
@@ -272,10 +291,12 @@ void BrowserGpuChannelHostFactory::EstablishGpuChannel(
   }
 
   if (!callback.is_null()) {
-    if (gpu_channel_.get())
-      callback.Run(gpu_channel_);
-    else
-      established_callbacks_.push_back(callback);
+    if (gpu_channel_.get()) {
+      std::move(callback).Run(gpu_channel_);
+    } else {
+      DCHECK(pending_request_);
+      pending_request_->AddCallback(std::move(callback));
+    }
   }
 }
 
@@ -283,13 +304,11 @@ void BrowserGpuChannelHostFactory::EstablishGpuChannel(
 // (Opening the initial channel to a child process involves handling a reply
 // task on the UI thread first, so we cannot block here.)
 scoped_refptr<gpu::GpuChannelHost>
-BrowserGpuChannelHostFactory::EstablishGpuChannelSync(bool* connection_error) {
+BrowserGpuChannelHostFactory::EstablishGpuChannelSync() {
 #if defined(OS_ANDROID)
   NOTREACHED();
   return nullptr;
 #endif
-  if (connection_error)
-    *connection_error = false;
   EstablishGpuChannel(gpu::GpuChannelEstablishedCallback());
 
   if (pending_request_.get())
@@ -313,24 +332,11 @@ gpu::GpuChannelHost* BrowserGpuChannelHostFactory::GetGpuChannel() {
 void BrowserGpuChannelHostFactory::GpuChannelEstablished() {
   DCHECK(BrowserThread::CurrentlyOn(BrowserThread::UI));
   DCHECK(pending_request_.get());
-  mojo::ScopedMessagePipeHandle handle(pending_request_->TakeChannelHandle());
-  if (!handle.is_valid()) {
-    DCHECK(!gpu_channel_.get());
-  } else {
-    GetContentClient()->SetGpuInfo(pending_request_->gpu_info());
-    gpu_channel_ = base::MakeRefCounted<gpu::GpuChannelHost>(
-        BrowserThread::GetTaskRunnerForThread(BrowserThread::IO),
-        gpu_client_id_, pending_request_->gpu_info(),
-        pending_request_->gpu_feature_info(), std::move(handle),
-        gpu_memory_buffer_manager_.get());
-  }
+  gpu_channel_ = pending_request_->gpu_channel();
   pending_request_ = nullptr;
   timeout_.Stop();
-
-  std::vector<gpu::GpuChannelEstablishedCallback> established_callbacks;
-  established_callbacks_.swap(established_callbacks);
-  for (auto& callback : established_callbacks)
-    callback.Run(gpu_channel_);
+  if (gpu_channel_)
+    GetContentClient()->SetGpuInfo(gpu_channel_->gpu_info());
 }
 
 void BrowserGpuChannelHostFactory::RestartTimeout() {
@@ -346,7 +352,7 @@ void BrowserGpuChannelHostFactory::RestartTimeout() {
     return;
 
 #if defined(ADDRESS_SANITIZER) || defined(THREAD_SANITIZER) || \
-    defined(SYZYASAN) || defined(CYGPROFILE_INSTRUMENTATION)
+    defined(CYGPROFILE_INSTRUMENTATION)
   constexpr int64_t kGpuChannelTimeoutInSeconds = 40;
 #else
   // The GPU watchdog timeout is 15 seconds (1.5x the kGpuTimeout value due to

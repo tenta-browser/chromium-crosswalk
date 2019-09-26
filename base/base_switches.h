@@ -11,6 +11,7 @@
 
 namespace switches {
 
+extern const char kDisableBackgroundTasks[];
 extern const char kDisableBreakpad[];
 extern const char kDisableFeatures[];
 extern const char kDisableLowEndDeviceMode[];
@@ -37,12 +38,18 @@ extern const char kWaitForDebugger[];
 extern const char kDisableUsbKeyboardDetect[];
 #endif
 
+#if defined(OS_LINUX) && !defined(OS_CHROMEOS)
+extern const char kDisableDevShmUsage[];
+#endif
+
 #if defined(OS_POSIX)
 extern const char kEnableCrashReporterForTesting[];
 #endif
 
 #if defined(OS_ANDROID)
-extern const char kMadviseRandomExecutableCode[];
+extern const char kOrderfileMemoryOptimization[];
+extern const char kForceNativePrefetch[];
+extern const char kNativePrefetchOrderedOnly[];
 #endif
 
 }  // namespace switches

@@ -64,7 +64,7 @@ bool IsValidSessionDescriptionType(const std::string& type) {
 }
 
 void UpdateCodecParameters(SdpMessage* sdp_message, bool incoming) {
-  // Set bitrate range to 1-20 Mbps.
+  // Set bitrate range to 1-100 Mbps.
   //  - Setting min bitrate here enables padding.
   //  - The default max bitrate is 600 kbps. Increasing it allows to
   //    use higher bandwidth when it's available.
@@ -75,11 +75,9 @@ void UpdateCodecParameters(SdpMessage* sdp_message, bool incoming) {
   // TODO(isheriff): The need for this should go away once we have a proper
   // API to provide max bitrate for the case of handing over encoded
   // frames to webrtc.
-  // TODO(crbug.com/773549): Increase the max bitrate to 100Mbps when the
-  // underlying bug is fixed to handle high load at high bitrate.
   if (sdp_message->has_video()) {
     const char* kParameters =
-        "x-google-min-bitrate=1000; x-google-max-bitrate=20000";
+        "x-google-min-bitrate=1000; x-google-max-bitrate=100000";
     bool param_added = sdp_message->AddCodecParameter("VP8", kParameters);
     param_added |= sdp_message->AddCodecParameter("VP9", kParameters);
     param_added |= sdp_message->AddCodecParameter("H264", kParameters);
@@ -210,7 +208,8 @@ class WebrtcTransport::PeerConnectionWrapper
     peer_connection_ = peer_connection_factory_->CreatePeerConnection(
         rtc_config, &constraints, std::move(port_allocator), nullptr, this);
   }
-  virtual ~PeerConnectionWrapper() {
+
+  ~PeerConnectionWrapper() override {
     // PeerConnection creates threads internally, which are stopped when the
     // connection is closed. Thread.Stop() is a blocking operation.
     // See crbug.com/660081.
@@ -332,7 +331,7 @@ std::unique_ptr<MessagePipe> WebrtcTransport::CreateOutgoingChannel(
     const std::string& name) {
   webrtc::DataChannelInit config;
   config.reliable = true;
-  return base::MakeUnique<WebrtcDataStreamAdapter>(
+  return std::make_unique<WebrtcDataStreamAdapter>(
       peer_connection()->CreateDataChannel(name, &config));
 }
 
@@ -393,8 +392,8 @@ bool WebrtcTransport::ProcessTransportInfo(XmlElement* transport_info) {
         session_description->Attr(QName(std::string(), "signature"));
     std::string signature;
     if (!base::Base64Decode(signature_base64, &signature) ||
-        !handshake_hmac_.Verify(type + " " + sdp_message.ToString(),
-                                signature)) {
+        !handshake_hmac_.Verify(
+            type + " " + sdp_message.NormalizedForSignature(), signature)) {
       LOG(WARNING) << "Received session-description with invalid signature.";
       bool ignore_error = false;
 #if !defined(NDEBUG)
@@ -517,9 +516,9 @@ void WebrtcTransport::OnLocalSessionDescriptionCreated(
 
   std::string digest;
   digest.resize(handshake_hmac_.DigestLength());
-  CHECK(handshake_hmac_.Sign(description->type() + " " + description_sdp,
-                             reinterpret_cast<uint8_t*>(&(digest[0])),
-                             digest.size()));
+  CHECK(handshake_hmac_.Sign(
+      description->type() + " " + sdp_message.NormalizedForSignature(),
+      reinterpret_cast<uint8_t*>(&(digest[0])), digest.size()));
   std::string digest_base64;
   base::Base64Encode(digest, &digest_base64);
   offer_tag->SetAttr(QName(std::string(), "signature"), digest_base64);
@@ -596,7 +595,7 @@ void WebrtcTransport::OnDataChannel(
   DCHECK(thread_checker_.CalledOnValidThread());
   event_handler_->OnWebrtcTransportIncomingDataChannel(
       data_channel->label(),
-      base::MakeUnique<WebrtcDataStreamAdapter>(data_channel));
+      std::make_unique<WebrtcDataStreamAdapter>(data_channel));
 }
 
 void WebrtcTransport::OnRenegotiationNeeded() {
@@ -630,6 +629,13 @@ void WebrtcTransport::OnIceConnectionChange(
       new_state == webrtc::PeerConnectionInterface::kIceConnectionConnected) {
     connected_ = true;
     event_handler_->OnWebrtcTransportConnected();
+  } else if (connected_ &&
+             new_state ==
+                 webrtc::PeerConnectionInterface::kIceConnectionDisconnected &&
+             transport_context_->role() == TransportRole::SERVER) {
+    connected_ = false;
+    want_ice_restart_ = true;
+    RequestNegotiation();
   }
 }
 
@@ -694,6 +700,11 @@ void WebrtcTransport::SendOffer() {
       webrtc::MediaConstraintsInterface::kValueFalse);
   offer_config.AddMandatory(webrtc::MediaConstraintsInterface::kEnableDtlsSrtp,
                             webrtc::MediaConstraintsInterface::kValueTrue);
+  if (want_ice_restart_) {
+    offer_config.AddMandatory(webrtc::MediaConstraintsInterface::kIceRestart,
+                              webrtc::MediaConstraintsInterface::kValueTrue);
+    want_ice_restart_ = false;
+  }
   peer_connection()->CreateOffer(
       CreateSessionDescriptionObserver::Create(
           base::Bind(&WebrtcTransport::OnLocalSessionDescriptionCreated,

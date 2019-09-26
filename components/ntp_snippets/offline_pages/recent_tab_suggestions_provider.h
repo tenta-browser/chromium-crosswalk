@@ -44,6 +44,8 @@ class RecentTabSuggestionsProvider : public ContentSuggestionsProvider,
   void DismissSuggestion(const ContentSuggestion::ID& suggestion_id) override;
   void FetchSuggestionImage(const ContentSuggestion::ID& suggestion_id,
                             ImageFetchedCallback callback) override;
+  void FetchSuggestionImageData(const ContentSuggestion::ID& suggestion_id,
+                                ImageDataFetchedCallback callback) override;
   void Fetch(const Category& category,
              const std::set<std::string>& known_suggestion_ids,
              FetchDoneCallback callback) override;
@@ -63,7 +65,6 @@ class RecentTabSuggestionsProvider : public ContentSuggestionsProvider,
   friend class RecentTabSuggestionsProviderTestNoLoad;
 
   // OfflineContentProvider::Observer implementation.
-  void OnItemsAvailable(OfflineContentProvider* provider) override;
   void OnItemsAdded(const std::vector<OfflineItem>& items) override;
   void OnItemRemoved(const ContentId& id) override;
   void OnItemUpdated(const OfflineItem& item) override;
@@ -74,6 +75,11 @@ class RecentTabSuggestionsProvider : public ContentSuggestionsProvider,
 
   // Manually requests all Recent Tabs UI items and updates the suggestions.
   void FetchRecentTabs();
+  void OnFetchRecentTabsDone(const std::vector<OfflineItem>& offline_items);
+
+  void OnGetDismissedSuggestionsForDebuggingDone(
+      DismissedSuggestionsCallback callback,
+      const std::vector<OfflineItem>& offline_items);
 
   // Converts an OfflineItem to a ContentSuggestion for the
   // |provided_category_|.

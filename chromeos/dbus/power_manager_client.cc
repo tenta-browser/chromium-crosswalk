@@ -25,10 +25,10 @@
 #include "base/timer/timer.h"
 #include "chromeos/chromeos_switches.h"
 #include "chromeos/dbus/fake_power_manager_client.h"
+#include "chromeos/dbus/power_manager/backlight.pb.h"
 #include "chromeos/dbus/power_manager/idle.pb.h"
 #include "chromeos/dbus/power_manager/input_event.pb.h"
 #include "chromeos/dbus/power_manager/peripheral_battery_status.pb.h"
-#include "chromeos/dbus/power_manager/policy.pb.h"
 #include "chromeos/dbus/power_manager/power_supply_properties.pb.h"
 #include "chromeos/dbus/power_manager/switch_states.pb.h"
 #include "chromeos/system/statistics_provider.h"
@@ -88,17 +88,6 @@ class PowerManagerClientImpl : public PowerManagerClient {
  public:
   PowerManagerClientImpl()
       : origin_thread_id_(base::PlatformThread::CurrentId()),
-        power_manager_proxy_(NULL),
-        suspend_delay_id_(-1),
-        has_suspend_delay_id_(false),
-        dark_suspend_delay_id_(-1),
-        has_dark_suspend_delay_id_(false),
-        pending_suspend_id_(-1),
-        suspend_is_pending_(false),
-        suspending_from_dark_resume_(false),
-        num_pending_suspend_readiness_callbacks_(0),
-        notifying_observers_about_suspend_imminent_(false),
-        last_is_projecting_(false),
         weak_ptr_factory_(this) {}
 
   ~PowerManagerClientImpl() override {
@@ -138,10 +127,9 @@ class PowerManagerClientImpl : public PowerManagerClient {
         power_manager::kDecreaseScreenBrightnessMethod);
     dbus::MessageWriter writer(&method_call);
     writer.AppendBool(allow_off);
-    power_manager_proxy_->CallMethod(
-        &method_call,
-        dbus::ObjectProxy::TIMEOUT_USE_DEFAULT,
-        dbus::ObjectProxy::EmptyResponseCallback());
+    power_manager_proxy_->CallMethod(&method_call,
+                                     dbus::ObjectProxy::TIMEOUT_USE_DEFAULT,
+                                     base::DoNothing());
   }
 
   void IncreaseScreenBrightness() override {
@@ -169,10 +157,9 @@ class PowerManagerClientImpl : public PowerManagerClient {
         gradual ?
         power_manager::kBrightnessTransitionGradual :
         power_manager::kBrightnessTransitionInstant);
-    power_manager_proxy_->CallMethod(
-        &method_call,
-        dbus::ObjectProxy::TIMEOUT_USE_DEFAULT,
-        dbus::ObjectProxy::EmptyResponseCallback());
+    power_manager_proxy_->CallMethod(&method_call,
+                                     dbus::ObjectProxy::TIMEOUT_USE_DEFAULT,
+                                     base::DoNothing());
   }
 
   void GetScreenBrightnessPercent(
@@ -212,9 +199,9 @@ class PowerManagerClientImpl : public PowerManagerClient {
     dbus::MessageWriter writer(&method_call);
     writer.AppendInt32(reason);
     writer.AppendString(description);
-    power_manager_proxy_->CallMethod(
-        &method_call, dbus::ObjectProxy::TIMEOUT_USE_DEFAULT,
-        dbus::ObjectProxy::EmptyResponseCallback());
+    power_manager_proxy_->CallMethod(&method_call,
+                                     dbus::ObjectProxy::TIMEOUT_USE_DEFAULT,
+                                     base::DoNothing());
   }
 
   void RequestShutdown(power_manager::RequestShutdownReason reason,
@@ -226,9 +213,9 @@ class PowerManagerClientImpl : public PowerManagerClient {
     dbus::MessageWriter writer(&method_call);
     writer.AppendInt32(reason);
     writer.AppendString(description);
-    power_manager_proxy_->CallMethod(
-        &method_call, dbus::ObjectProxy::TIMEOUT_USE_DEFAULT,
-        dbus::ObjectProxy::EmptyResponseCallback());
+    power_manager_proxy_->CallMethod(&method_call,
+                                     dbus::ObjectProxy::TIMEOUT_USE_DEFAULT,
+                                     base::DoNothing());
   }
 
   void NotifyUserActivity(power_manager::UserActivityType type) override {
@@ -238,10 +225,9 @@ class PowerManagerClientImpl : public PowerManagerClient {
     dbus::MessageWriter writer(&method_call);
     writer.AppendInt32(type);
 
-    power_manager_proxy_->CallMethod(
-        &method_call,
-        dbus::ObjectProxy::TIMEOUT_USE_DEFAULT,
-        dbus::ObjectProxy::EmptyResponseCallback());
+    power_manager_proxy_->CallMethod(&method_call,
+                                     dbus::ObjectProxy::TIMEOUT_USE_DEFAULT,
+                                     base::DoNothing());
   }
 
   void NotifyVideoActivity(bool is_fullscreen) override {
@@ -251,10 +237,9 @@ class PowerManagerClientImpl : public PowerManagerClient {
     dbus::MessageWriter writer(&method_call);
     writer.AppendBool(is_fullscreen);
 
-    power_manager_proxy_->CallMethod(
-        &method_call,
-        dbus::ObjectProxy::TIMEOUT_USE_DEFAULT,
-        dbus::ObjectProxy::EmptyResponseCallback());
+    power_manager_proxy_->CallMethod(&method_call,
+                                     dbus::ObjectProxy::TIMEOUT_USE_DEFAULT,
+                                     base::DoNothing());
   }
 
   void SetPolicy(const power_manager::PowerManagementPolicy& policy) override {
@@ -267,10 +252,9 @@ class PowerManagerClientImpl : public PowerManagerClient {
       POWER_LOG(ERROR) << "Error calling " << power_manager::kSetPolicyMethod;
       return;
     }
-    power_manager_proxy_->CallMethod(
-        &method_call,
-        dbus::ObjectProxy::TIMEOUT_USE_DEFAULT,
-        dbus::ObjectProxy::EmptyResponseCallback());
+    power_manager_proxy_->CallMethod(&method_call,
+                                     dbus::ObjectProxy::TIMEOUT_USE_DEFAULT,
+                                     base::DoNothing());
   }
 
   void SetIsProjecting(bool is_projecting) override {
@@ -280,10 +264,9 @@ class PowerManagerClientImpl : public PowerManagerClient {
         power_manager::kSetIsProjectingMethod);
     dbus::MessageWriter writer(&method_call);
     writer.AppendBool(is_projecting);
-    power_manager_proxy_->CallMethod(
-        &method_call,
-        dbus::ObjectProxy::TIMEOUT_USE_DEFAULT,
-        dbus::ObjectProxy::EmptyResponseCallback());
+    power_manager_proxy_->CallMethod(&method_call,
+                                     dbus::ObjectProxy::TIMEOUT_USE_DEFAULT,
+                                     base::DoNothing());
     last_is_projecting_ = is_projecting;
   }
 
@@ -293,18 +276,18 @@ class PowerManagerClientImpl : public PowerManagerClient {
                                  power_manager::kSetPowerSourceMethod);
     dbus::MessageWriter writer(&method_call);
     writer.AppendString(id);
-    power_manager_proxy_->CallMethod(
-        &method_call, dbus::ObjectProxy::TIMEOUT_USE_DEFAULT,
-        dbus::ObjectProxy::EmptyResponseCallback());
+    power_manager_proxy_->CallMethod(&method_call,
+                                     dbus::ObjectProxy::TIMEOUT_USE_DEFAULT,
+                                     base::DoNothing());
   }
 
   void SetBacklightsForcedOff(bool forced_off) override {
     dbus::MethodCall method_call(power_manager::kPowerManagerInterface,
                                  power_manager::kSetBacklightsForcedOffMethod);
     dbus::MessageWriter(&method_call).AppendBool(forced_off);
-    power_manager_proxy_->CallMethod(
-        &method_call, dbus::ObjectProxy::TIMEOUT_USE_DEFAULT,
-        dbus::ObjectProxy::EmptyResponseCallback());
+    power_manager_proxy_->CallMethod(&method_call,
+                                     dbus::ObjectProxy::TIMEOUT_USE_DEFAULT,
+                                     base::DoNothing());
   }
 
   void GetBacklightsForcedOff(DBusMethodCallback<bool> callback) override {
@@ -325,17 +308,31 @@ class PowerManagerClientImpl : public PowerManagerClient {
                        weak_ptr_factory_.GetWeakPtr(), std::move(callback)));
   }
 
-  base::Closure GetSuspendReadinessCallback() override {
+  void GetInactivityDelays(
+      DBusMethodCallback<power_manager::PowerManagementPolicy::Delays> callback)
+      override {
+    dbus::MethodCall method_call(power_manager::kPowerManagerInterface,
+                                 power_manager::kGetInactivityDelaysMethod);
+    power_manager_proxy_->CallMethod(
+        &method_call, dbus::ObjectProxy::TIMEOUT_USE_DEFAULT,
+        base::BindOnce(&PowerManagerClientImpl::OnGetInactivityDelays,
+                       weak_ptr_factory_.GetWeakPtr(), std::move(callback)));
+  }
+
+  base::Closure GetSuspendReadinessCallback(
+      const base::Location& from_where) override {
     DCHECK(OnOriginThread());
     DCHECK(suspend_is_pending_);
-    num_pending_suspend_readiness_callbacks_++;
+
+    const int callback_id = next_suspend_readiness_callback_id_++;
+    pending_suspend_readiness_callbacks_[callback_id] = from_where;
     return base::Bind(&PowerManagerClientImpl::HandleObserverSuspendReadiness,
                       weak_ptr_factory_.GetWeakPtr(), pending_suspend_id_,
-                      suspending_from_dark_resume_);
+                      suspending_from_dark_resume_, callback_id);
   }
 
   int GetNumPendingSuspendReadinessCallbacks() override {
-    return num_pending_suspend_readiness_callbacks_;
+    return pending_suspend_readiness_callbacks_.size();
   }
 
  protected:
@@ -348,100 +345,41 @@ class PowerManagerClientImpl : public PowerManagerClient {
         base::Bind(&PowerManagerClientImpl::NameOwnerChangedReceived,
                    weak_ptr_factory_.GetWeakPtr()));
 
-    // Monitor the D-Bus signal for brightness changes. Only the power
-    // manager knows the actual brightness level. We don't cache the
-    // brightness level in Chrome as it'll make things less reliable.
-    power_manager_proxy_->ConnectToSignal(
-        power_manager::kPowerManagerInterface,
-        power_manager::kBrightnessChangedSignal,
-        base::Bind(&PowerManagerClientImpl::BrightnessChangedReceived,
-                   weak_ptr_factory_.GetWeakPtr()),
-        base::Bind(&PowerManagerClientImpl::SignalConnected,
-                   weak_ptr_factory_.GetWeakPtr()));
-
-    power_manager_proxy_->ConnectToSignal(
-        power_manager::kPowerManagerInterface,
-        power_manager::kKeyboardBrightnessChangedSignal,
-        base::Bind(&PowerManagerClientImpl::KeyboardBrightnessChangedReceived,
-                   weak_ptr_factory_.GetWeakPtr()),
-        base::Bind(&PowerManagerClientImpl::SignalConnected,
-                   weak_ptr_factory_.GetWeakPtr()));
-
-    power_manager_proxy_->ConnectToSignal(
-        power_manager::kPowerManagerInterface,
-        power_manager::kScreenIdleStateChangedSignal,
-        base::Bind(&PowerManagerClientImpl::ScreenIdleStateChangedReceived,
-                   weak_ptr_factory_.GetWeakPtr()),
-        base::Bind(&PowerManagerClientImpl::SignalConnected,
-                   weak_ptr_factory_.GetWeakPtr()));
-
-    power_manager_proxy_->ConnectToSignal(
-        power_manager::kPowerManagerInterface,
-        power_manager::kPeripheralBatteryStatusSignal,
-        base::Bind(&PowerManagerClientImpl::PeripheralBatteryStatusReceived,
-                   weak_ptr_factory_.GetWeakPtr()),
-        base::Bind(&PowerManagerClientImpl::SignalConnected,
-                   weak_ptr_factory_.GetWeakPtr()));
-
-    power_manager_proxy_->ConnectToSignal(
-        power_manager::kPowerManagerInterface,
-        power_manager::kPowerSupplyPollSignal,
-        base::Bind(&PowerManagerClientImpl::PowerSupplyPollReceived,
-                   weak_ptr_factory_.GetWeakPtr()),
-        base::Bind(&PowerManagerClientImpl::SignalConnected,
-                   weak_ptr_factory_.GetWeakPtr()));
-
-    power_manager_proxy_->ConnectToSignal(
-        power_manager::kPowerManagerInterface,
-        power_manager::kInputEventSignal,
-        base::Bind(&PowerManagerClientImpl::InputEventReceived,
-                   weak_ptr_factory_.GetWeakPtr()),
-        base::Bind(&PowerManagerClientImpl::SignalConnected,
-                   weak_ptr_factory_.GetWeakPtr()));
-
-    power_manager_proxy_->ConnectToSignal(
-        power_manager::kPowerManagerInterface,
-        power_manager::kSuspendImminentSignal,
-        base::Bind(
-            &PowerManagerClientImpl::HandleSuspendImminent,
-            weak_ptr_factory_.GetWeakPtr(), false),
-        base::Bind(&PowerManagerClientImpl::SignalConnected,
-                   weak_ptr_factory_.GetWeakPtr()));
-
-    power_manager_proxy_->ConnectToSignal(
-        power_manager::kPowerManagerInterface,
-        power_manager::kSuspendDoneSignal,
-        base::Bind(&PowerManagerClientImpl::SuspendDoneReceived,
-                   weak_ptr_factory_.GetWeakPtr()),
-        base::Bind(&PowerManagerClientImpl::SignalConnected,
-                   weak_ptr_factory_.GetWeakPtr()));
-
-    power_manager_proxy_->ConnectToSignal(
-        power_manager::kPowerManagerInterface,
-        power_manager::kDarkSuspendImminentSignal,
-        base::Bind(
-            &PowerManagerClientImpl::HandleSuspendImminent,
-            weak_ptr_factory_.GetWeakPtr(), true),
-        base::Bind(&PowerManagerClientImpl::SignalConnected,
-                   weak_ptr_factory_.GetWeakPtr()));
-
-    power_manager_proxy_->ConnectToSignal(
-        power_manager::kPowerManagerInterface,
-        power_manager::kIdleActionImminentSignal,
-        base::Bind(
-            &PowerManagerClientImpl::IdleActionImminentReceived,
-            weak_ptr_factory_.GetWeakPtr()),
-        base::Bind(&PowerManagerClientImpl::SignalConnected,
-                   weak_ptr_factory_.GetWeakPtr()));
-
-    power_manager_proxy_->ConnectToSignal(
-        power_manager::kPowerManagerInterface,
-        power_manager::kIdleActionDeferredSignal,
-        base::Bind(
-            &PowerManagerClientImpl::IdleActionDeferredReceived,
-            weak_ptr_factory_.GetWeakPtr()),
-        base::Bind(&PowerManagerClientImpl::SignalConnected,
-                   weak_ptr_factory_.GetWeakPtr()));
+    // Listen to D-Bus signals emitted by powerd.
+    typedef void (PowerManagerClientImpl::*SignalMethod)(dbus::Signal*);
+    const std::map<const char*, SignalMethod> kSignalMethods = {
+        {power_manager::kScreenBrightnessChangedSignal,
+         &PowerManagerClientImpl::ScreenBrightnessChangedReceived},
+        {power_manager::kKeyboardBrightnessChangedSignal,
+         &PowerManagerClientImpl::KeyboardBrightnessChangedReceived},
+        {power_manager::kScreenIdleStateChangedSignal,
+         &PowerManagerClientImpl::ScreenIdleStateChangedReceived},
+        {power_manager::kInactivityDelaysChangedSignal,
+         &PowerManagerClientImpl::InactivityDelaysChangedReceived},
+        {power_manager::kPeripheralBatteryStatusSignal,
+         &PowerManagerClientImpl::PeripheralBatteryStatusReceived},
+        {power_manager::kPowerSupplyPollSignal,
+         &PowerManagerClientImpl::PowerSupplyPollReceived},
+        {power_manager::kInputEventSignal,
+         &PowerManagerClientImpl::InputEventReceived},
+        {power_manager::kSuspendImminentSignal,
+         &PowerManagerClientImpl::SuspendImminentReceived},
+        {power_manager::kSuspendDoneSignal,
+         &PowerManagerClientImpl::SuspendDoneReceived},
+        {power_manager::kDarkSuspendImminentSignal,
+         &PowerManagerClientImpl::DarkSuspendImminentReceived},
+        {power_manager::kIdleActionImminentSignal,
+         &PowerManagerClientImpl::IdleActionImminentReceived},
+        {power_manager::kIdleActionDeferredSignal,
+         &PowerManagerClientImpl::IdleActionDeferredReceived},
+    };
+    for (const auto& it : kSignalMethods) {
+      power_manager_proxy_->ConnectToSignal(
+          power_manager::kPowerManagerInterface, it.first,
+          base::BindRepeating(it.second, weak_ptr_factory_.GetWeakPtr()),
+          base::BindOnce(&PowerManagerClientImpl::SignalConnected,
+                         weak_ptr_factory_.GetWeakPtr()));
+    }
 
     RegisterSuspendDelays();
   }
@@ -464,10 +402,9 @@ class PowerManagerClientImpl : public PowerManagerClient {
   void SimpleMethodCallToPowerManager(const std::string& method_name) {
     dbus::MethodCall method_call(power_manager::kPowerManagerInterface,
                                  method_name);
-    power_manager_proxy_->CallMethod(
-        &method_call,
-        dbus::ObjectProxy::TIMEOUT_USE_DEFAULT,
-        dbus::ObjectProxy::EmptyResponseCallback());
+    power_manager_proxy_->CallMethod(&method_call,
+                                     dbus::ObjectProxy::TIMEOUT_USE_DEFAULT,
+                                     base::DoNothing());
   }
 
   void NameOwnerChangedReceived(const std::string& old_owner,
@@ -488,36 +425,34 @@ class PowerManagerClientImpl : public PowerManagerClient {
     }
   }
 
-  void BrightnessChangedReceived(dbus::Signal* signal) {
+  void ScreenBrightnessChangedReceived(dbus::Signal* signal) {
     dbus::MessageReader reader(signal);
-    int32_t brightness_level = 0;
-    bool user_initiated = 0;
-    if (!(reader.PopInt32(&brightness_level) &&
-          reader.PopBool(&user_initiated))) {
-      POWER_LOG(ERROR) << "Brightness changed signal had incorrect parameters: "
-                       << signal->ToString();
+    power_manager::BacklightBrightnessChange proto;
+    if (!reader.PopArrayOfBytesAsProto(&proto)) {
+      POWER_LOG(ERROR) << "Unable to decode protocol buffer from "
+                       << power_manager::kScreenBrightnessChangedSignal
+                       << " signal";
       return;
     }
-    POWER_LOG(DEBUG) << "Brightness changed to " << brightness_level
-                     << ": user initiated " << user_initiated;
+    POWER_LOG(DEBUG) << "Screen brightness changed to " << proto.percent()
+                     << ": cause " << proto.cause();
     for (auto& observer : observers_)
-      observer.BrightnessChanged(brightness_level, user_initiated);
+      observer.ScreenBrightnessChanged(proto);
   }
 
   void KeyboardBrightnessChangedReceived(dbus::Signal* signal) {
     dbus::MessageReader reader(signal);
-    int32_t brightness_level = 0;
-    bool user_initiated = 0;
-    if (!(reader.PopInt32(&brightness_level) &&
-          reader.PopBool(&user_initiated))) {
-      POWER_LOG(ERROR) << "Keyboard brightness changed signal had incorrect "
-                       << "parameters: " << signal->ToString();
+    power_manager::BacklightBrightnessChange proto;
+    if (!reader.PopArrayOfBytesAsProto(&proto)) {
+      POWER_LOG(ERROR) << "Unable to decode protocol buffer from "
+                       << power_manager::kKeyboardBrightnessChangedSignal
+                       << " signal";
       return;
     }
-    POWER_LOG(DEBUG) << "Keyboard brightness changed to " << brightness_level
-                     << ": user initiated " << user_initiated;
+    POWER_LOG(DEBUG) << "Keyboard brightness changed to " << proto.percent()
+                     << ": cause " << proto.cause();
     for (auto& observer : observers_)
-      observer.KeyboardBrightnessChanged(brightness_level, user_initiated);
+      observer.KeyboardBrightnessChanged(proto);
   }
 
   void ScreenIdleStateChangedReceived(dbus::Signal* signal) {
@@ -531,6 +466,19 @@ class PowerManagerClientImpl : public PowerManagerClient {
     }
     for (auto& observer : observers_)
       observer.ScreenIdleStateChanged(proto);
+  }
+
+  void InactivityDelaysChangedReceived(dbus::Signal* signal) {
+    dbus::MessageReader reader(signal);
+    power_manager::PowerManagementPolicy::Delays proto;
+    if (!reader.PopArrayOfBytesAsProto(&proto)) {
+      POWER_LOG(ERROR) << "Unable to decode protocol buffer from "
+                       << power_manager::kInactivityDelaysChangedSignal
+                       << " signal";
+      return;
+    }
+    for (auto& observer : observers_)
+      observer.InactivityDelaysChanged(proto);
   }
 
   void PeripheralBatteryStatusReceived(dbus::Signal* signal) {
@@ -646,6 +594,27 @@ class PowerManagerClientImpl : public PowerManagerClient {
                      GetTabletModeFromProtoEnum(proto.tablet_mode())});
   }
 
+  void OnGetInactivityDelays(
+      DBusMethodCallback<power_manager::PowerManagementPolicy::Delays> callback,
+      dbus::Response* response) {
+    if (!response) {
+      POWER_LOG(ERROR) << "Error calling "
+                       << power_manager::kGetInactivityDelaysMethod;
+      std::move(callback).Run(base::nullopt);
+      return;
+    }
+
+    dbus::MessageReader reader(response);
+    power_manager::PowerManagementPolicy::Delays proto;
+    if (!reader.PopArrayOfBytesAsProto(&proto)) {
+      POWER_LOG(ERROR) << "Error parsing response from "
+                       << power_manager::kGetInactivityDelaysMethod;
+      std::move(callback).Run(base::nullopt);
+      return;
+    }
+    std::move(callback).Run(proto);
+  }
+
   void HandlePowerSupplyProperties(
       const power_manager::PowerSupplyProperties& proto) {
     for (auto& observer : observers_)
@@ -682,6 +651,14 @@ class PowerManagerClientImpl : public PowerManagerClient {
     }
   }
 
+  void SuspendImminentReceived(dbus::Signal* signal) {
+    HandleSuspendImminent(false /* in_dark_resume */, signal);
+  }
+
+  void DarkSuspendImminentReceived(dbus::Signal* signal) {
+    HandleSuspendImminent(true /* in_dark_resume */, signal);
+  }
+
   void HandleSuspendImminent(bool in_dark_resume, dbus::Signal* signal) {
     std::string signal_name = signal->GetMember();
     if ((in_dark_resume && !has_dark_suspend_delay_id_) ||
@@ -716,7 +693,7 @@ class PowerManagerClientImpl : public PowerManagerClient {
     pending_suspend_id_ = proto.suspend_id();
     suspend_is_pending_ = true;
     suspending_from_dark_resume_ = in_dark_resume;
-    num_pending_suspend_readiness_callbacks_ = 0;
+    pending_suspend_readiness_callbacks_.clear();
 
     // Record the fact that observers are being notified to ensure that we don't
     // report readiness prematurely if one of them calls
@@ -767,7 +744,14 @@ class PowerManagerClientImpl : public PowerManagerClient {
     pending_suspend_id_ = -1;
     suspend_is_pending_ = false;
     suspending_from_dark_resume_ = false;
-    num_pending_suspend_readiness_callbacks_ = 0;
+
+    // powerd gives clients a limited amount of time to report suspend
+    // readiness. Log the stragglers within Chrome to aid in debugging.
+    for (const auto it : pending_suspend_readiness_callbacks_) {
+      LOG(WARNING) << "Didn't report suspend readiness due to "
+                   << it.second.ToString();
+    }
+    pending_suspend_readiness_callbacks_.clear();
 
     for (auto& observer : observers_)
       observer.SuspendDone(duration);
@@ -823,9 +807,8 @@ class PowerManagerClientImpl : public PowerManagerClient {
           dbus::MessageWriter writer(&method_call);
           writer.AppendInt64(proto.timestamp());
           power_manager_proxy_->CallMethod(
-              &method_call,
-              dbus::ObjectProxy::TIMEOUT_USE_DEFAULT,
-              dbus::ObjectProxy::EmptyResponseCallback());
+              &method_call, dbus::ObjectProxy::TIMEOUT_USE_DEFAULT,
+              base::DoNothing());
         }
         break;
       }
@@ -883,30 +866,30 @@ class PowerManagerClientImpl : public PowerManagerClient {
     protobuf_request.set_description(kSuspendDelayDescription);
 
     RegisterSuspendDelayImpl(
-        power_manager::kRegisterSuspendDelayMethod,
-        protobuf_request,
-        base::Bind(&PowerManagerClientImpl::HandleRegisterSuspendDelayReply,
-                   weak_ptr_factory_.GetWeakPtr(), false,
-                   power_manager::kRegisterSuspendDelayMethod));
+        power_manager::kRegisterSuspendDelayMethod, protobuf_request,
+        base::BindOnce(&PowerManagerClientImpl::HandleRegisterSuspendDelayReply,
+                       weak_ptr_factory_.GetWeakPtr(), false,
+                       power_manager::kRegisterSuspendDelayMethod));
     RegisterSuspendDelayImpl(
-        power_manager::kRegisterDarkSuspendDelayMethod,
-        protobuf_request,
-        base::Bind(&PowerManagerClientImpl::HandleRegisterSuspendDelayReply,
-                   weak_ptr_factory_.GetWeakPtr(), true,
-                   power_manager::kRegisterDarkSuspendDelayMethod));
+        power_manager::kRegisterDarkSuspendDelayMethod, protobuf_request,
+        base::BindOnce(&PowerManagerClientImpl::HandleRegisterSuspendDelayReply,
+                       weak_ptr_factory_.GetWeakPtr(), true,
+                       power_manager::kRegisterDarkSuspendDelayMethod));
   }
 
   // Records the fact that an observer has finished doing asynchronous work
   // that was blocking a pending suspend attempt and possibly reports
   // suspend readiness to powerd.  Called by callbacks returned via
   // GetSuspendReadinessCallback().
-  void HandleObserverSuspendReadiness(int32_t suspend_id, bool in_dark_resume) {
+  void HandleObserverSuspendReadiness(int32_t suspend_id,
+                                      bool in_dark_resume,
+                                      int callback_id) {
     DCHECK(OnOriginThread());
     if (!suspend_is_pending_ || suspend_id != pending_suspend_id_ ||
         in_dark_resume != suspending_from_dark_resume_)
       return;
 
-    num_pending_suspend_readiness_callbacks_--;
+    pending_suspend_readiness_callbacks_.erase(callback_id);
     MaybeReportSuspendReadiness();
   }
 
@@ -920,7 +903,7 @@ class PowerManagerClientImpl : public PowerManagerClient {
     if (notifying_observers_about_suspend_imminent_)
       return;
 
-    if (num_pending_suspend_readiness_callbacks_ > 0)
+    if (GetNumPendingSuspendReadinessCallbacks() > 0)
       return;
 
     std::string method_name;
@@ -953,49 +936,51 @@ class PowerManagerClientImpl : public PowerManagerClient {
       POWER_LOG(ERROR) << "Error constructing message for " << method_name;
       return;
     }
-    power_manager_proxy_->CallMethod(
-        &method_call,
-        dbus::ObjectProxy::TIMEOUT_USE_DEFAULT,
-        dbus::ObjectProxy::EmptyResponseCallback());
+    power_manager_proxy_->CallMethod(&method_call,
+                                     dbus::ObjectProxy::TIMEOUT_USE_DEFAULT,
+                                     base::DoNothing());
   }
 
   // Origin thread (i.e. the UI thread in production).
   base::PlatformThreadId origin_thread_id_;
 
-  dbus::ObjectProxy* power_manager_proxy_;
+  dbus::ObjectProxy* power_manager_proxy_ = nullptr;
   base::ObserverList<Observer> observers_;
 
   // The delay ID obtained from the RegisterSuspendDelay request.
-  int32_t suspend_delay_id_;
-  bool has_suspend_delay_id_;
+  int32_t suspend_delay_id_ = -1;
+  bool has_suspend_delay_id_ = false;
 
   // The delay ID obtained from the RegisterDarkSuspendDelay request.
-  int32_t dark_suspend_delay_id_;
-  bool has_dark_suspend_delay_id_;
+  int32_t dark_suspend_delay_id_ = -1;
+  bool has_dark_suspend_delay_id_ = false;
 
   // powerd-supplied ID corresponding to an imminent (either regular or dark)
   // suspend attempt that is currently being delayed.
-  int32_t pending_suspend_id_;
-  bool suspend_is_pending_;
+  int32_t pending_suspend_id_ = -1;
+  bool suspend_is_pending_ = false;
 
   // Set to true when the suspend currently being delayed was triggered during a
   // dark resume.  Since |pending_suspend_id_| and |suspend_is_pending_| are
   // both shared by normal and dark suspends, |suspending_from_dark_resume_|
   // helps distinguish the context within which these variables are being used.
-  bool suspending_from_dark_resume_;
+  bool suspending_from_dark_resume_ = false;
 
-  // Number of callbacks that have been returned by
-  // GetSuspendReadinessCallback() during the currently-pending suspend
-  // attempt but have not yet been called.
-  int num_pending_suspend_readiness_callbacks_;
+  // Next ID to be assigned to a callback returned via
+  // GetSuspendReadinessCallback().
+  int next_suspend_readiness_callback_id_ = 1;
+
+  // Map from suspend readiness callback ID to the location of the code that
+  // requested the callback.
+  std::map<int, base::Location> pending_suspend_readiness_callbacks_;
 
   // Inspected by MaybeReportSuspendReadiness() to avoid prematurely notifying
   // powerd about suspend readiness while |observers_|' SuspendImminent()
   // methods are being called by HandleSuspendImminent().
-  bool notifying_observers_about_suspend_imminent_;
+  bool notifying_observers_about_suspend_imminent_ = false;
 
   // Last state passed to SetIsProjecting().
-  bool last_is_projecting_;
+  bool last_is_projecting_ = false;
 
   // The delegate used to manage the power consumption of Chrome's renderer
   // processes.

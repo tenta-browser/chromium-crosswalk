@@ -10,6 +10,7 @@
 #include <string>
 
 #include "base/bind.h"
+#include "base/bind_helpers.h"
 #include "base/command_line.h"
 #include "base/location.h"
 #include "base/macros.h"
@@ -99,7 +100,7 @@ class MAYBE_AudioInputDeviceManagerTest : public testing::Test {
   void WaitForOpenCompletion() {
     media::WaitableMessageLoopEvent event;
     audio_manager_->GetTaskRunner()->PostTaskAndReply(
-        FROM_HERE, base::BindOnce(&base::DoNothing), event.GetClosure());
+        FROM_HERE, base::DoNothing(), event.GetClosure());
     // Runs the loop and waits for the audio thread to call event's
     // closure.
     event.RunAndWait();
@@ -338,7 +339,6 @@ TEST_F(AudioInputDeviceManagerNoDevicesTest,
     // Expects that device parameters stored by the manager are valid.
     const MediaStreamDevice* device = manager_->GetOpenedDeviceById(session_id);
     EXPECT_TRUE(device->input.IsValid());
-    EXPECT_TRUE(device->matched_output.IsValid());
 
     manager_->Close(session_id);
     EXPECT_CALL(*audio_input_listener_, Closed(device_request.type, session_id))

@@ -112,9 +112,6 @@ class OmniboxView {
   // Returns true if all text is selected or there is no text at all.
   virtual bool IsSelectAll() const = 0;
 
-  // Returns true if the user deleted the suggested text.
-  virtual bool DeleteAtEndPressed() = 0;
-
   // Fills |start| and |end| with the indexes of the current selection's bounds.
   // It is not guaranteed that |*start < *end|, as the selection can be
   // directed.  If there is no selection, |start| and |end| will both be equal
@@ -277,7 +274,10 @@ class OmniboxView {
   // draw attention to whatever best represents the "identity" of the current
   // URL.
   void UpdateTextStyle(const base::string16& display_text,
+                       const bool text_is_url,
                        const AutocompleteSchemeClassifier& classifier);
+
+  void OnShiftKeyChanged(bool down) { shift_key_down_ = down; }
 
  private:
   friend class OmniboxViewMacTest;
@@ -285,6 +285,7 @@ class OmniboxView {
   // |model_| can be NULL in tests.
   std::unique_ptr<OmniboxEditModel> model_;
   OmniboxEditController* controller_;
+  bool shift_key_down_;
 
   DISALLOW_COPY_AND_ASSIGN(OmniboxView);
 };

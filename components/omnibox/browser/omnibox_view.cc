@@ -14,10 +14,10 @@
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "build/build_config.h"
-#include "components/grit/components_scaled_resources.h"
 #include "components/omnibox/browser/autocomplete_match.h"
 #include "components/omnibox/browser/omnibox_edit_controller.h"
 #include "components/omnibox/browser/omnibox_edit_model.h"
+#include "components/omnibox/browser/omnibox_field_trial.h"
 #include "components/toolbar/toolbar_model.h"
 #include "extensions/common/constants.h"
 #include "ui/base/l10n/l10n_util.h"
@@ -87,6 +87,17 @@ void OmniboxView::OpenMatch(const AutocompleteMatch& match,
   // Invalid URLs such as chrome://history can end up here.
   if (!match.destination_url.is_valid() || !model_)
     return;
+  // Unless user requests navigation, change disposition for this match type
+  // so downstream will switch tabs.
+  if (match.has_tab_match) {
+    // "with-button" option inverts default action.
+    bool invert = OmniboxFieldTrial::InTabSwitchSuggestionWithButtonTrial();
+    if (disposition == WindowOpenDisposition::CURRENT_TAB &&
+        // i.e. If shift is not pressed without button, or down with it,
+        // change it to switch tabs.
+        invert == shift_key_down_)
+      disposition = WindowOpenDisposition::SWITCH_TO_TAB;
+  }
   model_->OpenMatch(
       match, disposition, alternate_nav_url, pasted_text, selected_line);
 }
@@ -102,7 +113,8 @@ const gfx::VectorIcon& OmniboxView::GetVectorIcon() const {
 
   return AutocompleteMatch::TypeToVectorIcon(
       model_ ? model_->CurrentTextType()
-             : AutocompleteMatchType::URL_WHAT_YOU_TYPED);
+             : AutocompleteMatchType::URL_WHAT_YOU_TYPED,
+      /*is_bookmark=*/false, /*is_tab_match=*/false);
 }
 
 void OmniboxView::SetUserText(const base::string16& text) {
@@ -187,7 +199,7 @@ OmniboxView::StateChanges OmniboxView::GetStateChanges(const State& before,
 
 OmniboxView::OmniboxView(OmniboxEditController* controller,
                          std::unique_ptr<OmniboxClient> client)
-    : controller_(controller) {
+    : controller_(controller), shift_key_down_(false) {
   // |client| can be null in tests.
   if (client) {
     model_.reset(new OmniboxEditModel(this, controller, std::move(client)));
@@ -202,6 +214,7 @@ void OmniboxView::TextChanged() {
 
 void OmniboxView::UpdateTextStyle(
     const base::string16& display_text,
+    const bool text_is_url,
     const AutocompleteSchemeClassifier& classifier) {
   enum DemphasizeComponents {
     EVERYTHING,
@@ -214,7 +227,7 @@ void OmniboxView::UpdateTextStyle(
   AutocompleteInput::ParseForEmphasizeComponents(display_text, classifier,
                                                  &scheme, &host);
 
-  if (model_->CurrentTextIsURL()) {
+  if (text_is_url) {
     const base::string16 url_scheme =
         display_text.substr(scheme.begin, scheme.len);
     // Extension IDs are not human-readable, so deemphasize everything to draw

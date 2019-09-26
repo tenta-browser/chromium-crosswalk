@@ -34,7 +34,9 @@
       'ts': 0
     },
     {
-      'args': {'sessionId': sessionId},
+      'args': {'data': {'sessionId': sessionId, 'frames': [
+        {'frame': 'frame1', 'url': 'frameurl', 'name': 'frame-name'}
+      ]}},
       'cat': 'disabled-by-default-devtools.timeline',
       'name': 'TracingStartedInPage',
       'ph': 'I',
@@ -62,7 +64,7 @@
   var model = PerformanceTestRunner.createPerformanceModelWithEvents(rawTraceEvents).timelineModel();
   var linkifier = new Components.Linkifier();
   var badgePool = new ProductRegistry.BadgePool();
-  for (var event of model.mainThreadEvents()) {
+  for (var event of PerformanceTestRunner.mainTrackEvents()) {
     var node = await Timeline.TimelineUIUtils.buildTraceEventDetails(event, model, linkifier, badgePool);
     await badgeRendered;
     for (var child of node.querySelectorAll('.timeline-details-view-row'))

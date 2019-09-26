@@ -15,15 +15,20 @@ import android.os.Bundle;
 import android.support.test.InstrumentationRegistry;
 import android.support.test.internal.runner.RunnerArgs;
 import android.support.test.internal.runner.TestExecutor;
+import android.support.test.internal.runner.TestLoader;
 import android.support.test.internal.runner.TestRequest;
 import android.support.test.internal.runner.TestRequestBuilder;
 import android.support.test.runner.AndroidJUnitRunner;
 
+import dalvik.system.DexFile;
+
+import org.chromium.base.BuildConfig;
 import org.chromium.base.Log;
 import org.chromium.base.multidex.ChromiumMultiDexInstaller;
 
-import java.io.File;
 import java.io.IOException;
+import java.lang.reflect.Field;
+import java.util.Enumeration;
 
 /**
  * A custom AndroidJUnitRunner that supports multidex installer and list out test information.
@@ -66,9 +71,25 @@ public class BaseChromiumAndroidJUnitRunner extends AndroidJUnitRunner {
     @Override
     public Application newApplication(ClassLoader cl, String className, Context context)
             throws ClassNotFoundException, IllegalAccessException, InstantiationException {
-        ChromiumMultiDexInstaller.install(new BaseChromiumRunnerCommon.MultiDexContextWrapper(
-                getContext(), getTargetContext()));
-        BaseChromiumRunnerCommon.reorderDexPathElements(cl, getContext(), getTargetContext());
+        // The multidex support library doesn't currently support having the test apk be multidex
+        // as well as the under-test apk being multidex. If MultiDex.install() is called for both,
+        // then re-extraction is triggered every time due to the support library caching only a
+        // single timestamp & crc.
+        //
+        // Attempt to install test apk multidex only if the apk-under-test is not multidex.
+        // It will likely continue to be true that the two are mutually exclusive because:
+        // * ProGuard enabled =>
+        //      Under-test apk is single dex.
+        //      Test apk duplicates under-test classes, so may need multidex.
+        // * ProGuard disabled =>
+        //      Under-test apk might be multidex
+        //      Test apk does not duplicate classes, so does not need multidex.
+        // https://crbug.com/824523
+        if (!BuildConfig.IS_MULTIDEX_ENABLED) {
+            ChromiumMultiDexInstaller.install(new BaseChromiumRunnerCommon.MultiDexContextWrapper(
+                    getContext(), getTargetContext()));
+            BaseChromiumRunnerCommon.reorderDexPathElements(cl, getContext(), getTargetContext());
+        }
         return super.newApplication(cl, className, context);
     }
 
@@ -154,32 +175,103 @@ public class BaseChromiumAndroidJUnitRunner extends AndroidJUnitRunner {
         finish(Activity.RESULT_OK, results);
     }
 
-    // For catch (Exception)
     private TestRequest createListTestRequest(Bundle arguments) {
         RunnerArgs runnerArgs =
                 new RunnerArgs.Builder().fromManifest(this).fromBundle(arguments).build();
-        TestRequestBuilder builder = new TestRequestBuilder(this, arguments);
-        builder.addApkToScan(getContext().getPackageCodePath());
-
-        File[] incrementalJars = null;
-        try {
-            Class<?> bootstrapClass =
-                    Class.forName("org.chromium.incrementalinstall.BootstrapApplication");
-            incrementalJars =
-                    (File[]) bootstrapClass.getDeclaredField("sIncrementalDexFiles").get(null);
-        } catch (Exception e) {
-            // Not an incremental build.
-        }
-        if (incrementalJars != null) {
-            for (File f : incrementalJars) {
-                builder.addApkToScan(f.getAbsolutePath());
-            }
-        }
+        TestRequestBuilder builder = new IncrementalInstallTestRequestBuilder(this, arguments);
         builder.addFromRunnerArgs(runnerArgs);
+        builder.addApkToScan(getContext().getPackageCodePath());
         return builder.build();
     }
 
     static boolean shouldListTests(Bundle arguments) {
         return arguments != null && arguments.getString(LIST_ALL_TESTS_FLAG) != null;
+    }
+
+    /**
+     * Wraps TestRequestBuilder to make it work with incremental install.
+     */
+    private static class IncrementalInstallTestRequestBuilder extends TestRequestBuilder {
+        boolean mHasClassList;
+
+        public IncrementalInstallTestRequestBuilder(Instrumentation instr, Bundle bundle) {
+            super(instr, bundle);
+        }
+
+        @Override
+        public TestRequestBuilder addTestClass(String className) {
+            mHasClassList = true;
+            return super.addTestClass(className);
+        }
+
+        @Override
+        public TestRequestBuilder addTestMethod(String testClassName, String testMethodName) {
+            mHasClassList = true;
+            return super.addTestMethod(testClassName, testMethodName);
+        }
+
+        @Override
+        public TestRequest build() {
+            // If a test class was requested, then no need to iterate class loader.
+            if (mHasClassList) {
+                return super.build();
+            }
+            maybeScanIncrementalClasspath();
+            return super.build();
+        }
+
+        private void maybeScanIncrementalClasspath() {
+            DexFile[] incrementalJars = null;
+            try {
+                Class<?> bootstrapClass =
+                        Class.forName("org.chromium.incrementalinstall.BootstrapApplication");
+                incrementalJars =
+                        (DexFile[]) bootstrapClass.getDeclaredField("sIncrementalDexFiles")
+                                .get(null);
+            } catch (Exception e) {
+                // Not an incremental apk.
+            }
+            if (incrementalJars != null) {
+                // builder.addApkToScan uses new DexFile(path) under the hood, which on Dalvik OS's
+                // assumes that the optimized dex is in the default location (crashes).
+                // Perform our own dex file scanning instead as a workaround.
+                addTestClasses(incrementalJars, this);
+            }
+        }
+
+        private boolean startsWithAny(String str, String[] prefixes) {
+            for (String prefix : prefixes) {
+                if (str.startsWith(prefix)) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        private void addTestClasses(DexFile[] dexFiles, TestRequestBuilder builder) {
+            Log.i(TAG, "Scanning incremental classpath.");
+            String[] excludedPrefixes;
+            try {
+                Field excludedPackagesField =
+                        TestRequestBuilder.class.getDeclaredField("DEFAULT_EXCLUDED_PACKAGES");
+                excludedPackagesField.setAccessible(true);
+                excludedPrefixes = (String[]) excludedPackagesField.get(null);
+            } catch (Exception e) {
+                throw new RuntimeException(e);
+            }
+
+            // Mirror TestRequestBuilder.getClassNamesFromClassPath().
+            TestLoader loader = new TestLoader();
+            for (DexFile dexFile : dexFiles) {
+                Enumeration<String> classNames = dexFile.entries();
+                while (classNames.hasMoreElements()) {
+                    String className = classNames.nextElement();
+                    if (!className.contains("$") && !startsWithAny(className, excludedPrefixes)
+                            && loader.loadIfTest(className) != null) {
+                        addTestClass(className);
+                    }
+                }
+            }
+        }
     }
 }

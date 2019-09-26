@@ -157,12 +157,24 @@ void CheckPerm(const BrokerFilePermission& perm,
       case O_NDELAY:
 #endif
       case kSyncFlag:
-      case O_TRUNC:
         ASSERT_TRUE(
             perm.CheckOpen(path, access_flags | flag, &file_to_open, NULL));
         break;
-      case O_CLOEXEC:
+      case O_TRUNC: {
+        // The effect of (O_RDONLY | O_TRUNC) is undefined, and in some cases it
+        // actually truncates, so deny.
+        bool result =
+            perm.CheckOpen(path, access_flags | flag, &file_to_open, NULL);
+        if (access_flags == O_RDONLY) {
+          ASSERT_FALSE(result);
+        } else {
+          ASSERT_TRUE(result);
+        }
+        break;
+      }
       case O_CREAT:
+        continue;  // Handled below.
+      case O_CLOEXEC:
       default:
         ASSERT_FALSE(
             perm.CheckOpen(path, access_flags | flag, &file_to_open, NULL));
@@ -196,6 +208,14 @@ TEST(BrokerFilePermission, ReadOnlyRecursive) {
   // expected.
 }
 
+// Explicit test for O_RDONLY|O_TRUNC, which should be denied due to
+// undefined behavior.
+TEST(BrokerFilePermission, ReadOnlyTruncate) {
+  const char kPath[] = "/tmp/good";
+  BrokerFilePermission perm = BrokerFilePermission::ReadOnly(kPath);
+  ASSERT_FALSE(perm.CheckOpen(kPath, O_RDONLY | O_TRUNC, nullptr, nullptr));
+}
+
 TEST(BrokerFilePermission, WriteOnly) {
   const char kPath[] = "/tmp/good";
   BrokerFilePermission perm = BrokerFilePermission::WriteOnly(kPath);
@@ -225,7 +245,6 @@ void CheckUnlink(BrokerFilePermission& perm,
                  int access_flags) {
   bool unlink;
   ASSERT_FALSE(perm.CheckOpen(path, access_flags, NULL, &unlink));
-  ASSERT_FALSE(perm.CheckOpen(path, access_flags | O_CREAT, NULL, &unlink));
   ASSERT_TRUE(
       perm.CheckOpen(path, access_flags | O_CREAT | O_EXCL, NULL, &unlink));
   ASSERT_TRUE(unlink);

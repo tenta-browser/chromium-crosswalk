@@ -15,7 +15,7 @@
 #include "content/public/browser/web_contents.h"
 #include "net/base/escape.h"
 #include "net/http/http_response_headers.h"
-#include "ppapi/features/features.h"
+#include "ppapi/buildflags/buildflags.h"
 
 #if BUILDFLAG(ENABLE_PLUGINS)
 #include "chrome/browser/plugins/chrome_plugin_service_filter.h"
@@ -61,7 +61,7 @@ PDFIFrameNavigationThrottle::MaybeCreateThrottleFor(
 
   // If ENABLE_PLUGINS is false, the PDF plugin is not available, so we should
   // always intercept PDF iframe navigations.
-  return base::MakeUnique<PDFIFrameNavigationThrottle>(handle);
+  return std::make_unique<PDFIFrameNavigationThrottle>(handle);
 }
 
 content::NavigationThrottle::ThrottleCheckResult

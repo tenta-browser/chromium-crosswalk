@@ -9,6 +9,7 @@
 #include "base/test/simple_test_tick_clock.h"
 #include "base/test/test_simple_task_runner.h"
 #include "base/threading/thread_task_runner_handle.h"
+#include "base/time/time.h"
 #include "gpu/command_buffer/client/gles2_interface_stub.h"
 #include "media/base/video_frame.h"
 #include "media/video/gpu_memory_buffer_video_frame_pool.h"
@@ -25,33 +26,18 @@ class TestGLES2Interface : public gpu::gles2::GLES2InterfaceStub {
     *textures = ++gen_textures_count_;
   }
 
-  void ShallowFlushCHROMIUM() override {
-    flushed_fence_sync_ = next_fence_sync_ - 1;
-  }
-
-  void OrderingBarrierCHROMIUM() override {
-    flushed_fence_sync_ = next_fence_sync_ - 1;
-  }
-
-  GLuint64 InsertFenceSyncCHROMIUM() override { return next_fence_sync_++; }
-
-  void GenSyncTokenCHROMIUM(GLuint64 fence_sync, GLbyte* sync_token) override {
+  void GenSyncTokenCHROMIUM(GLbyte* sync_token) override {
     gpu::SyncToken sync_token_data;
-    if (fence_sync <= flushed_fence_sync_) {
-      sync_token_data.Set(gpu::CommandBufferNamespace::GPU_IO, 0,
-                          gpu::CommandBufferId(), fence_sync);
-      sync_token_data.SetVerifyFlush();
-    }
+    sync_token_data.Set(gpu::CommandBufferNamespace::GPU_IO,
+                        gpu::CommandBufferId(), next_fence_sync_++);
+    sync_token_data.SetVerifyFlush();
     memcpy(sync_token, &sync_token_data, sizeof(sync_token_data));
   }
 
-  void GenUnverifiedSyncTokenCHROMIUM(GLuint64 fence_sync,
-                                      GLbyte* sync_token) override {
+  void GenUnverifiedSyncTokenCHROMIUM(GLbyte* sync_token) override {
     gpu::SyncToken sync_token_data;
-    if (fence_sync <= flushed_fence_sync_) {
-      sync_token_data.Set(gpu::CommandBufferNamespace::GPU_IO, 0,
-                          gpu::CommandBufferId(), fence_sync);
-    }
+    sync_token_data.Set(gpu::CommandBufferNamespace::GPU_IO,
+                        gpu::CommandBufferId(), next_fence_sync_++);
     memcpy(sync_token, &sync_token_data, sizeof(sync_token_data));
   }
 
@@ -69,7 +55,6 @@ class TestGLES2Interface : public gpu::gles2::GLES2InterfaceStub {
 
  private:
   uint64_t next_fence_sync_ = 1u;
-  uint64_t flushed_fence_sync_ = 0u;
   unsigned mailbox_ = 0u;
   unsigned gen_textures_count_ = 0u;
   unsigned deleted_textures_ = 0u;
@@ -110,29 +95,35 @@ class GpuMemoryBufferVideoFramePoolTest : public ::testing::Test {
     media_task_runner_->RunUntilIdle();
   }
 
-  static scoped_refptr<media::VideoFrame> CreateTestYUVVideoFrame(
-      int dimension) {
+  static scoped_refptr<VideoFrame> CreateTestYUVVideoFrame(
+      int dimension,
+      size_t bit_depth = 8,
+      int visible_rect_crop = 0) {
     const int kDimension = 10;
-    static uint8_t y_data[kDimension * kDimension] = {0};
-    static uint8_t u_data[kDimension * kDimension / 2] = {0};
-    static uint8_t v_data[kDimension * kDimension / 2] = {0};
+    // Data buffers are overdimensioned to acommodate up to 16bpc samples.
+    static uint8_t y_data[2 * kDimension * kDimension] = {0};
+    static uint8_t u_data[2 * kDimension * kDimension / 2] = {0};
+    static uint8_t v_data[2 * kDimension * kDimension / 2] = {0};
 
+    const VideoPixelFormat format =
+        (bit_depth > 8) ? PIXEL_FORMAT_YUV420P10 : PIXEL_FORMAT_I420;
     DCHECK_LE(dimension, kDimension);
-    gfx::Size size(dimension, dimension);
+    const gfx::Size size(dimension, dimension);
 
-    scoped_refptr<VideoFrame> video_frame =
-        media::VideoFrame::WrapExternalYuvData(
-            media::PIXEL_FORMAT_YV12,  // format
-            size,                      // coded_size
-            gfx::Rect(size),           // visible_rect
-            size,                      // natural_size
-            size.width(),              // y_stride
-            size.width() / 2,          // u_stride
-            size.width() / 2,          // v_stride
-            y_data,                    // y_data
-            u_data,                    // u_data
-            v_data,                    // v_data
-            base::TimeDelta());        // timestamp
+    scoped_refptr<VideoFrame> video_frame = VideoFrame::WrapExternalYuvData(
+        format,  // format
+        size,    // coded_size
+        gfx::Rect(visible_rect_crop, visible_rect_crop,
+                  size.width() - visible_rect_crop,
+                  size.height() - visible_rect_crop),  // visible_rect
+        size,                                          // natural_size
+        size.width(),                                  // y_stride
+        size.width() / 2,                              // u_stride
+        size.width() / 2,                              // v_stride
+        y_data,                                        // y_data
+        u_data,                                        // u_data
+        v_data,                                        // v_data
+        base::TimeDelta());                            // timestamp
     EXPECT_TRUE(video_frame);
     return video_frame;
   }
@@ -155,13 +146,21 @@ void MaybeCreateHardwareFrameCallback(
   *video_frame_output = video_frame;
 }
 
+void MaybeCreateHardwareFrameCallbackAndTrackTime(
+    scoped_refptr<VideoFrame>* video_frame_output,
+    base::TimeTicks* output_time,
+    const scoped_refptr<VideoFrame>& video_frame) {
+  *video_frame_output = video_frame;
+  *output_time = base::TimeTicks::Now();
+}
+
 TEST_F(GpuMemoryBufferVideoFramePoolTest, VideoFrameOutputFormatUnknown) {
   scoped_refptr<VideoFrame> software_frame = CreateTestYUVVideoFrame(10);
   mock_gpu_factories_->SetVideoFrameOutputFormat(
       media::GpuVideoAcceleratorFactories::OutputFormat::UNDEFINED);
   scoped_refptr<VideoFrame> frame;
   gpu_memory_buffer_pool_->MaybeCreateHardwareFrame(
-      software_frame, base::Bind(MaybeCreateHardwareFrameCallback, &frame));
+      software_frame, base::BindOnce(MaybeCreateHardwareFrameCallback, &frame));
   RunUntilIdle();
 
   EXPECT_EQ(software_frame.get(), frame.get());
@@ -171,7 +170,34 @@ TEST_F(GpuMemoryBufferVideoFramePoolTest, CreateOneHardwareFrame) {
   scoped_refptr<VideoFrame> software_frame = CreateTestYUVVideoFrame(10);
   scoped_refptr<VideoFrame> frame;
   gpu_memory_buffer_pool_->MaybeCreateHardwareFrame(
-      software_frame, base::Bind(MaybeCreateHardwareFrameCallback, &frame));
+      software_frame, base::BindOnce(MaybeCreateHardwareFrameCallback, &frame));
+
+  RunUntilIdle();
+
+  EXPECT_NE(software_frame.get(), frame.get());
+  EXPECT_EQ(PIXEL_FORMAT_I420, frame->format());
+  EXPECT_EQ(3u, frame->NumTextures());
+  EXPECT_EQ(3u, gles2_->gen_textures_count());
+}
+
+// Tests the current workaround for odd positioned video frame input. Once
+// https://crbug.com/638906 is fixed, output should be different.
+TEST_F(GpuMemoryBufferVideoFramePoolTest, CreateOneHardwareFrameWithOddOrigin) {
+  scoped_refptr<VideoFrame> software_frame = CreateTestYUVVideoFrame(9, 8, 1);
+  scoped_refptr<VideoFrame> frame;
+  gpu_memory_buffer_pool_->MaybeCreateHardwareFrame(
+      software_frame, base::BindOnce(MaybeCreateHardwareFrameCallback, &frame));
+
+  RunUntilIdle();
+
+  EXPECT_EQ(software_frame.get(), frame.get());
+}
+
+TEST_F(GpuMemoryBufferVideoFramePoolTest, CreateOne10BppHardwareFrame) {
+  scoped_refptr<VideoFrame> software_frame = CreateTestYUVVideoFrame(10, 10);
+  scoped_refptr<VideoFrame> frame;
+  gpu_memory_buffer_pool_->MaybeCreateHardwareFrame(
+      software_frame, base::BindOnce(MaybeCreateHardwareFrameCallback, &frame));
 
   RunUntilIdle();
 
@@ -185,7 +211,7 @@ TEST_F(GpuMemoryBufferVideoFramePoolTest, ReuseFirstResource) {
   scoped_refptr<VideoFrame> software_frame = CreateTestYUVVideoFrame(10);
   scoped_refptr<VideoFrame> frame;
   gpu_memory_buffer_pool_->MaybeCreateHardwareFrame(
-      software_frame, base::Bind(MaybeCreateHardwareFrameCallback, &frame));
+      software_frame, base::BindOnce(MaybeCreateHardwareFrameCallback, &frame));
   RunUntilIdle();
 
   EXPECT_NE(software_frame.get(), frame.get());
@@ -195,7 +221,8 @@ TEST_F(GpuMemoryBufferVideoFramePoolTest, ReuseFirstResource) {
 
   scoped_refptr<VideoFrame> frame2;
   gpu_memory_buffer_pool_->MaybeCreateHardwareFrame(
-      software_frame, base::Bind(MaybeCreateHardwareFrameCallback, &frame2));
+      software_frame,
+      base::BindOnce(MaybeCreateHardwareFrameCallback, &frame2));
   RunUntilIdle();
 
   EXPECT_NE(software_frame.get(), frame2.get());
@@ -207,7 +234,7 @@ TEST_F(GpuMemoryBufferVideoFramePoolTest, ReuseFirstResource) {
   RunUntilIdle();
 
   gpu_memory_buffer_pool_->MaybeCreateHardwareFrame(
-      software_frame, base::Bind(MaybeCreateHardwareFrameCallback, &frame));
+      software_frame, base::BindOnce(MaybeCreateHardwareFrameCallback, &frame));
   RunUntilIdle();
 
   EXPECT_NE(software_frame.get(), frame.get());
@@ -220,7 +247,7 @@ TEST_F(GpuMemoryBufferVideoFramePoolTest, DropResourceWhenSizeIsDifferent) {
   scoped_refptr<VideoFrame> frame;
   gpu_memory_buffer_pool_->MaybeCreateHardwareFrame(
       CreateTestYUVVideoFrame(10),
-      base::Bind(MaybeCreateHardwareFrameCallback, &frame));
+      base::BindOnce(MaybeCreateHardwareFrameCallback, &frame));
   RunUntilIdle();
 
   EXPECT_EQ(3u, gles2_->gen_textures_count());
@@ -229,7 +256,7 @@ TEST_F(GpuMemoryBufferVideoFramePoolTest, DropResourceWhenSizeIsDifferent) {
   RunUntilIdle();
   gpu_memory_buffer_pool_->MaybeCreateHardwareFrame(
       CreateTestYUVVideoFrame(4),
-      base::Bind(MaybeCreateHardwareFrameCallback, &frame));
+      base::BindOnce(MaybeCreateHardwareFrameCallback, &frame));
   RunUntilIdle();
   EXPECT_EQ(6u, gles2_->gen_textures_count());
 }
@@ -240,7 +267,7 @@ TEST_F(GpuMemoryBufferVideoFramePoolTest, CreateOneHardwareUYUVFrame) {
   mock_gpu_factories_->SetVideoFrameOutputFormat(
       media::GpuVideoAcceleratorFactories::OutputFormat::UYVY);
   gpu_memory_buffer_pool_->MaybeCreateHardwareFrame(
-      software_frame, base::Bind(MaybeCreateHardwareFrameCallback, &frame));
+      software_frame, base::BindOnce(MaybeCreateHardwareFrameCallback, &frame));
 
   RunUntilIdle();
 
@@ -258,7 +285,7 @@ TEST_F(GpuMemoryBufferVideoFramePoolTest, CreateOneHardwareNV12Frame) {
   mock_gpu_factories_->SetVideoFrameOutputFormat(
       media::GpuVideoAcceleratorFactories::OutputFormat::NV12_SINGLE_GMB);
   gpu_memory_buffer_pool_->MaybeCreateHardwareFrame(
-      software_frame, base::Bind(MaybeCreateHardwareFrameCallback, &frame));
+      software_frame, base::BindOnce(MaybeCreateHardwareFrameCallback, &frame));
 
   RunUntilIdle();
 
@@ -276,7 +303,7 @@ TEST_F(GpuMemoryBufferVideoFramePoolTest, CreateOneHardwareNV12Frame2) {
   mock_gpu_factories_->SetVideoFrameOutputFormat(
       media::GpuVideoAcceleratorFactories::OutputFormat::NV12_DUAL_GMB);
   gpu_memory_buffer_pool_->MaybeCreateHardwareFrame(
-      software_frame, base::Bind(MaybeCreateHardwareFrameCallback, &frame));
+      software_frame, base::BindOnce(MaybeCreateHardwareFrameCallback, &frame));
 
   RunUntilIdle();
 
@@ -288,6 +315,67 @@ TEST_F(GpuMemoryBufferVideoFramePoolTest, CreateOneHardwareNV12Frame2) {
       media::VideoFrameMetadata::READ_LOCK_FENCES_ENABLED));
 }
 
+TEST_F(GpuMemoryBufferVideoFramePoolTest, CreateOneHardwareXR30Frame) {
+  scoped_refptr<VideoFrame> software_frame = CreateTestYUVVideoFrame(10, 10);
+  scoped_refptr<VideoFrame> frame;
+  mock_gpu_factories_->SetVideoFrameOutputFormat(
+      media::GpuVideoAcceleratorFactories::OutputFormat::XR30);
+  gpu_memory_buffer_pool_->MaybeCreateHardwareFrame(
+      software_frame, base::BindOnce(MaybeCreateHardwareFrameCallback, &frame));
+
+  RunUntilIdle();
+
+  EXPECT_NE(software_frame.get(), frame.get());
+  EXPECT_EQ(PIXEL_FORMAT_ARGB, frame->format());
+  EXPECT_EQ(1u, frame->NumTextures());
+  EXPECT_EQ(1u, gles2_->gen_textures_count());
+  EXPECT_TRUE(frame->metadata()->IsTrue(
+      media::VideoFrameMetadata::READ_LOCK_FENCES_ENABLED));
+}
+
+TEST_F(GpuMemoryBufferVideoFramePoolTest, CreateOneHardwareXB30Frame) {
+  scoped_refptr<VideoFrame> software_frame = CreateTestYUVVideoFrame(10, 10);
+  scoped_refptr<VideoFrame> frame;
+  mock_gpu_factories_->SetVideoFrameOutputFormat(
+      media::GpuVideoAcceleratorFactories::OutputFormat::XB30);
+  gpu_memory_buffer_pool_->MaybeCreateHardwareFrame(
+      software_frame, base::BindOnce(MaybeCreateHardwareFrameCallback, &frame));
+
+  RunUntilIdle();
+
+  EXPECT_NE(software_frame.get(), frame.get());
+  EXPECT_EQ(PIXEL_FORMAT_RGB32, frame->format());
+  EXPECT_EQ(1u, frame->NumTextures());
+  EXPECT_EQ(1u, gles2_->gen_textures_count());
+  EXPECT_TRUE(frame->metadata()->IsTrue(
+      media::VideoFrameMetadata::READ_LOCK_FENCES_ENABLED));
+}
+
+TEST_F(GpuMemoryBufferVideoFramePoolTest, PreservesMetadata) {
+  scoped_refptr<VideoFrame> software_frame = CreateTestYUVVideoFrame(10);
+  software_frame->metadata()->SetBoolean(
+      media::VideoFrameMetadata::END_OF_STREAM, true);
+  base::TimeTicks kTestReferenceTime =
+      base::TimeDelta::FromMilliseconds(12345) + base::TimeTicks();
+  software_frame->metadata()->SetTimeTicks(VideoFrameMetadata::REFERENCE_TIME,
+                                           kTestReferenceTime);
+  scoped_refptr<VideoFrame> frame;
+  gpu_memory_buffer_pool_->MaybeCreateHardwareFrame(
+      software_frame, base::BindOnce(MaybeCreateHardwareFrameCallback, &frame));
+
+  RunUntilIdle();
+
+  EXPECT_NE(software_frame.get(), frame.get());
+  bool end_of_stream = false;
+  EXPECT_TRUE(frame->metadata()->GetBoolean(
+      media::VideoFrameMetadata::END_OF_STREAM, &end_of_stream));
+  EXPECT_TRUE(end_of_stream);
+  base::TimeTicks render_time;
+  EXPECT_TRUE(frame->metadata()->GetTimeTicks(
+      VideoFrameMetadata::REFERENCE_TIME, &render_time));
+  EXPECT_EQ(kTestReferenceTime, render_time);
+}
+
 // CreateGpuMemoryBuffer can return null (e.g: when the GPU process is down).
 // This test checks that in that case we don't crash and still create the
 // textures.
@@ -296,7 +384,7 @@ TEST_F(GpuMemoryBufferVideoFramePoolTest, CreateGpuMemoryBufferFail) {
   scoped_refptr<VideoFrame> frame;
   mock_gpu_factories_->SetFailToAllocateGpuMemoryBufferForTesting(true);
   gpu_memory_buffer_pool_->MaybeCreateHardwareFrame(
-      software_frame, base::Bind(MaybeCreateHardwareFrameCallback, &frame));
+      software_frame, base::BindOnce(MaybeCreateHardwareFrameCallback, &frame));
 
   RunUntilIdle();
 
@@ -308,14 +396,16 @@ TEST_F(GpuMemoryBufferVideoFramePoolTest, ShutdownReleasesUnusedResources) {
   scoped_refptr<VideoFrame> software_frame = CreateTestYUVVideoFrame(10);
   scoped_refptr<VideoFrame> frame_1;
   gpu_memory_buffer_pool_->MaybeCreateHardwareFrame(
-      software_frame, base::Bind(MaybeCreateHardwareFrameCallback, &frame_1));
+      software_frame,
+      base::BindOnce(MaybeCreateHardwareFrameCallback, &frame_1));
 
   RunUntilIdle();
   EXPECT_NE(software_frame.get(), frame_1.get());
 
   scoped_refptr<VideoFrame> frame_2;
   gpu_memory_buffer_pool_->MaybeCreateHardwareFrame(
-      software_frame, base::Bind(MaybeCreateHardwareFrameCallback, &frame_2));
+      software_frame,
+      base::BindOnce(MaybeCreateHardwareFrameCallback, &frame_2));
   RunUntilIdle();
   EXPECT_NE(software_frame.get(), frame_2.get());
   EXPECT_NE(frame_1.get(), frame_2.get());
@@ -342,14 +432,16 @@ TEST_F(GpuMemoryBufferVideoFramePoolTest, StaleFramesAreExpired) {
   scoped_refptr<VideoFrame> software_frame = CreateTestYUVVideoFrame(10);
   scoped_refptr<VideoFrame> frame_1;
   gpu_memory_buffer_pool_->MaybeCreateHardwareFrame(
-      software_frame, base::Bind(MaybeCreateHardwareFrameCallback, &frame_1));
+      software_frame,
+      base::BindOnce(MaybeCreateHardwareFrameCallback, &frame_1));
 
   RunUntilIdle();
   EXPECT_NE(software_frame.get(), frame_1.get());
 
   scoped_refptr<VideoFrame> frame_2;
   gpu_memory_buffer_pool_->MaybeCreateHardwareFrame(
-      software_frame, base::Bind(MaybeCreateHardwareFrameCallback, &frame_2));
+      software_frame,
+      base::BindOnce(MaybeCreateHardwareFrameCallback, &frame_2));
   RunUntilIdle();
   EXPECT_NE(software_frame.get(), frame_2.get());
   EXPECT_NE(frame_1.get(), frame_2.get());
@@ -370,6 +462,106 @@ TEST_F(GpuMemoryBufferVideoFramePoolTest, StaleFramesAreExpired) {
   RunUntilIdle();
   EXPECT_EQ(6u, gles2_->gen_textures_count());
   EXPECT_EQ(3u, gles2_->deleted_textures_count());
+}
+
+// Test when we request two copies in a row, there should be at most one frame
+// copy in flight at any time.
+TEST_F(GpuMemoryBufferVideoFramePoolTest, AtMostOneCopyInFlight) {
+  mock_gpu_factories_->SetVideoFrameOutputFormat(
+      media::GpuVideoAcceleratorFactories::OutputFormat::UYVY);
+
+  scoped_refptr<VideoFrame> software_frame_1 = CreateTestYUVVideoFrame(10);
+  scoped_refptr<VideoFrame> frame_1;
+  gpu_memory_buffer_pool_->MaybeCreateHardwareFrame(
+      software_frame_1,
+      base::BindOnce(MaybeCreateHardwareFrameCallback, &frame_1));
+
+  scoped_refptr<VideoFrame> software_frame_2 = CreateTestYUVVideoFrame(10);
+  scoped_refptr<VideoFrame> frame_2;
+  gpu_memory_buffer_pool_->MaybeCreateHardwareFrame(
+      software_frame_2,
+      base::BindOnce(MaybeCreateHardwareFrameCallback, &frame_2));
+
+  media_task_runner_->RunUntilIdle();
+  EXPECT_EQ(1u, copy_task_runner_->NumPendingTasks());
+  copy_task_runner_->RunUntilIdle();
+  media_task_runner_->RunUntilIdle();
+  EXPECT_EQ(1u, copy_task_runner_->NumPendingTasks());
+  RunUntilIdle();
+}
+
+// Tests that adding a frame that the pool doesn't handle does not break the
+// FIFO order in tasks.
+TEST_F(GpuMemoryBufferVideoFramePoolTest, PreservesOrder) {
+  std::vector<scoped_refptr<VideoFrame>> frame_outputs;
+
+  scoped_refptr<VideoFrame> software_frame_1 = CreateTestYUVVideoFrame(10);
+  scoped_refptr<VideoFrame> frame_1 = nullptr;
+  gpu_memory_buffer_pool_->MaybeCreateHardwareFrame(
+      software_frame_1,
+      base::BindOnce(MaybeCreateHardwareFrameCallback, &frame_1));
+
+  scoped_refptr<VideoFrame> software_frame_2 = CreateTestYUVVideoFrame(10);
+  scoped_refptr<VideoFrame> frame_2 = nullptr;
+  base::TimeTicks time_2;
+  gpu_memory_buffer_pool_->MaybeCreateHardwareFrame(
+      software_frame_2,
+      base::BindOnce(MaybeCreateHardwareFrameCallbackAndTrackTime, &frame_2,
+                     &time_2));
+
+  scoped_refptr<VideoFrame> software_frame_3 = VideoFrame::CreateEOSFrame();
+  scoped_refptr<VideoFrame> frame_3 = nullptr;
+  base::TimeTicks time_3;
+  gpu_memory_buffer_pool_->MaybeCreateHardwareFrame(
+      software_frame_3,
+      base::BindOnce(MaybeCreateHardwareFrameCallbackAndTrackTime, &frame_3,
+                     &time_3));
+
+  // Queue all the tasks |media_task_runner_|. Make sure that none is early
+  // returned.
+  media_task_runner_->RunUntilIdle();
+  EXPECT_FALSE(frame_1.get());
+  EXPECT_FALSE(frame_2.get());
+  EXPECT_FALSE(frame_3.get());
+  EXPECT_EQ(1u, copy_task_runner_->NumPendingTasks());
+
+  RunUntilIdle();
+  EXPECT_TRUE(frame_1.get());
+  EXPECT_NE(software_frame_1.get(), frame_1.get());
+  EXPECT_FALSE(frame_2.get());
+  EXPECT_FALSE(frame_3.get());
+
+  RunUntilIdle();
+  EXPECT_TRUE(frame_2.get());
+  EXPECT_TRUE(frame_3.get());
+  EXPECT_NE(software_frame_2.get(), frame_2.get());
+  EXPECT_EQ(software_frame_3.get(), frame_3.get());
+  EXPECT_LE(time_2, time_3);
+}
+
+// Test that Abort() stops any pending copies.
+TEST_F(GpuMemoryBufferVideoFramePoolTest, AbortCopies) {
+  scoped_refptr<VideoFrame> software_frame_1 = CreateTestYUVVideoFrame(10);
+  scoped_refptr<VideoFrame> frame_1;
+  gpu_memory_buffer_pool_->MaybeCreateHardwareFrame(
+      software_frame_1,
+      base::BindOnce(MaybeCreateHardwareFrameCallback, &frame_1));
+
+  scoped_refptr<VideoFrame> software_frame_2 = CreateTestYUVVideoFrame(10);
+  scoped_refptr<VideoFrame> frame_2;
+  gpu_memory_buffer_pool_->MaybeCreateHardwareFrame(
+      software_frame_2,
+      base::BindOnce(MaybeCreateHardwareFrameCallback, &frame_2));
+
+  media_task_runner_->RunUntilIdle();
+  EXPECT_GE(1u, copy_task_runner_->NumPendingTasks());
+  copy_task_runner_->RunUntilIdle();
+
+  gpu_memory_buffer_pool_->Abort();
+  media_task_runner_->RunUntilIdle();
+  EXPECT_EQ(0u, copy_task_runner_->NumPendingTasks());
+  RunUntilIdle();
+  ASSERT_FALSE(frame_2);
 }
 
 }  // namespace media

@@ -142,7 +142,7 @@ base::TimeDelta NudgeTracker::RecordLocalChange(ModelTypeSet types) {
 base::TimeDelta NudgeTracker::RecordLocalRefreshRequest(ModelTypeSet types) {
   for (ModelTypeSet::Iterator it = types.First(); it.Good(); it.Inc()) {
     TypeTrackerMap::const_iterator tracker_it = type_trackers_.find(it.Get());
-    DCHECK(tracker_it != type_trackers_.end());
+    DCHECK(tracker_it != type_trackers_.end()) << ModelTypeToString(it.Get());
     tracker_it->second->RecordLocalRefreshRequest();
   }
   return local_refresh_nudge_delay_;
@@ -346,6 +346,24 @@ sync_pb::GetUpdatesCallerInfo::GetUpdatesSource NudgeTracker::GetLegacySource()
   } else {
     return sync_pb::GetUpdatesCallerInfo::UNKNOWN;
   }
+}
+
+sync_pb::SyncEnums::GetUpdatesOrigin NudgeTracker::GetOrigin() const {
+  for (const auto& type_and_tracker : type_trackers_) {
+    const DataTypeTracker& tracker = *type_and_tracker.second;
+    if (!tracker.IsBlocked() &&
+        (tracker.HasPendingInvalidation() ||
+         tracker.HasRefreshRequestPending() ||
+         tracker.HasLocalChangePending() || tracker.IsInitialSyncRequired())) {
+      return sync_pb::SyncEnums::GU_TRIGGER;
+    }
+  }
+
+  if (IsRetryRequired()) {
+    return sync_pb::SyncEnums::RETRY;
+  }
+
+  return sync_pb::SyncEnums::UNKNOWN_ORIGIN;
 }
 
 void NudgeTracker::FillProtoMessage(ModelType type,

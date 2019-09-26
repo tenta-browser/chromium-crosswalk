@@ -4,20 +4,23 @@
 
 #include "media/gpu/android/media_codec_video_decoder.h"
 
+#include <memory>
+
 #include "base/callback.h"
 #include "base/callback_helpers.h"
 #include "base/command_line.h"
 #include "base/logging.h"
-#include "base/memory/ptr_util.h"
 #include "base/memory/weak_ptr.h"
 #include "base/metrics/histogram_macros.h"
 #include "media/base/android/media_codec_bridge_impl.h"
 #include "media/base/android/media_codec_util.h"
 #include "media/base/bind_to_current_loop.h"
+#include "media/base/cdm_context.h"
 #include "media/base/decoder_buffer.h"
 #include "media/base/media_switches.h"
 #include "media/base/video_codecs.h"
 #include "media/base/video_decoder_config.h"
+#include "media/base/video_frame.h"
 #include "media/gpu/android/android_video_surface_chooser.h"
 #include "media/gpu/android/avda_codec_allocator.h"
 
@@ -86,28 +89,24 @@ bool ConfigSupported(const VideoDecoderConfig& config,
 
 // static
 PendingDecode PendingDecode::CreateEos() {
-  auto nop = [](DecodeStatus s) {};
-  return {DecoderBuffer::CreateEOSBuffer(), base::Bind(nop)};
+  return {DecoderBuffer::CreateEOSBuffer(), base::DoNothing()};
 }
 
 PendingDecode::PendingDecode(scoped_refptr<DecoderBuffer> buffer,
                              VideoDecoder::DecodeCB decode_cb)
-    : buffer(buffer), decode_cb(decode_cb) {}
+    : buffer(std::move(buffer)), decode_cb(std::move(decode_cb)) {}
 PendingDecode::PendingDecode(PendingDecode&& other) = default;
 PendingDecode::~PendingDecode() = default;
 
 MediaCodecVideoDecoder::MediaCodecVideoDecoder(
     const gpu::GpuPreferences& gpu_preferences,
-    VideoFrameFactory::OutputWithReleaseMailboxCB output_cb,
     DeviceInfo* device_info,
     AVDACodecAllocator* codec_allocator,
     std::unique_ptr<AndroidVideoSurfaceChooser> surface_chooser,
     AndroidOverlayMojoFactoryCB overlay_factory_cb,
     RequestOverlayInfoCB request_overlay_info_cb,
-    std::unique_ptr<VideoFrameFactory> video_frame_factory,
-    std::unique_ptr<service_manager::ServiceContextRef> context_ref)
-    : output_cb_(output_cb),
-      codec_allocator_(codec_allocator),
+    std::unique_ptr<VideoFrameFactory> video_frame_factory)
+    : codec_allocator_(codec_allocator),
       request_overlay_info_cb_(std::move(request_overlay_info_cb)),
       surface_chooser_helper_(
           std::move(surface_chooser),
@@ -119,7 +118,6 @@ MediaCodecVideoDecoder::MediaCodecVideoDecoder(
       device_info_(device_info),
       enable_threaded_texture_mailboxes_(
           gpu_preferences.enable_threaded_texture_mailboxes),
-      context_ref_(std::move(context_ref)),
       weak_factory_(this),
       codec_allocator_weak_factory_(this) {
   DVLOG(2) << __func__;
@@ -135,16 +133,16 @@ MediaCodecVideoDecoder::~MediaCodecVideoDecoder() {
   ReleaseCodec();
   codec_allocator_->StopThread(this);
 
-  if (!media_drm_bridge_cdm_context_)
+  if (!media_crypto_context_)
     return;
 
   DCHECK(cdm_registration_id_);
 
   // Cancel previously registered callback (if any).
-  media_drm_bridge_cdm_context_->SetMediaCryptoReadyCB(
-      MediaDrmBridgeCdmContext::MediaCryptoReadyCB());
+  media_crypto_context_->SetMediaCryptoReadyCB(
+      MediaCryptoContext::MediaCryptoReadyCB());
 
-  media_drm_bridge_cdm_context_->UnregisterPlayer(cdm_registration_id_);
+  media_crypto_context_->UnregisterPlayer(cdm_registration_id_);
 }
 
 void MediaCodecVideoDecoder::Destroy() {
@@ -158,11 +156,13 @@ void MediaCodecVideoDecoder::Destroy() {
   StartDrainingCodec(DrainType::kForDestroy);
 }
 
-void MediaCodecVideoDecoder::Initialize(const VideoDecoderConfig& config,
-                                        bool low_delay,
-                                        CdmContext* cdm_context,
-                                        const InitCB& init_cb,
-                                        const OutputCB& output_cb) {
+void MediaCodecVideoDecoder::Initialize(
+    const VideoDecoderConfig& config,
+    bool low_delay,
+    CdmContext* cdm_context,
+    const InitCB& init_cb,
+    const OutputCB& output_cb,
+    const WaitingForDecryptionKeyCB& /* waiting_for_decryption_key_cb */) {
   const bool first_init = !decoder_config_.IsValidConfig();
   DVLOG(2) << (first_init ? "Initializing" : "Reinitializing")
            << " MCVD with config: " << config.AsHumanReadableString();
@@ -180,6 +180,8 @@ void MediaCodecVideoDecoder::Initialize(const VideoDecoderConfig& config,
     return;
   }
   decoder_config_ = config;
+
+  output_cb_ = output_cb;
 
 #if BUILDFLAG(USE_PROPRIETARY_CODECS)
   if (config.codec() == kCodecH264)
@@ -205,9 +207,13 @@ void MediaCodecVideoDecoder::SetCdm(CdmContext* cdm_context,
     return;
   }
 
-  // On Android platform the CdmContext must be a MediaDrmBridgeCdmContext.
-  media_drm_bridge_cdm_context_ =
-      static_cast<media::MediaDrmBridgeCdmContext*>(cdm_context);
+  media_crypto_context_ = cdm_context->GetMediaCryptoContext();
+  if (!media_crypto_context_) {
+    LOG(ERROR) << "MediaCryptoContext not supported";
+    EnterTerminalState(State::kError);
+    init_cb.Run(false);
+    return;
+  }
 
   // Register CDM callbacks. The callbacks registered will be posted back to
   // this thread via BindToCurrentLoop.
@@ -217,12 +223,12 @@ void MediaCodecVideoDecoder::SetCdm(CdmContext* cdm_context,
   // destructed as well. So the |cdm_unset_cb| will never have a chance to be
   // called.
   // TODO(xhwang): Remove |cdm_unset_cb| after it's not used on all platforms.
-  cdm_registration_id_ = media_drm_bridge_cdm_context_->RegisterPlayer(
+  cdm_registration_id_ = media_crypto_context_->RegisterPlayer(
       media::BindToCurrentLoop(base::Bind(&MediaCodecVideoDecoder::OnKeyAdded,
                                           weak_factory_.GetWeakPtr())),
-      base::Bind(&base::DoNothing));
+      base::DoNothing());
 
-  media_drm_bridge_cdm_context_->SetMediaCryptoReadyCB(media::BindToCurrentLoop(
+  media_crypto_context_->SetMediaCryptoReadyCB(media::BindToCurrentLoop(
       base::Bind(&MediaCodecVideoDecoder::OnMediaCryptoReady,
                  weak_factory_.GetWeakPtr(), init_cb)));
 }
@@ -358,8 +364,10 @@ void MediaCodecVideoDecoder::OnSurfaceDestroyed(AndroidOverlay* overlay) {
   }
 
   // Reset the target bundle if it is the one being destroyed.
-  if (target_surface_bundle_->overlay.get() == overlay)
+  if (target_surface_bundle_ &&
+      target_surface_bundle_->overlay.get() == overlay) {
     target_surface_bundle_ = surface_texture_bundle_;
+  }
 
   // Transition the codec away from the overlay if necessary.
   if (SurfaceTransitionPending())
@@ -395,7 +403,7 @@ void MediaCodecVideoDecoder::CreateCodec() {
   config->requires_secure_codec = requires_secure_codec_;
   // TODO(liberato): per android_util.h, remove JavaObjectPtr.
   config->media_crypto =
-      base::MakeUnique<base::android::ScopedJavaGlobalRef<jobject>>(
+      std::make_unique<base::android::ScopedJavaGlobalRef<jobject>>(
           media_crypto_);
   config->initial_expected_coded_size = decoder_config_.coded_size();
   config->surface_bundle = target_surface_bundle_;
@@ -416,7 +424,7 @@ void MediaCodecVideoDecoder::OnCodecConfigured(
     EnterTerminalState(State::kError);
     return;
   }
-  codec_ = base::MakeUnique<CodecWrapper>(
+  codec_ = std::make_unique<CodecWrapper>(
       CodecSurfacePair(std::move(codec), std::move(surface_bundle)),
       BindToCurrentLoop(base::Bind(&MediaCodecVideoDecoder::StartTimer,
                                    weak_factory_.GetWeakPtr())));
@@ -435,14 +443,14 @@ void MediaCodecVideoDecoder::OnCodecConfigured(
   StartTimer();
 }
 
-void MediaCodecVideoDecoder::Decode(const scoped_refptr<DecoderBuffer>& buffer,
+void MediaCodecVideoDecoder::Decode(scoped_refptr<DecoderBuffer> buffer,
                                     const DecodeCB& decode_cb) {
   DVLOG(2) << __func__ << ": " << buffer->AsHumanReadableString();
   if (state_ == State::kError) {
     decode_cb.Run(DecodeStatus::DECODE_ERROR);
     return;
   }
-  pending_decodes_.emplace_back(buffer, std::move(decode_cb));
+  pending_decodes_.emplace_back(std::move(buffer), std::move(decode_cb));
 
   if (state_ == State::kInitializing) {
     if (lazy_init_pending_)
@@ -660,10 +668,13 @@ void MediaCodecVideoDecoder::RunEosDecodeCb(int reset_generation) {
 
 void MediaCodecVideoDecoder::ForwardVideoFrame(
     int reset_generation,
-    VideoFrameFactory::ReleaseMailboxCB release_cb,
     const scoped_refptr<VideoFrame>& frame) {
-  if (reset_generation == reset_generation_)
-    output_cb_.Run(std::move(release_cb), frame);
+  if (reset_generation == reset_generation_) {
+    // TODO(liberato): We might actually have a SW decoder.  Consider setting
+    // this to false if so, especially for higher bitrates.
+    frame->metadata()->SetBoolean(VideoFrameMetadata::POWER_EFFICIENT, true);
+    output_cb_.Run(frame);
+  }
 }
 
 // Our Reset() provides a slightly stronger guarantee than VideoDecoder does.
@@ -766,19 +777,7 @@ AndroidOverlayFactoryCB MediaCodecVideoDecoder::CreateOverlayFactoryCb() {
   if (!overlay_factory_cb_ || !overlay_info_.HasValidRoutingToken())
     return AndroidOverlayFactoryCB();
 
-  // This wrapper forwards its arguments and clones a context ref on each call.
-  auto wrapper = [](AndroidOverlayMojoFactoryCB overlay_factory_cb,
-                    service_manager::ServiceContextRef* context_ref,
-                    base::UnguessableToken routing_token,
-                    AndroidOverlayConfig config) {
-    return overlay_factory_cb.Run(context_ref->Clone(),
-                                  std::move(routing_token), std::move(config));
-  };
-
-  // Pass ownership of a new context ref into the callback.
-  return base::Bind(wrapper, overlay_factory_cb_,
-                    base::Owned(context_ref_->Clone().release()),
-                    *overlay_info_.routing_token);
+  return base::BindRepeating(overlay_factory_cb_, *overlay_info_.routing_token);
 }
 
 std::string MediaCodecVideoDecoder::GetDisplayName() const {

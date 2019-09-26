@@ -26,13 +26,7 @@
 using bookmarks::BookmarkModel;
 using bookmarks::BookmarkNode;
 
-// Times out on win syzyasan, http://crbug.com/166026
-#if defined(SYZYASAN)
-#define MAYBE_BookmarkManager DISABLED_BookmarkManager
-#else
-#define MAYBE_BookmarkManager BookmarkManager
-#endif
-IN_PROC_BROWSER_TEST_F(ExtensionApiTest, MAYBE_BookmarkManager) {
+IN_PROC_BROWSER_TEST_F(ExtensionApiTest, BookmarkManager) {
   // Add managed bookmarks.
   Profile* profile = browser()->profile();
   BookmarkModel* model = BookmarkModelFactory::GetForBrowserContext(profile);
@@ -47,7 +41,7 @@ IN_PROC_BROWSER_TEST_F(ExtensionApiTest, MAYBE_BookmarkManager) {
   list.Append(std::move(node));
   node.reset(new base::DictionaryValue());
   node->SetString("name", "Managed Folder");
-  node->Set("children", base::MakeUnique<base::ListValue>());
+  node->Set("children", std::make_unique<base::ListValue>());
   list.Append(std::move(node));
   profile->GetPrefs()->Set(bookmarks::prefs::kManagedBookmarks, list);
   ASSERT_EQ(2, managed->managed_node()->child_count());

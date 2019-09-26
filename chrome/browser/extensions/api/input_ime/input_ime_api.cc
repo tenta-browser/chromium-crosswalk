@@ -8,12 +8,12 @@
 #include <utility>
 
 #include "base/lazy_instance.h"
-#include "base/memory/ptr_util.h"
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/common/extensions/api/input_ime.h"
 #include "content/public/browser/notification_registrar.h"
 #include "content/public/browser/notification_service.h"
 #include "extensions/browser/extension_registry.h"
+#include "ui/base/ime/ime_bridge.h"
 #include "ui/keyboard/keyboard_util.h"
 
 namespace input_ime = extensions::api::input_ime;
@@ -80,7 +80,7 @@ void ImeObserver::OnBlur(int context_id) {
 void ImeObserver::OnKeyEvent(
     const std::string& component_id,
     const InputMethodEngineBase::KeyboardEvent& event,
-    IMEEngineHandlerInterface::KeyEventDoneCallback& key_data) {
+    IMEEngineHandlerInterface::KeyEventDoneCallback key_data) {
   if (extension_id_.empty())
     return;
 
@@ -89,7 +89,7 @@ void ImeObserver::OnKeyEvent(
   if (!ShouldForwardKeyEvent()) {
     // Continue processing the key event so that the physical keyboard can
     // still work.
-    key_data.Run(false);
+    std::move(key_data).Run(false);
     return;
   }
 
@@ -97,8 +97,9 @@ void ImeObserver::OnKeyEvent(
       extensions::GetInputImeEventRouter(profile_);
   if (!event_router || !event_router->GetActiveEngine(extension_id_))
     return;
-  const std::string request_id = event_router->GetActiveEngine(extension_id_)
-                                     ->AddRequest(component_id, key_data);
+  const std::string request_id =
+      event_router->GetActiveEngine(extension_id_)
+          ->AddRequest(component_id, std::move(key_data));
 
   input_ime::KeyboardEvent key_data_value;
   key_data_value.type = input_ime::ParseKeyboardEventType(event.type);
@@ -332,12 +333,12 @@ ExtensionFunction::ResponseAction InputImeSetCompositionFunction::Run() {
                                 selection_start, selection_end, params.cursor,
                                 segments, &error)) {
       std::unique_ptr<base::ListValue> results =
-          base::MakeUnique<base::ListValue>();
-      results->Append(base::MakeUnique<base::Value>(false));
+          std::make_unique<base::ListValue>();
+      results->Append(std::make_unique<base::Value>(false));
       return RespondNow(ErrorWithArguments(std::move(results), error));
     }
   }
-  return RespondNow(OneArgument(base::MakeUnique<base::Value>(true)));
+  return RespondNow(OneArgument(std::make_unique<base::Value>(true)));
 }
 
 ExtensionFunction::ResponseAction InputImeCommitTextFunction::Run() {
@@ -352,12 +353,12 @@ ExtensionFunction::ResponseAction InputImeCommitTextFunction::Run() {
     std::string error;
     if (!engine->CommitText(params.context_id, params.text.c_str(), &error)) {
       std::unique_ptr<base::ListValue> results =
-          base::MakeUnique<base::ListValue>();
-      results->Append(base::MakeUnique<base::Value>(false));
+          std::make_unique<base::ListValue>();
+      results->Append(std::make_unique<base::Value>(false));
       return RespondNow(ErrorWithArguments(std::move(results), error));
     }
   }
-  return RespondNow(OneArgument(base::MakeUnique<base::Value>(true)));
+  return RespondNow(OneArgument(std::make_unique<base::Value>(true)));
 }
 
 ExtensionFunction::ResponseAction InputImeSendKeyEventsFunction::Run() {
@@ -414,6 +415,9 @@ InputImeAPI::~InputImeAPI() = default;
 void InputImeAPI::Shutdown() {
   EventRouter::Get(browser_context_)->UnregisterObserver(this);
   registrar_.RemoveAll();
+  if (observer_ && ui::IMEBridge::Get()) {
+    ui::IMEBridge::Get()->SetObserver(nullptr);
+  }
 }
 
 static base::LazyInstance<BrowserContextKeyedAPIFactory<InputImeAPI>>::

@@ -42,7 +42,6 @@
 #include "components/content_settings/core/common/content_settings_pattern.h"
 #include "components/content_settings/core/common/pref_names.h"
 #include "components/metrics/metrics_pref_names.h"
-#include "components/omnibox/browser/omnibox_pref_names.h"
 #include "components/password_manager/core/common/password_manager_pref_names.h"
 #include "components/prefs/pref_service.h"
 #include "components/safe_browsing/common/safe_browsing_prefs.h"
@@ -50,6 +49,7 @@
 #include "components/strings/grit/components_locale_settings.h"
 #include "components/translate/core/browser/translate_pref_names.h"
 #include "components/translate/core/browser/translate_prefs.h"
+#include "components/translate/core/common/translate_util.h"
 #include "components/version_info/version_info.h"
 #include "components/web_resource/web_resource_pref_names.h"
 #include "content/public/browser/browser_thread.h"
@@ -165,7 +165,8 @@ static jboolean JNI_PrefServiceBridge_IsContentSettingEnabled(
   // that the functionality provided below is correct.
   DCHECK(content_settings_type == CONTENT_SETTINGS_TYPE_JAVASCRIPT ||
          content_settings_type == CONTENT_SETTINGS_TYPE_POPUPS ||
-         content_settings_type == CONTENT_SETTINGS_TYPE_ADS);
+         content_settings_type == CONTENT_SETTINGS_TYPE_ADS ||
+         content_settings_type == CONTENT_SETTINGS_TYPE_CLIPBOARD_READ);
   ContentSettingsType type =
       static_cast<ContentSettingsType>(content_settings_type);
   return GetBooleanForContentSetting(type);
@@ -654,6 +655,17 @@ static void JNI_PrefServiceBridge_SetAutoplayEnabled(
       allow ? CONTENT_SETTING_ALLOW : CONTENT_SETTING_BLOCK);
 }
 
+static void JNI_PrefServiceBridge_SetClipboardEnabled(
+    JNIEnv* env,
+    const JavaParamRef<jobject>& obj,
+    jboolean allow) {
+  HostContentSettingsMap* host_content_settings_map =
+      HostContentSettingsMapFactory::GetForProfile(GetOriginalProfile());
+  host_content_settings_map->SetDefaultContentSetting(
+      CONTENT_SETTINGS_TYPE_CLIPBOARD_READ,
+      allow ? CONTENT_SETTING_ASK : CONTENT_SETTING_BLOCK);
+}
+
 static void JNI_PrefServiceBridge_SetSoundEnabled(
     JNIEnv* env,
     const JavaParamRef<jobject>& obj,
@@ -977,7 +989,7 @@ static ScopedJavaLocalRef<jobject> JNI_PrefServiceBridge_GetAboutVersionStrings(
 
   base::android::BuildInfo* android_build_info =
         base::android::BuildInfo::GetInstance();
-  std::string application(android_build_info->package_label());
+  std::string application(android_build_info->host_package_label());
   application.append(" ");
   application.append(version_info::GetVersionNumber());
 
@@ -1136,16 +1148,36 @@ static void JNI_PrefServiceBridge_SetSupervisedUserId(
                               ConvertJavaStringToUTF8(env, pref));
 }
 
-static void
-JNI_PrefServiceBridge_SetChromeHomePersonalizedOmniboxSuggestionsEnabled(
+static void JNI_PrefServiceBridge_GetChromeAcceptLanguages(
     JNIEnv* env,
     const JavaParamRef<jobject>& obj,
-    jboolean is_enabled) {
-  GetPrefService()->SetBoolean(omnibox::kZeroSuggestChromeHomePersonalized,
-                               is_enabled);
+    const JavaParamRef<jobject>& list) {
+  std::unique_ptr<translate::TranslatePrefs> translate_prefs =
+      ChromeTranslateClient::CreateTranslatePrefs(GetPrefService());
+
+  std::vector<translate::TranslateLanguageInfo> languages;
+  std::string app_locale = g_browser_process->GetApplicationLocale();
+  translate_prefs->GetLanguageInfoList(
+      app_locale, translate_prefs->IsTranslateAllowedByPolicy(), &languages);
+
+  translate::ToTranslateLanguageSynonym(&app_locale);
+  for (const auto& info : languages) {
+    // If the language comes from the same language family as the app locale,
+    // translate for this language won't be supported on this device.
+    std::string lang_code = info.code;
+    translate::ToTranslateLanguageSynonym(&lang_code);
+    bool supports_translate =
+        info.supports_translate && lang_code != app_locale;
+
+    Java_PrefServiceBridge_addNewLanguageItemToList(
+        env, list, ConvertUTF8ToJavaString(env, info.code),
+        ConvertUTF8ToJavaString(env, info.display_name),
+        ConvertUTF8ToJavaString(env, info.native_display_name),
+        supports_translate);
+  }
 }
 
-static void JNI_PrefServiceBridge_GetChromeLanguageList(
+static void JNI_PrefServiceBridge_GetUserAcceptLanguages(
     JNIEnv* env,
     const JavaParamRef<jobject>& obj,
     const JavaParamRef<jobject>& list) {
@@ -1154,8 +1186,117 @@ static void JNI_PrefServiceBridge_GetChromeLanguageList(
 
   std::vector<std::string> languages;
   translate_prefs->GetLanguageList(&languages);
-  Java_PrefServiceBridge_copyLanguageList(env, list,
-                                          ToJavaArrayOfStrings(env, languages));
+  Java_PrefServiceBridge_copyStringArrayToList(
+      env, list, ToJavaArrayOfStrings(env, languages));
+}
+
+static void JNI_PrefServiceBridge_UpdateUserAcceptLanguages(
+    JNIEnv* env,
+    const JavaParamRef<jobject>& obj,
+    const JavaParamRef<jstring>& language,
+    jboolean is_add) {
+  std::unique_ptr<translate::TranslatePrefs> translate_prefs =
+      ChromeTranslateClient::CreateTranslatePrefs(GetPrefService());
+  std::string language_code(ConvertJavaStringToUTF8(env, language));
+
+  if (is_add) {
+    translate_prefs->AddToLanguageList(language_code, false /*force_blocked=*/);
+  } else {
+    translate_prefs->RemoveFromLanguageList(language_code);
+  }
+}
+
+static void JNI_PrefServiceBridge_MoveAcceptLanguage(
+    JNIEnv* env,
+    const JavaParamRef<jobject>& obj,
+    const JavaParamRef<jstring>& language,
+    jint offset) {
+  std::unique_ptr<translate::TranslatePrefs> translate_prefs =
+      ChromeTranslateClient::CreateTranslatePrefs(GetPrefService());
+
+  std::vector<std::string> languages;
+  translate_prefs->GetLanguageList(&languages);
+
+  std::string language_code(ConvertJavaStringToUTF8(env, language));
+
+  translate::TranslatePrefs::RearrangeSpecifier where =
+      translate::TranslatePrefs::kNone;
+
+  if (offset > 0) {
+    where = translate::TranslatePrefs::kDown;
+  } else {
+    offset = -offset;
+    where = translate::TranslatePrefs::kUp;
+  }
+
+  translate_prefs->RearrangeLanguage(language_code, where, offset, languages);
+}
+
+static jboolean JNI_PrefServiceBridge_IsBlockedLanguage(
+    JNIEnv* env,
+    const JavaParamRef<jobject>& obj,
+    const JavaParamRef<jstring>& language) {
+  std::unique_ptr<translate::TranslatePrefs> translate_prefs =
+      ChromeTranslateClient::CreateTranslatePrefs(GetPrefService());
+
+  std::string language_code(ConvertJavaStringToUTF8(env, language));
+  translate::ToTranslateLanguageSynonym(&language_code);
+
+  // Application language is always blocked.
+  std::string app_locale = g_browser_process->GetApplicationLocale();
+  translate::ToTranslateLanguageSynonym(&app_locale);
+  if (app_locale == language_code)
+    return true;
+
+  return translate_prefs->IsBlockedLanguage(language_code);
+}
+
+static void JNI_PrefServiceBridge_SetLanguageBlockedState(
+    JNIEnv* env,
+    const JavaParamRef<jobject>& obj,
+    const JavaParamRef<jstring>& language,
+    jboolean blocked) {
+  std::unique_ptr<translate::TranslatePrefs> translate_prefs =
+      ChromeTranslateClient::CreateTranslatePrefs(GetPrefService());
+  std::string language_code(ConvertJavaStringToUTF8(env, language));
+
+  if (blocked) {
+    translate_prefs->BlockLanguage(language_code);
+  } else {
+    translate_prefs->UnblockLanguage(language_code);
+  }
+}
+
+static ScopedJavaLocalRef<jstring>
+JNI_PrefServiceBridge_GetDownloadDefaultDirectory(
+    JNIEnv* env,
+    const JavaParamRef<jobject>& obj) {
+  return ConvertUTF8ToJavaString(
+      env, GetPrefService()->GetString(prefs::kDownloadDefaultDirectory));
+}
+
+static void JNI_PrefServiceBridge_SetDownloadAndSaveFileDefaultDirectory(
+    JNIEnv* env,
+    const JavaParamRef<jobject>& obj,
+    const JavaParamRef<jstring>& directory) {
+  std::string path(ConvertJavaStringToUTF8(env, directory));
+  GetPrefService()->SetFilePath(prefs::kDownloadDefaultDirectory,
+                                base::FilePath(FILE_PATH_LITERAL(path)));
+  GetPrefService()->SetFilePath(prefs::kSaveFileDefaultDirectory,
+                                base::FilePath(FILE_PATH_LITERAL(path)));
+}
+
+static jint JNI_PrefServiceBridge_GetPromptForDownloadAndroid(
+    JNIEnv* env,
+    const JavaParamRef<jobject>& obj) {
+  return GetPrefService()->GetInteger(prefs::kPromptForDownloadAndroid);
+}
+
+static void JNI_PrefServiceBridge_SetPromptForDownloadAndroid(
+    JNIEnv* env,
+    const JavaParamRef<jobject>& obj,
+    const jint status) {
+  GetPrefService()->SetInteger(prefs::kPromptForDownloadAndroid, status);
 }
 
 const char* PrefServiceBridge::GetPrefNameExposedToJava(int pref_index) {

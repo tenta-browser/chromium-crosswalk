@@ -31,8 +31,9 @@ import logging
 import optparse
 import traceback
 
-from webkitpy.common.host import Host
 from webkitpy.common import exit_codes
+from webkitpy.common.host import Host
+from webkitpy.common.system.log_utils import configure_logging
 from webkitpy.layout_tests.models import test_expectations
 from webkitpy.layout_tests.port.factory import platform_options
 from webkitpy.w3c.wpt_manifest import WPTManifest
@@ -97,42 +98,58 @@ def check_virtual_test_suites(host, options):
     return failures
 
 
-def set_up_logging(logging_stream):
-    logger = logging.getLogger()
-    logger.setLevel(logging.INFO)
-    handler = logging.StreamHandler(logging_stream)
-    logger.addHandler(handler)
-    return (logger, handler)
+def check_smoke_tests(host, options):
+    port = host.port_factory.get(options=options)
+    smoke_tests_file = host.filesystem.join(port.layout_tests_dir(), 'SmokeTests')
+    failures = []
+    if not host.filesystem.exists(smoke_tests_file):
+        return failures
+
+    smoke_tests = host.filesystem.read_text_file(smoke_tests_file)
+    line_number = 0
+    parsed_lines = {}
+    for line in smoke_tests.split('\n'):
+        line_number += 1
+        line = line.split('#')[0].strip()
+        if not line:
+            continue
+        failure = ''
+        if line in parsed_lines:
+            failure = '%s:%d duplicate with line %d: %s' % (smoke_tests_file, line_number, parsed_lines[line], line)
+        elif not port.test_exists(line):
+            failure = '%s:%d Test does not exist: %s' % (smoke_tests_file, line_number, line)
+        if failure:
+            _log.error(failure)
+            failures.append(failure)
+        parsed_lines[line] = line_number
+    if failures:
+        _log.error('')
+    return failures
 
 
-def tear_down_logging(logger, handler):
-    logger.removeHandler(handler)
+def run_checks(host, options):
+    failures = []
+    failures.extend(lint(host, options))
+    failures.extend(check_virtual_test_suites(host, options))
+    failures.extend(check_smoke_tests(host, options))
 
+    if options.json:
+        with open(options.json, 'w') as f:
+            json.dump(failures, f)
 
-def run_checks(host, options, logging_stream):
-    logger, handler = set_up_logging(logging_stream)
-    try:
-        failures = []
-        failures.extend(lint(host, options))
-        failures.extend(check_virtual_test_suites(host, options))
-
-        if options.json:
-            with open(options.json, 'w') as f:
-                json.dump(failures, f)
-
-        if failures:
-            _log.error('Lint failed.')
-            return 1
-        else:
-            _log.info('Lint succeeded.')
-            return 0
-    finally:
-        logger.removeHandler(handler)
+    if failures:
+        _log.error('Lint failed.')
+        return 1
+    else:
+        _log.info('Lint succeeded.')
+        return 0
 
 
 def main(argv, stderr, host=None):
     parser = optparse.OptionParser(option_list=platform_options(use_globs=True))
     parser.add_option('--json', help='Path to JSON output file')
+    parser.add_option('--verbose', action='store_true', default=False,
+                      help='log extra details that may be helpful when debugging')
     options, _ = parser.parse_args(argv)
 
     if not host:
@@ -145,13 +162,20 @@ def main(argv, stderr, host=None):
         else:
             host = Host()
 
-    # Need to generate MANIFEST.json since some expectations correspond to WPT
-    # tests that aren't files and only exist in the manifest.
-    _log.info('Generating MANIFEST.json for web-platform-tests ...')
-    WPTManifest.ensure_manifest(host)
+    if options.verbose:
+        configure_logging(logging_level=logging.DEBUG, stream=stderr)
+        # Print full stdout/stderr when a command fails.
+        host.executive.error_output_limit = None
+    else:
+        # PRESUBMIT.py relies on our output, so don't include timestamps.
+        configure_logging(logging_level=logging.INFO, stream=stderr, include_time=False)
 
     try:
-        exit_status = run_checks(host, options, stderr)
+        # Need to generate MANIFEST.json since some expectations correspond to WPT
+        # tests that aren't files and only exist in the manifest.
+        _log.debug('Generating MANIFEST.json for web-platform-tests ...')
+        WPTManifest.ensure_manifest(host)
+        exit_status = run_checks(host, options)
     except KeyboardInterrupt:
         exit_status = exit_codes.INTERRUPTED_EXIT_STATUS
     except Exception as error:  # pylint: disable=broad-except

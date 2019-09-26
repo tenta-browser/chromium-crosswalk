@@ -40,7 +40,7 @@
 #include "media/cast/cast_config.h"
 #include "media/cast/cast_sender.h"
 #include "media/cast/net/cast_transport_config.h"
-#include "third_party/WebKit/public/platform/WebMediaStreamSource.h"
+#include "third_party/blink/public/platform/web_media_stream_source.h"
 #include "ui/gfx/geometry/size.h"
 
 using media::cast::FrameSenderConfig;
@@ -224,13 +224,13 @@ class CastVideoSink : public base::SupportsWeakPtr<CastVideoSink>,
 
       if (!(video_frame->format() == media::PIXEL_FORMAT_I420 ||
             video_frame->format() == media::PIXEL_FORMAT_YV12 ||
-            video_frame->format() == media::PIXEL_FORMAT_YV12A)) {
+            video_frame->format() == media::PIXEL_FORMAT_I420A)) {
         error_callback_.Run("Incompatible video frame format.");
         return;
       }
       scoped_refptr<media::VideoFrame> frame = video_frame;
       // Drop alpha channel since we do not support it yet.
-      if (frame->format() == media::PIXEL_FORMAT_YV12A)
+      if (frame->format() == media::PIXEL_FORMAT_I420A)
         frame = media::WrapAsI420VideoFrame(video_frame);
 
       // Used by chrome/browser/extension/api/cast_streaming/performance_test.cc

@@ -83,13 +83,7 @@ HpackEncoder::HpackEncoder(const HpackHuffmanTable& table)
       enable_compression_(true),
       should_emit_table_size_(false) {}
 
-HpackEncoder::~HpackEncoder() {}
-
-void HpackEncoder::EncodeHeaderSet(const Representations& representations,
-                                   SpdyString* output) {
-  RepresentationIterator iter(representations);
-  EncodeRepresentations(&iter, output);
-}
+HpackEncoder::~HpackEncoder() = default;
 
 bool HpackEncoder::EncodeHeaderSet(const SpdyHeaderBlock& header_set,
                                    SpdyString* output) {

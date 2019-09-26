@@ -11,6 +11,7 @@
 #include "base/values.h"
 #include "build/build_config.h"
 #include "chrome/browser/browser_process.h"
+#include "chrome/browser/policy/chrome_browser_policy_connector.h"
 #include "components/policy/core/browser/browser_policy_connector.h"
 #include "components/policy/core/common/cloud/cloud_policy_core.h"
 #include "components/policy/core/common/cloud/cloud_policy_manager.h"
@@ -55,7 +56,7 @@ void ProfilePolicyConnector::Init(
       g_browser_process->platform_part()->browser_policy_connector_chromeos();
 #else
   DCHECK_EQ(nullptr, user);
-  BrowserPolicyConnector* connector =
+  ChromeBrowserPolicyConnector* connector =
       g_browser_process->browser_policy_connector();
 #endif
 
@@ -74,6 +75,19 @@ void ProfilePolicyConnector::Init(
   if (connector->GetDeviceActiveDirectoryPolicyManager()) {
     policy_providers_.push_back(
         connector->GetDeviceActiveDirectoryPolicyManager());
+  }
+#else
+  for (auto* provider : connector->GetPolicyProviders()) {
+    // Skip the platform provider since it was already handled above.  The
+    // platform provider should be first in the list so that it always takes
+    // precedence.
+    if (provider == connector->GetPlatformProvider()) {
+      continue;
+    } else {
+      // TODO(zmin): In the future, we may want to have special handling for
+      // the other providers too.
+      policy_providers_.push_back(provider);
+    }
   }
 #endif
 
@@ -103,7 +117,7 @@ void ProfilePolicyConnector::Init(
   }
 #endif
 
-  policy_service_.reset(new PolicyServiceImpl(policy_providers_));
+  policy_service_ = std::make_unique<PolicyServiceImpl>(policy_providers_);
 
 #if defined(OS_CHROMEOS)
   if (is_primary_user_) {

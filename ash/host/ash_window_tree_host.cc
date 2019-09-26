@@ -10,16 +10,30 @@
 #include "ash/host/ash_window_tree_host_mirroring_unified.h"
 #include "ash/host/ash_window_tree_host_platform.h"
 #include "ash/host/ash_window_tree_host_unified.h"
+#include "ash/public/cpp/ash_switches.h"
 #include "ash/shell_port.h"
+#include "base/command_line.h"
+#include "base/sys_info.h"
 #include "ui/aura/client/screen_position_client.h"
 #include "ui/aura/env.h"
 #include "ui/aura/window_tree_host.h"
 #include "ui/events/event.h"
+#include "ui/gfx/geometry/insets.h"
 #include "ui/gfx/geometry/rect.h"
 
 namespace ash {
+namespace {
 
-AshWindowTreeHost::AshWindowTreeHost() = default;
+bool GetAllowConfineCursor() {
+  return base::SysInfo::IsRunningOnChromeOS() ||
+         base::CommandLine::ForCurrentProcess()->HasSwitch(
+             switches::kAshConstrainPointerToRoot);
+}
+
+}  // namespace
+
+AshWindowTreeHost::AshWindowTreeHost()
+    : allow_confine_cursor_(GetAllowConfineCursor()) {}
 
 AshWindowTreeHost::~AshWindowTreeHost() = default;
 

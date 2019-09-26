@@ -16,6 +16,7 @@
 #include "net/socket/fuzzed_datagram_client_socket.h"
 #include "net/socket/fuzzed_socket.h"
 #include "net/socket/ssl_client_socket.h"
+#include "net/traffic_annotation/network_traffic_annotation.h"
 
 namespace net {
 
@@ -39,7 +40,8 @@ class FailingSSLClientSocket : public SSLClientSocket {
 
   int Write(IOBuffer* buf,
             int buf_len,
-            const CompletionCallback& callback) override {
+            const CompletionCallback& callback,
+            const NetworkTrafficAnnotationTag& traffic_annotation) override {
     NOTREACHED();
     return ERR_UNEXPECTED;
   }
@@ -88,6 +90,8 @@ class FailingSSLClientSocket : public SSLClientSocket {
 
   int64_t GetTotalReceivedBytes() const override { return 0; }
 
+  void ApplySocketTag(const net::SocketTag& tag) override {}
+
   // SSLSocket implementation:
   int ExportKeyingMaterial(const base::StringPiece& label,
                            bool has_context,
@@ -135,13 +139,13 @@ FuzzedSocketFactory::~FuzzedSocketFactory() = default;
 std::unique_ptr<DatagramClientSocket>
 FuzzedSocketFactory::CreateDatagramClientSocket(
     DatagramSocket::BindType bind_type,
-    const RandIntCallback& rand_int_cb,
     NetLog* net_log,
     const NetLogSource& source) {
   return std::make_unique<FuzzedDatagramClientSocket>(data_provider_);
 }
 
-std::unique_ptr<StreamSocket> FuzzedSocketFactory::CreateTransportClientSocket(
+std::unique_ptr<TransportClientSocket>
+FuzzedSocketFactory::CreateTransportClientSocket(
     const AddressList& addresses,
     std::unique_ptr<SocketPerformanceWatcher> socket_performance_watcher,
     NetLog* net_log,

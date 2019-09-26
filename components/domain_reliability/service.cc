@@ -4,6 +4,8 @@
 
 #include "components/domain_reliability/service.h"
 
+#include <utility>
+
 #include "base/bind.h"
 #include "base/callback.h"
 #include "base/location.h"
@@ -17,7 +19,7 @@
 #include "content/public/browser/permission_manager.h"
 #include "content/public/browser/permission_type.h"
 #include "net/url_request/url_request_context_getter.h"
-#include "third_party/WebKit/public/platform/modules/permissions/permission_status.mojom.h"
+#include "third_party/blink/public/platform/modules/permissions/permission_status.mojom.h"
 #include "url/gurl.h"
 
 namespace domain_reliability {
@@ -118,10 +120,8 @@ class DomainReliabilityServiceImpl : public DomainReliabilityService {
     DCHECK(network_task_runner_.get());
 
     network_task_runner_->PostTask(
-        FROM_HERE,
-        base::Bind(&AddContextForTestingOnNetworkTaskRunner,
-                   monitor_,
-                   base::Passed(&config)));
+        FROM_HERE, base::BindOnce(&AddContextForTestingOnNetworkTaskRunner,
+                                  monitor_, std::move(config)));
   }
 
   void ForceUploadsForTesting() override {
@@ -145,7 +145,7 @@ class DomainReliabilityServiceImpl : public DomainReliabilityService {
         base::BindOnce(
             &DomainReliabilityServiceImpl::CheckUploadAllowedOnUIThread,
             service, base::RetainedRef(network_task_runner), origin,
-            base::Passed(&callback)));
+            std::move(callback)));
   }
 
   void CheckUploadAllowedOnUIThread(

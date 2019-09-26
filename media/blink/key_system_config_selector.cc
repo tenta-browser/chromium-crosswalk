@@ -18,11 +18,11 @@
 #include "media/base/media_permission.h"
 #include "media/base/mime_util.h"
 #include "media/blink/webmediaplayer_util.h"
-#include "third_party/WebKit/public/platform/URLConversion.h"
-#include "third_party/WebKit/public/platform/WebMediaKeySystemConfiguration.h"
-#include "third_party/WebKit/public/platform/WebSecurityOrigin.h"
-#include "third_party/WebKit/public/platform/WebString.h"
-#include "third_party/WebKit/public/platform/WebVector.h"
+#include "third_party/blink/public/platform/url_conversion.h"
+#include "third_party/blink/public/platform/web_media_key_system_configuration.h"
+#include "third_party/blink/public/platform/web_security_origin.h"
+#include "third_party/blink/public/platform/web_string.h"
+#include "third_party/blink/public/platform/web_vector.h"
 #include "url/gurl.h"
 #include "url/origin.h"
 
@@ -942,7 +942,7 @@ void KeySystemConfigSelector::SelectConfigInternal(
           GURL security_origin(url::Origin(request->security_origin).GetURL());
           DVLOG(3) << "Request permission.";
           media_permission_->RequestPermission(
-              MediaPermission::PROTECTED_MEDIA_IDENTIFIER, security_origin,
+              MediaPermission::PROTECTED_MEDIA_IDENTIFIER,
               base::Bind(&KeySystemConfigSelector::OnPermissionResult,
                          weak_factory_.GetWeakPtr(), base::Passed(&request)));
         }

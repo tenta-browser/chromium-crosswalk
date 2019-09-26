@@ -78,13 +78,13 @@ void GetImeTextSpans(HIMC imm_context,
         ime_text_span.start_offset = clause_data[i];
         ime_text_span.end_offset = clause_data[i + 1];
         ime_text_span.underline_color = SK_ColorBLACK;
-        ime_text_span.thick = false;
+        ime_text_span.thickness = ui::ImeTextSpan::Thickness::kThin;
         ime_text_span.background_color = SK_ColorTRANSPARENT;
 
         // Use thick underline for the target clause.
         if (ime_text_span.start_offset >= static_cast<uint32_t>(target_start) &&
             ime_text_span.end_offset <= static_cast<uint32_t>(target_end)) {
-          ime_text_span.thick = true;
+          ime_text_span.thickness = ui::ImeTextSpan::Thickness::kThick;
         }
         ime_text_spans->push_back(ime_text_span);
       }
@@ -330,24 +330,24 @@ void IMM32Manager::GetCompositionInfo(HIMC imm_context,
     return;
 
   ImeTextSpan ime_text_span;
-  ime_text_span.underline_color = SK_ColorBLACK;
+  ime_text_span.underline_color = SK_ColorTRANSPARENT;
   ime_text_span.background_color = SK_ColorTRANSPARENT;
   if (target_start > 0) {
     ime_text_span.start_offset = 0U;
     ime_text_span.end_offset = static_cast<uint32_t>(target_start);
-    ime_text_span.thick = false;
+    ime_text_span.thickness = ui::ImeTextSpan::Thickness::kThin;
     composition->ime_text_spans.push_back(ime_text_span);
   }
   if (target_end > target_start) {
     ime_text_span.start_offset = static_cast<uint32_t>(target_start);
     ime_text_span.end_offset = static_cast<uint32_t>(target_end);
-    ime_text_span.thick = true;
+    ime_text_span.thickness = ui::ImeTextSpan::Thickness::kThick;
     composition->ime_text_spans.push_back(ime_text_span);
   }
   if (target_end < length) {
     ime_text_span.start_offset = static_cast<uint32_t>(target_end);
     ime_text_span.end_offset = static_cast<uint32_t>(length);
-    ime_text_span.thick = false;
+    ime_text_span.thickness = ui::ImeTextSpan::Thickness::kThin;
     composition->ime_text_spans.push_back(ime_text_span);
   }
 }
@@ -583,28 +583,8 @@ void IMM32Manager::ConvertInputModeToImmFlags(TextInputMode input_mode,
                                               DWORD initial_conversion_mode,
                                               BOOL* open,
                                               DWORD* new_conversion_mode) {
-  *open = TRUE;
+  *open = FALSE;
   *new_conversion_mode = initial_conversion_mode;
-  switch (input_mode) {
-    case ui::TEXT_INPUT_MODE_FULL_WIDTH_LATIN:
-      *new_conversion_mode |= IME_CMODE_FULLSHAPE;
-      *new_conversion_mode &= ~(IME_CMODE_NATIVE
-                              | IME_CMODE_KATAKANA);
-      break;
-    case ui::TEXT_INPUT_MODE_KANA:
-      *new_conversion_mode |= (IME_CMODE_NATIVE
-                             | IME_CMODE_FULLSHAPE);
-      *new_conversion_mode &= ~IME_CMODE_KATAKANA;
-      break;
-    case ui::TEXT_INPUT_MODE_KATAKANA:
-      *new_conversion_mode |= (IME_CMODE_NATIVE
-                             | IME_CMODE_KATAKANA
-                             | IME_CMODE_FULLSHAPE);
-      break;
-    default:
-      *open = FALSE;
-      break;
-  }
 }
 
 }  // namespace ui

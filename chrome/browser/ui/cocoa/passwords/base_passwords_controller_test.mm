@@ -4,7 +4,6 @@
 
 #include "chrome/browser/ui/cocoa/passwords/base_passwords_controller_test.h"
 
-#include "base/memory/ptr_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/password_manager/password_store_factory.h"
 #include "components/password_manager/core/browser/mock_password_store.h"
@@ -65,10 +64,16 @@ void ManagePasswordsControllerTest::SetUpSavePendingState(
   autofill::PasswordForm form;
   form.username_value = base::ASCIIToUTF16(username);
   form.password_value = base::ASCIIToUTF16(password);
-  form.all_possible_passwords.push_back(form.password_value);
-  for (auto other_password : other_passwords)
-    form.all_possible_passwords.push_back(base::ASCIIToUTF16(other_password));
+  form.all_possible_passwords.push_back(
+      {form.password_value, base::ASCIIToUTF16("pass_el")});
+  for (size_t i = 0; i < other_passwords.size(); i++) {
+    form.all_possible_passwords.push_back(
+        {base::ASCIIToUTF16(other_passwords[i]),
+         base::ASCIIToUTF16("pass_el" + std::to_string(i))});
+  }
   EXPECT_CALL(*ui_controller_, GetPendingPassword()).WillOnce(ReturnRef(form));
+  std::vector<std::unique_ptr<autofill::PasswordForm>> forms;
+  EXPECT_CALL(*ui_controller_, GetCurrentForms()).WillOnce(ReturnRef(forms));
   GURL origin(kSiteOrigin);
   EXPECT_CALL(*ui_controller_, GetOrigin()).WillOnce(ReturnRef(origin));
   EXPECT_CALL(*ui_controller_, GetState())
@@ -82,9 +87,9 @@ void ManagePasswordsControllerTest::SetUpUpdatePendingState(
   autofill::PasswordForm form;
   EXPECT_CALL(*ui_controller_, GetPendingPassword()).WillOnce(ReturnRef(form));
   std::vector<std::unique_ptr<autofill::PasswordForm>> forms;
-  forms.push_back(base::MakeUnique<autofill::PasswordForm>(form));
+  forms.push_back(std::make_unique<autofill::PasswordForm>(form));
   if (multiple_forms) {
-    forms.push_back(base::MakeUnique<autofill::PasswordForm>(form));
+    forms.push_back(std::make_unique<autofill::PasswordForm>(form));
   }
   EXPECT_CALL(*ui_controller_, GetCurrentForms()).WillOnce(ReturnRef(forms));
   GURL origin(kSiteOrigin);

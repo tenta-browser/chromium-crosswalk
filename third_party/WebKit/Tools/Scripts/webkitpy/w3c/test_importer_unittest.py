@@ -18,7 +18,7 @@ from webkitpy.layout_tests.builder_list import BuilderList
 from webkitpy.w3c.chromium_commit_mock import MockChromiumCommit
 from webkitpy.w3c.local_wpt import LocalWPT
 from webkitpy.w3c.local_wpt_mock import MockLocalWPT
-from webkitpy.w3c.test_importer import TestImporter, ROTATIONS_URL
+from webkitpy.w3c.test_importer import TestImporter, ROTATIONS_URL, TBR_FALLBACK
 from webkitpy.w3c.wpt_github_mock import MockWPTGitHub
 
 
@@ -29,7 +29,7 @@ class TestImporterTest(LoggingTestCase):
         host.filesystem.write_text_file(
             '/mock-checkout/third_party/WebKit/LayoutTests/W3CImportExpectations', '')
         importer = TestImporter(host)
-        importer.git_cl = MockGitCL(host, results=None)
+        importer.git_cl = MockGitCL(host, time_out=True)
         success = importer.update_expectations_for_cl()
         self.assertFalse(success)
         self.assertLog([
@@ -43,12 +43,9 @@ class TestImporterTest(LoggingTestCase):
         host.filesystem.write_text_file(
             '/mock-checkout/third_party/WebKit/LayoutTests/W3CImportExpectations', '')
         importer = TestImporter(host)
-        importer.git_cl = MockGitCL(host, results=CLStatus(
-            status='closed',
-            try_job_results={
-                Build('builder-a', 123): TryJobStatus('COMPLETED', 'SUCCESS'),
-            },
-        ))
+        importer.git_cl = MockGitCL(host, status='closed', try_job_results={
+            Build('builder-a', 123): TryJobStatus('COMPLETED', 'SUCCESS'),
+        })
         success = importer.update_expectations_for_cl()
         self.assertFalse(success)
         self.assertLog([
@@ -61,12 +58,9 @@ class TestImporterTest(LoggingTestCase):
         host.filesystem.write_text_file(
             '/mock-checkout/third_party/WebKit/LayoutTests/W3CImportExpectations', '')
         importer = TestImporter(host)
-        importer.git_cl = MockGitCL(host, results=CLStatus(
-            status='lgtm',
-            try_job_results={
-                Build('builder-a', 123): TryJobStatus('COMPLETED', 'SUCCESS'),
-            },
-        ))
+        importer.git_cl = MockGitCL(host, status='lgtm', try_job_results={
+            Build('builder-a', 123): TryJobStatus('COMPLETED', 'SUCCESS'),
+        })
         success = importer.update_expectations_for_cl()
         self.assertLog([
             'INFO: Triggering try jobs for updating expectations.\n',
@@ -79,12 +73,9 @@ class TestImporterTest(LoggingTestCase):
         host.filesystem.write_text_file(
             '/mock-checkout/third_party/WebKit/LayoutTests/W3CImportExpectations', '')
         importer = TestImporter(host)
-        importer.git_cl = MockGitCL(host, results=CLStatus(
-            status='lgtm',
-            try_job_results={
-                Build('builder-a', 123): TryJobStatus('COMPLETED', 'FAILURE'),
-            },
-        ))
+        importer.git_cl = MockGitCL(host, status='lgtm', try_job_results={
+            Build('builder-a', 123): TryJobStatus('COMPLETED', 'FAILURE'),
+        })
         importer.fetch_new_expectations_and_baselines = lambda: None
         success = importer.update_expectations_for_cl()
         self.assertTrue(success)
@@ -99,13 +90,10 @@ class TestImporterTest(LoggingTestCase):
             '/mock-checkout/third_party/WebKit/LayoutTests/W3CImportExpectations', '')
         importer = TestImporter(host)
         # Only the latest job for each builder is counted.
-        importer.git_cl = MockGitCL(host, results=CLStatus(
-            status='lgtm',
-            try_job_results={
-                Build('cq-builder-a', 120): TryJobStatus('COMPLETED', 'FAILURE'),
-                Build('cq-builder-a', 123): TryJobStatus('COMPLETED', 'SUCCESS'),
-            },
-        ))
+        importer.git_cl = MockGitCL(host, status='lgtm', try_job_results={
+            Build('cq-builder-a', 120): TryJobStatus('COMPLETED', 'FAILURE'),
+            Build('cq-builder-a', 123): TryJobStatus('COMPLETED', 'SUCCESS'),
+        })
         success = importer.run_commit_queue_for_cl()
         self.assertTrue(success)
         self.assertLog([
@@ -125,14 +113,11 @@ class TestImporterTest(LoggingTestCase):
         host.filesystem.write_text_file(
             '/mock-checkout/third_party/WebKit/LayoutTests/W3CImportExpectations', '')
         importer = TestImporter(host)
-        importer.git_cl = MockGitCL(host, results=CLStatus(
-            status='lgtm',
-            try_job_results={
-                Build('cq-builder-a', 120): TryJobStatus('COMPLETED', 'SUCCESS'),
-                Build('cq-builder-a', 123): TryJobStatus('COMPLETED', 'FAILURE'),
-                Build('cq-builder-b', 200): TryJobStatus('COMPLETED', 'SUCCESS'),
-            },
-        ))
+        importer.git_cl = MockGitCL(host, status='lgtm', try_job_results={
+            Build('cq-builder-a', 120): TryJobStatus('COMPLETED', 'SUCCESS'),
+            Build('cq-builder-a', 123): TryJobStatus('COMPLETED', 'FAILURE'),
+            Build('cq-builder-b', 200): TryJobStatus('COMPLETED', 'SUCCESS'),
+        })
         importer.fetch_new_expectations_and_baselines = lambda: None
         success = importer.run_commit_queue_for_cl()
         self.assertFalse(success)
@@ -151,13 +136,10 @@ class TestImporterTest(LoggingTestCase):
         host.filesystem.write_text_file(
             '/mock-checkout/third_party/WebKit/LayoutTests/W3CImportExpectations', '')
         importer = TestImporter(host)
-        importer.git_cl = MockGitCL(host, results=CLStatus(
-            status='closed',
-            try_job_results={
-                Build('cq-builder-a', 120): TryJobStatus('COMPLETED', 'SUCCESS'),
-                Build('cq-builder-b', 200): TryJobStatus('COMPLETED', 'SUCCESS'),
-            },
-        ))
+        importer.git_cl = MockGitCL(host, status='closed', try_job_results={
+            Build('cq-builder-a', 120): TryJobStatus('COMPLETED', 'SUCCESS'),
+            Build('cq-builder-b', 200): TryJobStatus('COMPLETED', 'SUCCESS'),
+        })
         success = importer.run_commit_queue_for_cl()
         self.assertFalse(success)
         self.assertLog([
@@ -168,46 +150,11 @@ class TestImporterTest(LoggingTestCase):
             ['git', 'cl', 'try'],
         ])
 
-    def test_run_commit_queue_for_cl_only_checks_non_blink_bots(self):
-        host = MockHost()
-        host.filesystem.write_text_file(
-            '/mock-checkout/third_party/WebKit/LayoutTests/W3CImportExpectations', '')
-        host.builders = BuilderList({
-            'fakeos_blink_rel': {
-                'port_name': 'test-fakeos',
-                'specifiers': ['FakeOS', 'Release'],
-                'is_try_builder': True,
-            }
-        })
-        importer = TestImporter(host)
-        importer.git_cl = MockGitCL(host, results=CLStatus(
-            status='lgtm',
-            try_job_results={
-                Build('fakeos_blink_rel', 123): TryJobStatus('COMPLETED', 'FAILURE'),
-                Build('cq-builder-b', 200): TryJobStatus('COMPLETED', 'SUCCESS'),
-            },
-        ))
-        importer.fetch_new_expectations_and_baselines = lambda: None
-        success = importer.run_commit_queue_for_cl()
-        self.assertTrue(success)
-        self.assertLog([
-            'INFO: Triggering CQ try jobs.\n',
-            'INFO: All jobs finished.\n',
-            'INFO: CQ appears to have passed; trying to commit.\n',
-            'INFO: Update completed.\n',
-        ])
-        self.assertEqual(importer.git_cl.calls, [
-            ['git', 'cl', 'try'],
-            ['git', 'cl', 'upload', '-f', '--send-mail'],
-            ['git', 'cl', 'set-commit'],
-        ])
-
     def test_run_commit_queue_for_cl_timeout(self):
+        # This simulates the case where we time out while waiting for try jobs.
         host = MockHost()
         importer = TestImporter(host)
-        # The simulates the case where importer.git_cl.wait_for_try_jobs returns
-        # None, which would normally happen if we time out waiting for results.
-        importer.git_cl = MockGitCL(host, results=None)
+        importer.git_cl = MockGitCL(host, time_out=True)
         success = importer.run_commit_queue_for_cl()
         self.assertFalse(success)
         self.assertLog([
@@ -346,7 +293,7 @@ class TestImporterTest(LoggingTestCase):
         importer.host.environ['BUILDBOT_BUILDNUMBER'] = '123'
         description = importer._cl_description(directory_owners={})
         self.assertIn(
-            'Build: https://build.chromium.org/p/my.master/builders/b/builds/123\n\n',
+            'Build: https://ci.chromium.org/buildbot/my.master/b/123\n\n',
             description)
         self.assertEqual(host.executive.calls, [['git', 'log', '-1', '--format=%B']])
 
@@ -379,13 +326,13 @@ class TestImporterTest(LoggingTestCase):
     def test_tbr_reviewer_no_response_uses_backup(self):
         host = MockHost()
         importer = TestImporter(host)
-        self.assertEqual('qyearsley', importer.tbr_reviewer())
+        self.assertEqual(TBR_FALLBACK, importer.tbr_reviewer())
         self.assertLog([
             'ERROR: Exception while fetching current sheriff: '
             'No JSON object could be decoded\n'
         ])
 
-    def test_tbr_reviewer_nobody_on_rotation(self):
+    def test_tbr_reviewer_date_not_found(self):
         host = MockHost()
         yesterday = (datetime.date.fromtimestamp(host.time()) -
                      datetime.timedelta(days=1)).isoformat()
@@ -393,27 +340,34 @@ class TestImporterTest(LoggingTestCase):
             'calendar': [
                 {
                     'date': yesterday,
-                    'participants': [['some-sheriff']],
+                    'participants': [['some-sheriff'], ['other-sheriff']],
                 },
             ],
-            'rotations': ['ecosystem_infra']
+            'rotations': ['ecosystem_infra', 'other_rotation']
         })
         importer = TestImporter(host)
-        self.assertEqual('qyearsley', importer.tbr_reviewer())
-        self.assertLog([])
+        self.assertEqual(TBR_FALLBACK, importer.tbr_reviewer())
+        self.assertLog([
+            'ERROR: No entry found for date 1969-12-31 in rotations table.\n'
+        ])
 
+    def test_tbr_reviewer_nobody_on_rotation(self):
+        host = MockHost()
         today = datetime.date.fromtimestamp(host.time()).isoformat()
         host.web.urls[ROTATIONS_URL] = json.dumps({
             'calendar': [
                 {
                     'date': today,
-                    'participants': [[''], ['some-sheriff']],
+                    'participants': [[], ['some-sheriff']],
                 },
             ],
             'rotations': ['ecosystem_infra', 'other-rotation']
         })
-        self.assertEqual('qyearsley', importer.tbr_reviewer())
-        self.assertLog([])
+        importer = TestImporter(host)
+        self.assertEqual(TBR_FALLBACK, importer.tbr_reviewer())
+        self.assertLog([
+            'INFO: No sheriff today.\n'
+        ])
 
     def test_tbr_reviewer(self):
         host = MockHost()

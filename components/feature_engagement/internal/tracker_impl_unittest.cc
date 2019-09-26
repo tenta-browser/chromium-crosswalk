@@ -8,8 +8,8 @@
 #include <utility>
 
 #include "base/bind.h"
+#include "base/bind_helpers.h"
 #include "base/feature_list.h"
-#include "base/memory/ptr_util.h"
 #include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "base/sequenced_task_runner.h"
@@ -176,8 +176,6 @@ class TestDisplayLockController : public DisplayLockController {
     next_display_lock_handle_ = std::move(display_lock_handle);
   }
 
-  void NoopCallback() {}
-
  private:
   // The next DisplayLockHandle to return.
   std::unique_ptr<DisplayLockHandle> next_display_lock_handle_;
@@ -191,7 +189,7 @@ class TrackerImplTest : public ::testing::Test {
 
   void SetUp() override {
     std::unique_ptr<EditableConfiguration> configuration =
-        base::MakeUnique<EditableConfiguration>();
+        std::make_unique<EditableConfiguration>();
     configuration_ = configuration.get();
 
     RegisterFeatureConfig(configuration.get(), kTestFeatureFoo,
@@ -206,11 +204,11 @@ class TrackerImplTest : public ::testing::Test {
     std::unique_ptr<TestInMemoryEventStore> event_store = CreateEventStore();
     event_store_ = event_store.get();
 
-    auto event_model = base::MakeUnique<EventModelImpl>(
+    auto event_model = std::make_unique<EventModelImpl>(
         std::move(event_store),
-        base::MakeUnique<StoreEverythingEventStorageValidator>());
+        std::make_unique<StoreEverythingEventStorageValidator>());
 
-    auto availability_model = base::MakeUnique<TestAvailabilityModel>();
+    auto availability_model = std::make_unique<TestAvailabilityModel>();
     availability_model_ = availability_model.get();
     availability_model_->SetIsReady(ShouldAvailabilityStoreBeReady());
 
@@ -221,8 +219,8 @@ class TrackerImplTest : public ::testing::Test {
     tracker_.reset(new TrackerImpl(
         std::move(event_model), std::move(availability_model),
         std::move(configuration), std::move(display_lock_controller),
-        base::MakeUnique<OnceConditionValidator>(),
-        base::MakeUnique<TestTimeProvider>()));
+        std::make_unique<OnceConditionValidator>(),
+        std::make_unique<TestTimeProvider>()));
   }
 
   void VerifyEventTriggerEvents(const base::Feature& feature, uint32_t count) {
@@ -410,7 +408,7 @@ class TrackerImplTest : public ::testing::Test {
  protected:
   virtual std::unique_ptr<TestInMemoryEventStore> CreateEventStore() {
     // Returns a EventStore that will successfully initialize.
-    return base::MakeUnique<TestInMemoryEventStore>(true);
+    return std::make_unique<TestInMemoryEventStore>(true);
   }
 
   virtual bool ShouldAvailabilityStoreBeReady() { return true; }
@@ -435,7 +433,7 @@ class FailingStoreInitTrackerImplTest : public TrackerImplTest {
  protected:
   std::unique_ptr<TestInMemoryEventStore> CreateEventStore() override {
     // Returns a EventStore that will fail to initialize.
-    return base::MakeUnique<TestInMemoryEventStore>(false);
+    return std::make_unique<TestInMemoryEventStore>(false);
   }
 
  private:
@@ -859,9 +857,7 @@ TEST_F(TrackerImplTest, TestNotifyEvent) {
 }
 
 TEST_F(TrackerImplTest, ShouldPassThroughAcquireDisplayLock) {
-  auto lock_handle = std::make_unique<DisplayLockHandle>(
-      base::Bind(&TestDisplayLockController::NoopCallback,
-                 base::Unretained(display_lock_controller_)));
+  auto lock_handle = std::make_unique<DisplayLockHandle>(base::DoNothing());
   DisplayLockHandle* lock_handle_ptr = lock_handle.get();
   display_lock_controller_->SetNextDisplayLockHandle(std::move(lock_handle));
   EXPECT_EQ(lock_handle_ptr, tracker_->AcquireDisplayLock().get());

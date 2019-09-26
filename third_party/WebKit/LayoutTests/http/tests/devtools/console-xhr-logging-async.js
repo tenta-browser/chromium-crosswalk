@@ -7,9 +7,6 @@
       `Tests that XMLHttpRequest Logging works when Enabled and doesn't show logs when Disabled for asynchronous XHRs.\n`);
   await TestRunner.loadModule('console_test_runner');
   await TestRunner.loadModule('network_test_runner');
-  await TestRunner.loadHTML(`
-      <a href="https://bugs.webkit.org/show_bug.cgi?id=79229">Bug 79229</a>
-    `);
 
   step1();
 
@@ -19,19 +16,26 @@
 
   function step1() {
     Common.settingForTest('monitoringXHREnabled').set(true);
-    makeRequest(step2);
+    makeRequest(() => {
+      TestRunner.deprecatedRunAfterPendingDispatches(async () => {
+        TestRunner.addResult('XHR with logging enabled: ');
+        // Sorting console messages to prevent flakiness.
+        await ConsoleTestRunner.renderCompleteMessages();
+        TestRunner.addResults(ConsoleTestRunner.dumpConsoleMessagesIntoArray().sort());
+        Console.ConsoleView.clearConsole();
+        step2();
+      });
+    });
   }
 
   function step2() {
     Common.settingForTest('monitoringXHREnabled').set(false);
-    makeRequest(step3);
-  }
-
-  function step3() {
-    function finish() {
-      ConsoleTestRunner.dumpConsoleMessages();
-      TestRunner.completeTest();
-    }
-    TestRunner.deprecatedRunAfterPendingDispatches(finish);
+    makeRequest(() => {
+      TestRunner.deprecatedRunAfterPendingDispatches(() => {
+        TestRunner.addResult('XHR with logging disabled: ');
+        ConsoleTestRunner.dumpConsoleMessages();
+        TestRunner.completeTest();
+      });
+    });
   }
 })();

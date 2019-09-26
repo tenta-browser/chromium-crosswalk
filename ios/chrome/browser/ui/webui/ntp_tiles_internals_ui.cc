@@ -4,10 +4,10 @@
 
 #include "ios/chrome/browser/ui/webui/ntp_tiles_internals_ui.h"
 
-#include "base/memory/ptr_util.h"
+#include <memory>
+
 #include "components/grit/components_resources.h"
 #include "components/keyed_service/core/service_access_type.h"
-#include "components/ntp_tiles/field_trial.h"
 #include "components/ntp_tiles/most_visited_sites.h"
 #include "components/ntp_tiles/webui/ntp_tiles_internals_message_handler.h"
 #include "components/ntp_tiles/webui/ntp_tiles_internals_message_handler_client.h"
@@ -44,7 +44,8 @@ class IOSNTPTilesInternalsMessageHandlerBridge
   PrefService* GetPrefs() override;
   void RegisterMessageCallback(
       const std::string& message,
-      const base::Callback<void(const base::ListValue*)>& callback) override;
+      const base::RepeatingCallback<void(const base::ListValue*)>& callback)
+      override;
   void CallJavascriptFunctionVector(
       const std::string& name,
       const std::vector<const base::Value*>& values) override;
@@ -90,7 +91,7 @@ PrefService* IOSNTPTilesInternalsMessageHandlerBridge::GetPrefs() {
 
 void IOSNTPTilesInternalsMessageHandlerBridge::RegisterMessageCallback(
     const std::string& message,
-    const base::Callback<void(const base::ListValue*)>& callback) {
+    const base::RepeatingCallback<void(const base::ListValue*)>& callback) {
   web_ui()->RegisterMessageCallback(message, callback);
 }
 
@@ -121,7 +122,7 @@ NTPTilesInternalsUI::NTPTilesInternalsUI(web::WebUIIOS* web_ui)
   web::WebUIIOSDataSource::Add(browser_state,
                                CreateNTPTilesInternalsHTMLSource());
   web_ui->AddMessageHandler(
-      base::MakeUnique<IOSNTPTilesInternalsMessageHandlerBridge>(
+      std::make_unique<IOSNTPTilesInternalsMessageHandlerBridge>(
           ios::FaviconServiceFactory::GetForBrowserState(
               browser_state, ServiceAccessType::EXPLICIT_ACCESS)));
 }

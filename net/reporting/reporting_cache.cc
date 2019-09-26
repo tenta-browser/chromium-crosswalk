@@ -42,6 +42,11 @@ std::string GetSuperdomain(const std::string& domain) {
   return domain.substr(dot_pos + 1);
 }
 
+struct ClientMetadata {
+  base::TimeTicks last_used;
+  ReportingCache::ClientStatistics stats;
+};
+
 class ReportingCacheImpl : public ReportingCache {
  public:
   ReportingCacheImpl(ReportingContext* context) : context_(context) {
@@ -67,10 +72,11 @@ class ReportingCacheImpl : public ReportingCache {
                  const std::string& group,
                  const std::string& type,
                  std::unique_ptr<const base::Value> body,
+                 int depth,
                  base::TimeTicks queued,
                  int attempts) override {
     auto report = std::make_unique<ReportingReport>(
-        url, group, type, std::move(body), queued, attempts);
+        url, group, type, std::move(body), depth, queued, attempts);
 
     auto inserted =
         reports_.insert(std::make_pair(report.get(), std::move(report)));
@@ -97,6 +103,17 @@ class ReportingCacheImpl : public ReportingCache {
     for (const auto& it : reports_) {
       if (!base::ContainsKey(doomed_reports_, it.first))
         reports_out->push_back(it.second.get());
+    }
+  }
+
+  void GetNonpendingReports(
+      std::vector<const ReportingReport*>* reports_out) const override {
+    reports_out->clear();
+    for (const auto& it : reports_) {
+      if (!base::ContainsKey(pending_reports_, it.first) &&
+          !base::ContainsKey(doomed_reports_, it.first)) {
+        reports_out->push_back(it.second.get());
+      }
     }
   }
 
@@ -135,6 +152,31 @@ class ReportingCacheImpl : public ReportingCache {
     context_->NotifyCacheUpdated();
   }
 
+  void IncrementEndpointDeliveries(
+      const GURL& endpoint,
+      const std::vector<const ReportingReport*>& reports,
+      bool successful) override {
+    std::unordered_map<const ReportingClient*, int> reports_per_client;
+    for (const ReportingReport* report : reports) {
+      DCHECK(base::ContainsKey(reports_, report));
+      url::Origin origin = url::Origin::Create(report->url);
+      const ReportingClient* client =
+          GetClientByOriginAndEndpoint(origin, endpoint);
+      DCHECK(client);
+      reports_per_client[client]++;
+    }
+
+    for (const auto& client_and_report_count : reports_per_client) {
+      auto& metadata = client_metadata_[client_and_report_count.first];
+      metadata.stats.attempted_uploads++;
+      metadata.stats.attempted_reports += client_and_report_count.second;
+      if (successful) {
+        metadata.stats.successful_uploads++;
+        metadata.stats.successful_reports += client_and_report_count.second;
+      }
+    }
+  }
+
   void RemoveReports(const std::vector<const ReportingReport*>& reports,
                      ReportingReport::Outcome outcome) override {
     for (const ReportingReport* report : reports) {
@@ -167,6 +209,52 @@ class ReportingCacheImpl : public ReportingCache {
     context_->NotifyCacheUpdated();
   }
 
+  void SetClient(const url::Origin& origin,
+                 const GURL& endpoint,
+                 ReportingClient::Subdomains subdomains,
+                 const std::string& group,
+                 base::TimeTicks expires,
+                 int priority,
+                 int weight) override {
+    DCHECK(endpoint.SchemeIsCryptographic());
+
+    base::TimeTicks last_used = tick_clock()->NowTicks();
+
+    const ReportingClient* old_client =
+        GetClientByOriginAndEndpoint(origin, endpoint);
+    if (old_client) {
+      last_used = client_metadata_[old_client].last_used;
+      RemoveClient(old_client);
+    }
+
+    AddClient(
+        std::make_unique<ReportingClient>(origin, endpoint, subdomains, group,
+                                          expires, priority, weight),
+        last_used);
+
+    if (client_metadata_.size() > context_->policy().max_client_count) {
+      // There should only ever be one extra client, added above.
+      DCHECK_EQ(context_->policy().max_client_count + 1,
+                client_metadata_.size());
+      // And that shouldn't happen if it was replaced, not added.
+      DCHECK(!old_client);
+      const ReportingClient* to_evict =
+          FindClientToEvict(tick_clock()->NowTicks());
+      DCHECK(to_evict);
+      RemoveClient(to_evict);
+    }
+
+    context_->NotifyCacheUpdated();
+  }
+
+  void MarkClientUsed(const url::Origin& origin,
+                      const GURL& endpoint) override {
+    const ReportingClient* client =
+        GetClientByOriginAndEndpoint(origin, endpoint);
+    DCHECK(client);
+    client_metadata_[client].last_used = tick_clock()->NowTicks();
+  }
+
   void GetClients(
       std::vector<const ReportingClient*>* clients_out) const override {
     clients_out->clear();
@@ -190,7 +278,7 @@ class ReportingCacheImpl : public ReportingCache {
     }
 
     // If no clients were found, try successive superdomain suffixes until a
-    // client with includeSubdomains is found or there are no more domain
+    // client with include-subdomains is found or there are no more domain
     // components left.
     std::string domain = origin.host();
     while (clients_out->empty() && !domain.empty()) {
@@ -199,47 +287,17 @@ class ReportingCacheImpl : public ReportingCache {
     }
   }
 
-  void SetClient(const url::Origin& origin,
-                 const GURL& endpoint,
-                 ReportingClient::Subdomains subdomains,
-                 const std::string& group,
-                 base::TimeTicks expires) override {
-    DCHECK(endpoint.SchemeIsCryptographic());
+  // TODO(juliatuttle): Unittests.
+  void GetEndpointsForOrigin(const url::Origin& origin,
+                             std::vector<GURL>* endpoints_out) const override {
+    endpoints_out->clear();
 
-    base::TimeTicks last_used = tick_clock()->NowTicks();
+    const auto it = clients_.find(origin);
+    if (it == clients_.end())
+      return;
 
-    const ReportingClient* old_client =
-        GetClientByOriginAndEndpoint(origin, endpoint);
-    if (old_client) {
-      last_used = client_last_used_[old_client];
-      RemoveClient(old_client);
-    }
-
-    AddClient(std::make_unique<ReportingClient>(origin, endpoint, subdomains,
-                                                group, expires),
-              last_used);
-
-    if (client_last_used_.size() > context_->policy().max_client_count) {
-      // There should only ever be one extra client, added above.
-      DCHECK_EQ(context_->policy().max_client_count + 1,
-                client_last_used_.size());
-      // And that shouldn't happen if it was replaced, not added.
-      DCHECK(!old_client);
-      const ReportingClient* to_evict =
-          FindClientToEvict(tick_clock()->NowTicks());
-      DCHECK(to_evict);
-      RemoveClient(to_evict);
-    }
-
-    context_->NotifyCacheUpdated();
-  }
-
-  void MarkClientUsed(const url::Origin& origin,
-                      const GURL& endpoint) override {
-    const ReportingClient* client =
-        GetClientByOriginAndEndpoint(origin, endpoint);
-    DCHECK(client);
-    client_last_used_[client] = tick_clock()->NowTicks();
+    for (const auto& endpoint_and_client : it->second)
+      endpoints_out->push_back(endpoint_and_client.first);
   }
 
   void RemoveClients(
@@ -277,9 +335,21 @@ class ReportingCacheImpl : public ReportingCache {
   void RemoveAllClients() override {
     clients_.clear();
     wildcard_clients_.clear();
-    client_last_used_.clear();
+    client_metadata_.clear();
 
     context_->NotifyCacheUpdated();
+  }
+
+  ClientStatistics GetStatisticsForOriginAndEndpoint(
+      const url::Origin& origin,
+      const GURL& endpoint) const override {
+    const ReportingClient* client =
+        GetClientByOriginAndEndpoint(origin, endpoint);
+    auto it = client_metadata_.find(client);
+    if (it == client_metadata_.end()) {
+      return ClientStatistics();
+    }
+    return it->second.stats;
   }
 
   size_t GetFullReportCountForTesting() const override {
@@ -295,36 +365,6 @@ class ReportingCacheImpl : public ReportingCache {
   }
 
  private:
-  ReportingContext* context_;
-
-  // Owns all reports, keyed by const raw pointer for easier lookup.
-  std::unordered_map<const ReportingReport*, std::unique_ptr<ReportingReport>>
-      reports_;
-
-  // Reports that have been marked pending (in use elsewhere and should not be
-  // deleted until no longer pending).
-  std::unordered_set<const ReportingReport*> pending_reports_;
-
-  // Reports that have been marked doomed (would have been deleted, but were
-  // pending when the deletion was requested).
-  std::unordered_set<const ReportingReport*> doomed_reports_;
-
-  // Owns all clients, keyed by origin, then endpoint URL.
-  // (These would be unordered_map, but neither url::Origin nor GURL has a hash
-  // function implemented.)
-  std::map<url::Origin, std::map<GURL, std::unique_ptr<ReportingClient>>>
-      clients_;
-
-  // References but does not own all clients with includeSubdomains set, keyed
-  // by domain name.
-  std::unordered_map<std::string, std::unordered_set<const ReportingClient*>>
-      wildcard_clients_;
-
-  // The time that each client has last been used.
-  std::unordered_map<const ReportingClient*, base::TimeTicks> client_last_used_;
-
-  base::TickClock* tick_clock() { return context_->tick_clock(); }
-
   void RemoveReportInternal(const ReportingReport* report) {
     reports_[report]->RecordOutcome(tick_clock()->NowTicks());
     size_t erased = reports_.erase(report);
@@ -353,9 +393,9 @@ class ReportingCacheImpl : public ReportingCache {
     url::Origin origin = client->origin;
     GURL endpoint = client->endpoint;
 
-    auto inserted_last_used =
-        client_last_used_.insert(std::make_pair(client.get(), last_used));
-    DCHECK(inserted_last_used.second);
+    auto inserted_metadata = client_metadata_.insert(
+        std::make_pair(client.get(), ClientMetadata{last_used}));
+    DCHECK(inserted_metadata.second);
 
     if (client->subdomains == ReportingClient::Subdomains::INCLUDE) {
       const std::string& domain = origin.host();
@@ -385,8 +425,8 @@ class ReportingCacheImpl : public ReportingCache {
       }
     }
 
-    size_t erased_last_used = client_last_used_.erase(client);
-    DCHECK_EQ(1u, erased_last_used);
+    size_t erased_metadata = client_metadata_.erase(client);
+    DCHECK_EQ(1u, erased_metadata);
 
     size_t erased_endpoint = clients_[origin].erase(endpoint);
     DCHECK_EQ(1u, erased_endpoint);
@@ -428,15 +468,15 @@ class ReportingCacheImpl : public ReportingCache {
   }
 
   const ReportingClient* FindClientToEvict(base::TimeTicks now) const {
-    DCHECK(!client_last_used_.empty());
+    DCHECK(!client_metadata_.empty());
 
     const ReportingClient* earliest_used = nullptr;
     base::TimeTicks earliest_used_last_used;
     const ReportingClient* earliest_expired = nullptr;
 
-    for (const auto& it : client_last_used_) {
+    for (const auto& it : client_metadata_) {
       const ReportingClient* client = it.first;
-      base::TimeTicks client_last_used = it.second;
+      base::TimeTicks client_last_used = it.second.last_used;
       if (earliest_used == nullptr ||
           client_last_used < earliest_used_last_used) {
         earliest_used = client;
@@ -454,6 +494,36 @@ class ReportingCacheImpl : public ReportingCache {
     else
       return earliest_used;
   }
+
+  const base::TickClock* tick_clock() { return context_->tick_clock(); }
+
+  ReportingContext* context_;
+
+  // Owns all reports, keyed by const raw pointer for easier lookup.
+  std::unordered_map<const ReportingReport*, std::unique_ptr<ReportingReport>>
+      reports_;
+
+  // Reports that have been marked pending (in use elsewhere and should not be
+  // deleted until no longer pending).
+  std::unordered_set<const ReportingReport*> pending_reports_;
+
+  // Reports that have been marked doomed (would have been deleted, but were
+  // pending when the deletion was requested).
+  std::unordered_set<const ReportingReport*> doomed_reports_;
+
+  // Owns all clients, keyed by origin, then endpoint URL.
+  // (These would be unordered_map, but neither url::Origin nor GURL has a hash
+  // function implemented.)
+  std::map<url::Origin, std::map<GURL, std::unique_ptr<ReportingClient>>>
+      clients_;
+
+  // References but does not own all clients with include-subdomains set, keyed
+  // by domain name.
+  std::unordered_map<std::string, std::unordered_set<const ReportingClient*>>
+      wildcard_clients_;
+
+  // The time that each client has last been used.
+  std::unordered_map<const ReportingClient*, ClientMetadata> client_metadata_;
 };
 
 }  // namespace
@@ -464,6 +534,6 @@ std::unique_ptr<ReportingCache> ReportingCache::Create(
   return std::make_unique<ReportingCacheImpl>(context);
 }
 
-ReportingCache::~ReportingCache() {}
+ReportingCache::~ReportingCache() = default;
 
 }  // namespace net

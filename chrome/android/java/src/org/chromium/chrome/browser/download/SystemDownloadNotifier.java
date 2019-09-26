@@ -15,6 +15,8 @@ import org.chromium.base.ThreadUtils;
 import org.chromium.base.VisibleForTesting;
 import org.chromium.chrome.browser.download.DownloadNotificationService.Observer;
 import org.chromium.components.offline_items_collection.ContentId;
+import org.chromium.components.offline_items_collection.FailState;
+import org.chromium.components.offline_items_collection.PendingState;
 
 import java.util.ArrayList;
 import java.util.HashSet;
@@ -184,7 +186,7 @@ public class SystemDownloadNotifier implements DownloadNotifier, Observer {
     }
 
     @Override
-    public void notifyDownloadFailed(DownloadInfo downloadInfo) {
+    public void notifyDownloadFailed(DownloadInfo downloadInfo, @FailState int notUsed) {
         updateDownloadNotification(
                 new PendingNotificationInfo(DOWNLOAD_NOTIFICATION_TYPE_FAILURE, downloadInfo),
                 true);
@@ -208,7 +210,8 @@ public class SystemDownloadNotifier implements DownloadNotifier, Observer {
     }
 
     @Override
-    public void notifyDownloadInterrupted(DownloadInfo downloadInfo, boolean isAutoResumable) {
+    public void notifyDownloadInterrupted(
+            DownloadInfo downloadInfo, boolean isAutoResumable, @PendingState int notUsed) {
         PendingNotificationInfo info =
                 new PendingNotificationInfo(DOWNLOAD_NOTIFICATION_TYPE_INTERRUPT, downloadInfo);
         info.isAutoResumable = isAutoResumable;

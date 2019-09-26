@@ -6,9 +6,10 @@
 
 #include "base/test/fuzzed_data_provider.h"
 
+#include "net/base/completion_once_callback.h"
 #include "net/base/test_completion_callback.h"
-#include "net/cert/cert_verifier.h"
-#include "net/cert/multi_log_ct_verifier.h"
+#include "net/cert/do_nothing_ct_verifier.h"
+#include "net/cert/mock_cert_verifier.h"
 #include "net/cert/x509_certificate.h"
 #include "net/dns/fuzzed_host_resolver.h"
 #include "net/http/http_server_properties_impl.h"
@@ -20,9 +21,12 @@
 #include "net/quic/test_tools/mock_random.h"
 #include "net/socket/fuzzed_datagram_client_socket.h"
 #include "net/socket/fuzzed_socket_factory.h"
+#include "net/socket/socket_tag.h"
 #include "net/ssl/channel_id_service.h"
 #include "net/ssl/default_channel_id_store.h"
+#include "net/ssl/ssl_config_service_defaults.h"
 #include "net/test/gtest_util.h"
+#include "net/traffic_annotation/network_traffic_annotation_test_helper.h"
 
 namespace net {
 
@@ -30,18 +34,6 @@ namespace {
 
 const char kCertData[] = {
 #include "net/data/ssl/certificates/wildcard.inc"
-};
-
-class MockSSLConfigService : public SSLConfigService {
- public:
-  MockSSLConfigService() {}
-
-  void GetSSLConfig(SSLConfig* config) override { *config = config_; }
-
- private:
-  ~MockSSLConfigService() override {}
-
-  SSLConfig config_;
 };
 
 }  // namespace
@@ -62,12 +54,12 @@ const int kCertVerifyFlags = 0;
 struct Env {
   Env() : host_port_pair(kServerHostName, kServerPort), random_generator(0) {
     clock.AdvanceTime(QuicTime::Delta::FromSeconds(1));
-    ssl_config_service = new MockSSLConfigService;
+    ssl_config_service = base::MakeRefCounted<SSLConfigServiceDefaults>();
     crypto_client_stream_factory.set_use_mock_crypter(true);
-    cert_verifier = CertVerifier::CreateDefault();
+    cert_verifier = std::make_unique<MockCertVerifier>();
     channel_id_service =
         std::make_unique<ChannelIDService>(new DefaultChannelIDStore(nullptr));
-    cert_transparency_verifier = std::make_unique<MultiLogCTVerifier>();
+    cert_transparency_verifier = std::make_unique<DoNothingCTVerifier>();
     verify_details.cert_verify_result.verified_cert =
         X509Certificate::CreateFromBytes(kCertData, arraysize(kCertData));
     CHECK(verify_details.cert_verify_result.verified_cert);
@@ -109,26 +101,27 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
   bool allow_server_migration = data_provider.ConsumeBool();
   bool race_cert_verification = data_provider.ConsumeBool();
   bool estimate_initial_rtt = data_provider.ConsumeBool();
+  bool headers_include_h2_stream_dependency = data_provider.ConsumeBool();
   bool enable_token_binding = data_provider.ConsumeBool();
+  bool enable_socket_recv_optimization = data_provider.ConsumeBool();
 
   env->crypto_client_stream_factory.AddProofVerifyDetails(&env->verify_details);
 
   bool migrate_sessions_on_network_change = false;
   bool migrate_sessions_early = false;
   bool migrate_sessions_early_v2 = false;
+  bool migrate_sessions_on_network_change_v2 = false;
 
-  bool migrate_sessions_on_network_change_v2 = data_provider.ConsumeBool();
-
-  if (migrate_sessions_on_network_change_v2) {
-    migrate_sessions_early_v2 = data_provider.ConsumeBool();
-  } else {
-    migrate_sessions_on_network_change = data_provider.ConsumeBool();
-    if (migrate_sessions_on_network_change)
-      migrate_sessions_early = data_provider.ConsumeBool();
+  if (!close_sessions_on_ip_change) {
+    migrate_sessions_on_network_change_v2 = data_provider.ConsumeBool();
+    if (migrate_sessions_on_network_change_v2) {
+      migrate_sessions_early_v2 = data_provider.ConsumeBool();
+    } else {
+      migrate_sessions_on_network_change = data_provider.ConsumeBool();
+      if (migrate_sessions_on_network_change)
+        migrate_sessions_early = data_provider.ConsumeBool();
+    }
   }
-
-  if (migrate_sessions_on_network_change)
-    close_sessions_on_ip_change = false;
 
   std::unique_ptr<QuicStreamFactory> factory =
       std::make_unique<QuicStreamFactory>(
@@ -144,18 +137,22 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
           kMaxTimeForCryptoHandshakeSecs, kInitialIdleTimeoutSecs,
           connect_using_default_network, migrate_sessions_on_network_change,
           migrate_sessions_early, migrate_sessions_on_network_change_v2,
-          migrate_sessions_early_v2, allow_server_migration,
-          race_cert_verification, estimate_initial_rtt, env->connection_options,
-          env->client_connection_options, enable_token_binding);
+          migrate_sessions_early_v2,
+          base::TimeDelta::FromSeconds(kMaxTimeOnNonDefaultNetworkSecs),
+          kMaxMigrationsToNonDefaultNetworkOnPathDegrading,
+          allow_server_migration, race_cert_verification, estimate_initial_rtt,
+          headers_include_h2_stream_dependency, env->connection_options,
+          env->client_connection_options, enable_token_binding,
+          enable_socket_recv_optimization);
 
   QuicStreamRequest request(factory.get());
   TestCompletionCallback callback;
   NetErrorDetails net_error_details;
   request.Request(env->host_port_pair,
                   data_provider.PickValueInArray(kSupportedTransportVersions),
-                  PRIVACY_MODE_DISABLED, DEFAULT_PRIORITY, kCertVerifyFlags,
-                  GURL(kUrl), env->net_log, &net_error_details,
-                  callback.callback());
+                  PRIVACY_MODE_DISABLED, DEFAULT_PRIORITY, SocketTag(),
+                  kCertVerifyFlags, GURL(kUrl), env->net_log,
+                  &net_error_details, callback.callback());
 
   callback.WaitForResult();
   std::unique_ptr<QuicChromiumClientSession::Handle> session =
@@ -167,8 +164,10 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
   HttpRequestInfo request_info;
   request_info.method = kMethod;
   request_info.url = GURL(kUrl);
-  stream->InitializeStream(&request_info, DEFAULT_PRIORITY, env->net_log,
-                           CompletionCallback());
+  request_info.traffic_annotation =
+      MutableNetworkTrafficAnnotationTag(TRAFFIC_ANNOTATION_FOR_TESTS);
+  stream->InitializeStream(&request_info, true, DEFAULT_PRIORITY, env->net_log,
+                           CompletionOnceCallback());
 
   HttpResponseInfo response;
   HttpRequestHeaders request_headers;

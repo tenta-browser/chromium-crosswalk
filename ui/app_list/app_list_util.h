@@ -5,7 +5,7 @@
 #ifndef UI_APP_LIST_APP_LIST_UTIL_H_
 #define UI_APP_LIST_APP_LIST_UTIL_H_
 
-#include "ash/app_list/model/search_result.h"
+#include "ash/app_list/model/search/search_result.h"
 #include "ui/app_list/app_list_export.h"
 #include "ui/events/event.h"
 
@@ -30,7 +30,8 @@ APP_LIST_EXPORT bool ProcessLeftRightKeyTraversalForTextfield(
     const ui::KeyEvent& key_event);
 
 // Returns the dimension at which a result's icon should be displayed.
-APP_LIST_EXPORT int GetPreferredIconDimension(SearchResult* search_result);
+APP_LIST_EXPORT int GetPreferredIconDimension(
+    ash::SearchResultDisplayType display_type);
 
 }  // namespace app_list
 

@@ -5,6 +5,7 @@
 #include "chrome/browser/ui/views/location_bar/star_view.h"
 
 #include "base/command_line.h"
+#include "base/macros.h"
 #include "base/run_loop.h"
 #include "base/strings/utf_string_conversions.h"
 #include "build/build_config.h"
@@ -16,11 +17,13 @@
 #include "chrome/test/base/in_process_browser_test.h"
 #include "chrome/test/base/interactive_test_utils.h"
 #include "chrome/test/base/ui_test_utils.h"
+#include "chrome/test/views/scoped_macviews_browser_mode.h"
 #include "components/prefs/pref_service.h"
 #include "content/public/test/browser_test_utils.h"
 #include "content/public/test/test_utils.h"
 #include "ui/base/ui_base_switches.h"
 #include "ui/events/event_utils.h"
+#include "ui/views/animation/test/ink_drop_host_view_test_api.h"
 
 #if defined(OS_WIN)
 #include "ui/aura/window.h"
@@ -29,11 +32,23 @@
 
 namespace {
 
-typedef InProcessBrowserTest StarViewTest;
+class StarViewTest : public InProcessBrowserTest {
+ public:
+  StarViewTest() = default;
+  ~StarViewTest() override = default;
+
+ private:
+  test::ScopedMacViewsBrowserMode views_mode_{true};
+
+  DISALLOW_COPY_AND_ASSIGN(StarViewTest);
+};
 
 // Verify that clicking the bookmark star a second time hides the bookmark
 // bubble.
 #if defined(OS_LINUX) && defined(USE_AURA) && !defined(OS_CHROMEOS)
+#define MAYBE_HideOnSecondClick DISABLED_HideOnSecondClick
+#elif defined(OS_MACOSX)
+// Focusing or input is not completely working on Mac: http://crbug.com/824418
 #define MAYBE_HideOnSecondClick DISABLED_HideOnSecondClick
 #else
 #define MAYBE_HideOnSecondClick HideOnSecondClick
@@ -66,6 +81,19 @@ IN_PROC_BROWSER_TEST_F(StarViewTest, MAYBE_HideOnSecondClick) {
   EXPECT_FALSE(BookmarkBubbleView::bookmark_bubble());
   star_view->OnMouseReleased(released_event);
   EXPECT_FALSE(BookmarkBubbleView::bookmark_bubble());
+}
+
+IN_PROC_BROWSER_TEST_F(StarViewTest, InkDropHighlighted) {
+  BrowserView* browser_view =
+      reinterpret_cast<BrowserView*>(browser()->window());
+  StarView* star_view = browser_view->toolbar()->location_bar()->star_view();
+  views::test::InkDropHostViewTestApi ink_drop_test_api(star_view);
+
+  if (ink_drop_test_api.HasInkDrop()) {
+    browser_view->ShowBookmarkBubble(GURL("http://test.com"), false);
+    EXPECT_EQ(ink_drop_test_api.GetInkDrop()->GetTargetInkDropState(),
+              views::InkDropState::ACTIVATED);
+  }
 }
 
 }  // namespace

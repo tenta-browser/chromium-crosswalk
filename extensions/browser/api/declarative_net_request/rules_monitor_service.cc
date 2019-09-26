@@ -96,6 +96,16 @@ RulesMonitorService::GetFactoryInstance() {
   return g_factory.Pointer();
 }
 
+bool RulesMonitorService::HasAnyRegisteredRulesets() const {
+  return !extensions_with_rulesets_.empty();
+}
+
+bool RulesMonitorService::HasRegisteredRuleset(
+    const Extension* extension) const {
+  return extensions_with_rulesets_.find(extension) !=
+         extensions_with_rulesets_.end();
+}
+
 RulesMonitorService::RulesMonitorService(
     content::BrowserContext* browser_context)
     : registry_observer_(this),
@@ -117,6 +127,7 @@ void RulesMonitorService::OnExtensionLoaded(
     return;
 
   DCHECK(IsAPIAvailable());
+  extensions_with_rulesets_.insert(extension);
 
   base::OnceClosure task = base::BindOnce(
       &LoadRulesetOnFileTaskRunner, extension->id(), ruleset_checksum,
@@ -130,11 +141,8 @@ void RulesMonitorService::OnExtensionUnloaded(
     const Extension* extension,
     UnloadedExtensionReason reason) {
   // Return early if the extension does not have an indexed ruleset.
-  if (!ExtensionPrefs::Get(browser_context)
-           ->GetDNRRulesetChecksum(extension->id(),
-                                   nullptr /*dnr_ruleset checksum*/)) {
+  if (!extensions_with_rulesets_.erase(extension))
     return;
-  }
 
   DCHECK(IsAPIAvailable());
 

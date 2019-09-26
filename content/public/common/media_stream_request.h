@@ -58,15 +58,16 @@ enum MediaStreamRequestResult {
   MEDIA_DEVICE_PERMISSION_DISMISSED = 2,
   MEDIA_DEVICE_INVALID_STATE = 3,
   MEDIA_DEVICE_NO_HARDWARE = 4,
-  MEDIA_DEVICE_INVALID_SECURITY_ORIGIN_DEPRECATED = 5,
+  MEDIA_DEVICE_INVALID_SECURITY_ORIGIN = 5,
   MEDIA_DEVICE_TAB_CAPTURE_FAILURE = 6,
   MEDIA_DEVICE_SCREEN_CAPTURE_FAILURE = 7,
   MEDIA_DEVICE_CAPTURE_FAILURE = 8,
   MEDIA_DEVICE_CONSTRAINT_NOT_SATISFIED = 9,
-  MEDIA_DEVICE_TRACK_START_FAILURE = 10,
-  MEDIA_DEVICE_NOT_SUPPORTED = 11,
-  MEDIA_DEVICE_FAILED_DUE_TO_SHUTDOWN = 12,
-  MEDIA_DEVICE_KILL_SWITCH_ON = 13,
+  MEDIA_DEVICE_TRACK_START_FAILURE_AUDIO = 10,
+  MEDIA_DEVICE_TRACK_START_FAILURE_VIDEO = 11,
+  MEDIA_DEVICE_NOT_SUPPORTED = 12,
+  MEDIA_DEVICE_FAILED_DUE_TO_SHUTDOWN = 13,
+  MEDIA_DEVICE_KILL_SWITCH_ON = 14,
   NUM_MEDIA_REQUEST_RESULTS
 };
 
@@ -119,23 +120,14 @@ struct CONTENT_EXPORT MediaStreamDevice {
 
   // The device id of a matched output device if any (otherwise empty).
   // Only applicable to audio devices.
-  std::string matched_output_device_id;
+  base::Optional<std::string> matched_output_device_id;
 
   // The device's "friendly" name. Not guaranteed to be unique.
   std::string name;
 
-  // These below two member variables are valid only when the type of device is
-  // audio (i.e. IsAudioInputMediaType returns true).
-
-  // Contains the device properties of the capture device.
+  // Contains the device properties of the capture device. It's valid only when
+  // the type of device is audio (i.e. IsAudioInputMediaType returns true).
   media::AudioParameters input =
-      media::AudioParameters::UnavailableDeviceParams();
-
-  // If the capture device has an associated output device (e.g. headphones),
-  // this will contain the properties for the output device.  If no such device
-  // exists (e.g. webcam w/mic), then the value of this member will be all
-  // zeros.
-  media::AudioParameters matched_output =
       media::AudioParameters::UnavailableDeviceParams();
 
   // Id for this capture session. Unique for all sessions of the same type.

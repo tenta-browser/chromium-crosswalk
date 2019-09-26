@@ -59,15 +59,8 @@ class LoginDisplay {
     // Used when the lock screen is being displayed.
     virtual void Signout() = 0;
 
-    // Complete sign process with specified |user_context|.
-    // Used for new users authenticated through an extension.
-    virtual void CompleteLogin(const UserContext& user_context) = 0;
-
     // Notify the delegate when the sign-in UI is finished loading.
     virtual void OnSigninScreenReady() = 0;
-
-    // Notify the delegate when the GAIA UI is finished loading.
-    virtual void OnGaiaScreenReady() = 0;
 
     // Called when the user requests enterprise enrollment.
     virtual void OnStartEnterpriseEnrollment() = 0;
@@ -75,32 +68,26 @@ class LoginDisplay {
     // Called when the user requests enable developer features screen.
     virtual void OnStartEnableDebuggingScreen() = 0;
 
+    // Called when the user requests demo mode setup screen.
+    virtual void OnStartDemoModeSetupScreen() = 0;
+
     // Called when the user requests kiosk enable screen.
     virtual void OnStartKioskEnableScreen() = 0;
 
     // Called when the owner permission for kiosk app auto launch is requested.
     virtual void OnStartKioskAutolaunchScreen() = 0;
 
+    // Shows update required screen.
+    virtual void ShowUpdateRequiredScreen() = 0;
+
     // Shows wrong HWID screen.
     virtual void ShowWrongHWIDScreen() = 0;
-
-    // Sets the displayed email for the next login attempt with |CompleteLogin|.
-    // If it succeeds, user's displayed email value will be updated to |email|.
-    virtual void SetDisplayEmail(const std::string& email) = 0;
-    // Sets the displayed name and given name for the next login attempt with
-    // |CompleteLogin|. If it succeeds, user's displayed name and give name
-    // values will be updated to |display_name| and |given_name|.
-    virtual void SetDisplayAndGivenName(const std::string& display_name,
-                                        const std::string& given_name) = 0;
 
     // Returns name of the currently connected network, for error message,
     virtual base::string16 GetConnectedNetworkName() = 0;
 
     // Restarts the auto-login timer if it is running.
     virtual void ResetAutoLoginTimer() = 0;
-
-    // Returns true if user is allowed to log in by domain policy.
-    virtual bool IsUserWhitelisted(const AccountId& account_id) = 0;
 
    protected:
     virtual ~Delegate();

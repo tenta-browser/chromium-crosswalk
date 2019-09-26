@@ -76,14 +76,15 @@ void MojoAudioInputStream::OnStreamCreated(
   DCHECK(foreign_socket);
 
   base::SharedMemoryHandle foreign_memory_handle =
-      base::SharedMemory::DuplicateHandle(shared_memory->handle());
+      shared_memory->GetReadOnlyHandle();
   if (!base::SharedMemory::IsHandleValid(foreign_memory_handle)) {
     OnStreamError(/*not used*/ 0);
     return;
   }
 
   mojo::ScopedSharedBufferHandle buffer_handle = mojo::WrapSharedMemoryHandle(
-      foreign_memory_handle, shared_memory->requested_size(), false);
+      foreign_memory_handle, shared_memory->requested_size(),
+      mojo::UnwrappedSharedMemoryHandleProtection::kReadOnly);
   mojo::ScopedHandle socket_handle =
       mojo::WrapPlatformFile(foreign_socket->Release());
 
@@ -91,7 +92,8 @@ void MojoAudioInputStream::OnStreamCreated(
   DCHECK(socket_handle.is_valid());
 
   base::ResetAndReturn(&stream_created_callback_)
-      .Run(std::move(buffer_handle), std::move(socket_handle), initially_muted);
+      .Run({base::in_place, std::move(buffer_handle), std::move(socket_handle)},
+           initially_muted);
 }
 
 void MojoAudioInputStream::OnMuted(int stream_id, bool is_muted) {

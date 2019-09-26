@@ -28,7 +28,7 @@ int GetIconForAutocompleteMatchType(AutocompleteMatchType::Type type,
     case AutocompleteMatchType::HISTORY_TITLE:
     case AutocompleteMatchType::HISTORY_URL:
     case AutocompleteMatchType::SEARCH_HISTORY:
-    case AutocompleteMatchType::TAB_SEARCH:
+    case AutocompleteMatchType::TAB_SEARCH_DEPRECATED:
       return is_incognito ? IDR_IOS_OMNIBOX_HISTORY_INCOGNITO
                           : IDR_IOS_OMNIBOX_HISTORY;
     case AutocompleteMatchType::CONTACT_DEPRECATED:
@@ -66,5 +66,8 @@ int GetIconForSecurityState(security_state::SecurityLevel security_level) {
       return IDR_IOS_OMNIBOX_HTTPS_POLICY_WARNING;
     case security_state::DANGEROUS:
       return IDR_IOS_OMNIBOX_HTTPS_INVALID;
+    case security_state::SECURITY_LEVEL_COUNT:
+      NOTREACHED();
+      return IDR_IOS_OMNIBOX_HTTP;
   }
 }

@@ -124,6 +124,9 @@ const char kRemoveChromeRegistration[] = "remove-chrome-registration";
 // line flag so that we try the launch only once.
 const char kRunAsAdmin[] = "run-as-admin";
 
+// Saves the specified device management token to the registry.
+const char kStoreDMToken[] = "store-dmtoken";
+
 // Combined with --uninstall, signals to setup.exe that this uninstall was
 // triggered by a self-destructing Chrome.
 const char kSelfDestruct[] = "self-destruct";
@@ -188,18 +191,22 @@ const wchar_t kChromeExe[] = L"chrome.exe";
 const wchar_t kChromeNewExe[] = L"new_chrome.exe";
 const wchar_t kChromeOldExe[] = L"old_chrome.exe";
 const wchar_t kCmdOnOsUpgrade[] = L"on-os-upgrade";
+const wchar_t kCmdStoreDMToken[] = L"store-dmtoken";
 const wchar_t kEULASentinelFile[] = L"EULA Accepted";
 const wchar_t kInstallBinaryDir[] = L"Application";
 const wchar_t kInstallerDir[] = L"Installer";
 const wchar_t kInstallTempDir[] = L"Temp";
 const wchar_t kLnkExt[] = L".lnk";
 const wchar_t kNaClExe[] = L"nacl64.exe";
+const wchar_t kNotificationHelperExe[] = L"notification_helper.exe";
 const wchar_t kSetupExe[] = L"setup.exe";
 const wchar_t kUninstallStringField[] = L"UninstallString";
 const wchar_t kUninstallArgumentsField[] = L"UninstallArguments";
 const wchar_t kUninstallDisplayNameField[] = L"DisplayName";
 const char kUninstallMetricsName[] = "uninstall_metrics";
 const wchar_t kUninstallInstallationDate[] = L"installation_date";
+
+// Google Update installer result API.
 const wchar_t kInstallerError[] = L"InstallerError";
 const wchar_t kInstallerExtraCode1[] = L"InstallerExtraCode1";
 const wchar_t kInstallerResult[] = L"InstallerResult";
@@ -216,9 +223,6 @@ const wchar_t kChromeChannelStable[] = L"";
 const wchar_t kChromeChannelStableExplicit[] = L"stable";
 
 const size_t kMaxAppModelIdLength = 64U;
-
-const char kCourgette[] = "courgette";
-const char kBsdiff[] = "bsdiff";
 
 const char kSetupHistogramAllocatorName[] = "SetupMetrics";
 

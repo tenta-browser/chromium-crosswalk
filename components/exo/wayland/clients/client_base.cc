@@ -17,7 +17,6 @@
 
 #include "base/command_line.h"
 #include "base/logging.h"
-#include "base/memory/ptr_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/stringprintf.h"
 #include "third_party/skia/include/core/SkCanvas.h"
@@ -72,7 +71,7 @@ namespace {
 const int32_t kShmFormat = WL_SHM_FORMAT_ARGB8888;
 const SkColorType kColorType = kBGRA_8888_SkColorType;
 #if defined(USE_GBM)
-const GrPixelConfig kGrPixelConfig = kBGRA_8888_GrPixelConfig;
+const GLenum kSizedInternalFormat = GL_BGRA8_EXT;
 #endif
 const size_t kBytesPerPixel = 4;
 
@@ -105,13 +104,17 @@ void RegistryHandler(void* data,
         wl_registry_bind(registry, id, &wp_presentation_interface, 1)));
   } else if (strcmp(interface, "zaura_shell") == 0) {
     globals->aura_shell.reset(static_cast<zaura_shell*>(
-        wl_registry_bind(registry, id, &zaura_shell_interface, 1)));
+        wl_registry_bind(registry, id, &zaura_shell_interface, 5)));
   } else if (strcmp(interface, "zwp_linux_dmabuf_v1") == 0) {
     globals->linux_dmabuf.reset(static_cast<zwp_linux_dmabuf_v1*>(
-        wl_registry_bind(registry, id, &zwp_linux_dmabuf_v1_interface, 1)));
+        wl_registry_bind(registry, id, &zwp_linux_dmabuf_v1_interface, 2)));
   } else if (strcmp(interface, "wl_subcompositor") == 0) {
     globals->subcompositor.reset(static_cast<wl_subcompositor*>(
         wl_registry_bind(registry, id, &wl_subcompositor_interface, 1)));
+  } else if (strcmp(interface, "zwp_input_timestamps_manager_v1") == 0) {
+    globals->input_timestamps_manager.reset(
+        static_cast<zwp_input_timestamps_manager_v1*>(wl_registry_bind(
+            registry, id, &zwp_input_timestamps_manager_v1_interface, 1)));
   }
 }
 
@@ -471,9 +474,7 @@ bool ClientBase::Init(const InitParams& params) {
 
     native_interface = sk_sp<const GrGLInterface>(GrGLCreateNativeInterface());
     DCHECK(native_interface);
-    gr_context_ = sk_sp<GrContext>(GrContext::Create(
-        kOpenGL_GrBackend,
-        reinterpret_cast<GrBackendContext>(native_interface.get())));
+    gr_context_ = GrContext::MakeGL(std::move(native_interface));
     DCHECK(gr_context_);
 
 #if defined(USE_VULKAN)
@@ -670,11 +671,13 @@ std::unique_ptr<ClientBase::Buffer> ClientBase::CreateDrmBuffer(
     GrGLTextureInfo texture_info;
     texture_info.fID = buffer->texture->get();
     texture_info.fTarget = GL_TEXTURE_2D;
+    texture_info.fFormat = kSizedInternalFormat;
     GrBackendTexture backend_texture(size.width(), size.height(),
-                                     kGrPixelConfig, texture_info);
+                                     GrMipMapped::kNo, texture_info);
     buffer->sk_surface = SkSurface::MakeFromBackendTextureAsRenderTarget(
         gr_context_.get(), backend_texture, kTopLeft_GrSurfaceOrigin,
-        /* sampleCnt */ 0, /* colorSpace */ nullptr, /* props */ nullptr);
+        /* sampleCnt */ 0, kColorType, /* colorSpace */ nullptr,
+        /* props */ nullptr);
     DCHECK(buffer->sk_surface);
 
 #if defined(USE_VULKAN)

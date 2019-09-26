@@ -14,6 +14,7 @@ import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
 import android.net.Uri;
+import android.os.Build;
 import android.os.Bundle;
 import android.os.SystemClock;
 import android.provider.Browser;
@@ -24,8 +25,10 @@ import android.util.Pair;
 
 import org.chromium.base.ApiCompatibilityUtils;
 import org.chromium.base.ContextUtils;
+import org.chromium.base.FileUtils;
 import org.chromium.base.Log;
 import org.chromium.base.VisibleForTesting;
+import org.chromium.base.library_loader.LibraryProcessType;
 import org.chromium.base.metrics.RecordHistogram;
 import org.chromium.base.metrics.RecordUserAction;
 import org.chromium.blink_public.web.WebReferrerPolicy;
@@ -34,6 +37,7 @@ import org.chromium.chrome.browser.document.ChromeLauncherActivity;
 import org.chromium.chrome.browser.externalauth.ExternalAuthUtils;
 import org.chromium.chrome.browser.externalnav.ExternalNavigationDelegateImpl;
 import org.chromium.chrome.browser.externalnav.IntentWithGesturesHandler;
+import org.chromium.chrome.browser.offlinepages.OfflinePageUtils;
 import org.chromium.chrome.browser.omnibox.AutocompleteController;
 import org.chromium.chrome.browser.rappor.RapporServiceBridge;
 import org.chromium.chrome.browser.search_engines.TemplateUrlService;
@@ -42,6 +46,7 @@ import org.chromium.chrome.browser.tabmodel.TabModel.TabLaunchType;
 import org.chromium.chrome.browser.tabmodel.document.ActivityDelegate;
 import org.chromium.chrome.browser.util.IntentUtils;
 import org.chromium.chrome.browser.util.UrlUtilities;
+import org.chromium.content.browser.BrowserStartupController;
 import org.chromium.content_public.browser.LoadUrlParams;
 import org.chromium.content_public.common.ContentUrlConstants;
 import org.chromium.content_public.common.Referrer;
@@ -204,6 +209,7 @@ public class IntentHandler {
 
     /**
      * Represents popular external applications that can load a page in Chrome via intent.
+     * DO NOT reorder items in this enum, because it's mirrored to UMA (as ClientAppId).
      */
     public static enum ExternalAppId {
         OTHER,
@@ -219,6 +225,7 @@ public class IntentHandler {
         WHATSAPP,
         GSA,
         WEBAPK,
+        // Update ClientAppId in enums.xml when adding new items.
         INDEX_BOUNDARY
     }
 
@@ -290,11 +297,10 @@ public class IntentHandler {
 
     /**
      * Determines what App was used to fire this Intent.
-     * @param packageName Package name of this application.
      * @param intent Intent that was used to launch Chrome.
      * @return ExternalAppId representing the app.
      */
-    public static ExternalAppId determineExternalIntentSource(String packageName, Intent intent) {
+    public static ExternalAppId determineExternalIntentSource(Intent intent) {
         String appId = IntentUtils.safeGetStringExtra(intent, Browser.EXTRA_APPLICATION_ID);
         ExternalAppId externalId = ExternalAppId.OTHER;
         if (appId == null) {
@@ -317,31 +323,41 @@ public class IntentHandler {
                 }
             }
         } else {
-            if (appId.equals(PACKAGE_PLUS)) {
-                externalId = ExternalAppId.PLUS;
-            } else if (appId.equals(PACKAGE_GMAIL)) {
-                externalId = ExternalAppId.GMAIL;
-            } else if (appId.equals(PACKAGE_HANGOUTS)) {
-                externalId = ExternalAppId.HANGOUTS;
-            } else if (appId.equals(PACKAGE_MESSENGER)) {
-                externalId = ExternalAppId.MESSENGER;
-            } else if (appId.equals(PACKAGE_LINE)) {
-                externalId = ExternalAppId.LINE;
-            } else if (appId.equals(PACKAGE_WHATSAPP)) {
-                externalId = ExternalAppId.WHATSAPP;
-            } else if (appId.equals(PACKAGE_GSA)) {
-                externalId = ExternalAppId.GSA;
-            } else if (appId.equals(packageName)) {
-                externalId = ExternalAppId.CHROME;
-            } else if (appId.startsWith(WEBAPK_PACKAGE_PREFIX)) {
-                externalId = ExternalAppId.WEBAPK;
-            }
+            externalId = mapPackageToExternalAppId(appId);
         }
         return externalId;
     }
 
+    /**
+     * Returns the appropriate entry of the ExteranAppId enum based on the supplied package name.
+     * @param packageName String The application package name to map.
+     * @return ExternalAppId representing the app.
+     */
+    public static ExternalAppId mapPackageToExternalAppId(String packageName) {
+        if (packageName.equals(PACKAGE_PLUS)) {
+            return ExternalAppId.PLUS;
+        } else if (packageName.equals(PACKAGE_GMAIL)) {
+            return ExternalAppId.GMAIL;
+        } else if (packageName.equals(PACKAGE_HANGOUTS)) {
+            return ExternalAppId.HANGOUTS;
+        } else if (packageName.equals(PACKAGE_MESSENGER)) {
+            return ExternalAppId.MESSENGER;
+        } else if (packageName.equals(PACKAGE_LINE)) {
+            return ExternalAppId.LINE;
+        } else if (packageName.equals(PACKAGE_WHATSAPP)) {
+            return ExternalAppId.WHATSAPP;
+        } else if (packageName.equals(PACKAGE_GSA)) {
+            return ExternalAppId.GSA;
+        } else if (packageName.equals(ContextUtils.getApplicationContext().getPackageName())) {
+            return ExternalAppId.CHROME;
+        } else if (packageName.startsWith(WEBAPK_PACKAGE_PREFIX)) {
+            return ExternalAppId.WEBAPK;
+        }
+        return ExternalAppId.OTHER;
+    }
+
     private void recordExternalIntentSourceUMA(Intent intent) {
-        ExternalAppId externalId = determineExternalIntentSource(mPackageName, intent);
+        ExternalAppId externalId = determineExternalIntentSource(intent);
         RecordHistogram.recordEnumeratedHistogram("MobileIntent.PageLoadDueToExternalApp",
                 externalId.ordinal(), ExternalAppId.INDEX_BOUNDARY.ordinal());
         if (externalId == ExternalAppId.OTHER) {
@@ -402,13 +418,29 @@ public class IntentHandler {
         String referrerUrl = getReferrerUrlIncludingExtraHeaders(intent);
         String extraHeaders = getExtraHeadersFromIntent(intent);
 
+        if (isIntentForMhtmlFileOrContent(intent) && tabOpenType == TabOpenType.OPEN_NEW_TAB
+                && referrerUrl == null && extraHeaders == null) {
+            handleMhtmlFileOrContentIntent(url, intent);
+            return true;
+        }
+
+        processUrlViewIntent(url, referrerUrl, extraHeaders, tabOpenType,
+                IntentUtils.safeGetStringExtra(intent, Browser.EXTRA_APPLICATION_ID),
+                tabIdToBringToFront, hasUserGesture, intent);
+        return true;
+    }
+
+    private void processUrlViewIntent(String url, String referrerUrl, String extraHeaders,
+            TabOpenType tabOpenType, String externalAppId, int tabIdToBringToFront,
+            boolean hasUserGesture, Intent intent) {
+        extraHeaders = maybeAddAdditionalExtraHeaders(intent, url, extraHeaders);
+
         // TODO(joth): Presumably this should check the action too.
         mDelegate.processUrlViewIntent(url, referrerUrl, extraHeaders, tabOpenType,
                 IntentUtils.safeGetStringExtra(intent, Browser.EXTRA_APPLICATION_ID),
                 tabIdToBringToFront, hasUserGesture, intent);
         recordExternalIntentSourceUMA(intent);
         recordAppHandlersForIntent(intent);
-        return true;
     }
 
     /**
@@ -546,7 +578,11 @@ public class IntentHandler {
                 results.add(testResult);
             }
         }
-        if (results == null || results.size() == 0) return null;
+        if (results == null || results.size() == 0
+                || !BrowserStartupController.get(LibraryProcessType.PROCESS_BROWSER)
+                            .isStartupSuccessfullyCompleted()) {
+            return null;
+        }
         String query = results.get(0);
         String url = AutocompleteController.nativeQualifyPartialURLQuery(query);
         if (url == null) {
@@ -575,6 +611,13 @@ public class IntentHandler {
 
         mDelegate.processWebSearchIntent(query);
         return true;
+    }
+
+    private void handleMhtmlFileOrContentIntent(final String url, final Intent intent) {
+        OfflinePageUtils.getLoadUrlParamsForOpeningMhtmlFileOrContent(url, (loadUrlParams) -> {
+            processUrlViewIntent(loadUrlParams.getUrl(), null, loadUrlParams.getVerbatimHeaders(),
+                    TabOpenType.OPEN_NEW_TAB, null, 0, false, intent);
+        });
     }
 
     private static PendingIntent getAuthenticationToken() {
@@ -666,6 +709,8 @@ public class IntentHandler {
             String key = keys.next();
             String value = bundleExtraHeaders.getString(key);
             if ("referer".equals(key.toLowerCase(Locale.US))) continue;
+            // Strip the custom header that can only be added by ourselves.
+            if ("x-chrome-intent-type".equals(key.toLowerCase(Locale.US))) continue;
             if (extraHeaders.length() != 0) extraHeaders.append("\n");
             extraHeaders.append(key);
             extraHeaders.append(": ");
@@ -997,6 +1042,60 @@ public class IntentHandler {
                 ? data.getQuery() : null;
     }
 
+    @VisibleForTesting
+    static String maybeAddAdditionalExtraHeaders(Intent intent, String url, String extraHeaders) {
+        // On Oreo, ContentResolver.getType(contentUri) returns "application/octet-stream", instead
+        // of the registered MIME type when opening a document from Downloads. To work around this,
+        // we pass the intent type in extra headers such that content request job can get it.
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return extraHeaders;
+        if (intent == null || url == null) return extraHeaders;
+
+        String scheme = getSanitizedUrlScheme(url);
+        if (!TextUtils.equals(scheme, UrlConstants.CONTENT_SCHEME)) return extraHeaders;
+
+        Uri uri = Uri.parse(url);
+        if (uri == null
+                || !"com.android.providers.downloads.documents".equals(uri.getAuthority())) {
+            return extraHeaders;
+        }
+
+        String type = intent.getType();
+        if (type == null || type.isEmpty()) return extraHeaders;
+
+        String typeHeader = "X-Chrome-intent-type: " + type;
+        return (extraHeaders == null) ? typeHeader : (extraHeaders + "\n" + typeHeader);
+    }
+
+    /**
+     * @param intent An Intent to be checked.
+     * @return Whether the intent has an file:// or content:// URL with MHTML MIME type.
+     */
+    @VisibleForTesting
+    static boolean isIntentForMhtmlFileOrContent(Intent intent) {
+        String url = getUrlFromIntent(intent);
+        if (url == null) return false;
+        String scheme = getSanitizedUrlScheme(url);
+        boolean isContentUriScheme = TextUtils.equals(scheme, UrlConstants.CONTENT_SCHEME);
+        boolean isFileUriScheme = TextUtils.equals(scheme, UrlConstants.FILE_SCHEME);
+        if (!isContentUriScheme && !isFileUriScheme) return false;
+        String type = intent.getType();
+        if (type != null && (type.equals("multipart/related") || type.equals("message/rfc822"))) {
+            return true;
+        }
+        // Note that "application/octet-stream" type may be passed by some apps that do not know
+        // about MHTML file types.
+        if (!isFileUriScheme
+                || (!TextUtils.isEmpty(type) && !type.equals("application/octet-stream"))) {
+            return false;
+        }
+
+        // Get the file extension. We can't use MimeTypeMap.getFileExtensionFromUrl because it will
+        // reject urls with characters that are valid in filenames (such as "!").
+        String extension = FileUtils.getExtension(url);
+
+        return extension.equals("mhtml") || extension.equals("mht");
+    }
+
     /**
      * Adjusts the URL to account for the googlechrome:// scheme.
      * Currently, its only use is to handle navigations, only http and https URL is allowed.
@@ -1011,7 +1110,7 @@ public class IntentHandler {
                 String scheme = getSanitizedUrlScheme(parsedUrl);
                 if (scheme == null) {
                     // If no scheme, assuming this is an http url.
-                    parsedUrl = "http://" + parsedUrl;
+                    parsedUrl = UrlConstants.HTTP_URL_PREFIX + parsedUrl;
                 }
             }
             if (UrlUtilities.isHttpOrHttps(parsedUrl)) return parsedUrl;

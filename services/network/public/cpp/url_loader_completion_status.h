@@ -7,16 +7,17 @@
 
 #include <stdint.h>
 
+#include "base/component_export.h"
 #include "base/macros.h"
 #include "base/optional.h"
 #include "base/time/time.h"
 #include "net/ssl/ssl_info.h"
-#include "services/network/public/cpp/cors_error_status.h"
-#include "services/network/public/interfaces/cors.mojom-shared.h"
+#include "services/network/public/cpp/cors/cors_error_status.h"
+#include "services/network/public/mojom/cors.mojom-shared.h"
 
 namespace network {
 
-struct URLLoaderCompletionStatus {
+struct COMPONENT_EXPORT(NETWORK_CPP_BASE) URLLoaderCompletionStatus {
   URLLoaderCompletionStatus();
   URLLoaderCompletionStatus(const URLLoaderCompletionStatus& status);
 
@@ -34,6 +35,9 @@ struct URLLoaderCompletionStatus {
 
   // The error code. ERR_FAILED is set for CORS errors.
   int error_code = 0;
+
+  // Extra detail on the error.
+  int extended_error_code = 0;
 
   // A copy of the data requested exists in the cache.
   bool exists_in_cache = false;
@@ -55,6 +59,9 @@ struct URLLoaderCompletionStatus {
 
   // Optional SSL certificate info.
   base::Optional<net::SSLInfo> ssl_info;
+
+  // Set when response was blocked due to being cross-site document load.
+  bool blocked_cross_site_document = false;
 };
 
 }  // namespace network

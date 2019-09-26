@@ -14,11 +14,11 @@
 #include "base/containers/hash_tables.h"
 #include "base/macros.h"
 #include "build/build_config.h"
-#include "content/browser/accessibility/accessibility_flags.h"
+#include "content/browser/accessibility/accessibility_buildflags.h"
 #include "content/browser/accessibility/browser_accessibility_position.h"
 #include "content/common/content_export.h"
 #include "content/public/browser/ax_event_notification_details.h"
-#include "third_party/WebKit/public/web/WebAXEnums.h"
+#include "third_party/blink/public/web/web_ax_enums.h"
 #include "ui/accessibility/ax_action_data.h"
 #include "ui/accessibility/ax_event_generator.h"
 #include "ui/accessibility/ax_node_data.h"
@@ -130,7 +130,7 @@ class CONTENT_EXPORT BrowserAccessibilityManager : public ui::AXEventGenerator {
 
   // Subclasses override these methods to send native event notifications.
   virtual void FireFocusEvent(BrowserAccessibility* node);
-  virtual void FireBlinkEvent(ui::AXEvent event_type,
+  virtual void FireBlinkEvent(ax::mojom::Event event_type,
                               BrowserAccessibility* node) {}
   virtual void FireGeneratedEvent(AXEventGenerator::Event event_type,
                                   BrowserAccessibility* node) {}
@@ -172,6 +172,16 @@ class CONTENT_EXPORT BrowserAccessibilityManager : public ui::AXEventGenerator {
   virtual void UserIsReloading();
   void NavigationSucceeded();
   void NavigationFailed();
+  void DidStopLoading();
+
+  // Keep track of if this page is hidden by an interstitial, in which case
+  // we need to suppress all events.
+  void set_hidden_by_interstitial_page(bool hidden) {
+    hidden_by_interstitial_page_ = hidden;
+  }
+  bool hidden_by_interstitial_page() const {
+    return hidden_by_interstitial_page_;
+  }
 
   // Pretend that the given node has focus, for testing only. Doesn't
   // communicate with the renderer and doesn't fire any events.
@@ -303,9 +313,8 @@ class CONTENT_EXPORT BrowserAccessibilityManager : public ui::AXEventGenerator {
   // Sets |out_is_before| to true if |object1| comes before |object2|
   // in tree order (pre-order traversal), and false if the objects are the
   // same or not in the same tree.
-  static ui::AXTreeOrder CompareNodes(
-      const BrowserAccessibility& object1,
-      const BrowserAccessibility& object2);
+  static ax::mojom::TreeOrder CompareNodes(const BrowserAccessibility& object1,
+                                           const BrowserAccessibility& object2);
 
   static std::vector<const BrowserAccessibility*> FindTextOnlyObjectsInRange(
       const BrowserAccessibility& start_object,
@@ -412,6 +421,10 @@ class CONTENT_EXPORT BrowserAccessibilityManager : public ui::AXEventGenerator {
 
   // True if the user has initiated a navigation to another page.
   bool user_is_navigating_away_;
+
+  // Interstitial page, like an SSL warning.
+  // If so we need to suppress any events.
+  bool hidden_by_interstitial_page_ = false;
 
   BrowserAccessibilityFindInPageInfo find_in_page_info_;
 

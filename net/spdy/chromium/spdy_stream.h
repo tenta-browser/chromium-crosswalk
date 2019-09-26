@@ -28,7 +28,13 @@
 #include "net/spdy/core/spdy_protocol.h"
 #include "net/spdy/platform/api/spdy_string.h"
 #include "net/ssl/ssl_client_cert_type.h"
+#include "net/ssl/token_binding.h"
+#include "net/traffic_annotation/network_traffic_annotation.h"
 #include "url/gurl.h"
+
+namespace crypto {
+class ECPrivateKey;
+}
 
 namespace net {
 
@@ -119,7 +125,8 @@ class NET_EXPORT_PRIVATE SpdyStream {
              RequestPriority priority,
              int32_t initial_send_window_size,
              int32_t max_recv_window_size,
-             const NetLogWithSource& net_log);
+             const NetLogWithSource& net_log,
+             const NetworkTrafficAnnotationTag& traffic_annotation);
 
   ~SpdyStream();
 
@@ -248,7 +255,7 @@ class NET_EXPORT_PRIVATE SpdyStream {
 
   // Called by the SpdySession when a frame carrying request headers opening a
   // push stream is received. Stream transits to STATE_RESERVED_REMOTE state.
-  void OnPushPromiseHeadersReceived(SpdyHeaderBlock headers);
+  void OnPushPromiseHeadersReceived(SpdyHeaderBlock headers, GURL url);
 
   // Called by the SpdySession when response data has been received
   // for this stream.  This callback may be called multiple times as
@@ -321,10 +328,18 @@ class NET_EXPORT_PRIVATE SpdyStream {
   // MORE_DATA_TO_SEND for bidirectional streams; for request/response
   // streams, it must be MORE_DATA_TO_SEND if there is more data to
   // upload, or NO_MORE_DATA_TO_SEND if not.
+  // Must not be called until Delegate::OnHeadersSent() is called.
   void SendData(IOBuffer* data, int length, SpdySendStatus send_status);
 
   // Fills SSL info in |ssl_info| and returns true when SSL is in use.
   bool GetSSLInfo(SSLInfo* ssl_info) const;
+
+  // Generates the signature used in Token Binding using |*key| and for a Token
+  // Binding of type |tb_type|, putting the signature in |*out|. Returns OK or
+  // ERR_FAILED.
+  Error GetTokenBindingSignature(crypto::ECPrivateKey* key,
+                                 TokenBindingType tb_type,
+                                 std::vector<uint8_t>* out) const;
 
   // Returns true if ALPN was negotiated for the underlying socket.
   bool WasAlpnNegotiated() const;
@@ -370,15 +385,18 @@ class NET_EXPORT_PRIVATE SpdyStream {
   int64_t raw_received_bytes() const { return raw_received_bytes_; }
   int64_t raw_sent_bytes() const { return raw_sent_bytes_; }
   int recv_bytes() const { return recv_bytes_; }
+  bool ShouldRetryRSTPushStream();
 
   bool GetLoadTimingInfo(LoadTimingInfo* load_timing_info) const;
 
-  // Get the URL from the appropriate stream headers, or the empty
-  // GURL() if it is unknown.
-  const GURL& GetUrlFromHeaders() const { return url_from_header_block_; }
+  const SpdyHeaderBlock& request_headers() { return request_headers_; }
 
   // Returns the estimate of dynamically allocated memory in bytes.
   size_t EstimateMemoryUsage() const;
+
+  const NetworkTrafficAnnotationTag traffic_annotation() const {
+    return traffic_annotation_;
+  }
 
  private:
   class HeadersBufferProducer;
@@ -474,9 +492,6 @@ class NET_EXPORT_PRIVATE SpdyStream {
   bool request_headers_valid_;
   SpdyHeaderBlock request_headers_;
 
-  // The URL from the request headers.
-  GURL url_from_header_block_;
-
   // Data waiting to be sent, and the close state of the local endpoint
   // after the data is fully written.
   scoped_refptr<DrainableIOBuffer> pending_send_data_;
@@ -524,6 +539,8 @@ class NET_EXPORT_PRIVATE SpdyStream {
   // TODO(jgraettinger): Consider removing after crbug.com/35511 is tracked
   // down.
   bool write_handler_guard_;
+
+  const NetworkTrafficAnnotationTag traffic_annotation_;
 
   base::WeakPtrFactory<SpdyStream> weak_ptr_factory_;
 

@@ -35,26 +35,32 @@
   Runtime.experiments.enableForTest('timelineInvalidationTracking');
 
   TestRunner.runTestSuite([
-    function testLocalFrame(next) {
-      PerformanceTestRunner.invokeAsyncWithTimeline('display', function() {
-        PerformanceTestRunner.dumpInvalidations(TimelineModel.TimelineModel.RecordType.Paint, 0, 'paint invalidations');
-        next();
-      });
+    async function testLocalFrame(next) {
+      await PerformanceTestRunner.invokeAsyncWithTimeline('display');
+      PerformanceTestRunner.dumpInvalidations(TimelineModel.TimelineModel.RecordType.Paint, 0, 'paint invalidations');
+      next();
     },
 
-    function testSubframe(next) {
-      PerformanceTestRunner.invokeAsyncWithTimeline('updateSubframeAndDisplay', function() {
-        // The first paint corresponds to the local frame and should have no invalidations.
-        var firstPaintEvent = PerformanceTestRunner.findTimelineEvent(TimelineModel.TimelineModel.RecordType.Paint);
-        var firstInvalidations = TimelineModel.InvalidationTracker.invalidationEventsFor(firstPaintEvent);
-        TestRunner.assertEquals(firstInvalidations, null);
+    async function testSubframe(next) {
+      await PerformanceTestRunner.invokeAsyncWithTimeline('updateSubframeAndDisplay');
+      // The first paint corresponds to the local frame and should have no invalidations.
+      var firstPaintEvent = PerformanceTestRunner.findTimelineEvent(TimelineModel.TimelineModel.RecordType.Paint);
+      var firstInvalidations = TimelineModel.InvalidationTracker.invalidationEventsFor(firstPaintEvent);
+      TestRunner.assertEquals(firstInvalidations, null);
 
+      if (internals.runtimeFlags.slimmingPaintV175Enabled) {
+        // SlimmingPaintV175 doesn't invalidate paint of deleted elements which doesn't affect other elements.
+        // We may need to track raster invalidations in dev tools.
+        var secondPaintEvent = PerformanceTestRunner.findTimelineEvent(TimelineModel.TimelineModel.RecordType.Paint);
+        var secondInvalidations = TimelineModel.InvalidationTracker.invalidationEventsFor(secondPaintEvent);
+        TestRunner.assertEquals(secondInvalidations, null);
+      } else {
         // The second paint corresponds to the subframe and should have our layout/style invalidations.
         PerformanceTestRunner.dumpInvalidations(
             TimelineModel.TimelineModel.RecordType.Paint, 1, 'second paint invalidations');
+      }
 
-        next();
-      });
+      next();
     }
   ]);
 })();

@@ -2,6 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <tuple>
+
 #include "base/bind.h"
 #include "base/command_line.h"
 #include "base/files/file_path.h"
@@ -10,7 +12,8 @@
 #include "build/build_config.h"
 #include "chrome/browser/extensions/extension_apitest.h"
 #include "chrome/browser/extensions/extension_function_test_utils.h"
-#include "chrome/browser/extensions/extension_service.h"
+#include "chrome/browser/media/router/providers/cast/dual_media_sink_service.h"
+#include "chrome/browser/media/router/test/noop_dual_media_sink_service.h"
 #include "chrome/browser/ui/browser.h"
 #include "components/cast_channel/cast_socket.h"
 #include "components/cast_channel/cast_socket_service.h"
@@ -28,6 +31,7 @@
 #include "net/base/ip_address.h"
 #include "net/base/net_errors.h"
 #include "net/log/test_net_log.h"
+#include "net/traffic_annotation/network_traffic_annotation_test_helper.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gmock_mutant.h"
 
@@ -75,7 +79,7 @@ static void FillCastMessage(const std::string& message,
 ACTION_TEMPLATE(InvokeCompletionCallback,
                 HAS_1_TEMPLATE_PARAMS(int, k),
                 AND_1_VALUE_PARAMS(result)) {
-  ::std::tr1::get<k>(args).Run(result);
+  std::get<k>(args).Run(result);
 }
 
 }  // namespace
@@ -88,6 +92,13 @@ class CastChannelAPITest : public ExtensionApiTest {
     ExtensionApiTest::SetUpCommandLine(command_line);
     command_line->AppendSwitchASCII(
         extensions::switches::kWhitelistedExtensionID, kTestExtensionId);
+  }
+
+  void SetUp() override {
+    // Stub out DualMediaSinkService so it does not interfere with the test.
+    media_router::DualMediaSinkService::SetInstanceForTest(
+        new media_router::NoopDualMediaSinkService());
+    ExtensionApiTest::SetUp();
   }
 
   void SetUpMockCastSocket() {
@@ -113,12 +124,34 @@ class CastChannelAPITest : public ExtensionApiTest {
                 callback.Run(mock_cast_socket_);
               })));
       EXPECT_CALL(*mock_cast_socket_, ready_state())
-          .WillOnce(Return(ReadyState::OPEN));
+          .WillRepeatedly(Return(ReadyState::OPEN));
       EXPECT_CALL(*mock_cast_socket_->mock_transport(),
-                  SendMessage(A<const CastMessage&>(), _))
+                  SendMessage(A<const CastMessage&>(), _, _))
           .WillOnce(InvokeCompletionCallback<1>(net::OK));
       EXPECT_CALL(*mock_cast_socket_, ready_state())
           .WillOnce(Return(ReadyState::OPEN));
+      EXPECT_CALL(*mock_cast_socket_, Close(_))
+          .WillOnce(InvokeCompletionCallback<0>(net::OK));
+      EXPECT_CALL(*mock_cast_socket_, ready_state())
+          .WillOnce(Return(ReadyState::CLOSED));
+    }
+  }
+
+  void SetUpOpenErrorSend() {
+    SetUpMockCastSocket();
+    mock_cast_socket_->SetErrorState(ChannelError::CONNECT_ERROR);
+    {
+      InSequence sequence;
+
+      EXPECT_CALL(*mock_cast_socket_, ConnectInternal(_))
+          .WillOnce(WithArgs<0>(
+              Invoke([&](const MockCastSocket::MockOnOpenCallback& callback) {
+                callback.Run(mock_cast_socket_);
+              })));
+      EXPECT_CALL(*mock_cast_socket_, ready_state())
+          .WillRepeatedly(Return(ReadyState::CLOSED));
+      EXPECT_CALL(*mock_cast_socket_->mock_transport(), SendMessage(_, _, _))
+          .Times(0);
       EXPECT_CALL(*mock_cast_socket_, Close(_))
           .WillOnce(InvokeCompletionCallback<0>(net::OK));
       EXPECT_CALL(*mock_cast_socket_, ready_state())
@@ -240,6 +273,22 @@ IN_PROC_BROWSER_TEST_F(CastChannelAPITest, MAYBE_TestOpenSendClose) {
 
   EXPECT_TRUE(RunExtensionSubtest("cast_channel/api",
                                   "test_open_send_close.html"));
+}
+
+// TODO(kmarshall): Win Dbg has a workaround that makes RunExtensionSubtest
+// always return true without actually running the test. Remove when fixed.
+#if defined(OS_WIN) && !defined(NDEBUG)
+#define MAYBE_TestOpenErrorSend DISABLED_TestOpenErrorSend
+#else
+#define MAYBE_TestOpenErrorSend TestOpenErrorSend
+#endif
+// Test loading extension, failing to open a channel with ConnectInfo, sending
+// message on closed channel, and closing.
+IN_PROC_BROWSER_TEST_F(CastChannelAPITest, MAYBE_TestOpenErrorSend) {
+  SetUpOpenErrorSend();
+
+  EXPECT_TRUE(
+      RunExtensionSubtest("cast_channel/api", "test_open_error_send.html"));
 }
 
 // TODO(kmarshall): Win Dbg has a workaround that makes RunExtensionSubtest

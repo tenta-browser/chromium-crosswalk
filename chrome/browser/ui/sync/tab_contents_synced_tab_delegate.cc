@@ -8,7 +8,7 @@
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/sessions/session_tab_helper.h"
 #include "chrome/browser/sync/sessions/sync_sessions_router_tab_helper.h"
-#include "chrome/common/features.h"
+#include "chrome/common/buildflags.h"
 #include "components/sessions/content/content_serialized_navigation_builder.h"
 #include "components/sync_sessions/sync_sessions_client.h"
 #include "components/sync_sessions/synced_window_delegate.h"
@@ -18,7 +18,7 @@
 #include "content/public/browser/navigation_controller.h"
 #include "content/public/browser/navigation_entry.h"
 #include "content/public/browser/web_contents.h"
-#include "extensions/features/features.h"
+#include "extensions/buildflags/buildflags.h"
 
 #if BUILDFLAG(ENABLE_EXTENSIONS)
 #include "chrome/browser/extensions/tab_helper.h"
@@ -54,12 +54,12 @@ TabContentsSyncedTabDelegate::TabContentsSyncedTabDelegate(
 
 TabContentsSyncedTabDelegate::~TabContentsSyncedTabDelegate() {}
 
-SessionID::id_type TabContentsSyncedTabDelegate::GetWindowId() const {
-  return SessionTabHelper::FromWebContents(web_contents_)->window_id().id();
+SessionID TabContentsSyncedTabDelegate::GetWindowId() const {
+  return SessionTabHelper::FromWebContents(web_contents_)->window_id();
 }
 
-SessionID::id_type TabContentsSyncedTabDelegate::GetSessionId() const {
-  return SessionTabHelper::FromWebContents(web_contents_)->session_id().id();
+SessionID TabContentsSyncedTabDelegate::GetSessionId() const {
+  return SessionTabHelper::FromWebContents(web_contents_)->session_id();
 }
 
 bool TabContentsSyncedTabDelegate::IsBeingDestroyed() const {
@@ -179,7 +179,7 @@ bool TabContentsSyncedTabDelegate::ShouldSync(
   return false;
 }
 
-SessionID::id_type TabContentsSyncedTabDelegate::GetSourceTabID() const {
+SessionID TabContentsSyncedTabDelegate::GetSourceTabID() const {
   sync_sessions::SyncSessionsRouterTabHelper* helper =
       sync_sessions::SyncSessionsRouterTabHelper::FromWebContents(
           web_contents_);

@@ -4,8 +4,8 @@
 
 #import "ios/web/navigation/navigation_manager_impl.h"
 
-#include "base/memory/ptr_util.h"
 #import "ios/web/navigation/navigation_manager_delegate.h"
+#import "ios/web/navigation/wk_navigation_util.h"
 #import "ios/web/public/web_client.h"
 #include "ui/base/page_transition_types.h"
 
@@ -40,10 +40,28 @@ NavigationManager::WebLoadParams& NavigationManager::WebLoadParams::operator=(
   is_renderer_initiated = other.is_renderer_initiated;
   transition_type = other.transition_type;
   user_agent_override_option = other.user_agent_override_option;
-  extra_headers.reset([other.extra_headers copy]);
-  post_data.reset([other.post_data copy]);
+  extra_headers = [other.extra_headers copy];
+  post_data = [other.post_data copy];
 
   return *this;
+}
+
+/* static */
+NavigationItem* NavigationManagerImpl::GetLastCommittedNonRedirectedItem(
+    const NavigationManager* nav_manager) {
+  if (!nav_manager || !nav_manager->GetItemCount())
+    return nullptr;
+
+  int index = nav_manager->GetLastCommittedItemIndex();
+  while (index >= 0) {
+    NavigationItem* item = nav_manager->GetItemAtIndex(index);
+    // Returns the first non-Redirect item found.
+    if (!ui::PageTransitionIsRedirect(item->GetTransitionType()))
+      return item;
+    --index;
+  }
+
+  return nullptr;
 }
 
 /* static */
@@ -111,6 +129,8 @@ void NavigationManagerImpl::SetDelegate(NavigationManagerDelegate* delegate) {
 void NavigationManagerImpl::SetBrowserState(BrowserState* browser_state) {
   browser_state_ = browser_state;
 }
+
+void NavigationManagerImpl::DetachFromWebView() {}
 
 void NavigationManagerImpl::RemoveTransientURLRewriters() {
   transient_url_rewriters_.clear();
@@ -247,6 +267,9 @@ void NavigationManagerImpl::LoadURLWithParams(
         last_committed_url.EqualsIgnoringRef(pending_url)) {
       pending_item->SetIsCreatedFromHashChange(true);
     }
+
+    if (params.virtual_url.is_valid())
+      pending_item->SetVirtualURL(params.virtual_url);
   }
 
   // Add additional headers to the NavigationItem before loading it in the web
@@ -268,8 +291,7 @@ void NavigationManagerImpl::LoadURLWithParams(
     added_item->SetShouldSkipRepostFormConfirmation(true);
   }
 
-  delegate_->WillLoadCurrentItemWithUrl(params.url);
-  delegate_->LoadCurrentItem();
+  FinishLoadURLWithParams();
 }
 
 void NavigationManagerImpl::AddTransientURLRewriter(
@@ -304,7 +326,58 @@ void NavigationManagerImpl::Reload(ReloadType reload_type,
     reload_item->SetURL(reload_item->GetOriginalRequestURL());
   }
 
-  delegate_->Reload();
+  FinishReload();
+}
+
+void NavigationManagerImpl::ReloadWithUserAgentType(
+    UserAgentType user_agent_type) {
+  DCHECK_NE(user_agent_type, UserAgentType::NONE);
+
+  // This removes the web view, which will be recreated at the end of this.
+  delegate_->WillChangeUserAgentType();
+
+  NavigationItem* last_non_redirect_item = GetTransientItem();
+  if (!last_non_redirect_item ||
+      ui::PageTransitionIsRedirect(last_non_redirect_item->GetTransitionType()))
+    last_non_redirect_item = GetVisibleItem();
+  if (!last_non_redirect_item ||
+      ui::PageTransitionIsRedirect(last_non_redirect_item->GetTransitionType()))
+    last_non_redirect_item = GetLastCommittedNonRedirectedItem(this);
+
+  if (!last_non_redirect_item)
+    return;
+
+  // |reloadURL| will be empty if a page was open by DOM.
+  GURL reload_url(last_non_redirect_item->GetOriginalRequestURL());
+  if (reload_url.is_empty()) {
+    reload_url = last_non_redirect_item->GetVirtualURL();
+  }
+
+  // Reload using a client-side redirect URL to create a new entry in
+  // WKBackForwardList for the new user agent type. This hack is not needed for
+  // LegacyNavigationManagerImpl which manages its own history entries.
+  if (web::GetWebClient()->IsSlimNavigationManagerEnabled()) {
+    reload_url = wk_navigation_util::CreateRedirectUrl(reload_url);
+  }
+
+  WebLoadParams params(reload_url);
+  if (last_non_redirect_item->GetVirtualURL() != reload_url)
+    params.virtual_url = last_non_redirect_item->GetVirtualURL();
+  params.referrer = last_non_redirect_item->GetReferrer();
+  params.transition_type = ui::PAGE_TRANSITION_RELOAD;
+
+  switch (user_agent_type) {
+    case UserAgentType::DESKTOP:
+      params.user_agent_override_option = UserAgentOverrideOption::DESKTOP;
+      break;
+    case UserAgentType::MOBILE:
+      params.user_agent_override_option = UserAgentOverrideOption::MOBILE;
+      break;
+    case UserAgentType::NONE:
+      NOTREACHED();
+  }
+
+  LoadURLWithParams(params);
 }
 
 void NavigationManagerImpl::LoadIfNecessary() {
@@ -333,17 +406,22 @@ NavigationManagerImpl::CreateNavigationItemWithRewriters(
         &loaded_url, browser_state_);
   }
 
-  if (initiation_type == web::NavigationInitiationType::RENDERER_INITIATED &&
+  // The URL should not be changed to app-specific URL in two cases:
+  // 1) The load is renderer-initiated requested by non-app-specific URL. Pages
+  //    with app-specific urls have elevated previledges and should not be
+  //    allowed to open app-specific URLs.
+  // 2) The load is a placeholder URL. Navigation code relies on this special
+  //    URL to implement native view and WebUI.
+  bool is_renderer_initiated_app_specific_url_from_non_app_specific_url =
+      initiation_type == web::NavigationInitiationType::RENDERER_INITIATED &&
       loaded_url != url && web::GetWebClient()->IsAppSpecificURL(loaded_url) &&
-      !web::GetWebClient()->IsAppSpecificURL(previous_url)) {
-    // The URL should not be changed to app-specific URL if the load was
-    // renderer-initiated requested by non app-specific URL. Pages with
-    // app-specific urls have elevated previledges and should not be allowed
-    // to open app-specific URLs.
+      !web::GetWebClient()->IsAppSpecificURL(previous_url);
+  if (is_renderer_initiated_app_specific_url_from_non_app_specific_url ||
+      IsPlaceholderUrl(url)) {
     loaded_url = url;
   }
 
-  auto item = base::MakeUnique<NavigationItemImpl>();
+  auto item = std::make_unique<NavigationItemImpl>();
   item->SetOriginalRequestURL(loaded_url);
   item->SetURL(loaded_url);
   item->SetReferrer(referrer);
@@ -365,6 +443,18 @@ NavigationItem* NavigationManagerImpl::GetLastCommittedNonAppSpecificItem()
       return item;
   }
   return nullptr;
+}
+
+void NavigationManagerImpl::FinishReload() {
+  delegate_->Reload();
+}
+
+void NavigationManagerImpl::FinishLoadURLWithParams() {
+  delegate_->LoadCurrentItem();
+}
+
+bool NavigationManagerImpl::IsPlaceholderUrl(const GURL& url) const {
+  return false;  // Default implementation doesn't use placeholder URLs
 }
 
 }  // namespace web

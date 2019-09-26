@@ -27,7 +27,6 @@
 #include "chrome/test/base/test_browser_window.h"
 #include "chrome/test/base/testing_profile.h"
 #include "components/crx_file/id_util.h"
-#include "content/public/common/browser_side_navigation_policy.h"
 #include "content/public/test/browser_side_navigation_test_utils.h"
 #include "content/public/test/web_contents_tester.h"
 #include "extensions/browser/extension_dialog_auto_confirm.h"
@@ -44,9 +43,13 @@
 #include "extensions/common/value_builder.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/base/l10n/l10n_util.h"
+#include "ui/display/test/scoped_screen_override.h"
+#include "ui/display/test/test_screen.h"
 #include "ui/gfx/image/image.h"
 
 namespace extensions {
+
+using display::test::ScopedScreenOverride;
 
 namespace {
 
@@ -74,7 +77,7 @@ class MenuBuilder {
   ~MenuBuilder() {}
 
   std::unique_ptr<ExtensionContextMenuModel> BuildMenu() {
-    return base::MakeUnique<ExtensionContextMenuModel>(
+    return std::make_unique<ExtensionContextMenuModel>(
         extension_.get(), browser_, ExtensionContextMenuModel::VISIBLE,
         nullptr);
   }
@@ -85,7 +88,7 @@ class MenuBuilder {
     id.uid = ++cur_id_;
     menu_manager_->AddContextItem(
         extension_.get(),
-        base::MakeUnique<MenuItem>(id, kTestExtensionItemLabel,
+        std::make_unique<MenuItem>(id, kTestExtensionItemLabel,
                                    false,  // check`ed
                                    true,   // visible
                                    true,   // enabled
@@ -190,6 +193,8 @@ class ExtensionContextMenuModelTest : public ExtensionServiceTestBase {
  private:
   std::unique_ptr<TestBrowserWindow> test_window_;
   std::unique_ptr<Browser> browser_;
+  display::test::TestScreen test_screen_;
+  std::unique_ptr<ScopedScreenOverride> scoped_screen_override_;
 
   DISALLOW_COPY_AND_ASSIGN(ExtensionContextMenuModelTest);
 };
@@ -241,13 +246,13 @@ Browser* ExtensionContextMenuModelTest::GetBrowser() {
 
 void ExtensionContextMenuModelTest::SetUp() {
   ExtensionServiceTestBase::SetUp();
-  if (content::IsBrowserSideNavigationEnabled())
-    content::BrowserSideNavigationSetUp();
+  content::BrowserSideNavigationSetUp();
+  scoped_screen_override_ =
+      std::make_unique<ScopedScreenOverride>(&test_screen_);
 }
 
 void ExtensionContextMenuModelTest::TearDown() {
-  if (content::IsBrowserSideNavigationEnabled())
-    content::BrowserSideNavigationTearDown();
+  content::BrowserSideNavigationTearDown();
   ExtensionServiceTestBase::TearDown();
 }
 

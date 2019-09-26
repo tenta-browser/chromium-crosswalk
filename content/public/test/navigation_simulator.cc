@@ -4,8 +4,9 @@
 
 #include "content/public/test/navigation_simulator.h"
 
+#include <utility>
+
 #include "base/bind.h"
-#include "base/memory/ptr_util.h"
 #include "base/run_loop.h"
 #include "content/browser/frame_host/debug_urls.h"
 #include "content/browser/frame_host/navigation_handle_impl.h"
@@ -14,7 +15,6 @@
 #include "content/public/browser/navigation_throttle.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/browser_side_navigation_policy.h"
-#include "content/public/common/resource_request_body.h"
 #include "content/public/common/url_utils.h"
 #include "content/test/test_navigation_url_loader.h"
 #include "content/test/test_render_frame_host.h"
@@ -71,6 +71,8 @@ class NavigationThrottleCallbackRunner : public NavigationThrottle {
   base::Closure on_will_fail_request_;
   base::Closure on_will_process_response_;
 };
+
+int64_t g_unique_identifier = 0;
 
 }  // namespace
 
@@ -234,9 +236,11 @@ NavigationSimulator::NavigationSimulator(const GURL& original_url,
       handle_(nullptr),
       navigation_url_(original_url),
       socket_address_("2001:db8::1", 80),
+      initial_method_("GET"),
       browser_initiated_(browser_initiated),
       transition_(browser_initiated ? ui::PAGE_TRANSITION_TYPED
                                     : ui::PAGE_TRANSITION_LINK),
+      contents_mime_type_("text/html"),
       weak_factory_(this) {
   // For renderer-initiated navigation, the RenderFrame must be initialized. Do
   // it if it hasn't happened yet.
@@ -249,6 +253,9 @@ NavigationSimulator::NavigationSimulator(const GURL& original_url,
     else
       transition_ = ui::PAGE_TRANSITION_MANUAL_SUBFRAME;
   }
+
+  service_manager::mojom::InterfaceProviderPtr stub_interface_provider;
+  interface_provider_request_ = mojo::MakeRequest(&stub_interface_provider);
 }
 
 NavigationSimulator::~NavigationSimulator() {}
@@ -270,21 +277,22 @@ void NavigationSimulator::Start() {
   if (IsRendererDebugURL(navigation_url_))
     return;
 
-  if (same_document_ ||
-      (IsBrowserSideNavigationEnabled() &&
-       !IsURLHandledByNetworkStack(navigation_url_)) ||
+  if (same_document_ || !IsURLHandledByNetworkStack(navigation_url_) ||
       navigation_url_.IsAboutBlank()) {
     CHECK_EQ(1, num_did_start_navigation_called_);
     return;
   }
 
-  WaitForThrottleChecksComplete();
+  MaybeWaitForThrottleChecksComplete(base::BindOnce(
+      &NavigationSimulator::StartComplete, weak_factory_.GetWeakPtr()));
+}
 
+void NavigationSimulator::StartComplete() {
   CHECK_EQ(1, num_did_start_navigation_called_);
   if (GetLastThrottleCheckResult().action() == NavigationThrottle::PROCEED) {
     CHECK_EQ(1, num_will_start_request_called_);
   } else {
-    FailFromThrottleCheck(GetLastThrottleCheckResult());
+    state_ = FAILED;
   }
 }
 
@@ -309,41 +317,41 @@ void NavigationSimulator::Redirect(const GURL& new_url) {
       num_did_redirect_navigation_called_;
 
   PrepareCompleteCallbackOnHandle();
-  if (IsBrowserSideNavigationEnabled()) {
-    NavigationRequest* request =
-        render_frame_host_->frame_tree_node()->navigation_request();
-    TestNavigationURLLoader* url_loader =
-        static_cast<TestNavigationURLLoader*>(request->loader_for_testing());
-    CHECK(url_loader);
+  NavigationRequest* request =
+      render_frame_host_->frame_tree_node()->navigation_request();
+  TestNavigationURLLoader* url_loader =
+      static_cast<TestNavigationURLLoader*>(request->loader_for_testing());
+  CHECK(url_loader);
 
-    net::RedirectInfo redirect_info;
-    redirect_info.status_code = 302;
-    redirect_info.new_method = "GET";
-    redirect_info.new_url = new_url;
-    redirect_info.new_site_for_cookies = new_url;
-    redirect_info.new_referrer = referrer_.url.spec();
-    redirect_info.new_referrer_policy =
-        Referrer::ReferrerPolicyForUrlRequest(referrer_);
+  net::RedirectInfo redirect_info;
+  redirect_info.status_code = 302;
+  redirect_info.new_method = "GET";
+  redirect_info.new_url = new_url;
+  redirect_info.new_site_for_cookies = new_url;
+  redirect_info.new_referrer = referrer_.url.spec();
+  redirect_info.new_referrer_policy =
+      Referrer::ReferrerPolicyForUrlRequest(referrer_.policy);
 
-    url_loader->CallOnRequestRedirected(
-        redirect_info, scoped_refptr<ResourceResponse>(new ResourceResponse));
-  } else {
-    handle_->WillRedirectRequest(
-        new_url, "GET", referrer_.url, false /* is_external_protocol */,
-        scoped_refptr<net::HttpResponseHeaders>(),
-        net::HttpResponseInfo::ConnectionInfo(), nullptr,
-        base::Callback<void(NavigationThrottle::ThrottleCheckResult)>());
-  }
+  url_loader->CallOnRequestRedirected(
+      redirect_info,
+      scoped_refptr<network::ResourceResponse>(new network::ResourceResponse));
 
-  WaitForThrottleChecksComplete();
+  MaybeWaitForThrottleChecksComplete(base::BindOnce(
+      &NavigationSimulator::RedirectComplete, weak_factory_.GetWeakPtr(),
+      previous_num_will_redirect_request_called,
+      previous_did_redirect_navigation_called));
+}
 
+void NavigationSimulator::RedirectComplete(
+    int previous_num_will_redirect_request_called,
+    int previous_did_redirect_navigation_called) {
   if (GetLastThrottleCheckResult().action() == NavigationThrottle::PROCEED) {
     CHECK_EQ(previous_num_will_redirect_request_called + 1,
              num_will_redirect_request_called_);
     CHECK_EQ(previous_did_redirect_navigation_called + 1,
              num_did_redirect_navigation_called_);
   } else {
-    FailFromThrottleCheck(GetLastThrottleCheckResult());
+    state_ = FAILED;
   }
 }
 
@@ -361,81 +369,47 @@ void NavigationSimulator::ReadyToCommit() {
       return;
   }
 
-  if (!IsBrowserSideNavigationEnabled() && same_document_) {
-    CommitSameDocument();
+  PrepareCompleteCallbackOnHandle();
+  if (frame_tree_node_->navigation_request()) {
+    static_cast<TestRenderFrameHost*>(frame_tree_node_->current_frame_host())
+        ->PrepareForCommitWithSocketAddress(socket_address_);
+  }
+
+  // Synchronous failure can cause the navigation to finish here.
+  if (!handle_) {
+    state_ = FAILED;
     return;
   }
 
-  PrepareCompleteCallbackOnHandle();
-  if (IsBrowserSideNavigationEnabled()) {
-    if (frame_tree_node_->navigation_request()) {
-      static_cast<TestRenderFrameHost*>(frame_tree_node_->current_frame_host())
-          ->PrepareForCommitWithSocketAddress(socket_address_);
-    }
-
-    // Synchronous failure can cause the navigation to finish here.
-    if (!handle_) {
-      state_ = FAILED;
-      return;
-    }
+  bool needs_throttle_checks = !same_document_ &&
+                               !navigation_url_.IsAboutBlank() &&
+                               IsURLHandledByNetworkStack(navigation_url_);
+  auto complete_closure =
+      base::BindOnce(&NavigationSimulator::ReadyToCommitComplete,
+                     weak_factory_.GetWeakPtr(), needs_throttle_checks);
+  if (needs_throttle_checks) {
+    MaybeWaitForThrottleChecksComplete(std::move(complete_closure));
+    return;
   }
+  std::move(complete_closure).Run();
+}
 
-  // Call NavigationHandle::WillProcessResponse if needed.
-  // Note that the handle's state can be CANCELING if a throttle cancelled it
-  // synchronously in PrepareForCommit.
-  if (handle_->state_for_testing() < NavigationHandleImpl::CANCELING) {
-    // This code path should only be executed when browser-side navigation isn't
-    // enabled. When browser-side navigation is enabled, WillProcessResponse
-    // gets invoked via the call to PrepareForCommit() above.
-    DCHECK(!IsBrowserSideNavigationEnabled());
-
-    // Start the request_ids at 1000 to avoid collisions with request ids from
-    // network resources (it should be rare to compare these in unit tests).
-    static int request_id = 1000;
-    GlobalRequestID global_id(render_frame_host_->GetProcess()->GetID(),
-                              ++request_id);
-    handle_->WillProcessResponse(
-        render_frame_host_, scoped_refptr<net::HttpResponseHeaders>(),
-        net::HttpResponseInfo::ConnectionInfo(), socket_address_,
-        net::SSLInfo(), global_id, false /* should_replace_current_entry */,
-        false /* is_download */, false /* is_stream */, base::Closure(),
-        base::Callback<void(NavigationThrottle::ThrottleCheckResult)>());
-  }
-
-  if (!same_document_ && !IsRendererDebugURL(navigation_url_) &&
-      !navigation_url_.IsAboutBlank() &&
-      (!IsBrowserSideNavigationEnabled() ||
-       IsURLHandledByNetworkStack(navigation_url_))) {
-    WaitForThrottleChecksComplete();
-
+void NavigationSimulator::ReadyToCommitComplete(bool ran_throttles) {
+  if (ran_throttles) {
     if (GetLastThrottleCheckResult().action() != NavigationThrottle::PROCEED) {
-      FailFromThrottleCheck(GetLastThrottleCheckResult());
+      state_ = FAILED;
       return;
     }
     CHECK_EQ(1, num_will_process_response_called_);
     CHECK_EQ(1, num_ready_to_commit_called_);
   }
 
-
   request_id_ = handle_->GetGlobalRequestID();
 
   // Update the RenderFrameHost now that we know which RenderFrameHost will
   // commit the navigation.
-  TestRenderFrameHost* new_render_frame_host =
+  render_frame_host_ =
       static_cast<TestRenderFrameHost*>(handle_->GetRenderFrameHost());
-  if (!IsBrowserSideNavigationEnabled() &&
-      new_render_frame_host != render_frame_host_) {
-    CHECK(handle_->is_transferring());
-    // Simulate the renderer transfer.
-    new_render_frame_host->OnMessageReceived(FrameHostMsg_DidStartLoading(
-        new_render_frame_host->GetRoutingID(), true));
-    new_render_frame_host->OnMessageReceived(
-        FrameHostMsg_DidStartProvisionalLoad(
-            new_render_frame_host->GetRoutingID(), navigation_url_,
-            std::vector<GURL>(), base::TimeTicks::Now()));
-    CHECK(!handle_->is_transferring());
-  }
-  render_frame_host_ = new_render_frame_host;
   state_ = READY_TO_COMMIT;
 }
 
@@ -468,23 +442,26 @@ void NavigationSimulator::Commit() {
   params.did_create_new_entry = DidCreateNewEntry();
   params.gesture =
       has_user_gesture_ ? NavigationGestureUser : NavigationGestureAuto;
-  params.contents_mime_type = "text/html";
+  params.contents_mime_type = contents_mime_type_;
   params.method = "GET";
   params.http_status_code = 200;
   params.history_list_was_cleared = false;
   params.original_request_url = navigation_url_;
-  params.was_within_same_document = same_document_;
 
   // Simulate Blink assigning an item and document sequence number to the
   // navigation.
-  params.item_sequence_number = base::Time::Now().ToDoubleT() * 1000000;
-  params.document_sequence_number = params.item_sequence_number + 1;
+  params.item_sequence_number = ++g_unique_identifier;
+  params.document_sequence_number = ++g_unique_identifier;
 
   params.page_state = PageState::CreateForTestingWithSequenceNumbers(
       navigation_url_, params.item_sequence_number,
       params.document_sequence_number);
 
-  render_frame_host_->SendNavigateWithParams(&params);
+  if (same_document_)
+    interface_provider_request_ = nullptr;
+
+  render_frame_host_->SendNavigateWithParamsAndInterfaceProvider(
+      &params, std::move(interface_provider_request_), same_document_);
 
   // Simulate the UnloadACK in the old RenderFrameHost if it was swapped out at
   // commit time.
@@ -506,58 +483,50 @@ void NavigationSimulator::Fail(int error_code) {
   CHECK_EQ(0, num_did_finish_navigation_called_)
       << "NavigationSimulator::Fail cannot be called after the "
          "navigation has finished";
+  DCHECK(!IsRendererDebugURL(navigation_url_));
 
   if (state_ == INITIALIZATION)
     Start();
 
   state_ = FAILED;
 
+  PrepareCompleteCallbackOnHandle();
+  NavigationRequest* request = frame_tree_node_->navigation_request();
+  CHECK(request);
+  TestNavigationURLLoader* url_loader =
+      static_cast<TestNavigationURLLoader*>(request->loader_for_testing());
+  CHECK(url_loader);
+  url_loader->SimulateError(error_code);
+
+  auto complete_closure =
+      base::BindOnce(&NavigationSimulator::FailComplete,
+                     weak_factory_.GetWeakPtr(), error_code);
+  if (error_code != net::ERR_ABORTED) {
+    MaybeWaitForThrottleChecksComplete(std::move(complete_closure));
+    return;
+  }
+  std::move(complete_closure).Run();
+}
+
+void NavigationSimulator::FailComplete(int error_code) {
   bool should_result_in_error_page = error_code != net::ERR_ABORTED;
-  if (IsBrowserSideNavigationEnabled()) {
-    PrepareCompleteCallbackOnHandle();
-    NavigationRequest* request = frame_tree_node_->navigation_request();
-    CHECK(request);
-    TestNavigationURLLoader* url_loader =
-        static_cast<TestNavigationURLLoader*>(request->loader_for_testing());
-    CHECK(url_loader);
-    url_loader->SimulateError(error_code);
-    if (error_code != net::ERR_ABORTED) {
-      DCHECK(!IsRendererDebugURL(navigation_url_));
-      WaitForThrottleChecksComplete();
-      NavigationThrottle::ThrottleCheckResult result =
-          GetLastThrottleCheckResult();
-      if (result.action() == NavigationThrottle::CANCEL ||
-          result.action() == NavigationThrottle::CANCEL_AND_IGNORE) {
-        should_result_in_error_page = false;
-      }
-    }
-  } else {
-    FrameHostMsg_DidFailProvisionalLoadWithError_Params error_params;
-    error_params.error_code = error_code;
-    error_params.url = navigation_url_;
-    render_frame_host_->OnMessageReceived(
-        FrameHostMsg_DidFailProvisionalLoadWithError(
-            render_frame_host_->GetRoutingID(), error_params));
-    if (!should_result_in_error_page) {
-      render_frame_host_->OnMessageReceived(
-          FrameHostMsg_DidStopLoading(render_frame_host_->GetRoutingID()));
+  if (error_code != net::ERR_ABORTED) {
+    NavigationThrottle::ThrottleCheckResult result =
+        GetLastThrottleCheckResult();
+    if (result.action() == NavigationThrottle::CANCEL ||
+        result.action() == NavigationThrottle::CANCEL_AND_IGNORE) {
+      should_result_in_error_page = false;
     }
   }
 
-  if (IsBrowserSideNavigationEnabled()) {
-    if (should_result_in_error_page) {
-      CHECK_EQ(1, num_ready_to_commit_called_);
-      // Update the RenderFrameHost now that we know which RenderFrameHost will
-      // commit the error page.
-      render_frame_host_ =
-          static_cast<TestRenderFrameHost*>(handle_->GetRenderFrameHost());
-    }
-  }
-
-  if (should_result_in_error_page)
+  if (should_result_in_error_page) {
+    CHECK_EQ(1, num_ready_to_commit_called_);
     CHECK_EQ(0, num_did_finish_navigation_called_);
-  else
-    CHECK_EQ(1, num_did_finish_navigation_called_);
+    // Update the RenderFrameHost now that we know which RenderFrameHost will
+    // commit the error page.
+    render_frame_host_ =
+        static_cast<TestRenderFrameHost*>(handle_->GetRenderFrameHost());
+  }
 }
 
 void NavigationSimulator::CommitErrorPage() {
@@ -584,19 +553,20 @@ void NavigationSimulator::CommitErrorPage() {
   params.url = navigation_url_;
   params.referrer = referrer_;
   params.transition = transition_;
-  params.was_within_same_document = false;
   params.url_is_unreachable = true;
 
   // Simulate Blink assigning an item and document sequence number to the
   // navigation.
-  params.item_sequence_number = base::Time::Now().ToDoubleT() * 1000000;
-  params.document_sequence_number = params.item_sequence_number + 1;
+  params.item_sequence_number = ++g_unique_identifier;
+  params.document_sequence_number = ++g_unique_identifier;
 
   params.page_state = PageState::CreateForTestingWithSequenceNumbers(
       navigation_url_, params.item_sequence_number,
       params.document_sequence_number);
 
-  render_frame_host_->SendNavigateWithParams(&params);
+  render_frame_host_->SendNavigateWithParamsAndInterfaceProvider(
+      &params, std::move(interface_provider_request_),
+      false /* was_same_document */);
 
   // Simulate the UnloadACK in the old RenderFrameHost if it was swapped out at
   // commit time.
@@ -633,16 +603,17 @@ void NavigationSimulator::CommitSameDocument() {
   params.did_create_new_entry = false;
   params.gesture =
       has_user_gesture_ ? NavigationGestureUser : NavigationGestureAuto;
-  params.contents_mime_type = "text/html";
+  params.contents_mime_type = contents_mime_type_;
   params.method = "GET";
   params.http_status_code = 200;
   params.history_list_was_cleared = false;
   params.original_request_url = navigation_url_;
-  params.was_within_same_document = true;
   params.page_state =
       PageState::CreateForTesting(navigation_url_, false, nullptr, nullptr);
 
-  render_frame_host_->SendNavigateWithParams(&params);
+  interface_provider_request_ = nullptr;
+  render_frame_host_->SendNavigateWithParamsAndInterfaceProvider(
+      &params, nullptr /* interface_provider_request */, true);
 
   state_ = FINISHED;
 
@@ -682,6 +653,12 @@ void NavigationSimulator::SetReloadType(ReloadType reload_type) {
     transition_ = ui::PAGE_TRANSITION_RELOAD;
 }
 
+void NavigationSimulator::SetMethod(const std::string& method) {
+  CHECK_EQ(INITIALIZATION, state_) << "The method parameter cannot "
+                                      "be set after the navigation has started";
+  initial_method_ = method;
+}
+
 void NavigationSimulator::SetReferrer(const Referrer& referrer) {
   CHECK_LE(state_, STARTED) << "The referrer cannot be set after the "
                                "navigation has committed or has failed";
@@ -693,6 +670,25 @@ void NavigationSimulator::SetSocketAddress(
   CHECK_LE(state_, STARTED) << "The socket address cannot be set after the "
                                "navigation has committed or failed";
   socket_address_ = socket_address;
+}
+
+void NavigationSimulator::SetInterfaceProviderRequest(
+    service_manager::mojom::InterfaceProviderRequest request) {
+  CHECK_LE(state_, STARTED) << "The InterfaceProviderRequest cannot be set "
+                               "after the navigation has committed or failed";
+  CHECK(request.is_pending());
+  interface_provider_request_ = std::move(request);
+}
+
+void NavigationSimulator::SetContentsMimeType(
+    const std::string& contents_mime_type) {
+  CHECK_LE(state_, STARTED) << "The contents mime type cannot be set after the "
+                               "navigation has committed or failed";
+  contents_mime_type_ = contents_mime_type;
+}
+
+void NavigationSimulator::SetAutoAdvance(bool auto_advance) {
+  auto_advance_ = auto_advance;
 }
 
 NavigationThrottle::ThrottleCheckResult
@@ -712,20 +708,6 @@ content::GlobalRequestID NavigationSimulator::GetGlobalRequestID() const {
   return request_id_;
 }
 
-void NavigationSimulator::SetOnDeferCallback(
-    const base::Closure& on_defer_callback) {
-  CHECK_LT(state_, FINISHED)
-      << "The callback should not be set after the navigation has finished";
-  if (handle_) {
-    handle_->SetOnDeferCallbackForTesting(on_defer_callback);
-    return;
-  }
-
-  // If there is no NavigationHandle for the navigation yet, store the callback
-  // until one has been created.
-  on_defer_callback_ = on_defer_callback;
-}
-
 void NavigationSimulator::DidStartNavigation(
     NavigationHandle* navigation_handle) {
   // Check if this navigation is the one we're simulating.
@@ -737,11 +719,6 @@ void NavigationSimulator::DidStartNavigation(
 
   if (handle->frame_tree_node() != frame_tree_node_)
     return;
-
-  if (!IsBrowserSideNavigationEnabled() &&
-      navigation_handle->GetURL() != navigation_url_) {
-    return;
-  }
 
   handle_ = handle;
 
@@ -759,12 +736,6 @@ void NavigationSimulator::DidStartNavigation(
                      weak_factory_.GetWeakPtr()),
           base::Bind(&NavigationSimulator::OnWillProcessResponse,
                      weak_factory_.GetWeakPtr())));
-
-  // Pass the |on_defer_callback_| if it was registered.
-  if (!on_defer_callback_.is_null()) {
-    handle->SetOnDeferCallbackForTesting(on_defer_callback_);
-    on_defer_callback_.Reset();
-  }
 
   PrepareCompleteCallbackOnHandle();
 }
@@ -820,33 +791,6 @@ bool NavigationSimulator::SimulateBrowserInitiatedStart() {
   // Update it.
   navigation_url_ = web_contents_->GetController().GetPendingEntry()->GetURL();
 
-  if (!IsBrowserSideNavigationEnabled()) {
-    // Update the RenderFrameHost for navigation.
-    render_frame_host_ = static_cast<TestRenderFrameHost*>(
-        frame_tree_node_->render_manager()->pending_frame_host());
-    if (!render_frame_host_) {
-      render_frame_host_ =
-          static_cast<TestRenderFrameHost*>(web_contents_->GetMainFrame());
-    }
-    CHECK(render_frame_host_);
-
-    // Simulate the BeforeUnloadACK if needed.
-    if (web_contents_->GetMainFrame()->is_waiting_for_beforeunload_ack()) {
-      static_cast<TestRenderFrameHost*>(web_contents_->GetMainFrame())
-          ->SendBeforeUnloadACK(true /*proceed */);
-    }
-
-    // If this is a same-document navigation, there is no need to simulate
-    // anything else.
-    if (CheckIfSameDocument()) {
-      same_document_ = true;
-      return false;
-    }
-
-    // From there on, the calls are similar to a renderer-initiated navigation.
-    return SimulateRendererInitiatedStart();
-  }
-
   // Simulate the BeforeUnload ACK if needed.
   NavigationRequest* request = frame_tree_node_->navigation_request();
   if (request &&
@@ -861,16 +805,12 @@ bool NavigationSimulator::SimulateBrowserInitiatedStart() {
   request =
       web_contents_->GetMainFrame()->frame_tree_node()->navigation_request();
   if (!request) {
-    if (web_contents_->GetMainFrame()->navigation_handle() == handle_) {
-      DCHECK(handle_->IsSameDocument() ||
-             !IsURLHandledByNetworkStack(handle_->GetURL()));
-      same_document_ = handle_->IsSameDocument();
-      return true;
-    } else if (IsRendererDebugURL(navigation_url_)) {
-      // There is no DidStartNavigation for renderer-debug URLs and the
-      // NavigationHandle has already been passed to the main frame for commit.
-      // Register it now.
-      handle_ = web_contents_->GetMainFrame()->navigation_handle();
+    if (IsRendererDebugURL(navigation_url_)) {
+      // We don't create NavigationRequests nor NavigationHandles for a
+      // navigation to a renderer-debug URL. Instead, the URL is passed to the
+      // current RenderFrameHost so that the renderer process can handle it.
+      DCHECK(!handle_);
+      DCHECK(web_contents_->GetMainFrame()->is_loading());
 
       // A navigation to a renderer-debug URL cannot commit. Simulate the
       // renderer process aborting it.
@@ -879,6 +819,18 @@ bool NavigationSimulator::SimulateBrowserInitiatedStart() {
               web_contents_->GetMainFrame()->GetRoutingID()));
       state_ = FAILED;
       return false;
+    } else if (web_contents_->GetMainFrame()->GetNavigationHandle() ==
+               handle_) {
+      DCHECK(!IsURLHandledByNetworkStack(handle_->GetURL()));
+      return true;
+    } else if (web_contents_->GetMainFrame()
+                   ->same_document_navigation_request() &&
+               web_contents_->GetMainFrame()
+                       ->same_document_navigation_request()
+                       ->navigation_handle() == handle_) {
+      DCHECK(handle_->IsSameDocument());
+      same_document_ = true;
+      return true;
     }
     return false;
   }
@@ -888,80 +840,69 @@ bool NavigationSimulator::SimulateBrowserInitiatedStart() {
 }
 
 bool NavigationSimulator::SimulateRendererInitiatedStart() {
-  if (IsBrowserSideNavigationEnabled()) {
-    BeginNavigationParams begin_params(
-        std::string(), net::LOAD_NORMAL, false /* skip_service_worker */,
-        REQUEST_CONTEXT_TYPE_HYPERLINK,
-        blink::WebMixedContentContextType::kBlockable,
-        false,  // is_form_submission
-        url::Origin());
-    CommonNavigationParams common_params;
-    common_params.url = navigation_url_;
-    common_params.referrer = referrer_;
-    common_params.transition = transition_;
-    common_params.navigation_type =
-        PageTransitionCoreTypeIs(transition_, ui::PAGE_TRANSITION_RELOAD)
-            ? FrameMsg_Navigate_Type::RELOAD
-            : FrameMsg_Navigate_Type::DIFFERENT_DOCUMENT;
-    common_params.has_user_gesture = has_user_gesture_;
-    render_frame_host_->OnMessageReceived(FrameHostMsg_BeginNavigation(
-        render_frame_host_->GetRoutingID(), common_params, begin_params));
-    NavigationRequest* request =
-        render_frame_host_->frame_tree_node()->navigation_request();
+  mojom::BeginNavigationParamsPtr begin_params =
+      mojom::BeginNavigationParams::New(
+          std::string() /* headers */, net::LOAD_NORMAL,
+          false /* skip_service_worker */, REQUEST_CONTEXT_TYPE_HYPERLINK,
+          blink::WebMixedContentContextType::kBlockable,
+          false /* is_form_submission */, GURL() /* searchable_form_url */,
+          std::string() /* searchable_form_encoding */, url::Origin(),
+          GURL() /* client_side_redirect_url */,
+          base::nullopt /* detools_initiator_info */);
+  CommonNavigationParams common_params;
+  common_params.url = navigation_url_;
+  common_params.method = initial_method_;
+  common_params.referrer = referrer_;
+  common_params.transition = transition_;
+  common_params.navigation_type =
+      PageTransitionCoreTypeIs(transition_, ui::PAGE_TRANSITION_RELOAD)
+          ? FrameMsg_Navigate_Type::RELOAD
+          : FrameMsg_Navigate_Type::DIFFERENT_DOCUMENT;
+  common_params.has_user_gesture = has_user_gesture_;
+  render_frame_host_->frame_host_binding_for_testing().impl()->BeginNavigation(
+      common_params, std::move(begin_params), nullptr);
+  NavigationRequest* request =
+      render_frame_host_->frame_tree_node()->navigation_request();
 
-    // The request failed synchronously.
-    if (!request)
-      return false;
+  // The request failed synchronously.
+  if (!request)
+    return false;
 
-    DCHECK_EQ(handle_, request->navigation_handle());
-    return true;
-  }
-
-  render_frame_host_->OnMessageReceived(
-      FrameHostMsg_DidStartLoading(render_frame_host_->GetRoutingID(), true));
-  render_frame_host_->OnMessageReceived(FrameHostMsg_DidStartProvisionalLoad(
-      render_frame_host_->GetRoutingID(), navigation_url_, std::vector<GURL>(),
-      base::TimeTicks::Now()));
-  if (IsRendererDebugURL(navigation_url_)) {
-    // DidStartNavigation was not fired in that case.
-    handle_ = render_frame_host_->navigation_handle();
-  }
-  DCHECK_EQ(handle_, render_frame_host_->navigation_handle());
-  // Note: When PlzNavigate is enabled, WillStartRequest will have been fired as
-  // part of the processing of BeginNavigation. When not enabled, simulate the
-  // ResourceRequest having been received on the IO thread.
-  handle_->WillStartRequest(
-      "GET", scoped_refptr<content::ResourceRequestBody>(), referrer_,
-      has_user_gesture_, transition_, false /* is_external_protocol */,
-      REQUEST_CONTEXT_TYPE_LOCATION,
-      blink::WebMixedContentContextType::kNotMixedContent,
-      base::Callback<void(NavigationThrottle::ThrottleCheckResult)>());
+  DCHECK_EQ(handle_, request->navigation_handle());
   return true;
 }
 
-void NavigationSimulator::WaitForThrottleChecksComplete() {
+void NavigationSimulator::MaybeWaitForThrottleChecksComplete(
+    base::OnceClosure complete_closure) {
   // If last_throttle_check_result_ is set, then throttle checks completed
   // synchronously.
-  if (!last_throttle_check_result_) {
-    base::RunLoop run_loop;
-    throttle_checks_wait_closure_ = run_loop.QuitClosure();
-    run_loop.Run();
-    throttle_checks_wait_closure_.Reset();
+  if (last_throttle_check_result_) {
+    std::move(complete_closure).Run();
+    return;
   }
 
-  if (IsBrowserSideNavigationEnabled()) {
-    // Run message loop once since NavigationRequest::OnStartChecksComplete
-    // posted a task.
-    base::RunLoop().RunUntilIdle();
-  }
+  throttle_checks_complete_closure_ = std::move(complete_closure);
+  if (auto_advance_)
+    Wait();
+}
+
+void NavigationSimulator::Wait() {
+  DCHECK(!wait_closure_);
+  if (!IsDeferred())
+    return;
+  base::RunLoop run_loop;
+  wait_closure_ = run_loop.QuitClosure();
+  run_loop.Run();
 }
 
 void NavigationSimulator::OnThrottleChecksComplete(
     NavigationThrottle::ThrottleCheckResult result) {
   DCHECK(!last_throttle_check_result_);
   last_throttle_check_result_ = result;
-  if (throttle_checks_wait_closure_)
-    throttle_checks_wait_closure_.Run();
+  if (wait_closure_)
+    std::move(wait_closure_).Run();
+  if (throttle_checks_complete_closure_)
+    std::move(throttle_checks_complete_closure_).Run();
 }
 
 void NavigationSimulator::PrepareCompleteCallbackOnHandle() {
@@ -976,33 +917,8 @@ RenderFrameHost* NavigationSimulator::GetFinalRenderFrameHost() {
   return render_frame_host_;
 }
 
-void NavigationSimulator::FailFromThrottleCheck(
-    NavigationThrottle::ThrottleCheckResult result) {
-  DCHECK_NE(NavigationThrottle::PROCEED, result.action());
-  state_ = FAILED;
-
-  // Special failure logic only needed for non-PlzNavigate case.
-  if (IsBrowserSideNavigationEnabled())
-    return;
-  DCHECK_NE(NavigationThrottle::DEFER, result.action());
-  DCHECK_NE(NavigationThrottle::PROCEED, result.action());
-  DCHECK_NE(net::OK, result.net_error_code());
-
-  FrameHostMsg_DidFailProvisionalLoadWithError_Params error_params;
-  error_params.error_code = result.net_error_code();
-  error_params.url = navigation_url_;
-  render_frame_host_->OnMessageReceived(
-      FrameHostMsg_DidFailProvisionalLoadWithError(
-          render_frame_host_->GetRoutingID(), error_params));
-  bool should_result_in_error_page =
-      result.net_error_code() != net::ERR_ABORTED;
-  if (!should_result_in_error_page) {
-    render_frame_host_->OnMessageReceived(
-        FrameHostMsg_DidStopLoading(render_frame_host_->GetRoutingID()));
-    CHECK_EQ(1, num_did_finish_navigation_called_);
-  } else {
-    CHECK_EQ(0, num_did_finish_navigation_called_);
-  }
+bool NavigationSimulator::IsDeferred() {
+  return !throttle_checks_complete_closure_.is_null();
 }
 
 bool NavigationSimulator::CheckIfSameDocument() {

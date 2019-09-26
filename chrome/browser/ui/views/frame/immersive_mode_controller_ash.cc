@@ -8,7 +8,6 @@
 #include "ash/public/cpp/window_properties.h"
 #include "ash/public/interfaces/window_state_type.mojom.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/ui/ash/ash_util.h"
 #include "chrome/browser/ui/ash/tablet_mode_client.h"
@@ -164,8 +163,7 @@ bool ImmersiveModeControllerAsh::ShouldStayImmersiveAfterExitingFullscreen() {
     return false;
 
   return !browser_view_->IsBrowserTypeNormal() &&
-         TabletModeClient::Get()->tablet_mode_enabled() &&
-         TabletModeClient::Get()->auto_hide_title_bars();
+         TabletModeClient::Get()->tablet_mode_enabled();
 }
 
 views::Widget* ImmersiveModeControllerAsh::GetRevealWidget() {
@@ -180,8 +178,7 @@ void ImmersiveModeControllerAsh::OnWidgetActivationChanged(
 
   // TODO(crbug.com/760811): Support tablet mode in mash.
   if (ash_util::IsRunningInMash() ||
-      !(TabletModeClient::Get()->tablet_mode_enabled() &&
-        TabletModeClient::Get()->auto_hide_title_bars())) {
+      !TabletModeClient::Get()->tablet_mode_enabled()) {
     return;
   }
 
@@ -230,7 +227,7 @@ void ImmersiveModeControllerAsh::CreateMashRevealWidget() {
     return;
 
   DCHECK(!mash_reveal_widget_);
-  mash_reveal_widget_ = base::MakeUnique<views::Widget>();
+  mash_reveal_widget_ = std::make_unique<views::Widget>();
   views::Widget::InitParams init_params(views::Widget::InitParams::TYPE_POPUP);
   init_params.mus_properties
       [ui::mojom::WindowManager::kRenderParentTitleArea_Property] =
@@ -285,10 +282,14 @@ void ImmersiveModeControllerAsh::OnImmersiveRevealEnded() {
     observer.OnImmersiveRevealEnded();
 }
 
+void ImmersiveModeControllerAsh::OnImmersiveFullscreenEntered() {}
+
 void ImmersiveModeControllerAsh::OnImmersiveFullscreenExited() {
   DestroyMashRevealWidget();
   browser_view_->top_container()->DestroyLayer();
   LayoutBrowserRootView();
+  for (Observer& observer : observers_)
+    observer.OnImmersiveFullscreenExited();
 }
 
 void ImmersiveModeControllerAsh::SetVisibleFraction(double visible_fraction) {
@@ -353,6 +354,8 @@ void ImmersiveModeControllerAsh::OnWindowPropertyChanged(aura::Window* window,
     // case if the user exits fullscreen via the restore button.
     if (controller_->IsEnabled() &&
         new_state != ash::mojom::WindowStateType::FULLSCREEN &&
+        new_state != ash::mojom::WindowStateType::PINNED &&
+        new_state != ash::mojom::WindowStateType::TRUSTED_PINNED &&
         new_state != ash::mojom::WindowStateType::MINIMIZED &&
         old_state == ash::mojom::WindowStateType::FULLSCREEN) {
       browser_view_->FullscreenStateChanged();

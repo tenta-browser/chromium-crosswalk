@@ -155,7 +155,7 @@ initWithCollectionController:
     [self.headerController unfocusOmnibox];
   }
 
-  if (IsIPadIdiom()) {
+  if (IsIPadIdiom() && !IsUIRefreshPhase1Enabled()) {
     return;
   }
 
@@ -168,7 +168,8 @@ initWithCollectionController:
 }
 
 - (void)updateFakeOmniboxOnNewWidth:(CGFloat)width {
-  if (self.shouldAnimateHeader && !IsIPadIdiom()) {
+  if (self.shouldAnimateHeader &&
+      (IsUIRefreshPhase1Enabled() || !IsIPadIdiom())) {
     [self.headerController
         updateFakeOmniboxForOffset:self.collectionView.contentOffset.y
                        screenWidth:width

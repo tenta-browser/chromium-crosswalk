@@ -5,10 +5,8 @@
 #include "chrome/browser/ui/app_list/arc/arc_app_test.h"
 
 #include "base/command_line.h"
-#include "base/memory/ptr_util.h"
 #include "base/run_loop.h"
 #include "base/strings/stringprintf.h"
-#include "chrome/browser/chromeos/arc/arc_auth_notification.h"
 #include "chrome/browser/chromeos/arc/arc_play_store_enabled_preference_handler.h"
 #include "chrome/browser/chromeos/arc/arc_session_manager.h"
 #include "chrome/browser/chromeos/arc/arc_util.h"
@@ -22,6 +20,7 @@
 #include "components/arc/arc_service_manager.h"
 #include "components/arc/arc_session_runner.h"
 #include "components/arc/arc_util.h"
+#include "components/arc/test/connection_holder_util.h"
 #include "components/arc/test/fake_app_instance.h"
 #include "components/arc/test/fake_arc_session.h"
 #include "components/user_manager/scoped_user_manager.h"
@@ -85,17 +84,16 @@ void ArcAppTest::SetUp(Profile* profile) {
     ArcAppListPrefsFactory::GetInstance()->RecreateServiceInstanceForTesting(
         profile_);
   }
-  arc_service_manager_ = base::MakeUnique<arc::ArcServiceManager>();
-  arc_session_manager_ = base::MakeUnique<arc::ArcSessionManager>(
-      base::MakeUnique<arc::ArcSessionRunner>(
+  arc_service_manager_ = std::make_unique<arc::ArcServiceManager>();
+  arc_session_manager_ = std::make_unique<arc::ArcSessionManager>(
+      std::make_unique<arc::ArcSessionRunner>(
           base::Bind(arc::FakeArcSession::Create)));
   DCHECK(arc::ArcSessionManager::Get());
   arc::ArcSessionManager::DisableUIForTesting();
-  arc::ArcAuthNotification::DisableForTesting();
   arc_session_manager_->SetProfile(profile_);
   arc_session_manager_->Initialize();
   arc_play_store_enabled_preference_handler_ =
-      base::MakeUnique<arc::ArcPlayStoreEnabledPreferenceHandler>(
+      std::make_unique<arc::ArcPlayStoreEnabledPreferenceHandler>(
           profile_, arc_session_manager_.get());
   arc_play_store_enabled_preference_handler_->Start();
 
@@ -113,6 +111,10 @@ void ArcAppTest::SetUp(Profile* profile) {
   app_instance_.reset(new arc::FakeAppInstance(arc_app_list_pref_));
   arc_service_manager_->arc_bridge_service()->app()->SetInstance(
       app_instance_.get());
+  // TODO(khmel): Resolve this gracefully. Set of default app tests does not
+  // expect waiting in ArcAppTest setup.
+  if (wait_default_apps_)
+    WaitForInstanceReady(arc_service_manager_->arc_bridge_service()->app());
 }
 
 void ArcAppTest::WaitForDefaultApps() {
@@ -198,14 +200,16 @@ void ArcAppTest::TearDown() {
 }
 
 void ArcAppTest::StopArcInstance() {
-  arc_service_manager_->arc_bridge_service()->app()->SetInstance(nullptr);
+  arc_service_manager_->arc_bridge_service()->app()->CloseInstance(
+      app_instance_.get());
 }
 
 void ArcAppTest::RestartArcInstance() {
   auto* bridge_service = arc_service_manager_->arc_bridge_service();
-  bridge_service->app()->SetInstance(nullptr);
-  app_instance_ = base::MakeUnique<arc::FakeAppInstance>(arc_app_list_pref_);
+  bridge_service->app()->CloseInstance(app_instance_.get());
+  app_instance_ = std::make_unique<arc::FakeAppInstance>(arc_app_list_pref_);
   bridge_service->app()->SetInstance(app_instance_.get());
+  WaitForInstanceReady(bridge_service->app());
 }
 
 const user_manager::User* ArcAppTest::CreateUserAndLogin() {

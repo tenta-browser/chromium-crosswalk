@@ -11,6 +11,7 @@
 #include "build/build_config.h"
 #include "components/safe_browsing/password_protection/password_protection_service.h"
 #include "components/safe_browsing/triggers/trigger_manager.h"
+#include "components/sessions/core/session_id.h"
 #include "components/sync/protocol/user_event_specifics.pb.h"
 #include "ui/base/ui_features.h"
 #include "url/origin.h"
@@ -123,12 +124,37 @@ class ChromePasswordProtectionService : public PasswordProtectionService {
   bool UserClickedThroughSBInterstitial(
       content::WebContents* web_contents) override;
 
+  // For preference of |pref_name| is not managed by enterprise policy, this
+  // function should always return PHISHING_REUSE. Otherwise, returns the
+  // specified pref value.
+  PasswordProtectionTrigger GetPasswordProtectionTriggerPref(
+      const std::string& pref_name) const override;
+
+  // If change password URL is specified in preference, gets the pref value,
+  // otherwise, gets the GAIA change password URL based on |account_info_|.
+  GURL GetChangePasswordURL() const;
+
+  // If |url| matches Safe Browsing whitelist domains, password protection
+  // change password URL, or password protection login URLs in the enterprise
+  // policy.
+  bool IsURLWhitelistedForPasswordEntry(const GURL& url,
+                                        RequestOutcome* reason) const override;
+
+  // Gets the type of sync account associated with current profile or
+  // |NOT_SIGNED_IN|.
+  LoginReputationClientRequest::PasswordReuseEvent::SyncAccountType
+  GetSyncAccountType() const override;
+
+  // Gets the detailed warning text that should show in the modal warning dialog
+  // and page info bubble.
+  base::string16 GetWarningDetailText();
+
  protected:
   // PasswordProtectionService overrides.
   // Obtains referrer chain of |event_url| and |event_tab_id| and add this
   // info into |frame|.
   void FillReferrerChain(const GURL& event_url,
-                         int event_tab_id,
+                         SessionID event_tab_id,
                          LoginReputationClientRequest::Frame* frame) override;
 
   bool IsExtendedReporting() override;
@@ -146,9 +172,6 @@ class ChromePasswordProtectionService : public PasswordProtectionService {
   void MaybeLogPasswordReuseDetectedEvent(
       content::WebContents* web_contents) override;
 
-  LoginReputationClientRequest::PasswordReuseEvent::SyncAccountType
-  GetSyncAccountType() override;
-
   void MaybeLogPasswordReuseLookupEvent(
       content::WebContents* web_contents,
       PasswordProtectionService::RequestOutcome outcome,
@@ -165,10 +188,7 @@ class ChromePasswordProtectionService : public PasswordProtectionService {
       const history::URLRows& deleted_rows) override;
 
   // Gets |account_info_| based on |profile_|.
-  AccountInfo GetAccountInfo();
-
-  // Gets change password URl based on |account_info_|.
-  GURL GetChangePasswordURL();
+  virtual AccountInfo GetAccountInfo() const;
 
   void HandleUserActionOnModalWarning(
       content::WebContents* web_contents,

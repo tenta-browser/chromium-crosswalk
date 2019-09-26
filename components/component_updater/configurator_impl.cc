@@ -81,12 +81,9 @@ std::string GetSwitchArgument(const std::vector<std::string>& vec,
 
 }  // namespace
 
-ConfiguratorImpl::ConfiguratorImpl(
-    const base::CommandLine* cmdline,
-    net::URLRequestContextGetter* url_request_getter,
-    bool require_encryption)
-    : url_request_getter_(url_request_getter),
-      fast_update_(false),
+ConfiguratorImpl::ConfiguratorImpl(const base::CommandLine* cmdline,
+                                   bool require_encryption)
+    : fast_update_(false),
       pings_enabled_(false),
       deltas_enabled_(false),
       background_downloads_enabled_(false),
@@ -161,8 +158,8 @@ std::vector<GURL> ConfiguratorImpl::PingUrl() const {
   return pings_enabled_ ? UpdateUrl() : std::vector<GURL>();
 }
 
-base::Version ConfiguratorImpl::GetBrowserVersion() const {
-  return base::Version(version_info::GetVersionNumber());
+const base::Version& ConfiguratorImpl::GetBrowserVersion() const {
+  return version_info::GetVersion();
 }
 
 std::string ConfiguratorImpl::GetOSLongName() const {
@@ -175,10 +172,6 @@ std::string ConfiguratorImpl::ExtraRequestParams() const {
 
 std::string ConfiguratorImpl::GetDownloadPreference() const {
   return std::string();
-}
-
-net::URLRequestContextGetter* ConfiguratorImpl::RequestContext() const {
-  return url_request_getter_;
 }
 
 bool ConfiguratorImpl::EnabledDeltas() const {

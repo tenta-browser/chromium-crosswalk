@@ -11,8 +11,8 @@ namespace vr {
 namespace {
 
 static const char* g_draw_phase_strings[] = {
-    "kPhaseNone",         "kPhaseBackground", "kPhaseOverlayBackground",
-    "kPhaseFloorCeiling", "kPhaseForeground", "kPhaseOverlayForeground",
+    "kPhaseNone",       "kPhaseBackground",        "kPhaseBackplanes",
+    "kPhaseForeground", "kPhaseOverlayForeground",
 };
 
 static_assert(

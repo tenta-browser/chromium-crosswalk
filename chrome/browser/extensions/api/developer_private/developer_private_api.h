@@ -19,6 +19,7 @@
 #include "chrome/browser/extensions/extension_error_reporter.h"
 #include "chrome/browser/extensions/extension_management.h"
 #include "chrome/browser/extensions/extension_uninstall_dialog.h"
+#include "chrome/browser/extensions/load_error_reporter.h"
 #include "chrome/browser/extensions/pack_extension_job.h"
 #include "chrome/common/extensions/api/developer_private.h"
 #include "chrome/common/extensions/webstore_install_result.h"
@@ -27,6 +28,7 @@
 #include "extensions/browser/app_window/app_window_registry.h"
 #include "extensions/browser/browser_context_keyed_api_factory.h"
 #include "extensions/browser/event_router.h"
+#include "extensions/browser/extension_function.h"
 #include "extensions/browser/extension_prefs_observer.h"
 #include "extensions/browser/extension_registry_observer.h"
 #include "extensions/browser/process_manager_observer.h"
@@ -268,7 +270,7 @@ class DeveloperPrivateAPI : public BrowserContextKeyedAPI,
 
 namespace api {
 
-class DeveloperPrivateAPIFunction : public ChromeUIThreadExtensionFunction {
+class DeveloperPrivateAPIFunction : public UIThreadExtensionFunction {
  protected:
   ~DeveloperPrivateAPIFunction() override;
 
@@ -289,6 +291,9 @@ class DeveloperPrivateAutoUpdateFunction : public DeveloperPrivateAPIFunction {
  protected:
   ~DeveloperPrivateAutoUpdateFunction() override;
   ResponseAction Run() override;
+
+ private:
+  void OnComplete();
 };
 
 class DeveloperPrivateGetItemsInfoFunction
@@ -359,7 +364,7 @@ class DeveloperPrivateGetExtensionSizeFunction
   ~DeveloperPrivateGetExtensionSizeFunction() override;
   ResponseAction Run() override;
 
-  void OnSizeCalculated(int64_t size_in_bytes);
+  void OnSizeCalculated(const base::string16& size);
 
   DISALLOW_COPY_AND_ASSIGN(DeveloperPrivateGetExtensionSizeFunction);
 };
@@ -399,7 +404,7 @@ class DeveloperPrivateUpdateExtensionConfigurationFunction
 
 class DeveloperPrivateReloadFunction : public DeveloperPrivateAPIFunction,
                                        public ExtensionRegistryObserver,
-                                       public ExtensionErrorReporter::Observer {
+                                       public LoadErrorReporter::Observer {
  public:
   DECLARE_EXTENSION_FUNCTION("developerPrivate.reload",
                              DEVELOPERPRIVATE_RELOAD);
@@ -411,7 +416,7 @@ class DeveloperPrivateReloadFunction : public DeveloperPrivateAPIFunction,
                          const Extension* extension) override;
   void OnShutdown(ExtensionRegistry* registry) override;
 
-  // ExtensionErrorReporter::Observer:
+  // LoadErrorReporter::Observer:
   void OnLoadFailure(content::BrowserContext* browser_context,
                      const base::FilePath& file_path,
                      const std::string& error) override;
@@ -437,7 +442,7 @@ class DeveloperPrivateReloadFunction : public DeveloperPrivateAPIFunction,
 
   ScopedObserver<ExtensionRegistry, ExtensionRegistryObserver>
       registry_observer_;
-  ScopedObserver<ExtensionErrorReporter, ExtensionErrorReporter::Observer>
+  ScopedObserver<LoadErrorReporter, LoadErrorReporter::Observer>
       error_reporter_observer_;
 
   DISALLOW_COPY_AND_ASSIGN(DeveloperPrivateReloadFunction);
@@ -506,6 +511,22 @@ class DeveloperPrivateLoadUnpackedFunction
 
   // The identifier for the selected path when retrying an unpacked load.
   DeveloperPrivateAPI::UnpackedRetryId retry_guid_;
+};
+
+class DeveloperPrivateInstallDroppedFileFunction
+    : public DeveloperPrivateAPIFunction {
+ public:
+  DECLARE_EXTENSION_FUNCTION("developerPrivate.installDroppedFile",
+                             DEVELOPERPRIVATE_INSTALLDROPPEDFILE);
+  DeveloperPrivateInstallDroppedFileFunction();
+
+ private:
+  ~DeveloperPrivateInstallDroppedFileFunction() override;
+
+  // ExtensionFunction:
+  ResponseAction Run() override;
+
+  DISALLOW_COPY_AND_ASSIGN(DeveloperPrivateInstallDroppedFileFunction);
 };
 
 class DeveloperPrivateNotifyDragInstallInProgressFunction

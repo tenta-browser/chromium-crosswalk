@@ -9,36 +9,30 @@
 #include <vector>
 
 #include "base/macros.h"
-#include "base/sequence_checker.h"
-#include "net/cookies/cookie_store.h"
+#include "mojo/public/cpp/bindings/binding_set.h"
+#include "services/network/public/mojom/cookie_manager.mojom.h"
 
 class Profile;
 
+namespace net {
+class CanonicalCookie;
+}
+
 // Sends cookie-change notifications on the UI thread via
-// chrome::NOTIFICATION_COOKIE_CHANGED_FOR_EXTENSIONS.
-// This class must be used (AddStore() and OnCookieChanged() called) on a
-// single thread, but it may be constructed on a different thread.
-class ExtensionCookieNotifier {
+// chrome::NOTIFICATION_COOKIE_CHANGED_FOR_EXTENSIONS for all cookie
+// changes associated with the given profile.
+class ExtensionCookieNotifier : public network::mojom::CookieChangeListener {
  public:
   explicit ExtensionCookieNotifier(Profile* profile);
-  ~ExtensionCookieNotifier();
-
-  // Add a CookieStore for which cookie notifications will be transmitted.
-  // This store will be monitored until this object is destructed; i.e.
-  // |*store| must outlive this object.
-  // Must be called on the IO thread.
-  void AddStore(net::CookieStore* store);
+  ~ExtensionCookieNotifier() override;
 
  private:
-  // net::CookieStore::CookieChangedCallback implementation.
-  void OnCookieChanged(const net::CanonicalCookie& cookie,
-                       net::CookieStore::ChangeCause cause);
+  // network::mojom::CookieChangeListener implementation.
+  void OnCookieChange(const net::CanonicalCookie& cookie,
+                      network::mojom::CookieChangeCause cause) override;
 
   Profile* profile_;
-  std::vector<std::unique_ptr<net::CookieStore::CookieChangedSubscription>>
-      subscriptions_;
-
-  SEQUENCE_CHECKER(sequence_checker_);
+  mojo::Binding<network::mojom::CookieChangeListener> binding_;
 
   DISALLOW_COPY_AND_ASSIGN(ExtensionCookieNotifier);
 };

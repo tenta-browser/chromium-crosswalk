@@ -35,6 +35,7 @@ namespace http://www.w3.org/1999/xhtml
     property attachShadow
     property attributeStyleMap
     property attributes
+    property autocapitalize
     property baseURI
     property before
     property blur
@@ -146,6 +147,7 @@ namespace http://www.w3.org/1999/xhtml
     property onended
     property onerror
     property onfocus
+    property onformdata
     property onfullscreenchange
     property onfullscreenerror
     property ongotpointercapture
@@ -270,6 +272,7 @@ html element a
     property protocol
     property referrerPolicy
     property rel
+    property relList
     property rev
     property search
     property shape
@@ -298,6 +301,7 @@ html element area
     property protocol
     property referrerPolicy
     property rel
+    property relList
     property search
     property shape
     property target
@@ -581,6 +585,7 @@ html element iframe
     property marginHeight
     property marginWidth
     property name
+    property policy
     property referrerPolicy
     property sandbox
     property scrolling
@@ -618,7 +623,6 @@ html element input
     property accept
     property align
     property alt
-    property autocapitalize
     property autocomplete
     property autofocus
     property checkValidity
@@ -847,6 +851,7 @@ html element script
 html element section
 html element select
     property add
+    property autocomplete
     property autofocus
     property checkValidity
     property disabled
@@ -872,6 +877,7 @@ html element select
 html element shadow
     property getDistributedNodes
 html element slot
+    property assignedElements
     property assignedNodes
     property name
 html element small
@@ -943,7 +949,7 @@ html element td
 html element template
     property content
 html element textarea
-    property autocapitalize
+    property autocomplete
     property autofocus
     property checkValidity
     property cols
@@ -1062,6 +1068,7 @@ html element video
     property currentTime
     property defaultMuted
     property defaultPlaybackRate
+    property disablePictureInPicture
     property disableRemotePlayback
     property duration
     property ended
@@ -1074,6 +1081,8 @@ html element video
     property muted
     property networkState
     property onencrypted
+    property onenterpictureinpicture
+    property onleavepictureinpicture
     property onwaitingforkey
     property pause
     property paused
@@ -1084,6 +1093,7 @@ html element video
     property preload
     property readyState
     property remote
+    property requestPictureInPicture
     property seekable
     property seeking
     property setMediaKeys
@@ -1237,6 +1247,7 @@ namespace http://www.w3.org/2000/svg
     property onended
     property onerror
     property onfocus
+    property onformdata
     property onfullscreenchange
     property onfullscreenerror
     property ongotpointercapture

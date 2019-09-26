@@ -4,10 +4,8 @@
 
 #import "chrome/browser/ui/cocoa/toolbar/toolbar_controller.h"
 
-#include <sys/stat.h>
 #include <algorithm>
 
-#include "base/debug/crash_logging.h"
 #include "base/mac/bundle_locations.h"
 #include "base/mac/foundation_util.h"
 #include "base/mac/mac_util.h"
@@ -54,7 +52,6 @@
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/browser/ui/toolbar/app_menu_icon_controller.h"
 #include "chrome/browser/ui/toolbar/app_menu_model.h"
-#include "chrome/common/crash_keys.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/grit/chromium_strings.h"
 #include "chrome/grit/generated_resources.h"
@@ -97,9 +94,6 @@ const CGFloat kElementPadding = 4;
 // Toolbar buttons are 24x24 and centered in a 28x28 space, so there is a 2pt-
 // wide inset.
 const CGFloat kButtonInset = 2;
-
-// The y-offset of the browser actions container from the location bar.
-const CGFloat kContainerYOffset = 2;
 
 // The minimum width of the location bar in pixels.
 const CGFloat kMinimumLocationBarWidth = 100.0;
@@ -256,25 +250,6 @@ class NotificationBridge : public AppMenuIconController::Delegate {
 }
 
 - (void)viewDidLoadImpl {
-  // Temporary: collect information about a potentially missing or inaccessible
-  // nib (https://crbug.com/685985)
-  NSString* nibPath = [self.nibBundle pathForResource:@"Toolbar" ofType:@"nib"];
-  struct stat sb;
-  int nibErrno = 0;
-  if (stat(nibPath.fileSystemRepresentation, &sb) != 0) {
-    nibErrno = errno;
-  }
-  NSString* closestPath = nibPath;
-  while (closestPath && stat(closestPath.fileSystemRepresentation, &sb) != 0) {
-    closestPath = [closestPath stringByDeletingLastPathComponent];
-  }
-  base::debug::ScopedCrashKey nibCrashKey {
-    crash_keys::mac::kToolbarNibInfo,
-        [NSString stringWithFormat:@"errno: %d nib: %@ closest: %@", nibErrno,
-                                   nibPath, closestPath]
-            .UTF8String
-  };
-
   // When linking and running on 10.10+, both -awakeFromNib and -viewDidLoad may
   // be called, don't initialize twice.
   if (locationBarView_) {
@@ -332,7 +307,8 @@ class NotificationBridge : public AppMenuIconController::Delegate {
   // Adjust the menu button's position.
   NSRect menuButtonFrame = [appMenuButton_ frame];
   if (isRTL) {
-    menuButtonFrame.origin.x = [ToolbarController appMenuPadding];
+    menuButtonFrame.origin.x =
+        [ToolbarController appMenuPadding] + kButtonInset;
   } else {
     CGFloat menuButtonFrameMaxX =
         NSMaxX(toolbarBounds) - [ToolbarController appMenuPadding];
@@ -372,10 +348,10 @@ class NotificationBridge : public AppMenuIconController::Delegate {
   // Correctly position the extension buttons' container view.
   NSRect containerFrame = [browserActionsContainerView_ frame];
   containerFrame.size.width += kButtonInset;
-  containerFrame.origin.y = locationBarFrame.origin.y + kContainerYOffset;
-  containerFrame.size.height = toolbarButtonSize.height;
+  containerFrame.origin.y = locationBarFrame.origin.y;
+  containerFrame.size.height = kLocationBarHeight;
   if (cocoa_l10n_util::ShouldDoExperimentalRTLLayout())
-    containerFrame.origin.x = NSMinX(locationBarFrame);
+    containerFrame.origin.x = NSMinX(locationBarFrame) - kButtonInset;
   [browserActionsContainerView_ setFrame:containerFrame];
   [browserActionsContainerView_ setAutoresizingMask:trailingButtonMask];
 
@@ -520,7 +496,7 @@ class NotificationBridge : public AppMenuIconController::Delegate {
   [[backButton_ cell]
       accessibilitySetOverrideValue:description
                        forAttribute:NSAccessibilityDescriptionAttribute];
-  NSString* helpTag = l10n_util::GetNSStringWithFixup(IDS_ACCNAME_TOOLTIP_BACK);
+  NSString* helpTag = l10n_util::GetNSStringWithFixup(IDS_ACCDESCRIPTION_BACK);
   [[backButton_ cell]
       accessibilitySetOverrideValue:helpTag
                        forAttribute:NSAccessibilityHelpAttribute];
@@ -529,7 +505,7 @@ class NotificationBridge : public AppMenuIconController::Delegate {
   [[forwardButton_ cell]
       accessibilitySetOverrideValue:description
                        forAttribute:NSAccessibilityDescriptionAttribute];
-  helpTag = l10n_util::GetNSStringWithFixup(IDS_ACCNAME_TOOLTIP_FORWARD);
+  helpTag = l10n_util::GetNSStringWithFixup(IDS_ACCDESCRIPTION_FORWARD);
   [[forwardButton_ cell]
       accessibilitySetOverrideValue:helpTag
                        forAttribute:NSAccessibilityHelpAttribute];
@@ -546,6 +522,13 @@ class NotificationBridge : public AppMenuIconController::Delegate {
   [[locationBar_ cell]
       accessibilitySetOverrideValue:description
                        forAttribute:NSAccessibilityDescriptionAttribute];
+  // Expose Cmd+L shortcut in help for now.
+  // TODO(aleventhal) Key shortcuts attribute should eventually get
+  // its own field. Follow what WebKit does for aria-keyshortcuts, see
+  // https://bugs.webkit.org/show_bug.cgi?id=159215 (WebKit bug).
+  [[locationBar_ cell]
+      accessibilitySetOverrideValue:@"\u2318L"  // Expose Cmd+L shortcut.
+                       forAttribute:NSAccessibilityHelpAttribute];
   description = l10n_util::GetNSStringWithFixup(IDS_ACCNAME_APP);
   [[appMenuButton_ cell]
       accessibilitySetOverrideValue:description
@@ -883,7 +866,7 @@ class NotificationBridge : public AppMenuIconController::Delegate {
     // it afterwards.
     [browserActionsContainerView_ stopAnimation];
     NSRect containerFrame = [browserActionsContainerView_ frame];
-    containerFrame.origin.y = [locationBar_ frame].origin.y + kContainerYOffset;
+    containerFrame.origin.y = [locationBar_ frame].origin.y;
     [browserActionsContainerView_ setFrame:containerFrame];
     [self pinLocationBarBeforeBrowserActionsContainerAndAnimate:NO];
   }

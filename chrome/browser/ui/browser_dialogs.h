@@ -10,14 +10,17 @@
 #include <vector>
 
 #include "base/callback.h"
+#include "base/memory/scoped_refptr.h"
 #include "base/optional.h"
 #include "base/strings/string16.h"
 #include "build/build_config.h"
 #include "chrome/browser/ui/bookmarks/bookmark_editor.h"
+#include "content/public/browser/resource_request_info.h"
 #include "third_party/skia/include/core/SkColor.h"
 #include "ui/gfx/native_widget_types.h"
 
 #if defined(OS_CHROMEOS)
+#include "chrome/browser/chromeos/apps/intent_helper/apps_navigation_types.h"
 #include "chrome/browser/chromeos/arc/intent_helper/arc_navigation_throttle.h"
 #include "url/gurl.h"
 #endif  // OS_CHROMEOS
@@ -27,6 +30,10 @@ class LoginHandler;
 class Profile;
 class WebShareTarget;
 struct WebApplicationInfo;
+
+namespace base {
+class FilePath;
+}
 
 namespace content {
 class BrowserContext;
@@ -40,7 +47,7 @@ class Extension;
 
 namespace net {
 class AuthChallengeInfo;
-class URLRequest;
+class AuthCredentials;
 }
 
 namespace payments {
@@ -61,6 +68,7 @@ class TaskManagerTableModel;
 
 namespace ui {
 class WebDialogDelegate;
+struct SelectedFileInfo;
 }
 
 namespace views {
@@ -95,9 +103,11 @@ gfx::NativeWindow ShowWebDialog(gfx::NativeView parent,
 // Returns the created window.
 // See ash/public/cpp/shell_window_ids.h for |container_id| values. The window
 // is destroyed when it is closed. See also chrome::ShowWebDialog().
+// |is_minimal_style| means whether the title area of the dialog should be hide.
 gfx::NativeWindow ShowWebDialogInContainer(int container_id,
                                            content::BrowserContext* context,
-                                           ui::WebDialogDelegate* delegate);
+                                           ui::WebDialogDelegate* delegate,
+                                           bool is_minimal_style = false);
 #endif  // defined(OS_CHROMEOS)
 
 // Shows the create chrome app shortcut dialog box.
@@ -135,10 +145,6 @@ void ShowPWAInstallDialog(content::WebContents* web_contents,
 content::ColorChooser* ShowColorChooser(content::WebContents* web_contents,
                                         SkColor initial_color);
 
-// Shows the first-run bubble. This function should only be called when the
-// template URL service is ready.
-void ShowFirstRunBubble(Browser* browser);
-
 #if defined(OS_MACOSX)
 
 // Bridging methods that show/hide the toolkit-views based Task Manager on Mac.
@@ -153,8 +159,11 @@ void ShowUpdateChromeDialogViews(gfx::NativeWindow parent);
 #if defined(TOOLKIT_VIEWS)
 
 // Creates a toolkit-views based LoginHandler (e.g. HTTP-Auth dialog).
-LoginHandler* CreateLoginHandlerViews(net::AuthChallengeInfo* auth_info,
-                                      net::URLRequest* request);
+scoped_refptr<LoginHandler> CreateLoginHandlerViews(
+    net::AuthChallengeInfo* auth_info,
+    content::ResourceRequestInfo::WebContentsGetter web_contents_getter,
+    const base::Callback<void(const base::Optional<net::AuthCredentials>&)>&
+        auth_required_callback);
 
 // Shows the toolkit-views based BookmarkEditor.
 void ShowBookmarkEditorViews(gfx::NativeWindow parent_window,
@@ -267,6 +276,9 @@ enum class DialogIdentifier {
   ZOOM = 79,
   LOCK_SCREEN_NOTE_APP_TOAST = 80,
   PWA_CONFIRMATION = 81,
+  RELAUNCH_RECOMMENDED = 82,
+  CROSTINI_INSTALLER = 83,
+  RELAUNCH_REQUIRED = 84,
   MAX_VALUE
 };
 
@@ -302,14 +314,16 @@ void ShowChromeCleanerRebootPrompt(
 
 #if defined(OS_CHROMEOS)
 
-// This callback informs the package name of the app selected by the user, along
-// with the reason why the Bubble was closed. The string param must have a valid
-// package name, except when the CloseReason is ERROR or DIALOG_DEACTIVATED, for
-// these cases we return a dummy value which won't be used at all and has no
-// significance.
+// This callback informs the launch name and type of the app selected by the
+// user, along with the reason why the Bubble was closed and whether the
+// decision should be persisted. When the reason is ERROR or DIALOG_DEACTIVATED,
+// the values of the launch name, app type, and persistence boolean are all
+// ignored.
 using IntentPickerResponse =
-    base::Callback<void(const std::string&,
-                        arc::ArcNavigationThrottle::CloseReason)>;
+    base::OnceCallback<void(const std::string&,
+                            chromeos::AppType,
+                            chromeos::IntentPickerCloseReason,
+                            bool should_persist)>;
 
 // TODO(djacobo): Decide whether or not refactor as base::RepeatableCallback.
 // Return a pointer to the IntentPickerBubbleView::ShowBubble method, which in
@@ -320,12 +334,18 @@ using IntentPickerResponse =
 using BubbleShowPtr =
     views::Widget* (*)(views::View*,
                        content::WebContents*,
-                       const std::vector<arc::ArcNavigationThrottle::AppInfo>&,
+                       std::vector<chromeos::IntentPickerAppInfo>,
                        bool disable_display_in_chrome,
-                       const IntentPickerResponse&);
+                       IntentPickerResponse);
 
 BubbleShowPtr ShowIntentPickerBubble();
 
 #endif  // OS_CHROMEOS
+
+void ShowFolderUploadConfirmationDialog(
+    const base::FilePath& path,
+    base::OnceCallback<void(const std::vector<ui::SelectedFileInfo>&)> callback,
+    std::vector<ui::SelectedFileInfo> selected_files,
+    content::WebContents* web_contents);
 
 #endif  // CHROME_BROWSER_UI_BROWSER_DIALOGS_H_

@@ -138,13 +138,18 @@ void MetricsServicesManager::UpdateUkmService() {
   ukm::UkmService* ukm = GetUkmService();
   if (!ukm)
     return;
+
+  bool listeners_active =
+      GetMetricsServiceClient()->AreNotificationListenersEnabledOnAllProfiles();
   bool sync_enabled =
       client_->IsMetricsReportingForceEnabled() ||
       metrics_service_client_->IsHistorySyncEnabledOnAllProfiles();
   bool is_incognito = client_->IsIncognitoSessionActive();
 
-  if (consent_given_ && sync_enabled & !is_incognito) {
-    ukm->EnableRecording();
+  if (consent_given_ && listeners_active && sync_enabled && !is_incognito) {
+    // TODO(skare): revise this - merged in a big change
+    ukm->EnableRecording(
+        metrics_service_client_->IsExtensionSyncEnabledOnAllProfiles());
     if (may_upload_)
       ukm->EnableReporting();
     else
@@ -163,6 +168,10 @@ void MetricsServicesManager::UpdateUploadPermissions(bool may_upload) {
 
   UpdatePermissions(client_->IsMetricsReportingEnabled(),
                     client_->IsMetricsConsentGiven(), may_upload);
+}
+
+bool MetricsServicesManager::IsMetricsReportingEnabled() const {
+  return client_->IsMetricsReportingEnabled();
 }
 
 }  // namespace metrics_services_manager

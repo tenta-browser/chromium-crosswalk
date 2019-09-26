@@ -33,7 +33,7 @@ PacketPipe::PacketPipe() = default;
 PacketPipe::~PacketPipe() = default;
 void PacketPipe::InitOnIOThread(
     const scoped_refptr<base::SingleThreadTaskRunner>& task_runner,
-    base::TickClock* clock) {
+    const base::TickClock* clock) {
   task_runner_ = task_runner;
   clock_ = clock;
   if (pipe_) {
@@ -233,7 +233,7 @@ class RandomSortedDelay : public PacketPipe {
   }
   void InitOnIOThread(
       const scoped_refptr<base::SingleThreadTaskRunner>& task_runner,
-      base::TickClock* clock) final {
+      const base::TickClock* clock) final {
     PacketPipe::InitOnIOThread(task_runner, clock);
     // As we start the stream, assume that we are in a random
     // place between two extra delays, thus multiplier = 1.0;
@@ -309,7 +309,7 @@ class NetworkGlitchPipe : public PacketPipe {
 
   void InitOnIOThread(
       const scoped_refptr<base::SingleThreadTaskRunner>& task_runner,
-      base::TickClock* clock) final {
+      const base::TickClock* clock) final {
     PacketPipe::InitOnIOThread(task_runner, clock);
     Flip();
   }
@@ -369,7 +369,7 @@ class InterruptedPoissonProcess::InternalBuffer : public PacketPipe {
 
   void InitOnIOThread(
       const scoped_refptr<base::SingleThreadTaskRunner>& task_runner,
-      base::TickClock* clock) final {
+      const base::TickClock* clock) final {
     clock_ = clock;
     if (ipp_)
       ipp_->InitOnIOThread(task_runner, clock);
@@ -405,7 +405,7 @@ class InterruptedPoissonProcess::InternalBuffer : public PacketPipe {
   const size_t stored_limit_;
   base::circular_deque<linked_ptr<Packet>> buffer_;
   base::circular_deque<base::TimeTicks> buffer_time_;
-  base::TickClock* clock_;
+  const base::TickClock* clock_;
   base::WeakPtrFactory<InternalBuffer> weak_factory_;
 
   DISALLOW_COPY_AND_ASSIGN(InternalBuffer);
@@ -422,8 +422,8 @@ InterruptedPoissonProcess::InterruptedPoissonProcess(
       coef_variance_(coef_variance),
       rate_index_(0),
       on_state_(true),
+      mt_rand_(rand_seed),
       weak_factory_(this) {
-  mt_rand_.init_genrand(rand_seed);
   DCHECK(!average_rates.empty());
   ComputeRates();
 }
@@ -432,7 +432,7 @@ InterruptedPoissonProcess::~InterruptedPoissonProcess() = default;
 
 void InterruptedPoissonProcess::InitOnIOThread(
     const scoped_refptr<base::SingleThreadTaskRunner>& task_runner,
-    base::TickClock* clock) {
+    const base::TickClock* clock) {
   // Already initialized and started.
   if (task_runner_.get() && clock_)
     return;
@@ -461,9 +461,9 @@ base::TimeDelta InterruptedPoissonProcess::NextEvent(double rate) {
 double InterruptedPoissonProcess::RandDouble() {
   // Generate a 64-bits random number from MT19937 and then convert
   // it to double.
-  uint64_t rand = mt_rand_.genrand_int32();
+  uint64_t rand = mt_rand_();
   rand <<= 32;
-  rand |= mt_rand_.genrand_int32();
+  rand |= mt_rand_();
   return base::BitsToOpenEndedUnitInterval(rand);
 }
 
@@ -761,9 +761,9 @@ class UDPProxyImpl : public UDPProxy {
     BuildPipe(&to_dest_pipe_, new PacketSender(this, &destination_));
     BuildPipe(&from_dest_pipe_, new PacketSender(this, &return_address_));
     to_dest_pipe_->InitOnIOThread(base::ThreadTaskRunnerHandle::Get(),
-                                  &tick_clock_);
+                                  base::DefaultTickClock::GetInstance());
     from_dest_pipe_->InitOnIOThread(base::ThreadTaskRunnerHandle::Get(),
-                                    &tick_clock_);
+                                    base::DefaultTickClock::GetInstance());
 
     VLOG(0) << "From:" << local_port_.ToString();
     if (!destination_is_mutable_)
@@ -844,7 +844,6 @@ class UDPProxyImpl : public UDPProxy {
   net::IPEndPoint return_address_;
   bool set_destination_next_;
 
-  base::DefaultTickClock tick_clock_;
   base::Thread proxy_thread_;
   std::unique_ptr<net::UDPServerSocket> socket_;
   std::unique_ptr<PacketPipe> to_dest_pipe_;

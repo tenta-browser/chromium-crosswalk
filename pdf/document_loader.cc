@@ -9,6 +9,7 @@
 
 #include <algorithm>
 #include <memory>
+#include <utility>
 
 #include "base/logging.h"
 #include "base/numerics/safe_math.h"
@@ -51,8 +52,6 @@ bool IsValidContentType(const std::string& type) {
 }
 
 }  // namespace
-
-DocumentLoader::Client::~Client() = default;
 
 DocumentLoader::Chunk::Chunk() = default;
 
@@ -99,16 +98,15 @@ bool DocumentLoader::Init(std::unique_ptr<URLLoaderWrapper> loader,
   url_ = url;
   loader_ = std::move(loader);
 
-  if (!loader_->IsContentEncoded()) {
-    chunk_stream_.set_eof_pos(std::max(0, loader_->GetContentLength()));
-  }
+  if (!loader_->IsContentEncoded())
+    SetDocumentSize(std::max(0, loader_->GetContentLength()));
+
   int64_t bytes_received = 0;
   int64_t total_bytes_to_be_received = 0;
-  if (!chunk_stream_.eof_pos() &&
+  if (GetDocumentSize() == 0 &&
       loader_->GetDownloadProgress(&bytes_received,
                                    &total_bytes_to_be_received)) {
-    chunk_stream_.set_eof_pos(
-        std::max(0, static_cast<int>(total_bytes_to_be_received)));
+    SetDocumentSize(std::max(0, static_cast<int>(total_bytes_to_be_received)));
   }
 
   SetPartialLoadingEnabled(
@@ -123,6 +121,10 @@ bool DocumentLoader::Init(std::unique_ptr<URLLoaderWrapper> loader,
 
 bool DocumentLoader::IsDocumentComplete() const {
   return chunk_stream_.IsComplete();
+}
+
+void DocumentLoader::SetDocumentSize(uint32_t size) {
+  chunk_stream_.set_eof_pos(size);
 }
 
 uint32_t DocumentLoader::GetDocumentSize() const {
@@ -154,22 +156,22 @@ bool DocumentLoader::IsDataAvailable(uint32_t position, uint32_t size) const {
 }
 
 void DocumentLoader::RequestData(uint32_t position, uint32_t size) {
-  if (!size || IsDataAvailable(position, size)) {
+  if (size == 0 || IsDataAvailable(position, size))
     return;
-  }
-  {
-    // Check integer overflow.
+
+  const uint32_t document_size = GetDocumentSize();
+  if (document_size != 0) {
+    // Check for integer overflow.
     base::CheckedNumeric<uint32_t> addition_result = position;
     addition_result += size;
     if (!addition_result.IsValid())
       return;
+
+    if (addition_result.ValueOrDie() > document_size)
+      return;
   }
 
-  if (GetDocumentSize() && (position + size > GetDocumentSize())) {
-    return;
-  }
-
-  // We have some artefact request from
+  // We have some artifact request from
   // PDFiumEngine::OnDocumentComplete() -> FPDFAvail_IsPageAvail after
   // document is complete.
   // We need this fix in PDFIum. Adding this as a work around.
@@ -208,9 +210,10 @@ bool DocumentLoader::ShouldCancelLoading() const {
 void DocumentLoader::ContinueDownload() {
   if (!ShouldCancelLoading())
     return ReadMore();
+
   DCHECK(partial_loading_enabled_);
   DCHECK(!IsDocumentComplete());
-  DCHECK(GetDocumentSize());
+  DCHECK_GT(GetDocumentSize(), 0U);
 
   const uint32_t range_start =
       pending_requests_.IsEmpty() ? 0 : pending_requests_.First().start();
@@ -242,7 +245,7 @@ void DocumentLoader::ContinueDownload() {
 
   const uint32_t start = next_request.start() * DataStream::kChunkSize;
   const uint32_t length =
-      std::min(chunk_stream_.eof_pos() - start,
+      std::min(GetDocumentSize() - start,
                next_request.length() * DataStream::kChunkSize);
 
   loader_ = client_->CreateURLLoader();
@@ -262,27 +265,27 @@ void DocumentLoader::DidOpenPartial(int32_t result) {
 
   // Leave position untouched for multiparted responce for now, when we read the
   // data we'll get it.
-  if (!loader_->IsMultipart()) {
-    // Need to make sure that the server returned a byte-range, since it's
-    // possible for a server to just ignore our byte-range request and just
-    // return the entire document even if it supports byte-range requests.
-    // i.e. sniff response to
-    // http://www.act.org/compass/sample/pdf/geometry.pdf
-    int start_pos = 0;
-    int end_pos = 0;
-    if (loader_->GetByteRange(&start_pos, &end_pos)) {
-      if (start_pos % DataStream::kChunkSize != 0) {
-        return ReadComplete();
-      }
-      DCHECK(!chunk_.chunk_data);
-      chunk_.chunk_index = chunk_stream_.GetChunkIndex(start_pos);
-    } else {
-      SetPartialLoadingEnabled(false);
-    }
-    return ContinueDownload();
+  if (loader_->IsMultipart()) {
+    // Needs more data to calc chunk index.
+    return ReadMore();
   }
-  // Needs more data to calc chunk index.
-  return ReadMore();
+
+  // Need to make sure that the server returned a byte-range, since it's
+  // possible for a server to just ignore our byte-range request and just
+  // return the entire document even if it supports byte-range requests.
+  // i.e. sniff response to
+  // http://www.act.org/compass/sample/pdf/geometry.pdf
+  int start_pos = 0;
+  if (loader_->GetByteRangeStart(&start_pos)) {
+    if (start_pos % DataStream::kChunkSize != 0)
+      return ReadComplete();
+
+    DCHECK(!chunk_.chunk_data);
+    chunk_.chunk_index = chunk_stream_.GetChunkIndex(start_pos);
+  } else {
+    SetPartialLoadingEnabled(false);
+  }
+  return ContinueDownload();
 }
 
 void DocumentLoader::ReadMore() {
@@ -306,44 +309,43 @@ void DocumentLoader::DidRead(int32_t result) {
   }
   if (loader_->IsMultipart()) {
     int start_pos = 0;
-    int end_pos = 0;
-    if (!loader_->GetByteRange(&start_pos, &end_pos)) {
+    if (!loader_->GetByteRangeStart(&start_pos))
       return ReadComplete();
-    }
+
     DCHECK(!chunk_.chunk_data);
     chunk_.chunk_index = chunk_stream_.GetChunkIndex(start_pos);
   }
-  if (!SaveChunkData(buffer_, result)) {
+  if (!SaveBuffer(buffer_, result))
     return ReadMore();
-  }
-  if (IsDocumentComplete()) {
+  if (IsDocumentComplete())
     return ReadComplete();
-  }
   return ContinueDownload();
 }
 
-bool DocumentLoader::SaveChunkData(char* input, uint32_t input_size) {
-  count_of_bytes_received_ += input_size;
+bool DocumentLoader::SaveBuffer(char* input, uint32_t input_size) {
+  const uint32_t document_size = GetDocumentSize();
+  if (document_size != 0) {
+    // If the HTTP server sends more data than expected, then truncate
+    // |input_size| to the expected size.
+    input_size = std::min(document_size - bytes_received_, input_size);
+  }
+  bytes_received_ += input_size;
   bool chunk_saved = false;
   bool loading_pending_request = pending_requests_.Contains(chunk_.chunk_index);
   while (input_size > 0) {
-    if (chunk_.data_size == 0) {
+    if (chunk_.data_size == 0)
       chunk_.chunk_data = std::make_unique<DataStream::ChunkData>();
-    }
+
     const uint32_t new_chunk_data_len =
         std::min(DataStream::kChunkSize - chunk_.data_size, input_size);
     memcpy(chunk_.chunk_data->data() + chunk_.data_size, input,
            new_chunk_data_len);
     chunk_.data_size += new_chunk_data_len;
     if (chunk_.data_size == DataStream::kChunkSize ||
-        chunk_stream_.eof_pos() ==
-            chunk_.chunk_index * DataStream::kChunkSize + chunk_.data_size) {
-      chunk_stream_.SetChunkData(chunk_.chunk_index,
-                                 std::move(chunk_.chunk_data));
+        document_size == EndOfCurrentChunk()) {
       pending_requests_.Subtract(
           gfx::Range(chunk_.chunk_index, chunk_.chunk_index + 1));
-      chunk_.data_size = 0;
-      ++(chunk_.chunk_index);
+      SaveChunkData();
       chunk_saved = true;
     }
 
@@ -366,20 +368,32 @@ bool DocumentLoader::SaveChunkData(char* input, uint32_t input_size) {
   return true;
 }
 
+void DocumentLoader::SaveChunkData() {
+  chunk_stream_.SetChunkData(chunk_.chunk_index, std::move(chunk_.chunk_data));
+  chunk_.data_size = 0;
+  ++chunk_.chunk_index;
+}
+
+uint32_t DocumentLoader::EndOfCurrentChunk() const {
+  return chunk_.chunk_index * DataStream::kChunkSize + chunk_.data_size;
+}
+
 void DocumentLoader::ReadComplete() {
-  if (!GetDocumentSize()) {
-    uint32_t eof =
-        chunk_.chunk_index * DataStream::kChunkSize + chunk_.data_size;
+  if (GetDocumentSize() != 0) {
+    // If there is remaining data in |chunk_|, then save whatever can be saved.
+    // e.g. In the underrun case.
+    if (chunk_.data_size != 0)
+      SaveChunkData();
+  } else {
+    uint32_t eof = EndOfCurrentChunk();
     if (!chunk_stream_.filled_chunks().IsEmpty()) {
       eof = std::max(
           chunk_stream_.filled_chunks().Last().end() * DataStream::kChunkSize,
           eof);
     }
-    chunk_stream_.set_eof_pos(eof);
-    if (eof == chunk_.chunk_index * DataStream::kChunkSize + chunk_.data_size) {
-      chunk_stream_.SetChunkData(chunk_.chunk_index,
-                                 std::move(chunk_.chunk_data));
-    }
+    SetDocumentSize(eof);
+    if (eof == EndOfCurrentChunk())
+      SaveChunkData();
   }
   loader_.reset();
   if (IsDocumentComplete()) {

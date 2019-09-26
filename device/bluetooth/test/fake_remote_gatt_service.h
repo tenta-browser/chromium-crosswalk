@@ -11,7 +11,7 @@
 
 #include "device/bluetooth/bluetooth_remote_gatt_service.h"
 #include "device/bluetooth/bluetooth_uuid.h"
-#include "device/bluetooth/public/interfaces/test/fake_bluetooth.mojom.h"
+#include "device/bluetooth/public/mojom/test/fake_bluetooth.mojom.h"
 #include "device/bluetooth/test/fake_remote_gatt_characteristic.h"
 
 namespace device {
@@ -24,6 +24,8 @@ namespace bluetooth {
 
 // Implements device::BluetoothRemoteGattService. Meant to be used by
 // FakePeripheral to keep track of the service's state and attributes.
+//
+// Not intended for direct use by clients.  See README.md.
 class FakeRemoteGattService : public device::BluetoothRemoteGattService {
  public:
   FakeRemoteGattService(const std::string& service_id,

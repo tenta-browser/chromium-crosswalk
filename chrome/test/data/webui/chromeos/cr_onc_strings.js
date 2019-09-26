@@ -7,9 +7,9 @@
  *     network_config.html and other network configuration UI.
  */
 
-var CrOncStrings = {};
+var CrOncTest = CrOncTest || {};
 
-CrOncStrings.overrideValues = function() {
+CrOncTest.overrideCrOncStrings = function() {
   // From network_element_localized_string_provider.cc:AddOncLocalizedStrings.
   var oncKeys = {
     'OncConnected': 'OncConnected',
@@ -51,8 +51,11 @@ CrOncStrings.overrideValues = function() {
     'OncVPN-Host': 'OncVPN-Host',
     'OncVPN-IPsec-Group': 'OncVPN-IPsec-Group',
     'OncVPN-IPsec-PSK': 'OncVPN-IPsec-PSK',
+    'OncVPN-L2TP-Password': 'OncVPN-L2TP-Password',
+    'OncVPN-L2TP-Username': 'OncVPN-L2TP-Username',
     'OncVPN-OpenVPN-OTP': 'OncVPN-OpenVPN-OTP',
-    'OncVPN-Password': 'OncVPN-Password',
+    'OncVPN-OpenVPN-Password': 'OncVPN-OpenVPN-Password',
+    'OncVPN-OpenVPN-Username': 'OncVPN-OpenVPN-Username',
     'OncVPN-ThirdPartyVPN-ProviderName': 'OncVPN-ThirdPartyVPN-ProviderName',
     'OncVPN-Type': 'OncVPN-Type',
     'OncVPN-Type_L2TP_IPsec': 'OncVPN-Type_L2TP_IPsec',
@@ -60,7 +63,6 @@ CrOncStrings.overrideValues = function() {
     'OncVPN-Type_L2TP_IPsec_Cert': 'OncVPN-Type_L2TP_IPsec_Cert',
     'OncVPN-Type_OpenVPN': 'OncVPN-Type_OpenVPN',
     'OncVPN-Type_ARCVPN': 'OncVPN-Type_ARCVPN',
-    'OncVPN-Username': 'OncVPN-Username',
     'OncWiFi-Frequency': 'OncWiFi-Frequency',
     'OncWiFi-Passphrase': 'OncWiFi-Passphrase',
     'OncWiFi-SSID': 'OncWiFi-SSID',

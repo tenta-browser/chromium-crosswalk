@@ -6,7 +6,7 @@
 #include "content/browser/media/media_browsertest.h"
 #include "content/public/test/browser_test_utils.h"
 #include "media/base/test_data_util.h"
-#include "media/media_features.h"
+#include "media/media_buildflags.h"
 
 namespace content {
 
@@ -92,12 +92,19 @@ IN_PROC_BROWSER_TEST_F(MediaColorTest, MAYBE_Yuv420pRec709H264) {
   RunColorTest("yuv420p_rec709.mp4");
 }
 
-// Android devices usually only support baseline, main and high.
-#if !defined(OS_ANDROID)
-IN_PROC_BROWSER_TEST_F(MediaColorTest, Yuv420pHighBitDepth) {
+// This fails on Linux: http://crbug.com/767926. Android doesn't support 10bpc.
+// This test flakes on mac: http://crbug.com/810908
+#if defined(OS_LINUX) || defined(OS_ANDROID) || defined(OS_MACOSX)
+#define MAYBE_Yuv420pHighBitDepth DISABLED_Yuv420pHighBitDepth
+#else
+#define MAYBE_Yuv420pHighBitDepth Yuv420pHighBitDepth
+#endif
+IN_PROC_BROWSER_TEST_F(MediaColorTest, MAYBE_Yuv420pHighBitDepth) {
   RunColorTest("yuv420p_hi10p.mp4");
 }
 
+// Android devices usually only support baseline, main and high.
+#if !defined(OS_ANDROID)
 IN_PROC_BROWSER_TEST_F(MediaColorTest, Yuv422pH264) {
   RunColorTest("yuv422p.mp4");
 }

@@ -5,10 +5,12 @@
 #include "ash/frame/caption_buttons/frame_caption_button.h"
 
 #include "ash/ash_constants.h"
+#include "ui/base/material_design/material_design_controller.h"
 #include "ui/gfx/animation/slide_animation.h"
 #include "ui/gfx/animation/throb_animation.h"
 #include "ui/gfx/canvas.h"
 #include "ui/gfx/color_palette.h"
+#include "ui/gfx/color_utils.h"
 #include "ui/gfx/paint_vector_icon.h"
 
 namespace ash {
@@ -22,11 +24,30 @@ const int kSwapImagesAnimationDurationMs = 200;
 // animation as a ratio of |kSwapImagesAnimationDurationMs|.
 const float kFadeOutRatio = 0.5f;
 
+// The ratio applied to the button's alpha when the button is disabled.
+const float kDisabledButtonAlphaRatio = 0.5f;
+
 // The colors and alpha values used for the button background hovered and
 // pressed states.
 // TODO(tdanderson|estade): Request these colors from ThemeProvider.
 const int kHoveredAlpha = 0x14;
 const int kPressedAlpha = 0x24;
+
+// Minimum theme light color contrast.
+const float kContrastLightItemThreshold = 3;
+// The amount to darken a light theme color by for use as foreground color.
+const float kThemedForegroundBlackFraction = 0.64;
+
+// This mimics |shouldUseLightForegroundOnBackground| in ColorUtils.java.
+bool UseLightColor(FrameCaptionButton::ColorMode color_mode,
+                   SkColor background_color) {
+  if (color_mode == FrameCaptionButton::ColorMode::kThemed) {
+    return color_utils::GetContrastRatio(SK_ColorWHITE, background_color) >=
+           kContrastLightItemThreshold;
+  }
+  DCHECK_EQ(color_mode, FrameCaptionButton::ColorMode::kDefault);
+  return color_utils::IsDark(background_color);
+}
 
 }  // namespace
 
@@ -37,8 +58,9 @@ FrameCaptionButton::FrameCaptionButton(views::ButtonListener* listener,
                                        CaptionButtonIcon icon)
     : Button(listener),
       icon_(icon),
+      background_color_(SK_ColorWHITE),
+      color_mode_(ColorMode::kDefault),
       paint_as_active_(false),
-      use_light_images_(false),
       alpha_(255),
       swap_images_animation_(new gfx::SlideAnimation(this)) {
   set_animate_on_state_change(true);
@@ -52,15 +74,37 @@ FrameCaptionButton::FrameCaptionButton(views::ButtonListener* listener,
 FrameCaptionButton::~FrameCaptionButton() = default;
 
 // static
-SkColor FrameCaptionButton::GetButtonColor(bool use_light_images) {
-  return use_light_images ? SK_ColorWHITE : gfx::kChromeIconGrey;
+SkColor FrameCaptionButton::GetButtonColor(ColorMode color_mode,
+                                           SkColor background_color) {
+  bool use_light_color = UseLightColor(color_mode, background_color);
+
+  if (color_mode == ColorMode::kThemed) {
+    // This mimics |getThemedAssetColor| in ColorUtils.java.
+    return use_light_color
+               ? SK_ColorWHITE
+               : color_utils::AlphaBlend(SK_ColorBLACK, background_color,
+                                         255 * kThemedForegroundBlackFraction);
+  }
+
+  DCHECK_EQ(color_mode, ColorMode::kDefault);
+  if (ui::MaterialDesignController::IsTouchOptimizedUiEnabled())
+    return use_light_color ? gfx::kGoogleGrey100 : gfx::kGoogleGrey800;
+
+  return use_light_color ? SK_ColorWHITE : gfx::kChromeIconGrey;
+}
+
+// static
+float FrameCaptionButton::GetInactiveButtonColorAlphaRatio() {
+  return ui::MaterialDesignController::IsTouchOptimizedUiEnabled()
+             ? kInactiveFrameButtonIconAlphaRatioTouch
+             : kInactiveFrameButtonIconAlphaRatio;
 }
 
 void FrameCaptionButton::SetImage(CaptionButtonIcon icon,
                                   Animate animate,
                                   const gfx::VectorIcon& icon_definition) {
-  gfx::ImageSkia new_icon_image =
-      gfx::CreateVectorIcon(icon_definition, GetButtonColor(use_light_images_));
+  gfx::ImageSkia new_icon_image = gfx::CreateVectorIcon(
+      icon_definition, GetButtonColor(color_mode_, background_color_));
 
   // The early return is dependent on |animate| because callers use SetImage()
   // with ANIMATE_NO to progress the crossfade animation to the end.
@@ -140,8 +184,10 @@ void FrameCaptionButton::PaintButtonContents(gfx::Canvas* canvas) {
     bg_alpha = kPressedAlpha;
 
   if (bg_alpha != SK_AlphaTRANSPARENT) {
-    canvas->DrawColor(SkColorSetA(
-        use_light_images_ ? SK_ColorWHITE : SK_ColorBLACK, bg_alpha));
+    canvas->DrawColor(SkColorSetA(UseLightColor(color_mode_, background_color_)
+                                      ? SK_ColorWHITE
+                                      : SK_ColorBLACK,
+                                  bg_alpha));
   }
 
   int icon_alpha = swap_images_animation_->CurrentValueBetween(0, 255);
@@ -175,11 +221,15 @@ void FrameCaptionButton::PaintButtonContents(gfx::Canvas* canvas) {
 }
 
 int FrameCaptionButton::GetAlphaForIcon(int base_alpha) const {
+  if (!enabled())
+    return base_alpha * kDisabledButtonAlphaRatio;
+
   if (paint_as_active_)
     return base_alpha;
 
   // Paint icons as active when they are hovered over or pressed.
-  double inactive_alpha = kInactiveFrameButtonIconAlphaRatio;
+  double inactive_alpha = GetInactiveButtonColorAlphaRatio();
+
   if (hover_animation().is_animating()) {
     inactive_alpha =
         hover_animation().CurrentValueBetween(inactive_alpha, 1.0f);

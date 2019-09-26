@@ -72,6 +72,7 @@ source_set("tab_switcher") {
     "//ios/chrome/browser/sessions",
     "//ios/chrome/browser/sessions:serialisation",
     "//ios/chrome/browser/signin",
+    "//ios/chrome/browser/snapshots",
     "//ios/chrome/browser/sync",
     "//ios/chrome/browser/tabs",
     "//ios/chrome/browser/ui",
@@ -79,16 +80,17 @@ source_set("tab_switcher") {
     "//ios/chrome/browser/ui/authentication:authentication_ui",
     "//ios/chrome/browser/ui/colors",
     "//ios/chrome/browser/ui/commands",
+    "//ios/chrome/browser/ui/image_util",
     "//ios/chrome/browser/ui/keyboard",
     "//ios/chrome/browser/ui/material_components",
     "//ios/chrome/browser/ui/ntp/recent_tabs/views",
     "//ios/chrome/browser/ui/settings/sync_utils",
     "//ios/chrome/browser/ui/signin_interaction/public",
     "//ios/chrome/browser/ui/tabs/requirements",
-    "//ios/chrome/browser/ui/toolbar",
-    "//ios/chrome/browser/ui/toolbar",
+    "//ios/chrome/browser/ui/toolbar:toolbar_ui",
+    "//ios/chrome/browser/web",
     "//ios/chrome/browser/web_state_list",
-    "//ios/chrome/common:ios_app_bundle_id_prefix_header",
+    "//ios/chrome/common:ios_app_bundle_id_prefix_buildflags",
     "//ios/public/provider/chrome/browser",
     "//ios/third_party/material_components_ios",
     "//ios/third_party/material_roboto_font_loader_ios",
@@ -104,6 +106,18 @@ source_set("tab_switcher") {
   libs = [
     "QuartzCore.framework",
     "UIKit.framework",
+  ]
+}
+
+source_set("modes") {
+  configs += [ "//build/config/compiler:enable_arc" ]
+  sources = [
+    "tab_switcher_mode.h",
+    "tab_switcher_mode.mm",
+  ]
+  deps = [
+    "//base",
+    "//ios/chrome/browser/ui",
   ]
 }
 
@@ -164,6 +178,9 @@ source_set("unit_tests") {
     "//ios/chrome/browser/browser_state:test_support",
     "//ios/chrome/browser/tabs",
     "//ios/chrome/browser/ui/ntp/recent_tabs",
+    "//ios/chrome/browser/web_state_list",
+    "//ios/chrome/browser/web_state_list:test_support",
+    "//ios/web/public/test/fakes",
     "//testing/gtest",
     "//third_party/ocmock",
   ]
@@ -178,6 +195,7 @@ source_set("eg_tests") {
   ]
   deps = [
     ":egtest_support",
+    ":modes",
     ":tab_switcher",
     "//base",
     "//base/test:test_support",
@@ -186,8 +204,11 @@ source_set("eg_tests") {
     "//ios/chrome/browser",
     "//ios/chrome/browser/tabs",
     "//ios/chrome/browser/ui",
+    "//ios/chrome/browser/ui/authentication:eg_test_support",
+    "//ios/chrome/browser/ui/tab_grid:egtest_support",
     "//ios/chrome/test/app:test_support",
     "//ios/chrome/test/earl_grey:test_support",
+    "//ios/public/provider/chrome/browser/signin:test_support",
     "//ios/testing:ios_test_support",
     "//ios/third_party/earl_grey:earl_grey+link",
     "//ios/web/public/test/http_server",

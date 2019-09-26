@@ -11,10 +11,8 @@
 #include "base/bind.h"
 #include "base/callback.h"
 #include "base/logging.h"
-#include "base/memory/ptr_util.h"
 #include "base/sequenced_task_runner.h"
 #include "base/task_scheduler/post_task.h"
-#include "base/threading/sequenced_worker_pool.h"
 #include "components/cookie_config/cookie_store_util.h"
 #include "components/net_log/chrome_net_log.h"
 #include "components/prefs/json_pref_store.h"
@@ -29,7 +27,9 @@
 #include "ios/chrome/browser/net/ios_chrome_network_delegate.h"
 #include "ios/chrome/browser/net/ios_chrome_url_request_context_getter.h"
 #include "ios/chrome/browser/pref_names.h"
-#include "ios/net/cookies/cookie_store_ios.h"
+#import "ios/net/cookies/cookie_store_ios.h"
+#import "ios/net/cookies/ns_http_system_cookie_store.h"
+#import "ios/net/cookies/system_cookie_store.h"
 #include "ios/web/public/web_thread.h"
 #include "net/base/cache_type.h"
 #include "net/cookies/cookie_store.h"
@@ -220,7 +220,7 @@ void ChromeBrowserStateImplIOData::InitializeInternal(
   main_context->set_http_auth_handler_factory(
       io_thread_globals->http_auth_handler_factory.get());
 
-  main_context->set_proxy_service(proxy_service());
+  main_context->set_proxy_resolution_service(proxy_resolution_service());
 
   net::ChannelIDService* channel_id_service = NULL;
 
@@ -230,7 +230,8 @@ void ChromeBrowserStateImplIOData::InitializeInternal(
       cookie_util::CookieStoreConfig::RESTORED_SESSION_COOKIES,
       cookie_util::CookieStoreConfig::COOKIE_STORE_IOS,
       cookie_config::GetCookieCryptoDelegate());
-  main_cookie_store_ = cookie_util::CreateCookieStore(ios_cookie_config);
+  main_cookie_store_ = cookie_util::CreateCookieStore(
+      ios_cookie_config, std::move(profile_params->system_cookie_store));
 
   if (profile_params->path.BaseName().value() ==
       kIOSChromeInitialBrowserState) {
@@ -307,8 +308,10 @@ ChromeBrowserStateImplIOData::InitializeAppRequestContext(
       base::FilePath(),
       cookie_util::CookieStoreConfig::EPHEMERAL_SESSION_COOKIES,
       cookie_util::CookieStoreConfig::COOKIE_STORE_IOS, nullptr);
+  // TODO(crbug.com/779106): Check if cookiestore type should be changed.
   std::unique_ptr<net::CookieStore> cookie_store =
-      cookie_util::CreateCookieStore(ios_cookie_config);
+      cookie_util::CreateCookieStore(
+          ios_cookie_config, std::make_unique<net::NSHTTPSystemCookieStore>());
 
   // Transfer ownership of the ChannelIDStore, HttpNetworkSession, cookies, and
   // cache to AppRequestContext.
@@ -346,6 +349,9 @@ void ChromeBrowserStateImplIOData::ClearNetworkingHistorySinceOnIOThread(
   DCHECK(transport_security_state());
   // Completes synchronously.
   transport_security_state()->DeleteAllDynamicDataSince(time);
-  http_server_properties()->Clear();
-  web::WebThread::PostTask(web::WebThread::UI, FROM_HERE, completion);
+  http_server_properties()->Clear(base::BindOnce(
+      [](const base::Closure& completion) {
+        web::WebThread::PostTask(web::WebThread::UI, FROM_HERE, completion);
+      },
+      completion));
 }

@@ -55,13 +55,12 @@ void InitNavigateParams(FrameHostMsg_DidCommitProvisionalLoad_Params* params,
   params->searchable_form_encoding = std::string();
   params->did_create_new_entry = did_create_new_entry;
   params->gesture = NavigationGestureUser;
-  params->was_within_same_document = false;
   params->method = "GET";
   params->page_state = PageState::CreateFromURL(url);
 }
 
 TestRenderWidgetHostView::TestRenderWidgetHostView(RenderWidgetHost* rwh)
-    : rwh_(RenderWidgetHostImpl::From(rwh)),
+    : RenderWidgetHostViewBase(rwh),
       is_showing_(false),
       is_occluded_(false),
       did_swap_compositor_frame_(false),
@@ -81,7 +80,7 @@ TestRenderWidgetHostView::TestRenderWidgetHostView(RenderWidgetHost* rwh)
   }
 #endif
 
-  rwh_->SetView(this);
+  host()->SetView(this);
 
 #if defined(USE_AURA)
   window_.reset(new aura::Window(
@@ -95,14 +94,6 @@ TestRenderWidgetHostView::~TestRenderWidgetHostView() {
   viz::HostFrameSinkManager* manager = GetHostFrameSinkManager();
   if (manager)
     manager->InvalidateFrameSinkId(frame_sink_id_);
-}
-
-RenderWidgetHost* TestRenderWidgetHostView::GetRenderWidgetHost() const {
-  return rwh_;
-}
-
-gfx::Vector2dF TestRenderWidgetHostView::GetLastScrollOffset() const {
-  return gfx::Vector2dF();
 }
 
 gfx::NativeView TestRenderWidgetHostView::GetNativeView() const {
@@ -165,36 +156,18 @@ SkColor TestRenderWidgetHostView::background_color() const {
   return background_color_;
 }
 
-bool TestRenderWidgetHostView::HasAcceleratedSurface(
-      const gfx::Size& desired_size) {
-  return false;
-}
-
 #if defined(OS_MACOSX)
-
-ui::AcceleratedWidgetMac* TestRenderWidgetHostView::GetAcceleratedWidgetMac()
-    const {
-  return nullptr;
-}
-
 void TestRenderWidgetHostView::SetActive(bool active) {
   // <viettrungluu@gmail.com>: Do I need to do anything here?
 }
 
-bool TestRenderWidgetHostView::SupportsSpeech() const {
-  return false;
-}
-
 void TestRenderWidgetHostView::SpeakSelection() {
 }
-
-bool TestRenderWidgetHostView::IsSpeaking() const {
-  return false;
-}
-
-void TestRenderWidgetHostView::StopSpeaking() {}
-
 #endif
+
+gfx::Vector2d TestRenderWidgetHostView::GetOffsetFromRootSurface() {
+  return gfx::Vector2d();
+}
 
 gfx::Rect TestRenderWidgetHostView::GetBoundsInRootWindow() {
   return gfx::Rect();
@@ -215,6 +188,11 @@ void TestRenderWidgetHostView::SubmitCompositorFrame(
     OnFrameTokenChanged(frame_token);
 }
 
+void TestRenderWidgetHostView::TakeFallbackContentFrom(
+    RenderWidgetHostView* view) {
+  SetBackgroundColor(view->background_color());
+}
+
 bool TestRenderWidgetHostView::LockMouse() {
   return false;
 }
@@ -224,6 +202,10 @@ void TestRenderWidgetHostView::UnlockMouse() {
 
 viz::FrameSinkId TestRenderWidgetHostView::GetFrameSinkId() {
   return frame_sink_id_;
+}
+
+viz::SurfaceId TestRenderWidgetHostView::GetCurrentSurfaceId() const {
+  return viz::SurfaceId();
 }
 
 void TestRenderWidgetHostView::OnFirstSurfaceActivation(

@@ -23,7 +23,6 @@
 #include "components/viz/common/quads/solid_color_draw_quad.h"
 #include "components/viz/common/quads/texture_draw_quad.h"
 #include "components/viz/common/resources/single_release_callback.h"
-#include "components/viz/common/surfaces/sequence_surface_reference_factory.h"
 #include "components/viz/service/surfaces/surface.h"
 #include "components/viz/service/surfaces/surface_manager.h"
 #include "services/ui/public/interfaces/window_tree_constants.mojom.h"
@@ -46,7 +45,7 @@
 #include "ui/gfx/transform_util.h"
 #include "ui/views/widget/widget.h"
 
-DECLARE_UI_CLASS_PROPERTY_TYPE(exo::Surface*);
+DEFINE_UI_CLASS_PROPERTY_TYPE(exo::Surface*);
 
 namespace exo {
 namespace {
@@ -116,7 +115,11 @@ class CustomWindowDelegate : public aura::WindowDelegate {
   void OnBoundsChanged(const gfx::Rect& old_bounds,
                        const gfx::Rect& new_bounds) override {}
   gfx::NativeCursor GetCursor(const gfx::Point& point) override {
-    return surface_->GetCursor();
+    views::Widget* widget =
+        views::Widget::GetTopLevelWidgetForNativeView(surface_->window());
+    if (widget)
+      return widget->GetNativeWindow()->GetCursor(point /* not used */);
+    return ui::CursorType::kNull;
   }
   int GetNonClientComponent(const gfx::Point& point) const override {
     return HTNOWHERE;
@@ -163,7 +166,7 @@ class CustomWindowTargeter : public aura::WindowTargeter {
   bool EventLocationInsideBounds(aura::Window* window,
                                  const ui::LocatedEvent& event) const override {
     Surface* surface = Surface::AsSurface(window);
-    if (!surface)
+    if (!surface || !surface->IsInputEnabled(surface))
       return false;
 
     if (event.IsTouchEvent() && !surface->IsTouchEnabled(surface))
@@ -262,6 +265,12 @@ void Surface::SetInputRegion(const cc::Region& region) {
   TRACE_EVENT1("exo", "Surface::SetInputRegion", "region", region.ToString());
 
   pending_state_.input_region = region;
+}
+
+void Surface::ResetInputRegion() {
+  TRACE_EVENT0("exo", "Surface::ResetInputRegion");
+
+  pending_state_.input_region = base::nullopt;
 }
 
 void Surface::SetInputOutset(int outset) {
@@ -433,6 +442,29 @@ void Surface::SetFrame(SurfaceFrameType type) {
     delegate_->OnSetFrame(type);
 }
 
+void Surface::SetFrameColors(SkColor active_color, SkColor inactive_color) {
+  TRACE_EVENT2("exo", "Surface::SetFrameColors", "active_color", active_color,
+               "inactive_color", inactive_color);
+
+  if (delegate_)
+    delegate_->OnSetFrameColors(active_color, inactive_color);
+}
+
+void Surface::SetStartupId(const char* startup_id) {
+  TRACE_EVENT1("exo", "Surface::SetStartupId", "startup_id", startup_id);
+
+  if (delegate_)
+    delegate_->OnSetStartupId(startup_id);
+}
+
+void Surface::SetApplicationId(const char* application_id) {
+  TRACE_EVENT1("exo", "Surface::SetApplicationId", "application_id",
+               application_id);
+
+  if (delegate_)
+    delegate_->OnSetApplicationId(application_id);
+}
+
 void Surface::SetParent(Surface* parent, const gfx::Point& position) {
   TRACE_EVENT2("exo", "Surface::SetParent", "parent", !!parent, "position",
                position.ToString());
@@ -484,7 +516,7 @@ void Surface::CommitSurfaceHierarchy(bool synchronized) {
     pending_state_.only_visible_on_secure_output = false;
 
     window_->SetEventTargetingPolicy(
-        state_.input_region.IsEmpty()
+        (state_.input_region.has_value() && state_.input_region->IsEmpty())
             ? ui::mojom::EventTargetingPolicy::DESCENDANTS_ONLY
             : ui::mojom::EventTargetingPolicy::TARGET_AND_DESCENDANTS);
 
@@ -544,8 +576,18 @@ void Surface::CommitSurfaceHierarchy(bool synchronized) {
   }
 
   surface_hierarchy_content_bounds_ = gfx::Rect(content_size_);
-  hit_test_region_ = state_.input_region;
-  hit_test_region_.Intersect(surface_hierarchy_content_bounds_);
+  if (state_.input_region) {
+    hit_test_region_ = *state_.input_region;
+    hit_test_region_.Intersect(surface_hierarchy_content_bounds_);
+  } else
+    hit_test_region_ = surface_hierarchy_content_bounds_;
+
+  int outset = state_.input_outset;
+  if (outset > 0) {
+    gfx::Rect input_rect = surface_hierarchy_content_bounds_;
+    input_rect.Inset(-outset, -outset);
+    hit_test_region_ = input_rect;
+  }
 
   int outset = state_.input_outset;
   if (outset > 0) {
@@ -612,8 +654,8 @@ bool Surface::IsSynchronized() const {
   return delegate_ && delegate_->IsSurfaceSynchronized();
 }
 
-bool Surface::IsTouchEnabled(Surface* surface) const {
-  return !delegate_ || delegate_->IsTouchEnabled(surface);
+bool Surface::IsInputEnabled(Surface* surface) const {
+  return !delegate_ || delegate_->IsInputEnabled(surface);
 }
 
 bool Surface::HasHitTestRegion() const {
@@ -634,28 +676,9 @@ Surface::GetHitTestShapeRects() const {
     return nullptr;
 
   auto rects = std::make_unique<aura::WindowTargeter::HitTestRects>();
-  for (cc::Region::Iterator it(hit_test_region_); it.has_rect(); it.next())
-    rects->push_back(it.rect());
+  for (gfx::Rect rect : hit_test_region_)
+    rects->push_back(rect);
   return rects;
-}
-
-void Surface::RegisterCursorProvider(Pointer* provider) {
-  cursor_providers_.insert(provider);
-}
-
-void Surface::UnregisterCursorProvider(Pointer* provider) {
-  cursor_providers_.erase(provider);
-}
-
-gfx::NativeCursor Surface::GetCursor() {
-  // What cursor we display when we have multiple cursor providers is not
-  // important. Return the first non-null cursor.
-  for (auto* cursor_provider : cursor_providers_) {
-    gfx::NativeCursor cursor = cursor_provider->GetCursor();
-    if (cursor != ui::CursorType::kNull)
-      return cursor;
-  }
-  return ui::CursorType::kNull;
 }
 
 void Surface::SetSurfaceDelegate(SurfaceDelegate* delegate) {
@@ -710,7 +733,7 @@ bool Surface::FillsBoundsOpaquely() const {
 ////////////////////////////////////////////////////////////////////////////////
 // Buffer, private:
 
-Surface::State::State() : input_region(SkRegion(SkIRect::MakeLargest())) {}
+Surface::State::State() {}
 
 Surface::State::~State() = default;
 
@@ -829,9 +852,6 @@ void Surface::AppendContentsToFrame(const gfx::Point& origin,
     render_pass->damage_rect.Union(
         gfx::ConvertRectToPixel(device_scale_factor, damage_rect));
   }
-
-  render_pass->output_rect.Union(
-      gfx::ConvertRectToPixel(device_scale_factor, output_rect));
 
   // Compute the total transformation from post-transform buffer coordinates to
   // target coordinates.

@@ -7,6 +7,7 @@
         "browser": [
           "blink::mojom::OomIntervention",
           "blink::mojom::WebDatabase",
+          "content::mojom::AppCacheFrontend",
           "content::mojom::Child",
           "content::mojom::ChildControl",
           "content::mojom::ChildHistogramFetcher",
@@ -15,6 +16,7 @@
           "content::mojom::EmbeddedWorkerSetup",
           "content::mojom::FrameFactory",
           "content::mojom::RenderWidgetWindowTreeClientFactory",
+          "content::mojom::ResourceUsageReporter",
           "content::mojom::SharedWorkerFactory",
           "IPC::mojom::ChannelBootstrap",
           "visitedlink::mojom::VisitedLinkNotificationSink",
@@ -26,12 +28,16 @@
       },
       "requires": {
         "*": [ "app" ],
-        "content_browser": [ "renderer" ],
+        "content_browser": [
+          "dwrite_font_proxy",
+          "field_trials",
+          "font_loader",
+          "renderer"
+        ],
         "metrics": [ "url_keyed_metrics" ],
         "device": [
           "device:power_monitor",
           "device:screen_orientation",
-          "device:sensors",
           "device:time_zone_monitor"
         ],
         "ui": [
@@ -51,8 +57,10 @@
           "blink::mojom::TextSuggestionBackend",
           "content::mojom::ImageDownloader",
           "content::mojom::FrameInputHandler",
-          "content::mojom::MediaStreamDispatcher",
-          "content::mojom::Widget"
+          "content::mojom::FullscreenVideoElementHandler",
+          "content::mojom::MediaStreamDeviceObserver",
+          "content::mojom::Widget",
+          "viz::mojom::InputTargetClient"
         ]
       },
       "requires": {
@@ -84,24 +92,6 @@
       {
         "path": "assets/natives_blob.bin",
         "platform": "android"
-      }
-    ],
-    "v8_snapshot_data" : [{
-      "path": "snapshot_blob.bin",
-      "platform": "linux"
-    }],
-    "v8_snapshot_32_data" : [{
-      "path": "assets/snapshot_blob_32.bin",
-      "platform": "android"
-    }],
-    "v8_snapshot_64_data" : [{
-      "path": "assets/snapshot_blob_64.bin",
-      "platform": "android"
-    }],
-    "v8_context_snapshot_data" : [
-      {
-        "path": "v8_context_snapshot.bin",
-        "platform": "linux"
       }
     ]
   }

@@ -27,6 +27,7 @@ import android.widget.FrameLayout;
 
 import org.junit.Rule;
 import org.junit.Test;
+import org.junit.rules.TestRule;
 import org.junit.runner.RunWith;
 
 import org.chromium.base.ApiCompatibilityUtils;
@@ -35,7 +36,6 @@ import org.chromium.base.test.util.CallbackHelper;
 import org.chromium.base.test.util.CommandLineFlags;
 import org.chromium.base.test.util.DisabledTest;
 import org.chromium.base.test.util.Feature;
-import org.chromium.base.test.util.Restriction;
 import org.chromium.base.test.util.RetryOnFailure;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.ChromeActivity;
@@ -54,7 +54,7 @@ import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
 import org.chromium.chrome.test.ChromeTabbedActivityTestRule;
 import org.chromium.chrome.test.util.NewTabPageTestUtils;
 import org.chromium.chrome.test.util.RenderTestRule;
-import org.chromium.chrome.test.util.browser.ChromeHome;
+import org.chromium.chrome.test.util.browser.ChromeModernDesign;
 import org.chromium.chrome.test.util.browser.Features.DisableFeatures;
 import org.chromium.chrome.test.util.browser.RecyclerViewTestUtils;
 import org.chromium.chrome.test.util.browser.offlinepages.FakeOfflinePageBridge;
@@ -64,7 +64,6 @@ import org.chromium.chrome.test.util.browser.suggestions.SuggestionsDependencies
 import org.chromium.content.browser.test.util.Criteria;
 import org.chromium.content.browser.test.util.CriteriaHelper;
 import org.chromium.net.test.EmbeddedTestServerRule;
-import org.chromium.ui.test.util.UiRestriction;
 
 import java.io.IOException;
 import java.util.ArrayList;
@@ -84,7 +83,7 @@ public class TileGridLayoutTest {
     public ChromeTabbedActivityTestRule mActivityTestRule = new ChromeTabbedActivityTestRule();
 
     @Rule
-    public ChromeHome.Processor mChromeHomeStateRule = new ChromeHome.Processor();
+    public TestRule mChromeModernDesignStateRule = new ChromeModernDesign.Processor();
 
     @Rule
     public SuggestionsDependenciesRule mSuggestionsDeps = new SuggestionsDependenciesRule();
@@ -120,7 +119,7 @@ public class TileGridLayoutTest {
     public void testHomePageIsMovedToFirstPositionWhenMultipleRowsExist() throws Exception {
         // Contructs a home page tile in the second row. Assuming a row contains <= 6 tiles.
         NewTabPage ntp =
-                setUpFakeDataToShowOnNtp(/*homePagePosition=*/7, FAKE_MOST_VISITED_URLS.length);
+                setUpFakeDataToShowOnNtp(/* homePagePosition = */ 7, FAKE_MOST_VISITED_URLS.length);
         TileGridLayout grid = getTileGridLayout(ntp);
         TileView homePageTileView = (TileView) grid.getChildAt(7);
 
@@ -132,7 +131,8 @@ public class TileGridLayoutTest {
     @SmallTest
     @Feature({"NewTabPage"})
     public void testHomePageRemainsAsLastElementInOnlyRow() throws Exception {
-        NewTabPage ntp = setUpFakeDataToShowOnNtp(/*homePagePosition=*/4, /*suggestionsCount=*/4);
+        NewTabPage ntp =
+                setUpFakeDataToShowOnNtp(/* homePagePosition = */ 4, /* suggestionCount = */ 4);
         TileGridLayout grid = getTileGridLayout(ntp);
         TileView homePageTileView = (TileView) grid.getChildAt(4);
         grid.setMaxColumns(4);
@@ -149,7 +149,8 @@ public class TileGridLayoutTest {
     @SmallTest
     @Feature({"NewTabPage"})
     public void testHomePageKeepsPositionInOnlyRow() throws Exception {
-        NewTabPage ntp = setUpFakeDataToShowOnNtp(/*homePagePosition=*/2, /*suggestionsCount=*/3);
+        NewTabPage ntp =
+                setUpFakeDataToShowOnNtp(/* homePagePosition = */ 2, /* suggestionCount = */ 3);
         TileGridLayout grid = getTileGridLayout(ntp);
 
         // The home page tile stays at the third position as we have only one row.
@@ -163,6 +164,7 @@ public class TileGridLayoutTest {
     @Test
     @MediumTest
     @Feature({"NewTabPage", "RenderTest"})
+    @ChromeModernDesign.Disable
     public void testTileGridAppearance() throws Exception {
         NewTabPage ntp =
                 setUpFakeDataToShowOnNtp(/*homePagePosition=*/2, FAKE_MOST_VISITED_URLS.length);
@@ -173,8 +175,7 @@ public class TileGridLayoutTest {
     //@MediumTest
     @DisabledTest(message = "crbug.com/771648")
     @Feature({"NewTabPage", "RenderTest"})
-    @ChromeHome
-    @Restriction(UiRestriction.RESTRICTION_TYPE_PHONE)
+    @ChromeModernDesign.Enable
     public void testModernTileGridAppearance_Full() throws IOException, InterruptedException {
         View tileGridLayout = renderTiles(makeSuggestions(FAKE_MOST_VISITED_URLS.length));
 
@@ -196,7 +197,7 @@ public class TileGridLayoutTest {
     //@MediumTest
     @DisabledTest(message = "crbug.com/771648")
     @Feature({"NewTabPage", "RenderTest"})
-    @ChromeHome(false)
+    @ChromeModernDesign.Disable
     public void testTileGridAppearance_Full() throws IOException, InterruptedException {
         View tileGridLayout = renderTiles(makeSuggestions(FAKE_MOST_VISITED_URLS.length));
 
@@ -219,8 +220,7 @@ public class TileGridLayoutTest {
     @DisabledTest(message = "crbug.com/771648")
     @RetryOnFailure
     @Feature({"NewTabPage", "RenderTest"})
-    @ChromeHome
-    @Restriction(UiRestriction.RESTRICTION_TYPE_PHONE)
+    @ChromeModernDesign.Enable
     public void testModernTileGridAppearance_Two() throws IOException, InterruptedException {
         View tileGridLayout = renderTiles(makeSuggestions(2));
 
@@ -236,7 +236,7 @@ public class TileGridLayoutTest {
     @DisabledTest(message = "crbug.com/771648")
     @RetryOnFailure
     @Feature({"NewTabPage", "RenderTest"})
-    @ChromeHome(false)
+    @ChromeModernDesign.Disable
     public void testTileGridAppearance_Two() throws IOException, InterruptedException {
         View tileGridLayout = renderTiles(makeSuggestions(2));
 
@@ -250,8 +250,7 @@ public class TileGridLayoutTest {
     @Test
     @MediumTest
     @Feature({"NewTabPage", "RenderTest"})
-    @ChromeHome
-    @Restriction(UiRestriction.RESTRICTION_TYPE_PHONE)
+    @ChromeModernDesign.Enable
     public void testTileAppearanceModern()
             throws IOException, InterruptedException, TimeoutException {
         List<SiteSuggestion> suggestions = makeSuggestions(2);
@@ -267,7 +266,7 @@ public class TileGridLayoutTest {
     @Test
     @MediumTest
     @Feature({"NewTabPage", "RenderTest"})
-    @ChromeHome(false)
+    @ChromeModernDesign.Disable
     public void testTileAppearanceClassic()
             throws IOException, InterruptedException, TimeoutException {
         List<SiteSuggestion> suggestions = makeSuggestions(2);

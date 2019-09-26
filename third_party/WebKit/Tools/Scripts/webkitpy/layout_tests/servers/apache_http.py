@@ -64,6 +64,7 @@ class ApacheHTTP(server_base.ServerBase):
         cert_file = self._filesystem.join(self._port_obj.apache_config_directory(), 'webkit-httpd.pem')
         inspector_sources_dir = self._port_obj.inspector_build_directory()
         generated_sources_dir = self._port_obj.generated_sources_directory()
+        php_ini_dir = self._filesystem.join(test_dir, "http", "conf")
 
         self._access_log_path = self._filesystem.join(output_dir, 'access_log.txt')
         self._error_log_path = self._filesystem.join(output_dir, 'error_log.txt')
@@ -77,9 +78,13 @@ class ApacheHTTP(server_base.ServerBase):
             '-C', 'DocumentRoot "%s"' % document_root,
             '-c', 'Alias /js-test-resources "%s/resources"' % test_dir,
             '-c', 'Alias /geolocation-api/js-test-resources "%s/geolocation-api/resources"' % test_dir,
+            # TODO(509038): To be removed after bluetooth tests are ported to WPT.
+            '-c', 'Alias /resources/chromium "%s/external/wpt/resources/chromium"' % test_dir,
             '-c', 'Alias /resources/testharness.js "%s/resources/testharness.js"' % test_dir,
             '-c', 'Alias /resources/testharnessreport.js "%s/resources/testharnessreport.js"' % test_dir,
             '-c', 'Alias /w3c/resources "%s/resources"' % test_dir,
+            # TODO(509038): To be removed after bluetooth tests are ported to WPT.
+            '-c', 'Alias /bluetooth-resources "%s/external/wpt/bluetooth/resources"' % test_dir,
             '-c', 'Alias /forms-test-resources "%s"' % forms_test_resources_dir,
             '-c', 'Alias /media-resources "%s"' % media_resources_dir,
             '-c', 'Alias /webaudio-resources "%s"' % webaudio_resources_dir,
@@ -88,6 +93,7 @@ class ApacheHTTP(server_base.ServerBase):
             '-c', 'TypesConfig "%s"' % mime_types_path,
             '-c', 'CustomLog "%s" common' % self._access_log_path,
             '-c', 'ErrorLog "%s"' % self._error_log_path,
+            '-c', 'PHPINIDir "%s"' % php_ini_dir,
             '-c', 'PidFile %s' % self._pid_file,
             '-c', 'SSLCertificateFile "%s"' % cert_file,
             '-c', 'DefaultType None',

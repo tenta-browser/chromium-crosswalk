@@ -122,7 +122,8 @@ void ExternalInstallManager::RemoveExternalInstallError(
     if (iter->second.get() == currently_visible_install_alert_)
       currently_visible_install_alert_ = nullptr;
     errors_.erase(iter);
-    unacknowledged_ids_.erase(extension_id_copy);
+    // No need to erase the ID from |unacknowledged_ids_|; it's already in
+    // |shown_ids_|.
     UpdateExternalExtensionAlert();
   }
 }
@@ -138,7 +139,10 @@ void ExternalInstallManager::UpdateExternalExtensionAlert() {
       ExtensionRegistry::Get(browser_context_)->disabled_extensions();
   const ExtensionSet& blocked_extensions =
       ExtensionRegistry::Get(browser_context_)->blocked_extensions();
-  for (const auto& id : unacknowledged_ids_) {
+
+  // The list of ids can be mutated during this loop, so make a copy.
+  const std::set<ExtensionId> ids_copy = unacknowledged_ids_;
+  for (const auto& id : ids_copy) {
     if (base::ContainsKey(errors_, id) || shown_ids_.count(id) > 0)
       continue;
 
@@ -156,6 +160,7 @@ void ExternalInstallManager::UpdateExternalExtensionAlert() {
       // Stop prompting for this extension and record metrics.
       extension_prefs_->AcknowledgeExternalExtension(id);
       LogExternalExtensionEvent(extension, EXTERNAL_EXTENSION_IGNORED);
+      unacknowledged_ids_.erase(id);
       continue;
     }
 
@@ -171,6 +176,7 @@ void ExternalInstallManager::UpdateExternalExtensionAlert() {
 
 void ExternalInstallManager::AcknowledgeExternalExtension(
     const std::string& id) {
+  unacknowledged_ids_.erase(id);
   extension_prefs_->AcknowledgeExternalExtension(id);
   UpdateExternalExtensionAlert();
 }
@@ -192,6 +198,10 @@ ExternalInstallManager::GetErrorsForTesting() {
   for (auto const& error : errors_)
     errors.push_back(error.second.get());
   return errors;
+}
+
+void ExternalInstallManager::ClearShownIdsForTesting() {
+  shown_ids_.clear();
 }
 
 void ExternalInstallManager::OnExtensionLoaded(

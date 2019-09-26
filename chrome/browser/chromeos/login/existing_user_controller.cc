@@ -13,7 +13,6 @@
 #include "base/callback.h"
 #include "base/command_line.h"
 #include "base/logging.h"
-#include "base/memory/ptr_util.h"
 #include "base/message_loop/message_loop.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/optional.h"
@@ -31,6 +30,7 @@
 #include "chrome/browser/chromeos/customization/customization_document.h"
 #include "chrome/browser/chromeos/login/arc_kiosk_controller.h"
 #include "chrome/browser/chromeos/login/auth/chrome_login_performer.h"
+#include "chrome/browser/chromeos/login/easy_unlock/easy_unlock_service.h"
 #include "chrome/browser/chromeos/login/enterprise_user_session_metrics.h"
 #include "chrome/browser/chromeos/login/helper.h"
 #include "chrome/browser/chromeos/login/screens/encryption_migration_screen.h"
@@ -41,6 +41,7 @@
 #include "chrome/browser/chromeos/login/ui/login_display_host.h"
 #include "chrome/browser/chromeos/login/ui/user_adding_screen.h"
 #include "chrome/browser/chromeos/login/user_flow.h"
+#include "chrome/browser/chromeos/login/users/affiliation.h"
 #include "chrome/browser/chromeos/login/users/chrome_user_manager.h"
 #include "chrome/browser/chromeos/login/wizard_controller.h"
 #include "chrome/browser/chromeos/policy/browser_policy_connector_chromeos.h"
@@ -50,7 +51,6 @@
 #include "chrome/browser/chromeos/settings/cros_settings.h"
 #include "chrome/browser/chromeos/system/device_disabling_manager.h"
 #include "chrome/browser/profiles/profile.h"
-#include "chrome/browser/signin/easy_unlock_service.h"
 #include "chrome/browser/ui/aura/accessibility/automation_manager_aura.h"
 #include "chrome/browser/ui/webui/chromeos/login/l10n_util.h"
 #include "chrome/common/channel_info.h"
@@ -97,7 +97,7 @@
 #include "net/http/http_transaction_factory.h"
 #include "net/url_request/url_request_context.h"
 #include "net/url_request/url_request_context_getter.h"
-#include "ui/accessibility/ax_enums.h"
+#include "ui/accessibility/ax_enums.mojom.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/views/widget/widget.h"
 
@@ -190,6 +190,11 @@ bool CanShowDebuggingFeatures() {
          base::CommandLine::ForCurrentProcess()->HasSwitch(
              chromeos::switches::kLoginManager) &&
          !session_manager::SessionManager::Get()->IsSessionStarted();
+}
+
+bool DemoModeEnabled() {
+  return base::CommandLine::ForCurrentProcess()->HasSwitch(
+      chromeos::switches::kEnableDemoMode);
 }
 
 void RecordPasswordChangeFlow(LoginPasswordChangeFlow flow) {
@@ -347,6 +352,9 @@ ExistingUserController::ExistingUserController(LoginDisplayHost* host)
           kAccountsPrefDeviceLocalAccountAutoLoginDelay,
           base::Bind(&ExistingUserController::ConfigureAutoLogin,
                      base::Unretained(this)));
+  minimum_version_policy_handler_ =
+      std::make_unique<policy::MinimumVersionPolicyHandler>(cros_settings_);
+  minimum_version_policy_handler_->AddObserver(this);
 }
 
 void ExistingUserController::Init(const user_manager::UserList& users) {
@@ -467,11 +475,28 @@ void ExistingUserController::Observe(
 void ExistingUserController::OnArcKioskAppsChanged() {
   ConfigureAutoLogin();
 }
+
+////////////////////////////////////////////////////////////////////////////////
+// ExistingUserController, policy::MinimumVersionPolicyHandler::Observer
+// implementation:
+//
+
+void ExistingUserController::OnMinimumVersionStateChanged() {
+  if (is_login_in_progress_) {
+    // Too late, but there is another check in user session.
+    return;
+  }
+  if (!minimum_version_policy_handler_->RequirementsAreSatisfied()) {
+    ShowUpdateRequiredScreen();
+  }
+}
+
 ////////////////////////////////////////////////////////////////////////////////
 // ExistingUserController, private:
 
 ExistingUserController::~ExistingUserController() {
   UserSessionManager::GetInstance()->DelegateDeleted(this);
+  minimum_version_policy_handler_->RemoveObserver(this);
 
   if (current_controller_ == this) {
     current_controller_ = nullptr;
@@ -581,14 +606,24 @@ void ExistingUserController::PerformLogin(
         user_context.GetKey()->GetSecret());
   }
 
+  // If plain text password is available, computes its salt, hash, and length,
+  // and saves them in |user_context|. They will be saved to prefs when user
+  // profile is ready.
+  UserContext new_user_context = user_context;
+  if (user_context.GetKey()->GetKeyType() == Key::KEY_TYPE_PASSWORD_PLAIN) {
+    base::string16 password(
+        base::UTF8ToUTF16(new_user_context.GetKey()->GetSecret()));
+    new_user_context.SetSyncPasswordData(password_manager::SyncPasswordData(
+        password, auth_mode == LoginPerformer::AUTH_MODE_EXTENSION));
+  }
+
   if (user_manager::UserManager::Get()->IsSupervisedAccountId(
           user_context.GetAccountId())) {
-    login_performer_->LoginAsSupervisedUser(user_context);
+    login_performer_->LoginAsSupervisedUser(new_user_context);
   } else {
     // If a regular user log in to a device which supports ARC, we should make
     // sure that the user's cryptohome is encrypted in ext4 dircrypto to run the
     // latest Android runtime.
-    UserContext new_user_context = user_context;
     new_user_context.SetIsForcingDircrypto(
         ShouldForceDircrypto(new_user_context.GetAccountId()));
     login_performer_->PerformLogin(new_user_context, auth_mode);
@@ -658,6 +693,11 @@ void ExistingUserController::OnStartEnableDebuggingScreen() {
     ShowEnableDebuggingScreen();
 }
 
+void ExistingUserController::OnStartDemoModeSetupScreen() {
+  if (DemoModeEnabled())
+    ShowDemoModeSetupScreen();
+}
+
 void ExistingUserController::OnStartKioskEnableScreen() {
   KioskAppManager::Get()->GetConsumerKioskAutoLaunchStatus(base::Bind(
       &ExistingUserController::OnConsumerKioskAutoLaunchCheckCompleted,
@@ -691,6 +731,10 @@ void ExistingUserController::ShowWrongHWIDScreen() {
   host_->StartWizard(OobeScreen::SCREEN_WRONG_HWID);
 }
 
+void ExistingUserController::ShowUpdateRequiredScreen() {
+  host_->StartWizard(OobeScreen::SCREEN_UPDATE_REQUIRED);
+}
+
 void ExistingUserController::Signout() {
   NOTREACHED();
 }
@@ -700,8 +744,8 @@ bool ExistingUserController::IsUserWhitelisted(const AccountId& account_id) {
   if (login_performer_.get())
     return login_performer_->IsUserWhitelisted(account_id, &wildcard_match);
 
-  return chromeos::CrosSettings::IsWhitelisted(account_id.GetUserEmail(),
-                                               &wildcard_match);
+  return cros_settings_->IsUserWhitelisted(account_id.GetUserEmail(),
+                                           &wildcard_match);
 }
 
 void ExistingUserController::OnConsumerKioskAutoLaunchCheckCompleted(
@@ -737,6 +781,10 @@ void ExistingUserController::ShowEnrollmentScreen() {
 
 void ExistingUserController::ShowEnableDebuggingScreen() {
   host_->StartWizard(OobeScreen::SCREEN_OOBE_ENABLE_DEBUGGING);
+}
+
+void ExistingUserController::ShowDemoModeSetupScreen() {
+  host_->StartWizard(OobeScreen::SCREEN_OOBE_DEMO_SETUP);
 }
 
 void ExistingUserController::ShowKioskEnableScreen() {
@@ -1036,17 +1084,20 @@ void ExistingUserController::OnOldEncryptionDetected(
   // Use signin profile request context
   net::URLRequestContextGetter* const signin_profile_context =
       ProfileHelper::GetSigninProfile()->GetRequestContext();
-  auto cloud_policy_client = base::MakeUnique<policy::CloudPolicyClient>(
+  auto cloud_policy_client = std::make_unique<policy::CloudPolicyClient>(
       std::string() /* machine_id */, std::string() /* machine_model */,
       device_management_service, signin_profile_context,
-      nullptr /* signing_service */);
-  pre_signin_policy_fetcher_ = base::MakeUnique<policy::PreSigninPolicyFetcher>(
+      nullptr /* signing_service */,
+      chromeos::GetDeviceDMTokenForUserPolicyGetter(
+          user_context.GetAccountId()));
+  pre_signin_policy_fetcher_ = std::make_unique<policy::PreSigninPolicyFetcher>(
       DBusThreadManager::Get()->GetCryptohomeClient(),
       DBusThreadManager::Get()->GetSessionManagerClient(),
       std::move(cloud_policy_client), IsActiveDirectoryManaged(),
       user_context.GetAccountId(),
-      cryptohome::KeyDefinition(user_context.GetKey()->GetSecret(),
-                                std::string(), cryptohome::PRIV_DEFAULT));
+      cryptohome::KeyDefinition::CreateForPassword(
+          user_context.GetKey()->GetSecret(), std::string(),
+          cryptohome::PRIV_DEFAULT));
   pre_signin_policy_fetcher_->FetchPolicy(
       base::BindOnce(&ExistingUserController::OnPolicyFetchResult,
                      weak_factory_.GetWeakPtr(), user_context));
@@ -1552,10 +1603,7 @@ void ExistingUserController::ContinueLoginIfDeviceNotDisabled(
     return;
   }
 
-  bool device_disabled = false;
-  cros_settings_->GetBoolean(kDeviceDisabled, &device_disabled);
-  if (device_disabled && system::DeviceDisablingManager::
-                             HonorDeviceDisablingDuringNormalOperation()) {
+  if (system::DeviceDisablingManager::IsDeviceDisabledDuringNormalOperation()) {
     // If the device is disabled, bail out. A device disabled screen will be
     // shown by the DeviceDisablingManager.
 

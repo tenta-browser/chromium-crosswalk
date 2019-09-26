@@ -4,7 +4,6 @@
 
 package org.chromium.chrome.browser.tab;
 
-import android.os.SystemClock;
 import android.support.annotation.IntDef;
 import android.view.View;
 
@@ -20,10 +19,9 @@ import org.chromium.chrome.browser.media.MediaCaptureNotificationService;
 import org.chromium.chrome.browser.metrics.UmaUtils;
 import org.chromium.chrome.browser.policy.PolicyAuditor;
 import org.chromium.chrome.browser.policy.PolicyAuditor.AuditEvent;
+import org.chromium.chrome.browser.util.UrlUtilities;
 import org.chromium.content_public.browser.WebContents;
 import org.chromium.content_public.browser.WebContentsObserver;
-
-import java.util.concurrent.TimeUnit;
 
 /**
  * WebContentsObserver used by Tab.
@@ -113,7 +111,8 @@ public class TabWebContentsObserver extends WebContentsObserver {
                 || activityState == ActivityState.STOPPED
                 || activityState == ActivityState.DESTROYED) {
             // The tab crashed in background or was killed by the OS out-of-memory killer.
-            //setNeedsReload(true);
+            // TODO(crbug.com/829381): why not reuse the native needsReload flag found in
+            // NavigationController?
             mTab.setNeedsReload(true);
             if (applicationRunning) {
                 rendererCrashStatus = TAB_RENDERER_CRASH_STATUS_HIDDEN_IN_FOREGROUND_APP;
@@ -206,22 +205,10 @@ public class TabWebContentsObserver extends WebContentsObserver {
             recordErrorInPolicyAuditor(url, errorDescription, errorCode);
         }
 
+        boolean isTrackedPage = hasCommitted && isInMainFrame && !isErrorPage && !isSameDocument
+                && !isFragmentNavigation && UrlUtilities.isHttpOrHttps(url);
+        UmaUtils.registerFinishNavigation(isTrackedPage);
         if (!hasCommitted) return;
-        if (isInMainFrame && UmaUtils.hasComeToForeground()) {
-            // Current median is 550ms, and long tail is very long. ZoomedIn gives good view of the
-            // median and ZoomedOut gives a good overview.
-            RecordHistogram.recordCustomTimesHistogram(
-                    "Startup.FirstCommitNavigationTime3.ZoomedIn",
-                    SystemClock.uptimeMillis() - UmaUtils.getForegroundStartTime(), 200, 1000,
-                    TimeUnit.MILLISECONDS, 100);
-            // For ZoomedOut very rarely is it under 50ms and this range matches
-            // CustomTabs.IntentToFirstCommitNavigationTime2.ZoomedOut.
-            RecordHistogram.recordCustomTimesHistogram(
-                    "Startup.FirstCommitNavigationTime3.ZoomedOut",
-                    SystemClock.uptimeMillis() - UmaUtils.getForegroundStartTime(), 50,
-                    TimeUnit.MINUTES.toMillis(10), TimeUnit.MILLISECONDS, 50);
-            UmaUtils.setRunningApplicationStart(false);
-        }
 
         if (isInMainFrame) {
             mTab.setIsTabStateDirty(true);
@@ -294,6 +281,11 @@ public class TabWebContentsObserver extends WebContentsObserver {
         if (!mTab.maybeShowNativePage(mTab.getUrl(), false)) {
             mTab.showRenderedPage();
         }
+    }
+
+    @Override
+    public void navigationEntriesDeleted() {
+        mTab.notifyNavigationEntriesDeleted();
     }
 
     @Override

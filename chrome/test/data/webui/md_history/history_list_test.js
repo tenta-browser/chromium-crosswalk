@@ -3,11 +3,11 @@
 // found in the LICENSE file.
 
 suite('<history-list>', function() {
-  var app;
-  var element;
-  var toolbar;
-  var TEST_HISTORY_RESULTS;
-  var ADDITIONAL_RESULTS;
+  let app;
+  let element;
+  let toolbar;
+  let TEST_HISTORY_RESULTS;
+  let ADDITIONAL_RESULTS;
 
   suiteSetup(function() {
     TEST_HISTORY_RESULTS = [
@@ -34,7 +34,7 @@ suite('<history-list>', function() {
   });
 
   test('deleting single item', function(done) {
-    var listContainer = app.$.history;
+    const listContainer = app.$.history;
     app.historyResult(createHistoryInfo(), [
       createHistoryEntry('2015-01-01', 'http://example.com')
     ]);
@@ -47,7 +47,7 @@ suite('<history-list>', function() {
       return PolymerTest.flushTasks();
     }).then(function() {
       toolbar.deleteSelectedItems();
-      var dialog = listContainer.$.dialog.get();
+      const dialog = listContainer.$.dialog.get();
       registerMessageCallback('removeVisits', this, function() {
         PolymerTest.flushTasks().then(function() {
           deleteComplete();
@@ -66,7 +66,7 @@ suite('<history-list>', function() {
   test('cancelling selection of multiple items', function() {
     app.historyResult(createHistoryInfo(), TEST_HISTORY_RESULTS);
     return PolymerTest.flushTasks().then(function() {
-      var items = polymerSelectAll(element, 'history-item');
+      const items = polymerSelectAll(element, 'history-item');
 
       MockInteractions.tap(items[2].$.checkbox);
       MockInteractions.tap(items[3].$.checkbox);
@@ -91,7 +91,7 @@ suite('<history-list>', function() {
   test('selection of multiple items using shift click', function() {
     app.historyResult(createHistoryInfo(), TEST_HISTORY_RESULTS);
     return PolymerTest.flushTasks().then(function() {
-      var items = polymerSelectAll(element, 'history-item');
+      const items = polymerSelectAll(element, 'history-item');
 
       MockInteractions.tap(items[1].$.checkbox);
       assertDeepEquals([false, true, false, false],
@@ -142,11 +142,34 @@ suite('<history-list>', function() {
     });
   });
 
+  test('selection of all items using ctrl + a', function() {
+    app.historyResult(createHistoryInfo(), TEST_HISTORY_RESULTS);
+    return PolymerTest.flushTasks().then(function() {
+      const field = toolbar.$['main-toolbar'].getSearchField();
+      field.blur();
+      assertFalse(field.showingSearch);
+
+      const modifier = cr.isMac ? 'meta' : 'ctrl';
+      MockInteractions.pressAndReleaseKeyOn(
+          document.body, 65, modifier, 'a');
+
+      assertDeepEquals([true, true, true, true],
+                       element.historyData_.map(i => i.selected));
+
+      // If everything is already selected, the same shortcut will trigger
+      // cancelling selection.
+      MockInteractions.pressAndReleaseKeyOn(
+          document.body, 65, modifier, 'a');
+      assertDeepEquals([false, false, false, false],
+                       element.historyData_.map(i => i.selected));
+    });
+  });
+
   test('setting first and last items', function() {
     app.historyResult(createHistoryInfo(), TEST_HISTORY_RESULTS);
 
     return PolymerTest.flushTasks().then(function() {
-      var items = polymerSelectAll(element, 'history-item');
+      const items = polymerSelectAll(element, 'history-item');
       assertTrue(items[0].isCardStart);
       assertTrue(items[0].isCardEnd);
       assertFalse(items[1].isCardEnd);
@@ -162,7 +185,7 @@ suite('<history-list>', function() {
     app.historyResult(createHistoryInfo(), ADDITIONAL_RESULTS);
 
     return PolymerTest.flushTasks().then(function() {
-      var items = polymerSelectAll(element, 'history-item');
+      const items = polymerSelectAll(element, 'history-item');
       assertTrue(items[3].isCardStart);
       assertTrue(items[5].isCardEnd);
 
@@ -204,13 +227,13 @@ suite('<history-list>', function() {
     element.searchedTerm = 'Google';
 
     return PolymerTest.flushTasks().then(function() {
-      var item = element.$$('history-item');
+      const item = element.$$('history-item');
       assertTrue(item.isCardStart);
-      var heading = item.$$('#date-accessed').textContent;
-      var title = item.$.title;
+      const heading = item.$$('#date-accessed').textContent;
+      const title = item.$.title;
 
       // Check that the card title displays the search term somewhere.
-      var index = heading.indexOf('Google');
+      const index = heading.indexOf('Google');
       assertTrue(index != -1);
 
       // Check that the search term is bolded correctly in the history-item.
@@ -271,7 +294,7 @@ suite('<history-list>', function() {
   // See http://crbug.com/640862.
   test.skip('scrolling history list causes toolbar shadow to appear',
             () => {
-    for (var i = 0; i < 10; i++)
+    for (let i = 0; i < 10; i++)
       app.historyResult(createHistoryInfo(), TEST_HISTORY_RESULTS);
     return PolymerTest.flushTasks().then(function() {
       assertFalse(app.toolbarShadow_);
@@ -291,7 +314,7 @@ suite('<history-list>', function() {
         createHistoryInfo('ex'),
         [createHistoryEntry('2016-06-9', 'https://www.example.com')]);
     return PolymerTest.flushTasks().then(function() {
-      var item = element.$$('history-item');
+      const item = element.$$('history-item');
       MockInteractions.tap(item.$.checkbox);
 
       assertEquals(1, toolbar.count);
@@ -305,7 +328,7 @@ suite('<history-list>', function() {
   });
 
   test('delete items end to end', function(done) {
-    var listContainer = app.$.history;
+    const listContainer = app.$.history;
     app.historyResult(createHistoryInfo(), TEST_HISTORY_RESULTS);
     app.historyResult(createHistoryInfo(), ADDITIONAL_RESULTS);
     app.historyResult(createHistoryInfo(), [
@@ -327,7 +350,7 @@ suite('<history-list>', function() {
     }).then(function() {
       toolbar.deleteSelectedItems();
 
-      var dialog = listContainer.$.dialog.get();
+      const dialog = listContainer.$.dialog.get();
       registerMessageCallback('removeVisits', this, function() {
         PolymerTest.flushTasks().then(function() {
           deleteComplete();
@@ -359,7 +382,7 @@ suite('<history-list>', function() {
   });
 
   test('delete via menu button', function(done) {
-    var listContainer = app.$.history;
+    const listContainer = app.$.history;
     app.historyResult(createHistoryInfo(), TEST_HISTORY_RESULTS);
 
     PolymerTest.flushTasks().then(function() {
@@ -393,9 +416,9 @@ suite('<history-list>', function() {
   });
 
   test('deleting items using shortcuts', function(done) {
-    var listContainer = app.$.history;
+    const listContainer = app.$.history;
     app.historyResult(createHistoryInfo(), TEST_HISTORY_RESULTS);
-    var dialog = listContainer.$.dialog.get();
+    const dialog = listContainer.$.dialog.get();
     return PolymerTest.flushTasks().then(function() {
       items = polymerSelectAll(element, 'history-item');
 
@@ -443,7 +466,7 @@ suite('<history-list>', function() {
     app.historyResult(createHistoryInfo(), TEST_HISTORY_RESULTS);
     app.historyResult(createHistoryInfo(), ADDITIONAL_RESULTS);
 
-    var listContainer = app.$.history;
+    const listContainer = app.$.history;
     PolymerTest.flushTasks().then(function() {
       items = Polymer.dom(element.root).querySelectorAll('history-item');
 
@@ -468,12 +491,12 @@ suite('<history-list>', function() {
   });
 
   test('clicking file:// url sends message to chrome', function(done) {
-    var fileURL = 'file:///home/myfile';
+    const fileURL = 'file:///home/myfile';
     app.historyResult(createHistoryInfo(), [
       createHistoryEntry('2016-03-15', fileURL),
     ]);
     PolymerTest.flushTasks().then(function() {
-      var items = Polymer.dom(element.root).querySelectorAll('history-item');
+      const items = Polymer.dom(element.root).querySelectorAll('history-item');
 
       registerMessageCallback('navigateToUrl', this, function(info) {
         assertEquals(fileURL, info[0]);

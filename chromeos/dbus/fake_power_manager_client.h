@@ -16,6 +16,7 @@
 #include "base/observer_list.h"
 #include "base/optional.h"
 #include "chromeos/chromeos_export.h"
+#include "chromeos/dbus/power_manager/backlight.pb.h"
 #include "chromeos/dbus/power_manager/policy.pb.h"
 #include "chromeos/dbus/power_manager/power_supply_properties.pb.h"
 #include "chromeos/dbus/power_manager/suspend.pb.h"
@@ -53,8 +54,9 @@ class CHROMEOS_EXPORT FakePowerManagerClient : public PowerManagerClient {
   void set_enqueue_brightness_changes_on_backlights_forced_off(bool enqueue) {
     enqueue_brightness_changes_on_backlights_forced_off_ = enqueue;
   }
-  const std::queue<double>& pending_brightness_changes() const {
-    return pending_brightness_changes_;
+  const std::queue<power_manager::BacklightBrightnessChange>&
+  pending_screen_brightness_changes() const {
+    return pending_screen_brightness_changes_;
   }
   void set_user_activity_callback(base::RepeatingClosure callback) {
     user_activity_callback_ = std::move(callback);
@@ -87,7 +89,11 @@ class CHROMEOS_EXPORT FakePowerManagerClient : public PowerManagerClient {
   void SetBacklightsForcedOff(bool forced_off) override;
   void GetBacklightsForcedOff(DBusMethodCallback<bool> callback) override;
   void GetSwitchStates(DBusMethodCallback<SwitchStates> callback) override;
-  base::Closure GetSuspendReadinessCallback() override;
+  void GetInactivityDelays(
+      DBusMethodCallback<power_manager::PowerManagementPolicy::Delays> callback)
+      override;
+  base::Closure GetSuspendReadinessCallback(
+      const base::Location& from_where) override;
   int GetNumPendingSuspendReadinessCallbacks() override;
 
   // Pops the first report from |video_activity_reports_|, returning whether the
@@ -97,16 +103,15 @@ class CHROMEOS_EXPORT FakePowerManagerClient : public PowerManagerClient {
   // Emulates the power manager announcing that the system is starting or
   // completing a suspend attempt.
   void SendSuspendImminent(power_manager::SuspendImminent::Reason reason);
-  void SendSuspendDone();
+  void SendSuspendDone(base::TimeDelta sleep_duration = base::TimeDelta());
   void SendDarkSuspendImminent();
 
-  // Emulates the power manager announcing that the system is changing
-  // display brightness to |level|.
-  void SendBrightnessChanged(int level, bool user_initiated);
-
-  // Emulates the power manager announcing that the system is changing
-  // keyboard brightness to |level|.
-  void SendKeyboardBrightnessChanged(int level, bool user_initiated);
+  // Emulates the power manager announcing that the system is changing the
+  // screen or keyboard brightness.
+  void SendScreenBrightnessChanged(
+      const power_manager::BacklightBrightnessChange& proto);
+  void SendKeyboardBrightnessChanged(
+      const power_manager::BacklightBrightnessChange& proto);
 
   // Notifies observers about the screen idle state changing.
   void SendScreenIdleStateChanged(const power_manager::ScreenIdleState& proto);
@@ -119,6 +124,10 @@ class CHROMEOS_EXPORT FakePowerManagerClient : public PowerManagerClient {
   void SetLidState(LidState state, const base::TimeTicks& timestamp);
   void SetTabletMode(TabletMode mode, const base::TimeTicks& timestamp);
 
+  // Sets |inactivity_delays_| and notifies |observers_| about the change.
+  void SetInactivityDelays(
+      const power_manager::PowerManagementPolicy::Delays& delays);
+
   // Updates |props_| and notifies observers of its changes.
   void UpdatePowerProperties(
       const power_manager::PowerSupplyProperties& power_props);
@@ -129,10 +138,10 @@ class CHROMEOS_EXPORT FakePowerManagerClient : public PowerManagerClient {
   void SetPowerPolicyQuitClosure(base::OnceClosure quit_closure);
 
   // Updates screen brightness to the first pending value in
-  // |pending_brightness_changes_|.
+  // |pending_screen_brightness_changes_|.
   // Returns whether the screen brightness change was applied - this will
   // return false if there are no pending brightness changes.
-  bool ApplyPendingBrightnessChange();
+  bool ApplyPendingScreenBrightnessChange();
 
   // Sets the screen brightness percent to be returned.
   // The nullopt |percent| means an error. In case of success,
@@ -190,13 +199,17 @@ class CHROMEOS_EXPORT FakePowerManagerClient : public PowerManagerClient {
   // brightness and send a brightness change event (provided undimmed
   // brightness percent is set).
   // If set, brightness changes will be enqueued to
-  // pending_brightness_changes_, and will have to be applied explicitly by
-  // calling ApplyPendingBrightnessChange().
+  // |pending_screen_brightness_changes_|, and will have to be applied
+  // explicitly by calling ApplyPendingScreenBrightnessChange().
   bool enqueue_brightness_changes_on_backlights_forced_off_ = false;
 
-  // Pending brightness changes caused by SetBacklightsForcedOff().
-  // ApplyPendingBrightnessChange() applies the first pending change.
-  std::queue<double> pending_brightness_changes_;
+  // Pending screen brightness changes caused by SetBacklightsForcedOff().
+  // ApplyPendingScreenBrightnessChange() applies the first pending change.
+  std::queue<power_manager::BacklightBrightnessChange>
+      pending_screen_brightness_changes_;
+
+  // Delays returned by GetInactivityDelays().
+  power_manager::PowerManagementPolicy::Delays inactivity_delays_;
 
   // States returned by GetSwitchStates().
   LidState lid_state_ = LidState::OPEN;

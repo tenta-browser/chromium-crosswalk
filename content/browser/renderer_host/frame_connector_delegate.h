@@ -18,18 +18,19 @@
 
 namespace blink {
 class WebGestureEvent;
+struct WebIntrinsicSizingInfo;
 }
 
 namespace viz {
 class SurfaceId;
 class SurfaceInfo;
-struct SurfaceSequence;
 }  // namespace viz
 
 namespace content {
 class RenderWidgetHostViewBase;
 class RenderWidgetHostViewChildFrame;
 class WebCursor;
+struct FrameResizeParams;
 
 //
 // FrameConnectorDelegate
@@ -50,7 +51,7 @@ class WebCursor;
 // into, and whether the view currently has keyboard focus.
 class CONTENT_EXPORT FrameConnectorDelegate {
  public:
-  virtual void SetView(RenderWidgetHostViewChildFrame* view) {}
+  virtual void SetView(RenderWidgetHostViewChildFrame* view);
 
   // Returns the parent RenderWidgetHostView or nullptr if it doesn't have one.
   virtual RenderWidgetHostViewBase* GetParentRenderWidgetHostView();
@@ -64,16 +65,39 @@ class CONTENT_EXPORT FrameConnectorDelegate {
   // Provide the SurfaceInfo to the embedder, which becomes a reference to the
   // current view's Surface that is included in higher-level compositor
   // frames.
-  virtual void SetChildFrameSurface(const viz::SurfaceInfo& surface_info,
-                                    const viz::SurfaceSequence& sequence) {}
+  virtual void SetChildFrameSurface(const viz::SurfaceInfo& surface_info) {}
+
+  // Sends the given intrinsic sizing information from a sub-frame to
+  // its corresponding remote frame in the parent frame's renderer.
+  virtual void SendIntrinsicSizingInfoToParent(
+      const blink::WebIntrinsicSizingInfo&) {}
+
+  // Sends new resize parameters to the sub-frame's renderer.
+  void UpdateResizeParams(const viz::SurfaceId& surface_id,
+                          const FrameResizeParams& resize_params);
+
+  // Return the size of the CompositorFrame to use in the child renderer.
+  const gfx::Size& local_frame_size_in_pixels() {
+    return local_frame_size_in_pixels_;
+  }
+
+  // Return the size of the CompositorFrame to use in the child renderer in DIP.
+  // This is used to set the layout size of the child renderer.
+  const gfx::Size& local_frame_size_in_dip() {
+    return local_frame_size_in_dip_;
+  }
 
   // Return the rect in DIP that the RenderWidgetHostViewChildFrame's content
   // will render into.
-  const gfx::Rect& frame_rect_in_dip() { return frame_rect_in_dip_; }
+  const gfx::Rect& screen_space_rect_in_dip() {
+    return screen_space_rect_in_dip_;
+  }
 
   // Return the rect in pixels that the RenderWidgetHostViewChildFrame's content
   // will render into.
-  const gfx::Rect& frame_rect_in_pixels() { return frame_rect_in_pixels_; }
+  const gfx::Rect& screen_space_rect_in_pixels() {
+    return screen_space_rect_in_pixels_;
+  }
 
   // Request that the platform change the mouse cursor when the mouse is
   // positioned over this view's content.
@@ -134,8 +158,14 @@ class CONTENT_EXPORT FrameConnectorDelegate {
 
   // Returns a rect that represents the intersection of the current view's
   // content bounds with the top-level browser viewport.
-  const gfx::Rect& ViewportIntersection() const {
+  const gfx::Rect& viewport_intersection_rect() const {
     return viewport_intersection_rect_;
+  }
+
+  // Returns a rect in physical pixels that indicates the area of the current
+  // view's content bounds that should be rastered by the compositor.
+  const gfx::Rect& compositor_visible_rect() const {
+    return compositor_visible_rect_;
   }
 
   // Returns the viz::LocalSurfaceId propagated from the parent to be used by
@@ -151,6 +181,14 @@ class CONTENT_EXPORT FrameConnectorDelegate {
   void SetScreenInfoForTesting(const ScreenInfo& screen_info) {
     screen_info_ = screen_info;
   }
+
+  // Informs the parent the child will enter auto-resize mode, automatically
+  // resizing itself to the provided |min_size| and |max_size| constraints.
+  virtual void EnableAutoResize(const gfx::Size& min_size,
+                                const gfx::Size& max_size);
+
+  // Turns off auto-resize mode.
+  virtual void DisableAutoResize();
 
   // Determines whether the current view's content is inert, either because
   // an HTMLDialogElement is being modally displayed in a higher-level frame,
@@ -172,9 +210,14 @@ class CONTENT_EXPORT FrameConnectorDelegate {
   // nested child RWHVCFs inside it.
   virtual void SetVisibilityForChildViews(bool visible) const {}
 
-  // Called to resize the child renderer. |frame_rect| is in pixels if
+  // Called to resize the child renderer's CompositorFrame.
+  // |local_frame_size| is in pixels if zoom-for-dsf is enabled, and in DIP
+  // if not.
+  virtual void SetLocalFrameSize(const gfx::Size& local_frame_size);
+
+  // Called to resize the child renderer. |screen_space_rect| is in pixels if
   // zoom-for-dsf is enabled, and in DIP if not.
-  virtual void SetRect(const gfx::Rect& frame_rect);
+  virtual void SetScreenSpaceRect(const gfx::Rect& screen_space_rect);
 
 #if defined(USE_AURA)
   // Embeds a WindowTreeClient in the parent. This results in the parent
@@ -188,21 +231,35 @@ class CONTENT_EXPORT FrameConnectorDelegate {
   virtual void ResizeDueToAutoResize(const gfx::Size& new_size,
                                      uint64_t sequence_number) {}
 
+  bool has_size() const { return has_size_; }
+
  protected:
   explicit FrameConnectorDelegate(bool use_zoom_for_device_scale_factor);
 
   virtual ~FrameConnectorDelegate() {}
 
+  // The RenderWidgetHostView for the frame. Initially NULL.
+  RenderWidgetHostViewChildFrame* view_ = nullptr;
+
   // This is here rather than in the implementation class so that
   // ViewportIntersection() can return a reference.
   gfx::Rect viewport_intersection_rect_;
 
+  gfx::Rect compositor_visible_rect_;
+
   ScreenInfo screen_info_;
-  gfx::Rect frame_rect_in_dip_;
-  gfx::Rect frame_rect_in_pixels_;
+  gfx::Size local_frame_size_in_dip_;
+  gfx::Size local_frame_size_in_pixels_;
+  gfx::Rect screen_space_rect_in_dip_;
+  gfx::Rect screen_space_rect_in_pixels_;
+
   viz::LocalSurfaceId local_surface_id_;
 
+  bool has_size_ = false;
   const bool use_zoom_for_device_scale_factor_;
+
+  FRIEND_TEST_ALL_PREFIXES(RenderWidgetHostViewChildFrameZoomForDSFTest,
+                           CompositorViewportPixelSize);
 };
 
 }  // namespace content

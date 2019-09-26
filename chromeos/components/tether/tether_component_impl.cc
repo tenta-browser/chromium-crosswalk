@@ -4,7 +4,11 @@
 
 #include "chromeos/components/tether/tether_component_impl.h"
 
+#include <memory>
+
 #include "base/bind.h"
+#include "base/memory/ptr_util.h"
+#include "chromeos/components/proximity_auth/logging/logging.h"
 #include "chromeos/components/tether/active_host.h"
 #include "chromeos/components/tether/asynchronous_shutdown_object_container_impl.h"
 #include "chromeos/components/tether/crash_recovery_manager_impl.h"
@@ -13,9 +17,9 @@
 #include "chromeos/components/tether/synchronous_shutdown_object_container_impl.h"
 #include "chromeos/components/tether/tether_disconnector.h"
 #include "chromeos/components/tether/tether_host_response_recorder.h"
+#include "chromeos/components/tether/tether_session_completion_logger.h"
 #include "chromeos/components/tether/wifi_hotspot_disconnector_impl.h"
 #include "components/pref_registry/pref_registry_syncable.h"
-#include "components/proximity_auth/logging/logging.h"
 
 namespace chromeos {
 
@@ -28,6 +32,34 @@ void OnDisconnectErrorDuringShutdown(const std::string& error_name) {
                   << "Error name: " << error_name;
 }
 
+TetherSessionCompletionLogger::SessionCompletionReason
+GetSessionCompletionReasonFromShutdownReason(
+    TetherComponent::ShutdownReason shutdown_reason) {
+  switch (shutdown_reason) {
+    case TetherComponent::ShutdownReason::OTHER:
+      return TetherSessionCompletionLogger::SessionCompletionReason::OTHER;
+    case TetherComponent::ShutdownReason::USER_LOGGED_OUT:
+      return TetherSessionCompletionLogger::SessionCompletionReason::
+          USER_LOGGED_OUT;
+    case TetherComponent::ShutdownReason::USER_CLOSED_LID:
+      return TetherSessionCompletionLogger::SessionCompletionReason::
+          USER_CLOSED_LID;
+    case TetherComponent::ShutdownReason::PREF_DISABLED:
+      return TetherSessionCompletionLogger::SessionCompletionReason::
+          PREF_DISABLED;
+    case TetherComponent::ShutdownReason::BLUETOOTH_DISABLED:
+      return TetherSessionCompletionLogger::SessionCompletionReason::
+          BLUETOOTH_DISABLED;
+    case TetherComponent::ShutdownReason::CELLULAR_DISABLED:
+      return TetherSessionCompletionLogger::SessionCompletionReason::
+          CELLULAR_DISABLED;
+    default:
+      break;
+  }
+
+  return TetherSessionCompletionLogger::SessionCompletionReason::OTHER;
+}
+
 }  // namespace
 
 // static
@@ -37,20 +69,24 @@ TetherComponentImpl::Factory* TetherComponentImpl::Factory::factory_instance_ =
 // static
 std::unique_ptr<TetherComponent> TetherComponentImpl::Factory::NewInstance(
     cryptauth::CryptAuthService* cryptauth_service,
+    TetherHostFetcher* tether_host_fetcher,
     NotificationPresenter* notification_presenter,
+    GmsCoreNotificationsStateTrackerImpl* gms_core_notifications_state_tracker,
     PrefService* pref_service,
     NetworkStateHandler* network_state_handler,
     ManagedNetworkConfigurationHandler* managed_network_configuration_handler,
     NetworkConnect* network_connect,
     NetworkConnectionHandler* network_connection_handler,
-    scoped_refptr<device::BluetoothAdapter> adapter) {
+    scoped_refptr<device::BluetoothAdapter> adapter,
+    session_manager::SessionManager* session_manager) {
   if (!factory_instance_)
     factory_instance_ = new Factory();
 
   return factory_instance_->BuildInstance(
-      cryptauth_service, notification_presenter, pref_service,
-      network_state_handler, managed_network_configuration_handler,
-      network_connect, network_connection_handler, adapter);
+      cryptauth_service, tether_host_fetcher, notification_presenter,
+      gms_core_notifications_state_tracker, pref_service, network_state_handler,
+      managed_network_configuration_handler, network_connect,
+      network_connection_handler, adapter, session_manager);
 }
 
 // static
@@ -69,32 +105,40 @@ void TetherComponentImpl::RegisterProfilePrefs(
 
 std::unique_ptr<TetherComponent> TetherComponentImpl::Factory::BuildInstance(
     cryptauth::CryptAuthService* cryptauth_service,
+    TetherHostFetcher* tether_host_fetcher,
     NotificationPresenter* notification_presenter,
+    GmsCoreNotificationsStateTrackerImpl* gms_core_notifications_state_tracker,
     PrefService* pref_service,
     NetworkStateHandler* network_state_handler,
     ManagedNetworkConfigurationHandler* managed_network_configuration_handler,
     NetworkConnect* network_connect,
     NetworkConnectionHandler* network_connection_handler,
-    scoped_refptr<device::BluetoothAdapter> adapter) {
-  return base::MakeUnique<TetherComponentImpl>(
-      cryptauth_service, notification_presenter, pref_service,
-      network_state_handler, managed_network_configuration_handler,
-      network_connect, network_connection_handler, adapter);
+    scoped_refptr<device::BluetoothAdapter> adapter,
+    session_manager::SessionManager* session_manager) {
+  return base::WrapUnique(new TetherComponentImpl(
+      cryptauth_service, tether_host_fetcher, notification_presenter,
+      gms_core_notifications_state_tracker, pref_service, network_state_handler,
+      managed_network_configuration_handler, network_connect,
+      network_connection_handler, adapter, session_manager));
 }
 
 TetherComponentImpl::TetherComponentImpl(
     cryptauth::CryptAuthService* cryptauth_service,
+    TetherHostFetcher* tether_host_fetcher,
     NotificationPresenter* notification_presenter,
+    GmsCoreNotificationsStateTrackerImpl* gms_core_notifications_state_tracker,
     PrefService* pref_service,
     NetworkStateHandler* network_state_handler,
     ManagedNetworkConfigurationHandler* managed_network_configuration_handler,
     NetworkConnect* network_connect,
     NetworkConnectionHandler* network_connection_handler,
-    scoped_refptr<device::BluetoothAdapter> adapter)
+    scoped_refptr<device::BluetoothAdapter> adapter,
+    session_manager::SessionManager* session_manager)
     : asynchronous_shutdown_object_container_(
           AsynchronousShutdownObjectContainerImpl::Factory::NewInstance(
               adapter,
               cryptauth_service,
+              tether_host_fetcher,
               network_state_handler,
               managed_network_configuration_handler,
               network_connection_handler,
@@ -103,10 +147,12 @@ TetherComponentImpl::TetherComponentImpl(
           SynchronousShutdownObjectContainerImpl::Factory::NewInstance(
               asynchronous_shutdown_object_container_.get(),
               notification_presenter,
+              gms_core_notifications_state_tracker,
               pref_service,
               network_state_handler,
               network_connect,
-              network_connection_handler)),
+              network_connection_handler,
+              session_manager)),
       crash_recovery_manager_(CrashRecoveryManagerImpl::Factory::NewInstance(
           network_state_handler,
           synchronous_shutdown_object_container_->active_host(),
@@ -119,12 +165,15 @@ TetherComponentImpl::TetherComponentImpl(
 
 TetherComponentImpl::~TetherComponentImpl() = default;
 
-void TetherComponentImpl::RequestShutdown() {
+void TetherComponentImpl::RequestShutdown(
+    const ShutdownReason& shutdown_reason) {
   has_shutdown_been_requested_ = true;
 
   // If shutdown has already happened, there is nothing else to do.
   if (status() != TetherComponent::Status::ACTIVE)
     return;
+
+  shutdown_reason_ = shutdown_reason;
 
   // If crash recovery has not yet completed, wait for it to complete before
   // continuing.
@@ -167,8 +216,9 @@ void TetherComponentImpl::InitiateShutdown() {
                         active_host->GetActiveHostDeviceId())
                  << "\".";
     tether_disconnector->DisconnectFromNetwork(
-        active_host->GetTetherNetworkGuid(), base::Bind(&base::DoNothing),
-        base::Bind(&OnDisconnectErrorDuringShutdown));
+        active_host->GetTetherNetworkGuid(), base::DoNothing(),
+        base::Bind(&OnDisconnectErrorDuringShutdown),
+        GetSessionCompletionReasonFromShutdownReason(shutdown_reason_));
   }
 
   TransitionToStatus(TetherComponent::Status::SHUTTING_DOWN);

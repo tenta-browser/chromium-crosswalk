@@ -10,7 +10,16 @@
 #include "base/compiler_specific.h"
 #include "chrome/browser/extensions/chrome_extension_function.h"
 #include "extensions/browser/browser_context_keyed_api_factory.h"
-#include "ui/message_center/notification_types.h"
+#include "ui/message_center/public/cpp/notification_types.h"
+
+#if defined(OS_CHROMEOS)
+#include "ash/public/interfaces/ash_message_center_controller.mojom.h"
+#include "chrome/browser/chromeos/printing/cups_printers_manager.h"
+#endif
+
+namespace message_center {
+class Notification;
+}
 
 namespace extensions {
 
@@ -50,6 +59,10 @@ class AutotestPrivateLoginStatusFunction : public UIThreadExtensionFunction {
  private:
   ~AutotestPrivateLoginStatusFunction() override {}
   ResponseAction Run() override;
+
+#if defined(OS_CHROMEOS)
+  void OnIsReadyForPassword(bool is_ready);
+#endif
 };
 
 class AutotestPrivateLockScreenFunction : public UIThreadExtensionFunction {
@@ -176,11 +189,18 @@ class AutotestPrivateGetVisibleNotificationsFunction
   DECLARE_EXTENSION_FUNCTION("autotestPrivate.getVisibleNotifications",
                              AUTOTESTPRIVATE_GETVISIBLENOTIFICATIONS)
 
- private:
-  static std::string ConvertToString(message_center::NotificationType type);
+  AutotestPrivateGetVisibleNotificationsFunction();
 
-  ~AutotestPrivateGetVisibleNotificationsFunction() override {}
+ private:
+  ~AutotestPrivateGetVisibleNotificationsFunction() override;
   ResponseAction Run() override;
+
+#if defined(OS_CHROMEOS)
+  void OnGotNotifications(
+      const std::vector<message_center::Notification>& notifications);
+
+  ash::mojom::AshMessageCenterControllerPtr controller_;
+#endif
 };
 
 class AutotestPrivateGetPlayStoreStateFunction
@@ -203,6 +223,23 @@ class AutotestPrivateSetPlayStoreEnabledFunction
  private:
   ~AutotestPrivateSetPlayStoreEnabledFunction() override {}
   ResponseAction Run() override;
+};
+
+class AutotestPrivateGetPrinterListFunction : public UIThreadExtensionFunction {
+ public:
+  AutotestPrivateGetPrinterListFunction() = default;
+  DECLARE_EXTENSION_FUNCTION("autotestPrivate.getPrinterList",
+                             AUTOTESTPRIVATE_GETPRINTERLIST)
+
+ private:
+#if defined(OS_CHROMEOS)
+  static std::string GetPrinterType(
+      chromeos::CupsPrintersManager::PrinterClass type);
+#endif
+  ~AutotestPrivateGetPrinterListFunction() override = default;
+  ResponseAction Run() override;
+
+  DISALLOW_COPY_AND_ASSIGN(AutotestPrivateGetPrinterListFunction);
 };
 
 // Don't kill the browser when we're in a browser test.

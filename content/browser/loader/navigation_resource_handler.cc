@@ -9,6 +9,7 @@
 #include "base/bind.h"
 #include "base/logging.h"
 #include "base/optional.h"
+#include "content/browser/loader/navigation_metrics.h"
 #include "content/browser/loader/navigation_url_loader_impl_core.h"
 #include "content/browser/loader/resource_controller.h"
 #include "content/browser/loader/resource_loader.h"
@@ -19,25 +20,13 @@
 #include "content/public/browser/navigation_data.h"
 #include "content/public/browser/resource_dispatcher_host_delegate.h"
 #include "content/public/browser/stream_handle.h"
-#include "content/public/common/resource_response.h"
 #include "net/base/net_errors.h"
 #include "net/http/transport_security_state.h"
 #include "net/ssl/ssl_info.h"
 #include "net/url_request/url_request.h"
 #include "net/url_request/url_request_context.h"
+#include "services/network/public/cpp/resource_response.h"
 #include "url/gurl.h"
-
-namespace {
-
-// TODO(crbug.com/757633): Attach this information to net::SSLInfo instead of
-// calculating it here.
-bool ShouldSSLErrorsBeFatal(net::URLRequest* request) {
-  net::TransportSecurityState* state =
-      request->context()->transport_security_state();
-  return state->ShouldSSLErrorsBeFatal(request->url().host());
-}
-
-}  // namespace
 
 namespace content {
 
@@ -56,7 +45,7 @@ NavigationResourceHandler::NavigationResourceHandler(
 
 NavigationResourceHandler::~NavigationResourceHandler() {
   if (core_) {
-    core_->NotifyRequestFailed(false, net::ERR_ABORTED, base::nullopt, false);
+    core_->NotifyRequestFailed(false, net::ERR_ABORTED, base::nullopt);
     DetachFromCore();
   }
 }
@@ -85,6 +74,9 @@ void NavigationResourceHandler::FollowRedirect() {
 void NavigationResourceHandler::ProceedWithResponse() {
   DCHECK(response_);
   DCHECK(has_controller());
+
+  time_proceed_with_response_ = base::TimeTicks::Now();
+
   // Detach from the loader; at this point, the request is now owned by the
   // StreamHandle sent in OnResponseStarted.
   DetachFromCore();
@@ -94,7 +86,7 @@ void NavigationResourceHandler::ProceedWithResponse() {
 
 void NavigationResourceHandler::OnRequestRedirected(
     const net::RedirectInfo& redirect_info,
-    ResourceResponse* response,
+    network::ResourceResponse* response,
     std::unique_ptr<ResourceController> controller) {
   DCHECK(!has_controller());
 
@@ -113,9 +105,11 @@ void NavigationResourceHandler::OnRequestRedirected(
 }
 
 void NavigationResourceHandler::OnResponseStarted(
-    ResourceResponse* response,
+    network::ResourceResponse* response,
     std::unique_ptr<ResourceController> controller) {
   DCHECK(!has_controller());
+
+  time_response_started_ = base::TimeTicks::Now();
 
   // The UI thread already cancelled the navigation. Do not proceed.
   if (!core_) {
@@ -126,6 +120,8 @@ void NavigationResourceHandler::OnResponseStarted(
   ResourceRequestInfoImpl* info = GetRequestInfo();
 
   response->head.encoded_data_length = request()->raw_header_size();
+  if (request()->ssl_info().cert)
+    response->head.ssl_info = request()->ssl_info();
 
   std::unique_ptr<NavigationData> cloned_data;
   if (resource_dispatcher_host_delegate_) {
@@ -138,12 +134,24 @@ void NavigationResourceHandler::OnResponseStarted(
       cloned_data = navigation_data->Clone();
   }
 
-  core_->NotifyResponseStarted(response, std::move(stream_handle_),
-                               request()->ssl_info(), std::move(cloned_data),
-                               info->GetGlobalRequestID(), info->IsDownload(),
-                               info->is_stream());
+  core_->NotifyResponseStarted(
+      response, std::move(stream_handle_), std::move(cloned_data),
+      info->GetGlobalRequestID(), info->IsDownload(), info->is_stream());
   HoldController(std::move(controller));
   response_ = response;
+}
+
+void NavigationResourceHandler::OnReadCompleted(
+    int bytes_read,
+    std::unique_ptr<ResourceController> controller) {
+  if (!has_completed_one_read_) {
+    has_completed_one_read_ = true;
+    base::TimeTicks time_first_read_completed = base::TimeTicks::Now();
+    RecordNavigationResourceHandlerMetrics(time_response_started_,
+                                           time_proceed_with_response_,
+                                           time_first_read_completed);
+  }
+  next_handler_->OnReadCompleted(bytes_read, std::move(controller));
 }
 
 void NavigationResourceHandler::OnResponseCompleted(
@@ -159,7 +167,7 @@ void NavigationResourceHandler::OnResponseCompleted(
     }
 
     core_->NotifyRequestFailed(request()->response_info().was_cached, net_error,
-                               ssl_info, ShouldSSLErrorsBeFatal(request()));
+                               ssl_info);
     DetachFromCore();
   }
   next_handler_->OnResponseCompleted(status, std::move(controller));

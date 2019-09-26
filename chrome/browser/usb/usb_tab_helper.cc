@@ -14,12 +14,12 @@
 #include "content/public/common/content_features.h"
 #include "device/usb/mojo/device_manager_impl.h"
 #include "mojo/public/cpp/bindings/message.h"
-#include "third_party/WebKit/common/feature_policy/feature_policy_feature.h"
+#include "third_party/blink/public/mojom/feature_policy/feature_policy.mojom.h"
 
 #if defined(OS_ANDROID)
 #include "chrome/browser/android/usb/web_usb_chooser_service_android.h"
 #else
-#include "chrome/browser/usb/web_usb_chooser_service.h"
+#include "chrome/browser/usb/web_usb_chooser_service_desktop.h"
 #endif  // defined(OS_ANDROID)
 
 using content::RenderFrameHost;
@@ -41,7 +41,7 @@ struct FrameUsbServices {
 #if defined(OS_ANDROID)
   std::unique_ptr<WebUsbChooserServiceAndroid> chooser_service;
 #else
-  std::unique_ptr<WebUsbChooserService> chooser_service;
+  std::unique_ptr<WebUsbChooserServiceDesktop> chooser_service;
 #endif  // defined(OS_ANDROID)
   int device_connection_count_ = 0;
 };
@@ -146,7 +146,7 @@ void UsbTabHelper::GetChooserService(
 #if defined(OS_ANDROID)
         new WebUsbChooserServiceAndroid(render_frame_host));
 #else
-        new WebUsbChooserService(render_frame_host));
+        new WebUsbChooserServiceDesktop(render_frame_host));
 #endif  // defined(OS_ANDROID)
   }
   frame_usb_services->chooser_service->Bind(std::move(request));
@@ -168,9 +168,6 @@ void UsbTabHelper::NotifyTabStateChanged() const {
 bool UsbTabHelper::AllowedByFeaturePolicy(
     RenderFrameHost* render_frame_host) const {
   DCHECK(WebContents::FromRenderFrameHost(render_frame_host) == web_contents());
-  if (base::FeatureList::IsEnabled(features::kFeaturePolicy)) {
-    return render_frame_host->IsFeatureEnabled(
-        blink::FeaturePolicyFeature::kUsb);
-  }
-  return web_contents()->GetMainFrame() == render_frame_host;
+  return render_frame_host->IsFeatureEnabled(
+      blink::mojom::FeaturePolicyFeature::kUsb);
 }

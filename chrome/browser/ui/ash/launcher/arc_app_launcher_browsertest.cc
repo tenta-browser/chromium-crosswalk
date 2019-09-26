@@ -2,6 +2,10 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <memory>
+#include <string>
+#include <tuple>
+
 #include "ash/public/cpp/shelf_item_delegate.h"
 #include "ash/public/cpp/shelf_model.h"
 #include "ash/shelf/shelf.h"
@@ -12,7 +16,6 @@
 #include "base/run_loop.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
-#include "chrome/browser/chromeos/arc/arc_auth_notification.h"
 #include "chrome/browser/chromeos/arc/arc_service_launcher.h"
 #include "chrome/browser/chromeos/arc/arc_session_manager.h"
 #include "chrome/browser/chromeos/arc/arc_util.h"
@@ -27,9 +30,11 @@
 #include "chrome/browser/ui/ash/launcher/arc_app_window_launcher_controller.h"
 #include "chrome/browser/ui/ash/launcher/chrome_launcher_controller.h"
 #include "chrome/browser/ui/ash/launcher/chrome_launcher_controller_test_util.h"
+#include "components/arc/arc_bridge_service.h"
+#include "components/arc/arc_service_manager.h"
 #include "components/arc/arc_util.h"
+#include "components/arc/test/fake_app_instance.h"
 #include "content/public/test/browser_test_utils.h"
-#include "ui/app_list/app_list_features.h"
 #include "ui/display/types/display_constants.h"
 #include "ui/events/event_constants.h"
 #include "ui/events/test/event_generator.h"
@@ -69,8 +74,6 @@ constexpr char kTestAppName2[] = "Test ARC App 2";
 constexpr char kTestShortcutName[] = "Test Shortcut";
 constexpr char kTestShortcutName2[] = "Test Shortcut 2";
 constexpr char kTestAppPackage[] = "test.arc.app.package";
-constexpr char kTestAppPackage2[] = "test.arc.app.package2";
-constexpr char kTestAppPackage3[] = "test.arc.app.package3";
 constexpr char kTestAppActivity[] = "test.arc.app.package.activity";
 constexpr char kTestAppActivity2[] = "test.arc.gitapp.package.activity2";
 constexpr char kTestShelfGroup[] = "shelf_group";
@@ -135,7 +138,7 @@ enum TestAction {
 };
 
 // Test parameters include TestAction and pin/unpin state.
-typedef std::tr1::tuple<TestAction, bool> TestParameter;
+typedef std::tuple<TestAction, bool> TestParameter;
 
 TestParameter build_test_parameter[] = {
     TestParameter(TEST_ACTION_START, false),
@@ -166,7 +169,6 @@ class ArcAppLauncherBrowserTest : public ExtensionBrowserTest {
   void SetUpInProcessBrowserTestFixture() override {
     ExtensionBrowserTest::SetUpInProcessBrowserTestFixture();
     arc::ArcSessionManager::DisableUIForTesting();
-    arc::ArcAuthNotification::DisableForTesting();
   }
 
   void SetUpOnMainThread() override {
@@ -253,12 +255,14 @@ class ArcAppLauncherBrowserTest : public ExtensionBrowserTest {
       arc_session_manager()->SetProfile(profile());
       arc::ArcServiceLauncher::Get()->OnPrimaryUserProfilePrepared(profile());
     }
-    app_connection_observer()->OnConnectionReady();
+    app_instance_ = std::make_unique<arc::FakeAppInstance>(app_host());
+    arc_brige_service()->app()->SetInstance(app_instance_.get());
   }
 
   void StopInstance() {
+    if (app_instance_)
+      arc_brige_service()->app()->CloseInstance(app_instance_.get());
     arc_session_manager()->Shutdown();
-    app_connection_observer()->OnConnectionClosed();
   }
 
   ash::ShelfItemDelegate* GetShelfItemDelegate(const std::string& id) {
@@ -282,7 +286,13 @@ class ArcAppLauncherBrowserTest : public ExtensionBrowserTest {
     return arc::ArcSessionManager::Get();
   }
 
+  arc::ArcBridgeService* arc_brige_service() {
+    return arc::ArcServiceManager::Get()->arc_bridge_service();
+  }
+
  private:
+  std::unique_ptr<arc::FakeAppInstance> app_instance_;
+
   DISALLOW_COPY_AND_ASSIGN(ArcAppLauncherBrowserTest);
 };
 
@@ -350,9 +360,9 @@ class ArcAppDeferredLauncherWithParamsBrowserTest
   ~ArcAppDeferredLauncherWithParamsBrowserTest() override = default;
 
  protected:
-  bool is_pinned() const { return std::tr1::get<1>(GetParam()); }
+  bool is_pinned() const { return std::get<1>(GetParam()); }
 
-  TestAction test_action() const { return std::tr1::get<0>(GetParam()); }
+  TestAction test_action() const { return std::get<0>(GetParam()); }
 
  private:
   DISALLOW_COPY_AND_ASSIGN(ArcAppDeferredLauncherWithParamsBrowserTest);
@@ -441,7 +451,8 @@ IN_PROC_BROWSER_TEST_F(ArcAppLauncherBrowserTest, PinOnPackageUpdateAndRemove) {
 
   // Make use app list sync service is started. Normally it is started when
   // sycing is initialized.
-  app_list::AppListSyncableServiceFactory::GetForProfile(profile())->GetModel();
+  app_list::AppListSyncableServiceFactory::GetForProfile(profile())
+      ->GetModelUpdater();
 
   InstallTestApps(kTestAppPackage, true);
   SendPackageAdded(kTestAppPackage, false);
@@ -471,52 +482,6 @@ IN_PROC_BROWSER_TEST_F(ArcAppLauncherBrowserTest, PinOnPackageUpdateAndRemove) {
   // No pin is expected.
   EXPECT_FALSE(controller->GetItem(shelf_id1));
   EXPECT_FALSE(controller->GetItem(shelf_id2));
-}
-
-// This test validates that app list is shown on new package and not shown
-// on package update.
-IN_PROC_BROWSER_TEST_F(ArcAppLauncherBrowserTest, AppListShown) {
-  // TODO(newcomer): this test needs to be reevaluated for the fullscreen app
-  // list (http://crbug.com/759779).
-  if (app_list::features::IsFullscreenAppListEnabled())
-    return;
-
-  StartInstance();
-  AppListService* app_list_service = AppListService::Get();
-  ASSERT_TRUE(app_list_service);
-
-  EXPECT_FALSE(app_list_service->IsAppListVisible());
-
-  SendInstallationStarted(kTestAppPackage);
-  SendInstallationStarted(kTestAppPackage2);
-
-  // New package is available. Show app list.
-  SendInstallationFinished(kTestAppPackage, true);
-  InstallTestApps(kTestAppPackage, false);
-  SendPackageAdded(kTestAppPackage, true);
-  EXPECT_TRUE(app_list_service->IsAppListVisible());
-
-  app_list_service->DismissAppList();
-  EXPECT_FALSE(app_list_service->IsAppListVisible());
-
-  // Send package update event. App list is not shown.
-  SendPackageAdded(kTestAppPackage, true);
-  EXPECT_FALSE(app_list_service->IsAppListVisible());
-
-  // Install next package from batch. Next new package is available.
-  // Don't show app list.
-  SendInstallationFinished(kTestAppPackage2, true);
-  InstallTestApps(kTestAppPackage2, false);
-  SendPackageAdded(kTestAppPackage2, true);
-  EXPECT_FALSE(app_list_service->IsAppListVisible());
-
-  // Run next installation batch. App list should be shown again.
-  SendInstallationStarted(kTestAppPackage3);
-  SendInstallationFinished(kTestAppPackage3, true);
-  InstallTestApps(kTestAppPackage3, false);
-  SendPackageAdded(kTestAppPackage3, true);
-  EXPECT_TRUE(app_list_service->IsAppListVisible());
-  app_list_service->DismissAppList();
 }
 
 // Test AppListControllerDelegate::IsAppOpen for ARC apps.

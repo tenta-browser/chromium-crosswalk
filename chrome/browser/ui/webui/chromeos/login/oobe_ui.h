@@ -54,10 +54,13 @@ class SigninScreenHandler;
 class SigninScreenHandlerDelegate;
 class SupervisedUserCreationScreenHandler;
 class ResetView;
+class DemoSetupScreenView;
+class SyncConsentScreenView;
 class TermsOfServiceScreenView;
 class UserBoardView;
 class UserImageView;
 class UpdateView;
+class UpdateRequiredView;
 class VoiceInteractionValuePropScreenView;
 class WaitForContainerReadyScreenView;
 class WrongHWIDScreenView;
@@ -77,6 +80,7 @@ class OobeUI : public content::WebUIController,
   static const char kUserAddingDisplay[];
   static const char kAppLaunchSplashDisplay[];
   static const char kArcKioskSplashDisplay[];
+  static const char kGaiaSigninDisplay[];
 
   class Observer {
    public:
@@ -101,9 +105,11 @@ class OobeUI : public content::WebUIController,
   EnableDebuggingScreenView* GetEnableDebuggingScreenView();
   EnrollmentScreenView* GetEnrollmentScreenView();
   ResetView* GetResetView();
+  DemoSetupScreenView* GetDemoSetupScreenView();
   KioskAutolaunchScreenView* GetKioskAutolaunchScreenView();
   KioskEnableScreenView* GetKioskEnableScreenView();
   TermsOfServiceScreenView* GetTermsOfServiceScreenView();
+  SyncConsentScreenView* GetSyncConsentScreenView();
   ArcTermsOfServiceScreenView* GetArcTermsOfServiceScreenView();
   UserImageView* GetUserImageView();
   ErrorScreen* GetErrorScreen();
@@ -119,6 +125,7 @@ class OobeUI : public content::WebUIController,
   EncryptionMigrationScreenView* GetEncryptionMigrationScreenView();
   VoiceInteractionValuePropScreenView* GetVoiceInteractionValuePropScreenView();
   WaitForContainerReadyScreenView* GetWaitForContainerReadyScreenView();
+  UpdateRequiredView* GetUpdateRequiredScreenView();
   GaiaView* GetGaiaScreenView();
   UserBoardView* GetUserBoardView();
 

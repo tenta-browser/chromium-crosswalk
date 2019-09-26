@@ -48,9 +48,6 @@ const base::Feature kOfflinePagesResourceBasedSnapshotFeature{
 const base::Feature kBackgroundLoaderForDownloadsFeature{
     "BackgroundLoadingForDownloads", base::FEATURE_ENABLED_BY_DEFAULT};
 
-const base::Feature kOfflinePagesAsyncDownloadFeature{
-    "OfflinePagesAsyncDownload", base::FEATURE_DISABLED_BY_DEFAULT};
-
 const base::Feature kPrefetchingOfflinePagesFeature{
     "OfflinePagesPrefetching", base::FEATURE_DISABLED_BY_DEFAULT};
 
@@ -59,6 +56,24 @@ const base::Feature kOfflinePagesCTV2Feature{"OfflinePagesCTV2",
 
 const base::Feature kOfflinePagesPrefetchingUIFeature{
     "OfflinePagesPrefetchingUI", base::FEATURE_ENABLED_BY_DEFAULT};
+
+const base::Feature kOfflinePagesLimitlessPrefetchingFeature{
+    "OfflinePagesLimitlessPrefetching", base::FEATURE_DISABLED_BY_DEFAULT};
+
+const base::Feature kOfflinePagesDescriptiveFailStatusFeature{
+    "OfflinePagesDescriptiveFailStatus", base::FEATURE_DISABLED_BY_DEFAULT};
+
+const base::Feature kOfflinePagesDescriptivePendingStatusFeature{
+    "OfflinePagesDescriptivePendingStatus", base::FEATURE_DISABLED_BY_DEFAULT};
+
+const base::Feature kOfflinePagesInDownloadHomeOpenInCctFeature{
+    "OfflinePagesInDownloadHomeOpenInCct", base::FEATURE_DISABLED_BY_DEFAULT};
+
+const base::Feature kOfflinePagesCTSuppressNotificationsFeature{
+    "OfflinePagesCTSuppressNotifications", base::FEATURE_DISABLED_BY_DEFAULT};
+
+const base::Feature kOfflinePagesShowAlternateDinoPageFeature{
+    "OfflinePagesShowAlternateDinoPage", base::FEATURE_DISABLED_BY_DEFAULT};
 
 const char kPrefetchingOfflinePagesExperimentsOption[] = "exp";
 
@@ -87,10 +102,6 @@ bool IsBackgroundLoaderForDownloadsEnabled() {
   return base::FeatureList::IsEnabled(kBackgroundLoaderForDownloadsFeature);
 }
 
-bool IsOfflinePagesAsyncDownloadEnabled() {
-  return base::FeatureList::IsEnabled(kOfflinePagesAsyncDownloadFeature);
-}
-
 bool IsPrefetchingOfflinePagesEnabled() {
   return base::FeatureList::IsEnabled(kPrefetchingOfflinePagesFeature);
 }
@@ -98,6 +109,11 @@ bool IsPrefetchingOfflinePagesEnabled() {
 bool IsOfflinePagesPrefetchingUIEnabled() {
   return IsPrefetchingOfflinePagesEnabled() &&
          base::FeatureList::IsEnabled(kOfflinePagesPrefetchingUIFeature);
+}
+
+bool IsLimitlessPrefetchingEnabled() {
+  // TODO(https://crbug.com/803584): fix limitless mode or fully remove it.
+  return false;
 }
 
 bool IsOfflinePagesLoadSignalCollectingEnabled() {
@@ -120,6 +136,31 @@ bool ShouldUseTestingSnapshotDelay() {
 
 bool IsOfflinePagesCTV2Enabled() {
   return base::FeatureList::IsEnabled(kOfflinePagesCTV2Feature);
+}
+
+bool IsOfflinePagesDescriptiveFailStatusEnabled() {
+  return base::FeatureList::IsEnabled(
+      kOfflinePagesDescriptiveFailStatusFeature);
+}
+
+bool IsOfflinePagesDescriptivePendingStatusEnabled() {
+  return base::FeatureList::IsEnabled(
+      kOfflinePagesDescriptivePendingStatusFeature);
+}
+
+bool ShouldOfflinePagesInDownloadHomeOpenInCct() {
+  return base::FeatureList::IsEnabled(
+      kOfflinePagesInDownloadHomeOpenInCctFeature);
+}
+
+bool IsOfflinePagesSuppressNotificationsEnabled() {
+  return base::FeatureList::IsEnabled(
+      kOfflinePagesCTSuppressNotificationsFeature);
+}
+
+bool ShouldShowAlternateDinoPage() {
+  return base::FeatureList::IsEnabled(
+      kOfflinePagesShowAlternateDinoPageFeature);
 }
 
 std::string GetPrefetchingOfflinePagesExperimentTag() {

@@ -126,6 +126,8 @@ TEST_F(MediaInternalsVideoCaptureDeviceTest,
   std::map<VideoCaptureApi, std::string> api_to_string_map;
   api_to_string_map[VideoCaptureApi::LINUX_V4L2_SINGLE_PLANE] = "V4L2 SPLANE";
   api_to_string_map[VideoCaptureApi::WIN_MEDIA_FOUNDATION] = "Media Foundation";
+  api_to_string_map[VideoCaptureApi::WIN_MEDIA_FOUNDATION_SENSOR] =
+      "Media Foundation Sensor Camera";
   api_to_string_map[VideoCaptureApi::WIN_DIRECT_SHOW] = "Direct Show";
   api_to_string_map[VideoCaptureApi::MACOSX_AVFOUNDATION] = "AV Foundation";
   api_to_string_map[VideoCaptureApi::MACOSX_DECKLINK] = "DeckLink";
@@ -135,7 +137,6 @@ TEST_F(MediaInternalsVideoCaptureDeviceTest,
   api_to_string_map[VideoCaptureApi::ANDROID_API2_FULL] = "Camera API2 Full";
   api_to_string_map[VideoCaptureApi::ANDROID_API2_LIMITED] =
       "Camera API2 Limited";
-  api_to_string_map[VideoCaptureApi::ANDROID_TANGO] = "Tango API";
   EXPECT_EQ(static_cast<size_t>(VideoCaptureApi::UNKNOWN),
             api_to_string_map.size());
   for (const auto& map_entry : api_to_string_map) {
@@ -156,7 +157,7 @@ TEST_F(MediaInternalsVideoCaptureDeviceTest,
   const float kFrameRate = 30.0f;
   const gfx::Size kFrameSize(1280, 720);
   const media::VideoPixelFormat kPixelFormat = media::PIXEL_FORMAT_I420;
-  const media::VideoPixelStorage kPixelStorage = media::PIXEL_STORAGE_CPU;
+  const media::VideoPixelStorage kPixelStorage = media::VideoPixelStorage::CPU;
   const media::VideoCaptureFormat capture_format(kFrameSize, kFrameRate,
                                                  kPixelFormat, kPixelStorage);
   const std::string expected_string = base::StringPrintf(
@@ -180,7 +181,7 @@ TEST_F(MediaInternalsVideoCaptureDeviceTest,
   formats.push_back(format_hd);
   media::VideoCaptureDeviceDescriptor descriptor;
   descriptor.device_id = "dummy";
-  descriptor.display_name = "dummy";
+  descriptor.set_display_name("dummy");
 #if defined(OS_MACOSX)
   descriptor.capture_api = media::VideoCaptureApi::MACOSX_AVFOUNDATION;
 #elif defined(OS_WIN)
@@ -232,7 +233,8 @@ class MediaInternalsAudioLogTest
                               base::Unretained(this))),
         test_params_(MakeAudioParams()),
         test_component_(GetParam()),
-        audio_log_(media_internals_->CreateAudioLog(test_component_)) {
+        audio_log_(media_internals_->CreateAudioLog(test_component_,
+                                                    kTestComponentID)) {
     media_internals_->AddUpdateCallback(update_cb_);
   }
 
@@ -257,7 +259,7 @@ class MediaInternalsAudioLogTest
 };
 
 TEST_P(MediaInternalsAudioLogTest, AudioLogCreateStartStopErrorClose) {
-  audio_log_->OnCreated(kTestComponentID, test_params_, kTestDeviceID);
+  audio_log_->OnCreated(test_params_, kTestDeviceID);
   base::RunLoop().RunUntilIdle();
 
   ExpectString("channel_layout",
@@ -272,12 +274,12 @@ TEST_P(MediaInternalsAudioLogTest, AudioLogCreateStartStopErrorClose) {
   ExpectStatus("created");
 
   // Verify OnStarted().
-  audio_log_->OnStarted(kTestComponentID);
+  audio_log_->OnStarted();
   base::RunLoop().RunUntilIdle();
   ExpectStatus("started");
 
   // Verify OnStopped().
-  audio_log_->OnStopped(kTestComponentID);
+  audio_log_->OnStopped();
   base::RunLoop().RunUntilIdle();
   ExpectStatus("stopped");
 
@@ -285,22 +287,22 @@ TEST_P(MediaInternalsAudioLogTest, AudioLogCreateStartStopErrorClose) {
   const char kErrorKey[] = "error_occurred";
   std::string no_value;
   ASSERT_FALSE(update_data_.GetString(kErrorKey, &no_value));
-  audio_log_->OnError(kTestComponentID);
+  audio_log_->OnError();
   base::RunLoop().RunUntilIdle();
   ExpectString(kErrorKey, "true");
 
   // Verify OnClosed().
-  audio_log_->OnClosed(kTestComponentID);
+  audio_log_->OnClosed();
   base::RunLoop().RunUntilIdle();
   ExpectStatus("closed");
 }
 
 TEST_P(MediaInternalsAudioLogTest, AudioLogCreateClose) {
-  audio_log_->OnCreated(kTestComponentID, test_params_, kTestDeviceID);
+  audio_log_->OnCreated(test_params_, kTestDeviceID);
   base::RunLoop().RunUntilIdle();
   ExpectStatus("created");
 
-  audio_log_->OnClosed(kTestComponentID);
+  audio_log_->OnClosed();
   base::RunLoop().RunUntilIdle();
   ExpectStatus("closed");
 }

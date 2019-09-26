@@ -7,17 +7,28 @@
 #include <memory>
 
 #include "base/command_line.h"
-#include "base/memory/ptr_util.h"
 #include "build/build_config.h"
 #include "chrome/browser/extensions/api/image_writer_private/error_messages.h"
 #include "chrome/browser/extensions/api/image_writer_private/test_utils.h"
 #include "chrome/test/base/testing_profile.h"
 #include "extensions/browser/test_event_router.h"
+#include "services/service_manager/public/cpp/connector.h"
 
 namespace extensions {
 namespace image_writer {
 
 namespace {
+
+class TestOperationManager : public OperationManager {
+ public:
+  explicit TestOperationManager(content::BrowserContext* context)
+      : OperationManager(context) {}
+
+ private:
+  std::unique_ptr<service_manager::Connector> CreateConnector() override {
+    return nullptr;
+  }
+};
 
 class ImageWriterOperationManagerTest : public ImageWriterUnitTestBase {
  public:
@@ -56,14 +67,13 @@ class ImageWriterOperationManagerTest : public ImageWriterUnitTestBase {
 };
 
 TEST_F(ImageWriterOperationManagerTest, WriteFromFile) {
-  OperationManager manager(&test_profile_);
+  TestOperationManager manager(&test_profile_);
 
   manager.StartWriteFromFile(
-      kDummyExtensionId,
-      test_utils_.GetImagePath(),
+      kDummyExtensionId, test_utils_.GetImagePath(),
       test_utils_.GetDevicePath().AsUTF8Unsafe(),
-      base::Bind(&ImageWriterOperationManagerTest::StartCallback,
-                 base::Unretained(this)));
+      base::BindOnce(&ImageWriterOperationManagerTest::StartCallback,
+                     base::Unretained(this)));
 
   EXPECT_TRUE(started_);
   EXPECT_TRUE(start_success_);
@@ -71,8 +81,8 @@ TEST_F(ImageWriterOperationManagerTest, WriteFromFile) {
 
   manager.CancelWrite(
       kDummyExtensionId,
-      base::Bind(&ImageWriterOperationManagerTest::CancelCallback,
-                 base::Unretained(this)));
+      base::BindOnce(&ImageWriterOperationManagerTest::CancelCallback,
+                     base::Unretained(this)));
 
   EXPECT_TRUE(cancelled_);
   EXPECT_TRUE(cancel_success_);
@@ -82,13 +92,12 @@ TEST_F(ImageWriterOperationManagerTest, WriteFromFile) {
 }
 
 TEST_F(ImageWriterOperationManagerTest, DestroyPartitions) {
-  OperationManager manager(&test_profile_);
+  TestOperationManager manager(&test_profile_);
 
   manager.DestroyPartitions(
-      kDummyExtensionId,
-      test_utils_.GetDevicePath().AsUTF8Unsafe(),
-      base::Bind(&ImageWriterOperationManagerTest::StartCallback,
-                 base::Unretained(this)));
+      kDummyExtensionId, test_utils_.GetDevicePath().AsUTF8Unsafe(),
+      base::BindOnce(&ImageWriterOperationManagerTest::StartCallback,
+                     base::Unretained(this)));
 
   EXPECT_TRUE(started_);
   EXPECT_TRUE(start_success_);
@@ -96,8 +105,8 @@ TEST_F(ImageWriterOperationManagerTest, DestroyPartitions) {
 
   manager.CancelWrite(
       kDummyExtensionId,
-      base::Bind(&ImageWriterOperationManagerTest::CancelCallback,
-                 base::Unretained(this)));
+      base::BindOnce(&ImageWriterOperationManagerTest::CancelCallback,
+                     base::Unretained(this)));
 
   EXPECT_TRUE(cancelled_);
   EXPECT_TRUE(cancel_success_);

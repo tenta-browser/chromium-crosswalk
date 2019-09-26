@@ -15,7 +15,6 @@
 #include "base/bind_helpers.h"
 #include "base/command_line.h"
 #include "base/i18n/rtl.h"
-#include "base/memory/ptr_util.h"
 #include "base/metrics/field_trial.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/strings/string_util.h"
@@ -34,6 +33,7 @@
 #include "chrome/browser/ui/browser_finder.h"
 #include "chrome/browser/ui/browser_tabstrip.h"
 #include "chrome/browser/ui/browser_window.h"
+#include "chrome/browser/ui/chrome_pages.h"
 #include "chrome/browser/ui/extensions/app_launch_params.h"
 #include "chrome/browser/ui/extensions/application_launch.h"
 #include "chrome/browser/ui/extensions/extension_enable_flow.h"
@@ -41,11 +41,11 @@
 #include "chrome/browser/ui/webui/extensions/extension_basic_info.h"
 #include "chrome/browser/ui/webui/extensions/extension_icon_source.h"
 #include "chrome/browser/ui/webui/ntp/new_tab_ui.h"
+#include "chrome/common/buildflags.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/common/extensions/extension_constants.h"
 #include "chrome/common/extensions/extension_metrics.h"
 #include "chrome/common/extensions/manifest_handlers/app_launch_info.h"
-#include "chrome/common/features.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/common/url_constants.h"
 #include "chrome/common/web_application_info.h"
@@ -223,39 +223,46 @@ void AppLauncherHandler::RegisterMessages() {
   registrar_.Add(this, chrome::NOTIFICATION_APP_INSTALLED_TO_NTP,
       content::Source<WebContents>(web_ui()->GetWebContents()));
 
-  web_ui()->RegisterMessageCallback("getApps",
-      base::Bind(&AppLauncherHandler::HandleGetApps,
-                 base::Unretained(this)));
-  web_ui()->RegisterMessageCallback("launchApp",
-      base::Bind(&AppLauncherHandler::HandleLaunchApp,
-                 base::Unretained(this)));
-  web_ui()->RegisterMessageCallback("setLaunchType",
-      base::Bind(&AppLauncherHandler::HandleSetLaunchType,
-                 base::Unretained(this)));
-  web_ui()->RegisterMessageCallback("uninstallApp",
-      base::Bind(&AppLauncherHandler::HandleUninstallApp,
-                 base::Unretained(this)));
-  web_ui()->RegisterMessageCallback("createAppShortcut",
-      base::Bind(&AppLauncherHandler::HandleCreateAppShortcut,
-                 base::Unretained(this)));
-  web_ui()->RegisterMessageCallback("showAppInfo",
-      base::Bind(&AppLauncherHandler::HandleShowAppInfo,
-                 base::Unretained(this)));
-  web_ui()->RegisterMessageCallback("reorderApps",
-      base::Bind(&AppLauncherHandler::HandleReorderApps,
-                 base::Unretained(this)));
-  web_ui()->RegisterMessageCallback("setPageIndex",
-      base::Bind(&AppLauncherHandler::HandleSetPageIndex,
-                 base::Unretained(this)));
-  web_ui()->RegisterMessageCallback("saveAppPageName",
-      base::Bind(&AppLauncherHandler::HandleSaveAppPageName,
-                 base::Unretained(this)));
-  web_ui()->RegisterMessageCallback("generateAppForLink",
-      base::Bind(&AppLauncherHandler::HandleGenerateAppForLink,
-                 base::Unretained(this)));
-  web_ui()->RegisterMessageCallback("pageSelected",
-      base::Bind(&AppLauncherHandler::HandlePageSelected,
-                 base::Unretained(this)));
+  web_ui()->RegisterMessageCallback(
+      "getApps", base::BindRepeating(&AppLauncherHandler::HandleGetApps,
+                                     base::Unretained(this)));
+  web_ui()->RegisterMessageCallback(
+      "launchApp", base::BindRepeating(&AppLauncherHandler::HandleLaunchApp,
+                                       base::Unretained(this)));
+  web_ui()->RegisterMessageCallback(
+      "setLaunchType",
+      base::BindRepeating(&AppLauncherHandler::HandleSetLaunchType,
+                          base::Unretained(this)));
+  web_ui()->RegisterMessageCallback(
+      "uninstallApp",
+      base::BindRepeating(&AppLauncherHandler::HandleUninstallApp,
+                          base::Unretained(this)));
+  web_ui()->RegisterMessageCallback(
+      "createAppShortcut",
+      base::BindRepeating(&AppLauncherHandler::HandleCreateAppShortcut,
+                          base::Unretained(this)));
+  web_ui()->RegisterMessageCallback(
+      "showAppInfo", base::BindRepeating(&AppLauncherHandler::HandleShowAppInfo,
+                                         base::Unretained(this)));
+  web_ui()->RegisterMessageCallback(
+      "reorderApps", base::BindRepeating(&AppLauncherHandler::HandleReorderApps,
+                                         base::Unretained(this)));
+  web_ui()->RegisterMessageCallback(
+      "setPageIndex",
+      base::BindRepeating(&AppLauncherHandler::HandleSetPageIndex,
+                          base::Unretained(this)));
+  web_ui()->RegisterMessageCallback(
+      "saveAppPageName",
+      base::BindRepeating(&AppLauncherHandler::HandleSaveAppPageName,
+                          base::Unretained(this)));
+  web_ui()->RegisterMessageCallback(
+      "generateAppForLink",
+      base::BindRepeating(&AppLauncherHandler::HandleGenerateAppForLink,
+                          base::Unretained(this)));
+  web_ui()->RegisterMessageCallback(
+      "pageSelected",
+      base::BindRepeating(&AppLauncherHandler::HandlePageSelected,
+                          base::Unretained(this)));
 }
 
 void AppLauncherHandler::Observe(int type,
@@ -299,7 +306,7 @@ void AppLauncherHandler::Observe(int type,
               crx_installer->profile())) {
         return;
       }
-      // Fall through.
+      FALLTHROUGH;
     }
     case extensions::NOTIFICATION_EXTENSION_LOAD_ERROR: {
       attempted_bookmark_app_install_ = false;
@@ -346,7 +353,7 @@ void AppLauncherHandler::FillAppDictionary(base::DictionaryValue* dictionary) {
   // CreateAppInfo and ClearOrdinals can change the extension prefs.
   base::AutoReset<bool> auto_reset(&ignore_changes_, true);
 
-  auto installed_extensions = base::MakeUnique<base::ListValue>();
+  auto installed_extensions = std::make_unique<base::ListValue>();
   Profile* profile = Profile::FromWebUI(web_ui());
   PrefService* prefs = profile->GetPrefs();
 
@@ -366,7 +373,7 @@ void AppLauncherHandler::FillAppDictionary(base::DictionaryValue* dictionary) {
   if (!app_page_names || !app_page_names->GetSize()) {
     ListPrefUpdate update(prefs, prefs::kNtpAppPageNames);
     base::ListValue* list = update.Get();
-    list->Set(0, base::MakeUnique<base::Value>(
+    list->Set(0, std::make_unique<base::Value>(
                      l10n_util::GetStringUTF16(IDS_APP_DEFAULT_PAGE_NAME)));
     dictionary->SetKey("appPageNames", list->Clone());
   } else {
@@ -609,6 +616,13 @@ void AppLauncherHandler::HandleShowAppInfo(const base::ListValue* args) {
   if (!extension)
     return;
 
+  if (extension->is_hosted_app() && extension->from_bookmark()) {
+    chrome::ShowSiteSettings(
+        chrome::FindBrowserWithWebContents(web_ui()->GetWebContents()),
+        extensions::AppLaunchInfo::GetFullLaunchURL(extension));
+    return;
+  }
+
   UMA_HISTOGRAM_ENUMERATION("Apps.AppInfoDialog.Launches",
                             AppInfoLaunchSource::FROM_APPS_PAGE,
                             AppInfoLaunchSource::NUM_LAUNCH_SOURCES);
@@ -677,7 +691,7 @@ void AppLauncherHandler::HandleSaveAppPageName(const base::ListValue* args) {
   ListPrefUpdate update(prefs, prefs::kNtpAppPageNames);
   base::ListValue* list = update.Get();
   list->Set(static_cast<size_t>(page_index),
-            base::MakeUnique<base::Value>(name));
+            std::make_unique<base::Value>(name));
 }
 
 void AppLauncherHandler::HandleGenerateAppForLink(const base::ListValue* args) {

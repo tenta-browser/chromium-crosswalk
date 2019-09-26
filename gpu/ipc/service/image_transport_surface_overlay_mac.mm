@@ -4,38 +4,19 @@
 
 #include "gpu/ipc/service/image_transport_surface_overlay_mac.h"
 
-#include <CoreGraphics/CoreGraphics.h>
-#include <IOSurface/IOSurface.h>
-#include <OpenGL/CGLRenderers.h>
-#include <OpenGL/CGLTypes.h>
-#include <OpenGL/gl.h>
-#include <stddef.h>
-
-#include <algorithm>
-
-// This type consistently causes problem on Mac, and needs to be dealt with
-// in a systemic way.
-// http://crbug.com/517208
-#ifndef GL_OES_EGL_image
-typedef void* GLeglImageOES;
-#endif
-
 #include "base/bind.h"
-#include "base/bind_helpers.h"
 #include "base/command_line.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "base/trace_event/trace_event.h"
+#include "gpu/command_buffer/common/swap_buffers_complete_params.h"
 #include "gpu/ipc/service/gpu_channel_manager.h"
 #include "gpu/ipc/service/gpu_channel_manager_delegate.h"
+#include "gpu/ipc/service/image_transport_surface_delegate.h"
 #include "ui/accelerated_widget_mac/ca_layer_tree_coordinator.h"
 #include "ui/accelerated_widget_mac/io_surface_context.h"
-#include "ui/base/cocoa/animation_utils.h"
 #include "ui/base/cocoa/remote_layer_api.h"
 #include "ui/base/ui_base_switches.h"
-#include "ui/gfx/geometry/rect_conversions.h"
-#include "ui/gfx/swap_result.h"
-#include "ui/gfx/transform.h"
 #include "ui/gl/ca_renderer_layer_params.h"
 #include "ui/gl/gl_context.h"
 #include "ui/gl/gl_fence.h"
@@ -50,9 +31,6 @@ void CheckGLErrors(const char* msg) {
   while ((gl_error = glGetError()) != GL_NO_ERROR) {
     LOG(ERROR) << "OpenGL error hit " << msg << ": " << gl_error;
   }
-}
-
-void IOSurfaceContextNoOp(scoped_refptr<ui::IOSurfaceContext>) {
 }
 
 }  // namespace
@@ -101,11 +79,6 @@ bool ImageTransportSurfaceOverlayMac::Initialize(gl::GLSurfaceFormat format) {
     ca_context_.reset([
         [CAContext contextWithCGSConnection:connection_id options:@{}] retain]);
     [ca_context_ setLayer:ca_layer_tree_coordinator_->GetCALayerForDisplay()];
-
-    fullscreen_low_power_ca_context_.reset([
-        [CAContext contextWithCGSConnection:connection_id options:@{}] retain]);
-    [fullscreen_low_power_ca_context_ setLayer:
-        ca_layer_tree_coordinator_->GetFullscreenLowPowerLayerForDisplay()];
   }
   return true;
 }
@@ -208,12 +181,9 @@ gfx::SwapResult ImageTransportSurfaceOverlayMac::SwapBuffersInternal(
   base::TimeTicks after_flush_before_commit_time;
   ApplyBackpressure(&before_flush_time, &after_flush_before_commit_time);
 
-  // Do the CATransaction to update the CALayer tree.
-  bool fullscreen_low_power_layer_valid = false;
   {
     TRACE_EVENT0("gpu", "CommitPendingTreesToCA");
-    ca_layer_tree_coordinator_->CommitPendingTreesToCA(
-        pixel_damage_rect, &fullscreen_low_power_layer_valid);
+    ca_layer_tree_coordinator_->CommitPendingTreesToCA(pixel_damage_rect);
   }
 
   base::TimeTicks after_transaction_time = base::TimeTicks::Now();
@@ -227,25 +197,23 @@ gfx::SwapResult ImageTransportSurfaceOverlayMac::SwapBuffersInternal(
                          "GLImpl", static_cast<int>(gl::GetGLImplementation()),
                          "width", pixel_size_.width());
     if (use_remote_layer_api_) {
-      params.ca_context_id = [ca_context_ contextId];
-      params.fullscreen_low_power_ca_context_id =
-          [fullscreen_low_power_ca_context_ contextId];
-      params.fullscreen_low_power_ca_context_valid =
-          fullscreen_low_power_layer_valid;
+      params.ca_layer_params.ca_context_id = [ca_context_ contextId];
     } else {
       IOSurfaceRef io_surface =
           ca_layer_tree_coordinator_->GetIOSurfaceForDisplay();
       if (io_surface) {
-        params.io_surface.reset(IOSurfaceCreateMachPort(io_surface));
+        params.ca_layer_params.io_surface_mach_port.reset(
+            IOSurfaceCreateMachPort(io_surface));
       }
     }
-    params.pixel_size = pixel_size_;
-    params.scale_factor = scale_factor_;
-    params.response.swap_id = swap_id_++;
-    params.response.result = gfx::SwapResult::SWAP_ACK;
+    params.ca_layer_params.pixel_size = pixel_size_;
+    params.ca_layer_params.scale_factor = scale_factor_;
+    params.ca_layer_params.is_empty = false;
+    params.swap_response.swap_id = swap_id_++;
+    params.swap_response.result = gfx::SwapResult::SWAP_ACK;
     // TODO(brianderson): Tie swap_start to before_flush_time.
-    params.response.swap_start = after_flush_before_commit_time;
-    params.response.swap_end = after_flush_before_commit_time;
+    params.swap_response.swap_start = after_flush_before_commit_time;
+    params.swap_response.swap_end = after_flush_before_commit_time;
     for (auto& query : ca_layer_in_use_queries_) {
       gpu::TextureInUseResponse response;
       response.texture = query.texture;
@@ -257,7 +225,7 @@ gfx::SwapResult ImageTransportSurfaceOverlayMac::SwapBuffersInternal(
                  IOSurfaceIsInUse(io_surface_image->io_surface());
       }
       response.in_use = in_use;
-      params.in_use_responses.push_back(std::move(response));
+      params.texture_in_use_responses.push_back(std::move(response));
     }
     ca_layer_in_use_queries_.clear();
   }
@@ -316,7 +284,8 @@ bool ImageTransportSurfaceOverlayMac::ScheduleOverlayPlane(
     gfx::OverlayTransform transform,
     gl::GLImage* image,
     const gfx::Rect& pixel_frame_rect,
-    const gfx::RectF& crop_rect) {
+    const gfx::RectF& crop_rect,
+    bool enable_blend) {
   if (transform != gfx::OVERLAY_TRANSFORM_NONE) {
     DLOG(ERROR) << "Invalid overlay plane transform.";
     return false;
@@ -398,7 +367,10 @@ void ImageTransportSurfaceOverlayMac::OnGpuSwitched() {
   // this is to avoid creating-then-destroying the context for every image
   // transport surface that is observing the GPU switch.
   base::ThreadTaskRunnerHandle::Get()->PostTask(
-      FROM_HERE, base::Bind(&IOSurfaceContextNoOp, context_on_new_gpu));
+      FROM_HERE,
+      base::Bind(
+          base::DoNothing::Repeatedly<scoped_refptr<ui::IOSurfaceContext>>(),
+          context_on_new_gpu));
 }
 
 }  // namespace gpu

@@ -4,19 +4,20 @@
 
 #include "content/browser/site_instance_impl.h"
 
+#include <string>
+
 #include "base/command_line.h"
 #include "base/debug/crash_logging.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "content/browser/browsing_instance.h"
 #include "content/browser/child_process_security_policy_impl.h"
 #include "content/browser/frame_host/debug_urls.h"
 #include "content/browser/frame_host/frame_tree_node.h"
 #include "content/browser/renderer_host/render_process_host_impl.h"
 #include "content/browser/storage_partition_impl.h"
-#include "content/common/site_isolation_policy.h"
 #include "content/public/browser/content_browser_client.h"
 #include "content/public/browser/render_process_host_factory.h"
+#include "content/public/browser/site_isolation_policy.h"
 #include "content/public/browser/web_ui_controller_factory.h"
 #include "content/public/common/content_switches.h"
 #include "content/public/common/url_constants.h"
@@ -26,6 +27,9 @@
 namespace content {
 
 int32_t SiteInstanceImpl::next_site_instance_id_ = 1;
+
+using CheckOriginLockResult =
+    ChildProcessSecurityPolicyImpl::CheckOriginLockResult;
 
 SiteInstanceImpl::SiteInstanceImpl(BrowsingInstance* browsing_instance)
     : id_(next_site_instance_id_++),
@@ -355,6 +359,12 @@ bool SiteInstanceImpl::IsSameWebSite(BrowserContext* browser_context,
   if (dest_url == blank_page)
     return true;
 
+  // If the source and destination URLs are equal excluding the hash, they have
+  // the same site.  This matters for file URLs, where SameDomainOrHost() would
+  // otherwise return false below.
+  if (src_url.EqualsIgnoringRef(dest_url))
+    return true;
+
   url::Origin src_origin = url::Origin::Create(src_url);
   url::Origin dest_origin = url::Origin::Create(dest_url);
 
@@ -404,13 +414,13 @@ GURL SiteInstance::GetSiteForURL(BrowserContext* browser_context,
   // origin lookup.
   auto* policy = ChildProcessSecurityPolicyImpl::GetInstance();
   url::Origin isolated_origin;
-  if (policy->GetMatchingIsolatedOrigin(url::Origin::Create(url),
-                                        &isolated_origin)) {
+  if (policy->GetMatchingIsolatedOrigin(origin, &isolated_origin))
     return isolated_origin.GetURL();
-  }
 
-  // If the url has a host, then determine the site.
-  if (!origin.host().empty()) {
+  // If the url has a host, then determine the site.  Skip file URLs to avoid a
+  // situation where site URL of file://localhost/ would mismatch Blink's origin
+  // (which ignores the hostname in this case - see https://crbug.com/776160).
+  if (!origin.host().empty() && origin.scheme() != url::kFileScheme) {
     // Only keep the scheme and registered domain of |origin|.
     std::string domain = net::registry_controlled_domains::GetDomainAndRegistry(
         origin.host(),
@@ -423,11 +433,18 @@ GURL SiteInstance::GetSiteForURL(BrowserContext* browser_context,
 
   // If there is no host but there is a scheme, return the scheme.
   // This is useful for cases like file URLs.
-  if (url.has_scheme())
+  if (!origin.unique()) {
+    // Prefer to use the scheme of |origin| rather than |url|, to correctly
+    // cover blob: and filesystem: URIs (see also https://crbug.com/697111).
+    DCHECK(!origin.scheme().empty());
+    return GURL(origin.scheme() + ":");
+  } else if (url.has_scheme()) {
+    DCHECK(!url.scheme().empty());
     return GURL(url.scheme() + ":");
+  }
 
   // Otherwise the URL should be invalid; return an empty site.
-  DCHECK(!url.is_valid());
+  DCHECK(!url.is_valid()) << url;
   return GURL();
 }
 
@@ -460,8 +477,7 @@ bool SiteInstanceImpl::DoesSiteRequireDedicatedProcess(
   // Let the content embedder enable site isolation for specific URLs. Use the
   // canonical site url for this check, so that schemes with nested origins
   // (blob and filesystem) work properly.
-  if (GetContentClient()->IsSupplementarySiteIsolationModeEnabled() &&
-      GetContentClient()->browser()->DoesSiteRequireDedicatedProcess(
+  if (GetContentClient()->browser()->DoesSiteRequireDedicatedProcess(
           browser_context, site_url)) {
     return true;
   }
@@ -551,7 +567,7 @@ void SiteInstanceImpl::LockToOriginIfNeeded() {
     CHECK(!process_->IsForGuestsOnly());
 
     switch (lock_state) {
-      case ChildProcessSecurityPolicyImpl::CheckOriginLockResult::NO_LOCK: {
+      case CheckOriginLockResult::NO_LOCK: {
         // TODO(nick): When all sites are isolated, this operation provides
         // strong protection. If only some sites are isolated, we need
         // additional logic to prevent the non-isolated sites from requesting
@@ -559,20 +575,19 @@ void SiteInstanceImpl::LockToOriginIfNeeded() {
         policy->LockToOrigin(process_->GetID(), site_);
         break;
       }
-      case ChildProcessSecurityPolicyImpl::CheckOriginLockResult::
-          HAS_WRONG_LOCK:
+      case CheckOriginLockResult::HAS_WRONG_LOCK:
         // We should never attempt to reassign a different origin lock to a
         // process.
-        base::debug::SetCrashKeyValue("requested_site_url", site_.spec());
-        base::debug::SetCrashKeyValue(
-            "killed_process_origin_lock",
+        base::debug::SetCrashKeyString(bad_message::GetRequestedSiteURLKey(),
+                                       site_.spec());
+        base::debug::SetCrashKeyString(
+            bad_message::GetKilledProcessOriginLockKey(),
             policy->GetOriginLock(process_->GetID()).spec());
         CHECK(false) << "Trying to lock a process to " << site_
                      << " but the process is already locked to "
                      << policy->GetOriginLock(process_->GetID());
         break;
-      case ChildProcessSecurityPolicyImpl::CheckOriginLockResult::
-          HAS_EQUAL_LOCK:
+      case CheckOriginLockResult::HAS_EQUAL_LOCK:
         // Process already has the right origin lock assigned.  This case will
         // happen for commits to |site_| after the first one.
         break;
@@ -583,14 +598,16 @@ void SiteInstanceImpl::LockToOriginIfNeeded() {
     // If the site that we've just committed doesn't require a dedicated
     // process, make sure we aren't putting it in a process for a site that
     // does.
-    base::debug::SetCrashKeyValue("requested_site_url", site_.spec());
-    base::debug::SetCrashKeyValue(
-        "killed_process_origin_lock",
-        policy->GetOriginLock(process_->GetID()).spec());
-    CHECK_EQ(lock_state,
-             ChildProcessSecurityPolicyImpl::CheckOriginLockResult::NO_LOCK)
-        << "Trying to commit non-isolated site " << site_
-        << " in process locked to " << policy->GetOriginLock(process_->GetID());
+    if (lock_state != CheckOriginLockResult::NO_LOCK) {
+      base::debug::SetCrashKeyString(bad_message::GetRequestedSiteURLKey(),
+                                     site_.spec());
+      base::debug::SetCrashKeyString(
+          bad_message::GetKilledProcessOriginLockKey(),
+          policy->GetOriginLock(process_->GetID()).spec());
+      CHECK(false) << "Trying to commit non-isolated site " << site_
+                   << " in process locked to "
+                   << policy->GetOriginLock(process_->GetID());
+    }
   }
 }
 

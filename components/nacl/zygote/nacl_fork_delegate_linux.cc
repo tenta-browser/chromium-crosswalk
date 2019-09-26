@@ -10,6 +10,7 @@
 #include <sys/resource.h>
 #include <sys/socket.h>
 
+#include <memory>
 #include <set>
 
 #include "base/command_line.h"
@@ -18,7 +19,6 @@
 #include "base/files/scoped_file.h"
 #include "base/logging.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/path_service.h"
 #include "base/pickle.h"
 #include "base/posix/eintr_wrapper.h"
@@ -27,7 +27,6 @@
 #include "base/process/kill.h"
 #include "base/process/launch.h"
 #include "base/strings/string_split.h"
-#include "base/third_party/dynamic_annotations/dynamic_annotations.h"
 #include "build/build_config.h"
 #include "components/nacl/common/nacl_nonsfi_util.h"
 #include "components/nacl/common/nacl_paths.h"
@@ -133,9 +132,9 @@ namespace nacl {
 void AddNaClZygoteForkDelegates(
     std::vector<std::unique_ptr<content::ZygoteForkDelegate>>* delegates) {
   delegates->push_back(
-      base::MakeUnique<NaClForkDelegate>(false /* nonsfi_mode */));
+      std::make_unique<NaClForkDelegate>(false /* nonsfi_mode */));
   delegates->push_back(
-      base::MakeUnique<NaClForkDelegate>(true /* nonsfi_mode */));
+      std::make_unique<NaClForkDelegate>(true /* nonsfi_mode */));
 }
 
 NaClForkDelegate::NaClForkDelegate(bool nonsfi_mode)
@@ -210,8 +209,6 @@ void NaClForkDelegate::Init(const int sandboxdesc,
              !PathService::Get(nacl::FILE_NACL_HELPER_BOOTSTRAP,
                                &helper_bootstrap_exe)) {
     status_ = kNaClHelperBootstrapMissing;
-  } else if (RunningOnValgrind()) {
-    status_ = kNaClHelperValgrind;
   } else {
     base::CommandLine::StringVector argv_to_launch;
     {
@@ -222,7 +219,7 @@ void NaClForkDelegate::Init(const int sandboxdesc,
         cmd_line.SetProgram(helper_exe);
 
       // Append any switches that need to be forwarded to the NaCl helper.
-      static const char* kForwardSwitches[] = {
+      static constexpr const char* kForwardSwitches[] = {
           service_manager::switches::kAllowSandboxDebugging,
           service_manager::switches::kDisableSeccompFilterSandbox,
           switches::kEnableNaClDebug,

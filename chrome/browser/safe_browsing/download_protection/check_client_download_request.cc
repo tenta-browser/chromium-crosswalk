@@ -4,6 +4,9 @@
 
 #include "chrome/browser/safe_browsing/download_protection/check_client_download_request.h"
 
+#include <memory>
+
+#include "base/metrics/histogram_functions.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/rand_util.h"
 #include "base/task_scheduler/post_task.h"
@@ -19,10 +22,15 @@
 #include "chrome/common/safe_browsing/file_type_policies.h"
 #include "components/data_use_measurement/core/data_use_user_data.h"
 #include "components/safe_browsing/common/utils.h"
+#include "components/safe_browsing/features.h"
 #include "content/public/browser/browser_context.h"
+#include "content/public/browser/download_item_utils.h"
 #include "content/public/common/service_manager_connection.h"
+#include "net/base/load_flags.h"
 #include "net/http/http_cache.h"
 #include "net/http/http_status_code.h"
+#include "services/network/public/cpp/shared_url_loader_factory.h"
+#include "services/network/public/cpp/simple_url_loader.h"
 
 namespace safe_browsing {
 
@@ -33,12 +41,12 @@ const char kUnsupportedSchemeUmaPrefix[] = "SBClientDownload.UnsupportedScheme";
 
 void RecordFileExtensionType(const std::string& metric_name,
                              const base::FilePath& file) {
-  UMA_HISTOGRAM_SPARSE_SLOWLY(
+  base::UmaHistogramSparse(
       metric_name, FileTypePolicies::GetInstance()->UmaValueForFile(file));
 }
 
 void RecordArchivedArchiveFileExtensionType(const base::FilePath& file) {
-  UMA_HISTOGRAM_SPARSE_SLOWLY(
+  base::UmaHistogramSparse(
       "SBClientDownload.ArchivedArchiveExtensions",
       FileTypePolicies::GetInstance()->UmaValueForFile(file));
 }
@@ -66,7 +74,7 @@ std::string GetUnsupportedSchemeName(const GURL& download_url) {
 }  // namespace
 
 CheckClientDownloadRequest::CheckClientDownloadRequest(
-    content::DownloadItem* item,
+    download::DownloadItem* item,
     const CheckDownloadCallback& callback,
     DownloadProtectionService* service,
     const scoped_refptr<SafeBrowsingDatabaseManager>& database_manager,
@@ -115,11 +123,13 @@ void CheckClientDownloadRequest::Start() {
   DVLOG(2) << "Starting SafeBrowsing download check for: "
            << item_->DebugString(true);
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
-  if (item_->GetBrowserContext()) {
-    Profile* profile = Profile::FromBrowserContext(item_->GetBrowserContext());
+  content::BrowserContext* browser_context =
+      content::DownloadItemUtils::GetBrowserContext(item_);
+  if (browser_context) {
+    Profile* profile = Profile::FromBrowserContext(browser_context);
     is_extended_reporting_ =
         profile && IsExtendedReportingEnabled(*profile->GetPrefs());
-    is_incognito_ = item_->GetBrowserContext()->IsOffTheRecord();
+    is_incognito_ = browser_context->IsOffTheRecord();
   }
 
   // If whitelist check passes, PostFinishTask() will be called to avoid
@@ -156,13 +166,13 @@ void CheckClientDownloadRequest::StartTimeout() {
 void CheckClientDownloadRequest::Cancel() {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   cancelable_task_tracker_.TryCancelAll();
-  if (fetcher_.get()) {
+  if (loader_.get()) {
     // The DownloadProtectionService is going to release its reference, so we
-    // might be destroyed before the URLFetcher completes.  Cancel the
-    // fetcher so it does not try to invoke OnURLFetchComplete.
-    fetcher_.reset();
+    // might be destroyed before the URLLoader completes.  Cancel the
+    // loader so it does not try to invoke OnURLFetchComplete.
+    loader_.reset();
   }
-  // Note: If there is no fetcher, then some callback is still holding a
+  // Note: If there is no loader, then some callback is still holding a
   // reference to this object.  We'll eventually wind up in some method on
   // the UI thread that will call FinishRequest() again.  If FinishRequest()
   // is called a second time, it will be a no-op.
@@ -171,39 +181,36 @@ void CheckClientDownloadRequest::Cancel() {
   // this point.
 }
 
-// content::DownloadItem::Observer implementation.
+// download::DownloadItem::Observer implementation.
 void CheckClientDownloadRequest::OnDownloadDestroyed(
-    content::DownloadItem* download) {
+    download::DownloadItem* download) {
   Cancel();
   DCHECK(item_ == NULL);
 }
 
 // TODO: this method puts "DownloadProtectionService::" in front of a lot of
-// stuff to avoid referencing the enums i copied to this .h file. From the
-// net::URLFetcherDelegate interface.
-void CheckClientDownloadRequest::OnURLFetchComplete(
-    const net::URLFetcher* source) {
+// stuff to avoid referencing the enums i copied to this .h file.
+void CheckClientDownloadRequest::OnURLLoaderComplete(
+    std::unique_ptr<std::string> response_body) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
-  DCHECK_EQ(source, fetcher_.get());
+  bool success = loader_->NetError() == net::OK;
+  int response_code = 0;
+  if (loader_->ResponseInfo() && loader_->ResponseInfo()->headers)
+    response_code = loader_->ResponseInfo()->headers->response_code();
   DVLOG(2) << "Received a response for URL: " << item_->GetUrlChain().back()
-           << ": success=" << source->GetStatus().is_success()
-           << " response_code=" << source->GetResponseCode();
-  if (source->GetStatus().is_success()) {
-    UMA_HISTOGRAM_SPARSE_SLOWLY("SBClientDownload.DownloadRequestResponseCode",
-                                source->GetResponseCode());
+           << ": success=" << success << " response_code=" << response_code;
+  if (success) {
+    base::UmaHistogramSparse("SBClientDownload.DownloadRequestResponseCode",
+                             response_code);
   }
-  UMA_HISTOGRAM_SPARSE_SLOWLY("SBClientDownload.DownloadRequestNetError",
-                              -source->GetStatus().error());
+  base::UmaHistogramSparse("SBClientDownload.DownloadRequestNetError",
+                           -loader_->NetError());
   DownloadCheckResultReason reason = REASON_SERVER_PING_FAILED;
   DownloadCheckResult result = DownloadCheckResult::UNKNOWN;
   std::string token;
-  if (source->GetStatus().is_success() &&
-      net::HTTP_OK == source->GetResponseCode()) {
+  if (success && net::HTTP_OK == response_code) {
     ClientDownloadResponse response;
-    std::string data;
-    bool got_data = source->GetResponseAsString(&data);
-    DCHECK(got_data);
-    if (!response.ParseFromString(data)) {
+    if (!response.ParseFromString(*response_body.get())) {
       reason = REASON_INVALID_RESPONSE_PROTO;
       result = DownloadCheckResult::UNKNOWN;
     } else if (type_ == ClientDownloadRequest::SAMPLED_UNSUPPORTED_FILE) {
@@ -253,10 +260,11 @@ void CheckClientDownloadRequest::OnURLFetchComplete(
 
     bool upload_requested = response.upload();
     DownloadFeedbackService::MaybeStorePingsForDownload(
-        result, upload_requested, item_, client_download_request_data_, data);
+        result, upload_requested, item_, client_download_request_data_,
+        *response_body.get());
   }
-  // We don't need the fetcher anymore.
-  fetcher_.reset();
+  // We don't need the loader anymore.
+  loader_.reset();
   UMA_HISTOGRAM_TIMES("SBClientDownload.DownloadRequestDuration",
                       base::TimeTicks::Now() - start_time_);
   UMA_HISTOGRAM_TIMES("SBClientDownload.DownloadRequestNetworkDuration",
@@ -267,7 +275,7 @@ void CheckClientDownloadRequest::OnURLFetchComplete(
 
 // static
 bool CheckClientDownloadRequest::IsSupportedDownload(
-    const content::DownloadItem& item,
+    const download::DownloadItem& item,
     const base::FilePath& target_path,
     DownloadCheckResultReason* reason,
     ClientDownloadRequest::DownloadType* type) {
@@ -355,6 +363,10 @@ void CheckClientDownloadRequest::AnalyzeFile() {
   // are enabled.
   if (item_->GetTargetFilePath().MatchesExtension(FILE_PATH_LITERAL(".zip"))) {
     StartExtractZipFeatures();
+  } else if (item_->GetTargetFilePath().MatchesExtension(
+                 FILE_PATH_LITERAL(".rar")) &&
+             base::FeatureList::IsEnabled(kInspectDownloadedRarFiles)) {
+    StartExtractRarFeatures();
 #if defined(OS_MACOSX)
   } else if (item_->GetTargetFilePath().MatchesExtension(
                  FILE_PATH_LITERAL(".dmg")) ||
@@ -471,18 +483,47 @@ void CheckClientDownloadRequest::ExtractFileFeatures(
   OnFileFeatureExtractionDone();
 }
 
+void CheckClientDownloadRequest::StartExtractRarFeatures() {
+  DCHECK_CURRENTLY_ON(BrowserThread::UI);
+  DCHECK(item_);  // Called directly from Start(), item should still exist.
+  rar_analysis_start_time_ = base::TimeTicks::Now();
+  // We give the rar analyzer a weak pointer to this object.  Since the
+  // analyzer is refcounted, it might outlive the request.
+  rar_analyzer_ = new SandboxedRarAnalyzer(
+      item_->GetFullPath(),
+      base::BindRepeating(&CheckClientDownloadRequest::OnRarAnalysisFinished,
+                          weakptr_factory_.GetWeakPtr()),
+      content::ServiceManagerConnection::GetForProcess()->GetConnector());
+  rar_analyzer_->Start();
+}
+
+void CheckClientDownloadRequest::OnRarAnalysisFinished(
+    const ArchiveAnalyzerResults& results) {
+  DCHECK_CURRENTLY_ON(BrowserThread::UI);
+  if (item_ == nullptr) {
+    PostFinishTask(DownloadCheckResult::UNKNOWN, REASON_REQUEST_CANCELED);
+    return;
+  }
+  if (!service_)
+    return;
+  UMA_HISTOGRAM_TIMES("SBClientDownload.ExtractRarFeaturesTime",
+                      base::TimeTicks::Now() - rar_analysis_start_time_);
+  // TODO(crbug/750327): Use information from |results|.
+  OnFileFeatureExtractionDone();
+}
+
 void CheckClientDownloadRequest::StartExtractZipFeatures() {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   DCHECK(item_);  // Called directly from Start(), item should still exist.
   zip_analysis_start_time_ = base::TimeTicks::Now();
   // We give the zip analyzer a weak pointer to this object.  Since the
   // analyzer is refcounted, it might outlive the request.
-  analyzer_ = new chrome::SandboxedZipAnalyzer(
+  zip_analyzer_ = new SandboxedZipAnalyzer(
       item_->GetFullPath(),
       base::Bind(&CheckClientDownloadRequest::OnZipAnalysisFinished,
                  weakptr_factory_.GetWeakPtr()),
       content::ServiceManagerConnection::GetForProcess()->GetConnector());
-  analyzer_->Start();
+  zip_analyzer_->Start();
 }
 
 // static
@@ -571,7 +612,7 @@ void CheckClientDownloadRequest::StartExtractDmgFeatures() {
   if (too_big_to_unpack) {
     OnFileFeatureExtractionDone();
   } else {
-    dmg_analyzer_ = new chrome::SandboxedDMGAnalyzer(
+    dmg_analyzer_ = new SandboxedDMGAnalyzer(
         item_->GetFullPath(),
         base::Bind(&CheckClientDownloadRequest::OnDmgAnalysisFinished,
                    weakptr_factory_.GetWeakPtr()),
@@ -612,7 +653,7 @@ void CheckClientDownloadRequest::OnDmgAnalysisFinished(
 
   if (results.signature_blob.size() > 0) {
     disk_image_signature_ =
-        base::MakeUnique<std::vector<uint8_t>>(results.signature_blob);
+        std::make_unique<std::vector<uint8_t>>(results.signature_blob);
   }
 
   // Even if !results.success, some of the DMG may have been parsed.
@@ -629,21 +670,21 @@ void CheckClientDownloadRequest::OnDmgAnalysisFinished(
       item_->GetTargetFilePath());
 
   if (results.success) {
-    UMA_HISTOGRAM_SPARSE_SLOWLY("SBClientDownload.DmgFileSuccessByType",
-                                uma_file_type);
+    base::UmaHistogramSparse("SBClientDownload.DmgFileSuccessByType",
+                             uma_file_type);
   } else {
-    UMA_HISTOGRAM_SPARSE_SLOWLY("SBClientDownload.DmgFileFailureByType",
-                                uma_file_type);
+    base::UmaHistogramSparse("SBClientDownload.DmgFileFailureByType",
+                             uma_file_type);
   }
 
   if (archived_executable_) {
-    UMA_HISTOGRAM_SPARSE_SLOWLY("SBClientDownload.DmgFileHasExecutableByType",
-                                uma_file_type);
+    base::UmaHistogramSparse("SBClientDownload.DmgFileHasExecutableByType",
+                             uma_file_type);
     UMA_HISTOGRAM_COUNTS("SBClientDownload.DmgFileArchivedBinariesCount",
                          results.archived_binary.size());
   } else {
-    UMA_HISTOGRAM_SPARSE_SLOWLY("SBClientDownload.DmgFileHasNoExecutableByType",
-                                uma_file_type);
+    base::UmaHistogramSparse("SBClientDownload.DmgFileHasNoExecutableByType",
+                             uma_file_type);
   }
 
   UMA_HISTOGRAM_TIMES("SBClientDownload.ExtractDmgFeaturesTime",
@@ -732,7 +773,7 @@ void CheckClientDownloadRequest::CheckCertificateChainAgainstWhitelist() {
     return;
   }
 
-  // The URLFetcher is owned by the UI thread, so post a message to
+  // The URLLoader is owned by the UI thread, so post a message to
   // start the pingback.
   BrowserThread::PostTask(
       BrowserThread::UI, FROM_HERE,
@@ -749,7 +790,8 @@ void CheckClientDownloadRequest::GetTabRedirects() {
     return;
   }
 
-  Profile* profile = Profile::FromBrowserContext(item_->GetBrowserContext());
+  Profile* profile = Profile::FromBrowserContext(
+      content::DownloadItemUtils::GetBrowserContext(item_));
   history::HistoryService* history = HistoryServiceFactory::GetForProfile(
       profile, ServiceAccessType::EXPLICIT_ACCESS);
   if (!history) {
@@ -872,12 +914,15 @@ void CheckClientDownloadRequest::SendRequest() {
       !referrer_chain_data->GetReferrerChain()->empty()) {
     request.mutable_referrer_chain()->Swap(
         referrer_chain_data->GetReferrerChain());
+    request.mutable_referrer_chain_options()->set_recent_navigations_to_collect(
+        referrer_chain_data->recent_navigations_to_collect());
     UMA_HISTOGRAM_COUNTS_100(
         "SafeBrowsing.ReferrerURLChainSize.DownloadAttribution",
-        request.referrer_chain().size());
-    if (type_ == ClientDownloadRequest::SAMPLED_UNSUPPORTED_FILE)
+        referrer_chain_data->referrer_chain_length());
+    if (type_ == ClientDownloadRequest::SAMPLED_UNSUPPORTED_FILE) {
       SafeBrowsingNavigationObserverManager::SanitizeReferrerChain(
           request.mutable_referrer_chain());
+    }
   }
 
 #if defined(OS_MACOSX)
@@ -960,20 +1005,21 @@ void CheckClientDownloadRequest::SendRequest() {
               }
             }
           })");
-  fetcher_ =
-      net::URLFetcher::Create(0, PPAPIDownloadRequest::GetDownloadRequestUrl(),
-                              net::URLFetcher::POST, this, traffic_annotation);
-  data_use_measurement::DataUseUserData::AttachToFetcher(
-      fetcher_.get(), data_use_measurement::DataUseUserData::SAFE_BROWSING);
-  fetcher_->SetLoadFlags(net::LOAD_DISABLE_CACHE);
-  fetcher_->SetAutomaticallyRetryOn5xx(false);  // Don't retry on error.
-  fetcher_->SetRequestContext(service_->request_context_getter_.get());
-  fetcher_->SetUploadData("application/octet-stream",
-                          client_download_request_data_);
+  auto resource_request = std::make_unique<network::ResourceRequest>();
+  resource_request->url = PPAPIDownloadRequest::GetDownloadRequestUrl();
+  resource_request->method = "POST";
+  resource_request->load_flags = net::LOAD_DISABLE_CACHE;
+  loader_ = network::SimpleURLLoader::Create(std::move(resource_request),
+                                             traffic_annotation);
+  loader_->AttachStringForUpload(client_download_request_data_,
+                                 "application/octet-stream");
+  loader_->DownloadToStringOfUnboundedSizeUntilCrashAndDie(
+      service_->url_loader_factory_.get(),
+      base::BindOnce(&CheckClientDownloadRequest::OnURLLoaderComplete,
+                     base::Unretained(this)));
   request_start_time_ = base::TimeTicks::Now();
   UMA_HISTOGRAM_COUNTS("SBClientDownload.DownloadRequestPayloadSize",
                        client_download_request_data_.size());
-  fetcher_->Start();
 }
 
 void CheckClientDownloadRequest::PostFinishTask(
@@ -1025,6 +1071,7 @@ void CheckClientDownloadRequest::FinishRequest(
     // so we may be deleted now.
   } else {
     callback_.Run(DownloadCheckResult::UNKNOWN);
+    item_ = NULL;
   }
 }
 

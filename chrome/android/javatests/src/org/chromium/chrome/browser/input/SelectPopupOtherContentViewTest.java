@@ -22,11 +22,11 @@ import org.chromium.chrome.browser.ChromeSwitches;
 import org.chromium.chrome.browser.WebContentsFactory;
 import org.chromium.chrome.test.ChromeActivityTestRule;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
-import org.chromium.content.browser.ContentView;
-import org.chromium.content.browser.ContentViewCore;
+import org.chromium.components.content_view.ContentView;
 import org.chromium.content.browser.test.util.Criteria;
 import org.chromium.content.browser.test.util.CriteriaHelper;
 import org.chromium.content.browser.test.util.DOMUtils;
+import org.chromium.content_public.browser.ContentViewCore;
 import org.chromium.content_public.browser.WebContents;
 import org.chromium.ui.base.ActivityWindowAndroid;
 import org.chromium.ui.base.ViewAndroidDelegate;
@@ -36,8 +36,7 @@ import org.chromium.ui.base.WindowAndroid;
  * Test the select popup and how it interacts with another ContentViewCore.
  */
 @RunWith(ChromeJUnit4ClassRunner.class)
-@CommandLineFlags.Add({ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE,
-        ChromeActivityTestRule.DISABLE_NETWORK_PREDICTION_FLAG})
+@CommandLineFlags.Add({ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE})
 public class SelectPopupOtherContentViewTest {
     @Rule
     public ChromeActivityTestRule<ChromeActivity> mActivityTestRule =
@@ -66,7 +65,7 @@ public class SelectPopupOtherContentViewTest {
         public boolean isSatisfied() {
             ContentViewCore contentViewCore =
                     mActivityTestRule.getActivity().getCurrentContentViewCore();
-            return contentViewCore.getSelectPopupForTest() != null;
+            return contentViewCore.isSelectPopupVisibleForTest();
         }
     }
 
@@ -96,15 +95,12 @@ public class SelectPopupOtherContentViewTest {
             @Override
             public void run() {
                 WebContents webContents = WebContentsFactory.createWebContents(false, false);
-                WindowAndroid windowAndroid =
-                        new ActivityWindowAndroid(mActivityTestRule.getActivity());
+                ChromeActivity activity = mActivityTestRule.getActivity();
+                WindowAndroid windowAndroid = new ActivityWindowAndroid(activity);
 
-                ContentViewCore contentViewCore =
-                        ContentViewCore.create(mActivityTestRule.getActivity(), "");
-                ContentView cv = ContentView.createContentView(
-                        mActivityTestRule.getActivity(), contentViewCore);
-                contentViewCore.initialize(ViewAndroidDelegate.createBasicDelegate(cv), cv,
-                        webContents, windowAndroid);
+                ContentView cv = ContentView.createContentView(activity, webContents);
+                ContentViewCore contentViewCore = ContentViewCore.create(activity, "", webContents,
+                        ViewAndroidDelegate.createBasicDelegate(cv), cv, windowAndroid);
                 contentViewCore.destroy();
             }
         });
@@ -113,8 +109,7 @@ public class SelectPopupOtherContentViewTest {
         InstrumentationRegistry.getInstrumentation().waitForIdleSync();
 
         // The popup should still be shown.
-        Assert.assertNotNull(
-                "The select popup got hidden by destroying of unrelated ContentViewCore.",
-                viewCore.getSelectPopupForTest());
+        Assert.assertTrue("The select popup got hidden by destroying of unrelated ContentViewCore.",
+                viewCore.isSelectPopupVisibleForTest());
     }
 }

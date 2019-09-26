@@ -27,35 +27,6 @@ var LOG_TYPE = {
 
 
 /**
- * The different sources where an NTP tile's title can originate from.
- * Note: Keep in sync with components/ntp_tiles/tile_title_source.h
- * @enum {number}
- * @const
- */
-var TileTitleSource = {
-  UNKNOWN: 0,
-  MANIFEST: 1,
-  META_TAG: 2,
-  TITLE: 3,
-  INFERRED: 4
-};
-
-
-/**
- * The different sources that an NTP tile can have.
- * Note: Keep in sync with components/ntp_tiles/tile_source.h
- * @enum {number}
- * @const
- */
-var TileSource = {
-  TOP_SITES: 0,
-  SUGGESTIONS_SERVICE: 1,
-  POPULAR: 3,
-  WHITELIST: 4,
-};
-
-
-/**
  * The different (visual) types that an NTP tile can have.
  * Note: Keep in sync with components/ntp_tiles/tile_visual_type.h
  * @enum {number}
@@ -128,9 +99,11 @@ var logEvent = function(eventType) {
 /**
  * Log impression of an NTP tile.
  * @param {number} tileIndex Position of the tile, >= 0 and < NUMBER_OF_TILES.
- * @param {number} tileTitleSource The title's source from TileTitleSource.
- * @param {number} tileSource The source from TileSource.
- * @param {number} tileType The type from TileVisualType.
+ * @param {number} tileTitleSource The source of the tile's title as received
+ *                 from getMostVisitedItemData.
+ * @param {number} tileSource The tile's source as received from
+ *                 getMostVisitedItemData.
+ * @param {number} tileType The tile's visual type from TileVisualType.
  * @param {Date} dataGenerationTime Timestamp representing when the tile was
  *               produced by a ranking algorithm.
  */
@@ -143,9 +116,11 @@ function logMostVisitedImpression(
 /**
  * Log click on an NTP tile.
  * @param {number} tileIndex Position of the tile, >= 0 and < NUMBER_OF_TILES.
- * @param {number} tileTitleSource The title's source from TileTitleSource.
- * @param {number} tileSource The source from TileSource.
- * @param {number} tileType The type from TileVisualType.
+ * @param {number} tileTitleSource The source of the tile's title as received
+ *                 from getMostVisitedItemData.
+ * @param {number} tileSource The tile's source as received from
+ *                 getMostVisitedItemData.
+ * @param {number} tileType The tile's visual type from TileVisualType.
  * @param {Date} dataGenerationTime Timestamp representing when the tile was
  *               produced by a ranking algorithm.
  */
@@ -199,6 +174,8 @@ var handleCommand = function(data) {
   if (cmd == 'tile') {
     addTile(data);
   } else if (cmd == 'show') {
+    // TODO(treib): If this happens before we have finished loading the previous
+    // tiles, we probably get into a bad state.
     showTiles(data);
   } else if (cmd == 'updateTheme') {
     updateTheme(data);
@@ -364,12 +341,6 @@ var renderTile = function(data) {
 
   tile.className = 'mv-tile';
   tile.setAttribute('data-tid', data.tid);
-  var html = [];
-  html.push('<div class="mv-favicon"></div>');
-  html.push('<div class="mv-title"></div><div class="mv-thumb"></div>');
-  html.push('<button class="mv-x"></button>');
-  tile.innerHTML = html.join('');
-  tile.lastElementChild.title = queryArgs['removeTooltip'] || '';
 
   if (isSchemeAllowed(data.url)) {
     tile.href = data.url;
@@ -425,14 +396,33 @@ var renderTile = function(data) {
     }
   });
 
-  var title = tile.querySelector('.mv-title');
+  var favicon = document.createElement('div');
+  favicon.className = 'mv-favicon';
+  var fi = document.createElement('img');
+  fi.src = data.faviconUrl;
+  // Set title and alt to empty so screen readers won't say the image name.
+  fi.title = '';
+  fi.alt = '';
+  loadedCounter += 1;
+  fi.addEventListener('load', countLoad);
+  fi.addEventListener('error', countLoad);
+  fi.addEventListener('error', function(ev) {
+    favicon.classList.add('failed-favicon');
+  });
+  favicon.appendChild(fi);
+  tile.appendChild(favicon);
+
+  var title = document.createElement('div');
+  title.className = 'mv-title';
   title.innerText = data.title;
   title.style.direction = data.direction || 'ltr';
   if (NUM_TITLE_LINES > 1) {
     title.classList.add('multiline');
   }
+  tile.appendChild(title);
 
-  var thumb = tile.querySelector('.mv-thumb');
+  var thumb = document.createElement('div');
+  thumb.className = 'mv-thumb';
   var img = document.createElement('img');
   img.title = data.title;
   img.src = data.thumbnailUrl;
@@ -460,34 +450,23 @@ var renderTile = function(data) {
     countLoad();
   });
   thumb.appendChild(img);
+  tile.appendChild(thumb);
 
-  var favicon = tile.querySelector('.mv-favicon');
-  var fi = document.createElement('img');
-  fi.src = data.faviconUrl;
-  // Set title and alt to empty so screen readers won't say the image name.
-  fi.title = '';
-  fi.alt = '';
-  loadedCounter += 1;
-  fi.addEventListener('load', countLoad);
-  fi.addEventListener('error', countLoad);
-  fi.addEventListener('error', function(ev) {
-    favicon.classList.add('failed-favicon');
-  });
-  favicon.appendChild(fi);
-
-  var mvx = tile.querySelector('.mv-x');
+  var mvx = document.createElement('button');
+  mvx.className = 'mv-x';
+  mvx.title = queryArgs['removeTooltip'] || '';
   mvx.addEventListener('click', function(ev) {
     removeAllOldTiles();
     blacklistTile(tile);
     ev.preventDefault();
     ev.stopPropagation();
   });
-
   // Don't allow the event to bubble out to the containing tile, as that would
   // trigger navigation to the tile URL.
   mvx.addEventListener('keydown', function(event) {
     event.stopPropagation();
   });
+  tile.appendChild(mvx);
 
   return tile;
 };

@@ -9,7 +9,6 @@
 
 #include "base/bind.h"
 #include "base/callback.h"
-#include "base/memory/ptr_util.h"
 #include "chrome/browser/favicon/favicon_service_factory.h"
 #include "chrome/browser/favicon/large_icon_service_factory.h"
 #include "chrome/browser/history/top_sites_factory.h"
@@ -114,7 +113,7 @@ ChromeMostVisitedSitesFactory::NewForProfile(Profile* profile) {
     return nullptr;
   }
 
-  return base::MakeUnique<ntp_tiles::MostVisitedSites>(
+  return std::make_unique<ntp_tiles::MostVisitedSites>(
       profile->GetPrefs(), TopSitesFactory::GetForProfile(profile),
       SuggestionsServiceFactory::GetForProfile(profile),
 #if defined(OS_ANDROID)
@@ -122,12 +121,12 @@ ChromeMostVisitedSitesFactory::NewForProfile(Profile* profile) {
 #else
       nullptr,
 #endif
-      base::MakeUnique<ntp_tiles::IconCacherImpl>(
+      std::make_unique<ntp_tiles::IconCacherImpl>(
           FaviconServiceFactory::GetForProfile(
               profile, ServiceAccessType::IMPLICIT_ACCESS),
           LargeIconServiceFactory::GetForBrowserContext(profile),
-          base::MakeUnique<image_fetcher::ImageFetcherImpl>(
-              base::MakeUnique<suggestions::ImageDecoderImpl>(),
+          std::make_unique<image_fetcher::ImageFetcherImpl>(
+              std::make_unique<suggestions::ImageDecoderImpl>(),
               profile->GetRequestContext())),
-      base::MakeUnique<SupervisorBridge>(profile));
+      std::make_unique<SupervisorBridge>(profile));
 }

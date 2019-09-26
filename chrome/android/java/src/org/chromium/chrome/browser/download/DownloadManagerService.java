@@ -4,6 +4,7 @@
 
 package org.chromium.chrome.browser.download;
 
+import android.annotation.SuppressLint;
 import android.app.DownloadManager;
 import android.content.ActivityNotFoundException;
 import android.content.Context;
@@ -29,15 +30,19 @@ import org.chromium.base.library_loader.LibraryProcessType;
 import org.chromium.base.metrics.RecordHistogram;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.ChromeFeatureList;
+import org.chromium.chrome.browser.download.DownloadMetrics.DownloadOpenSource;
 import org.chromium.chrome.browser.download.ui.BackendProvider;
 import org.chromium.chrome.browser.download.ui.DownloadHistoryAdapter;
 import org.chromium.chrome.browser.externalnav.ExternalNavigationDelegateImpl;
 import org.chromium.chrome.browser.feature_engagement.TrackerFactory;
+import org.chromium.chrome.browser.media.MediaViewerUtils;
 import org.chromium.chrome.browser.profiles.Profile;
 import org.chromium.components.feature_engagement.EventConstants;
 import org.chromium.components.feature_engagement.Tracker;
 import org.chromium.components.offline_items_collection.ContentId;
+import org.chromium.components.offline_items_collection.FailState;
 import org.chromium.components.offline_items_collection.LegacyHelpers;
+import org.chromium.components.offline_items_collection.PendingState;
 import org.chromium.content.browser.BrowserStartupController;
 import org.chromium.net.ConnectionType;
 import org.chromium.net.NetworkChangeNotifierAutoDetect;
@@ -112,6 +117,8 @@ public class DownloadManagerService
             "application/application/x-pem-file",
             "application/pkix-cert",
             "application/x-wifi-config"));
+
+    private static final Set<String> sFirstSeenDownloadIds = new HashSet<String>();
 
     private static DownloadManagerService sDownloadManagerService;
     private static boolean sIsNetworkListenerDisabled;
@@ -391,19 +398,29 @@ public class DownloadManagerService
      * Stores download information to shared preferences. The information can be
      * either pending download IDs, or pending OMA downloads.
      *
-     * @param sharedPrefs SharedPreferences to update.
-     * @param type Type of the information.
-     * @param downloadInfo Information to be saved.
+     * @param sharedPrefs   SharedPreferences to update.
+     * @param type          Type of the information.
+     * @param downloadInfo  Information to be saved.
+     * @param forceCommit   Whether to synchronously update shared preferences.
      */
-    static void storeDownloadInfo(
-            SharedPreferences sharedPrefs, String type, Set<String> downloadInfo) {
+    @SuppressLint({"ApplySharedPref", "CommitPrefEdits"})
+    static void storeDownloadInfo(SharedPreferences sharedPrefs, String type,
+            Set<String> downloadInfo, boolean forceCommit) {
         SharedPreferences.Editor editor = sharedPrefs.edit();
         if (downloadInfo.isEmpty()) {
             editor.remove(type);
         } else {
             editor.putStringSet(type, downloadInfo);
         }
-        editor.apply();
+
+        if (forceCommit) {
+            // Write synchronously because it might be used on restart and needs to stay up-to-date.
+            if (!editor.commit()) {
+                Log.e(TAG, "Failed to write DownloadInfo " + type);
+            }
+        } else {
+            editor.apply();
+        }
     }
 
     /**
@@ -432,7 +449,8 @@ public class DownloadManagerService
                 removeFromDownloadProgressMap = notificationUpdateScheduled;
                 break;
             case DOWNLOAD_STATUS_FAILED:
-                mDownloadNotifier.notifyDownloadFailed(info);
+                // TODO(cmsy): Use correct FailState.
+                mDownloadNotifier.notifyDownloadFailed(info, FailState.CANNOT_DOWNLOAD);
                 Log.w(TAG, "Download failed: " + info.getFilePath());
                 onDownloadFailed(info.getFileName(), DownloadManager.ERROR_UNKNOWN);
                 break;
@@ -450,7 +468,8 @@ public class DownloadManagerService
                 mDownloadNotifier.notifyDownloadCanceled(item.getContentId());
                 break;
             case DOWNLOAD_STATUS_INTERRUPTED:
-                mDownloadNotifier.notifyDownloadInterrupted(info, progress.mIsAutoResumable);
+                mDownloadNotifier.notifyDownloadInterrupted(
+                        info, progress.mIsAutoResumable, PendingState.PENDING_NETWORK);
                 removeFromDownloadProgressMap = !progress.mIsAutoResumable;
                 break;
             default:
@@ -491,7 +510,8 @@ public class DownloadManagerService
                             info, result.first, result.second, isSupportedMimeType);
                     broadcastDownloadSuccessful(info);
                 } else {
-                    mDownloadNotifier.notifyDownloadFailed(info);
+                    // TODO(cmsy): Use correct FailState.
+                    mDownloadNotifier.notifyDownloadFailed(info, FailState.CANNOT_DOWNLOAD);
                     // TODO(qinmin): get the failure message from native.
                     onDownloadFailed(info.getFileName(), DownloadManager.ERROR_UNKNOWN);
                 }
@@ -552,7 +572,8 @@ public class DownloadManagerService
                     download.getDownloadInfo(), download.getSystemDownloadId());
             return;
         }
-        openDownloadedContent(download.getDownloadInfo(), download.getSystemDownloadId());
+        openDownloadedContent(download.getDownloadInfo(), download.getSystemDownloadId(),
+                DownloadMetrics.AUTO_OPEN);
     }
 
     /**
@@ -604,6 +625,7 @@ public class DownloadManagerService
                 progress.mIsUpdated = true;
                 progress.mIsSupportedMimeType = isSupportedMimeType;
                 mDownloadProgressMap.put(id, progress);
+                sFirstSeenDownloadIds.add(id);
                 DownloadUmaStatsEntry entry = getUmaStatsEntry(downloadItem.getId());
                 if (entry == null) {
                     addUmaStatsEntry(new DownloadUmaStatsEntry(
@@ -633,21 +655,22 @@ public class DownloadManagerService
             case DOWNLOAD_STATUS_COMPLETE:
             case DOWNLOAD_STATUS_FAILED:
             case DOWNLOAD_STATUS_CANCELLED:
-                recordDownloadFinishedUMA(downloadStatus, downloadItem.getId(),
-                        downloadItem.getDownloadInfo().getBytesReceived());
-                clearDownloadRetryCount(downloadItem.getId(), true);
-                clearDownloadRetryCount(downloadItem.getId(), false);
+                recordDownloadFinishedUMA(
+                        downloadStatus, id, downloadItem.getDownloadInfo().getBytesReceived());
+                clearDownloadRetryCount(id, true);
+                clearDownloadRetryCount(id, false);
                 updateNotification(progress);
+                sFirstSeenDownloadIds.remove(id);
                 break;
             case DOWNLOAD_STATUS_INTERRUPTED:
-                entry = getUmaStatsEntry(downloadItem.getId());
+                entry = getUmaStatsEntry(id);
                 entry.numInterruptions++;
                 updateBytesReceived(entry, bytesReceived);
                 storeUmaEntries();
                 updateNotification(progress);
                 break;
             case DOWNLOAD_STATUS_IN_PROGRESS:
-                entry = getUmaStatsEntry(downloadItem.getId());
+                entry = getUmaStatsEntry(id);
                 if (entry.isPaused != downloadItem.getDownloadInfo().isPaused()
                         || updateBytesReceived(entry, bytesReceived)) {
                     entry.isPaused = downloadItem.getDownloadInfo().isPaused();
@@ -768,10 +791,10 @@ public class DownloadManagerService
             // the real file path to the user instead of a content:// download ID.
             Uri fileUri = contentUri;
             if (filePath != null) fileUri = Uri.fromFile(new File(filePath));
-            return DownloadUtils.getMediaViewerIntentForDownloadItem(fileUri, contentUri, mimeType);
+            return MediaViewerUtils.getMediaViewerIntent(
+                    fileUri, contentUri, mimeType, true /* allowExternalAppHandlers */);
         }
-        return DownloadUtils.createViewIntentForDownloadItem(
-                contentUri, mimeType, originalUrl, referrer);
+        return MediaViewerUtils.createViewIntentForUri(contentUri, mimeType, originalUrl, referrer);
     }
 
     /**
@@ -793,11 +816,12 @@ public class DownloadManagerService
     }
 
     /** See {@link #openDownloadedContent(Context, String, boolean, boolean, String, long)}. */
-    protected void openDownloadedContent(final DownloadInfo downloadInfo, final long downloadId) {
+    protected void openDownloadedContent(final DownloadInfo downloadInfo, final long downloadId,
+            @DownloadOpenSource int source) {
         openDownloadedContent(mContext, downloadInfo.getFilePath(),
                 isSupportedMimeType(downloadInfo.getMimeType()), downloadInfo.isOffTheRecord(),
                 downloadInfo.getDownloadGuid(), downloadId, downloadInfo.getOriginalUrl(),
-                downloadInfo.getReferrer());
+                downloadInfo.getReferrer(), source);
     }
 
     /**
@@ -812,11 +836,12 @@ public class DownloadManagerService
      * @param downloadId          ID of the download item in DownloadManager.
      * @param originalUrl         The original url of the downloaded file.
      * @param referrer            Referrer of the downloaded file.
+     * @param source              The source that tries to open the download.
      */
     protected static void openDownloadedContent(final Context context, final String filePath,
             final boolean isSupportedMimeType, final boolean isOffTheRecord,
             final String downloadGuid, final long downloadId, final String originalUrl,
-            final String referrer) {
+            final String referrer, @DownloadOpenSource int source) {
         new AsyncTask<Void, Void, Intent>() {
             @Override
             public Intent doInBackground(Void... params) {
@@ -838,6 +863,10 @@ public class DownloadManagerService
                 if (didLaunchIntent && hasDownloadManagerService()) {
                     DownloadManagerService.getDownloadManagerService().updateLastAccessTime(
                             downloadGuid, isOffTheRecord);
+                    DownloadManager manager =
+                            (DownloadManager) context.getSystemService(Context.DOWNLOAD_SERVICE);
+                    String mimeType = manager.getMimeTypeForDownloadedFile(downloadId);
+                    DownloadMetrics.recordDownloadOpen(source, mimeType);
                 }
             }
         }.executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR);
@@ -900,10 +929,14 @@ public class DownloadManagerService
         recordDownloadResumption(uma);
         if (progress == null) {
             assert !item.getDownloadInfo().isPaused();
+            // If the download was not resumed before, the browser must have been killed while the
+            // download is active.
+            if (!sFirstSeenDownloadIds.contains(item.getId())) {
+                sFirstSeenDownloadIds.add(item.getId());
+                recordDownloadResumption(UMA_DOWNLOAD_RESUMPTION_BROWSER_KILLED);
+            }
             updateDownloadProgress(item, DOWNLOAD_STATUS_IN_PROGRESS);
             progress = mDownloadProgressMap.get(item.getId());
-            // If progress is null, the browser must have been killed while the download is active.
-            recordDownloadResumption(UMA_DOWNLOAD_RESUMPTION_BROWSER_KILLED);
         }
         if (hasUserGesture) {
             // If user manually resumes a download, update the connection type that the download
@@ -979,9 +1012,11 @@ public class DownloadManagerService
      * Removes a download from the list.
      * @param downloadGuid GUID of the download.
      * @param isOffTheRecord Whether the download is off the record.
+     * @param externallyRemoved If the file is externally removed by other applications.
      */
     @Override
-    public void removeDownload(final String downloadGuid, boolean isOffTheRecord) {
+    public void removeDownload(
+            final String downloadGuid, boolean isOffTheRecord, boolean externallyRemoved) {
         mHandler.post(() -> {
             nativeRemoveDownload(getNativeDownloadManagerService(), downloadGuid, isOffTheRecord);
             removeDownloadProgress(downloadGuid);
@@ -990,7 +1025,7 @@ public class DownloadManagerService
         new AsyncTask<Void, Void, Void>() {
             @Override
             public Void doInBackground(Void... params) {
-                mDownloadManagerDelegate.removeCompletedDownload(downloadGuid);
+                mDownloadManagerDelegate.removeCompletedDownload(downloadGuid, externallyRemoved);
                 return null;
             }
         }.executeOnExecutor(AsyncTask.SERIAL_EXECUTOR);
@@ -1030,8 +1065,10 @@ public class DownloadManagerService
 
     @CalledByNative
     void onResumptionFailed(String downloadGuid) {
+        // TODO(cmsy): Use correct FailState.
         mDownloadNotifier.notifyDownloadFailed(
-                new DownloadInfo.Builder().setDownloadGuid(downloadGuid).build());
+                new DownloadInfo.Builder().setDownloadGuid(downloadGuid).build(),
+                FailState.CANNOT_DOWNLOAD);
         removeDownloadProgress(downloadGuid);
         recordDownloadResumption(UMA_DOWNLOAD_RESUMPTION_FAILED);
         recordDownloadFinishedUMA(DOWNLOAD_STATUS_FAILED, downloadGuid, 0);
@@ -1232,6 +1269,7 @@ public class DownloadManagerService
     private void removeDownloadProgress(String guid) {
         mDownloadProgressMap.remove(guid);
         removeAutoResumableDownload(guid);
+        sFirstSeenDownloadIds.remove(guid);
     }
 
     @Override
@@ -1324,7 +1362,7 @@ public class DownloadManagerService
         for (int i = 0; i < mUmaEntries.size(); ++i) {
             entries.add(mUmaEntries.get(i).getSharedPreferenceString());
         }
-        storeDownloadInfo(mSharedPrefs, DOWNLOAD_UMA_ENTRY, entries);
+        storeDownloadInfo(mSharedPrefs, DOWNLOAD_UMA_ENTRY, entries, false /* forceCommit */);
     }
 
     /**
@@ -1394,12 +1432,39 @@ public class DownloadManagerService
             Intent intent = DownloadNotificationService.buildActionIntent(mContext, action,
                     LegacyHelpers.buildLegacyContentId(false, downloadItem.getId()),
                     downloadItem.getDownloadInfo().isOffTheRecord());
+            addCancelExtra(intent, downloadItem);
             mContext.sendBroadcast(intent);
         } else {
             Intent intent = DownloadNotificationFactory.buildActionIntent(mContext, action,
                     LegacyHelpers.buildLegacyContentId(false, downloadItem.getId()),
                     downloadItem.getDownloadInfo().isOffTheRecord());
+            addCancelExtra(intent, downloadItem);
             mContext.startService(intent);
+        }
+    }
+
+    /**
+     * Add an Intent extra for StateAtCancel UMA to know the state of a request prior to a
+     * user-initated cancel.
+     * @param intent The Intent associated with the download action.
+     * @param downloadItem The download associated with download action.
+     */
+    private void addCancelExtra(Intent intent, DownloadItem downloadItem) {
+        if (intent.getAction().equals(DownloadNotificationService2.ACTION_DOWNLOAD_CANCEL)) {
+            int state;
+            if (DownloadUtils.isDownloadPaused(downloadItem)) {
+                state = DownloadNotificationUmaHelper.StateAtCancel.PAUSED;
+            } else if (DownloadUtils.isDownloadPending(downloadItem)) {
+                if (downloadItem.getDownloadInfo().getPendingState()
+                        == PendingState.PENDING_NETWORK) {
+                    state = DownloadNotificationUmaHelper.StateAtCancel.PENDING_NETWORK;
+                } else {
+                    state = DownloadNotificationUmaHelper.StateAtCancel.PENDING_ANOTHER_DOWNLOAD;
+                }
+            } else {
+                state = DownloadNotificationUmaHelper.StateAtCancel.DOWNLOADING;
+            }
+            intent.putExtra(DownloadNotificationService2.EXTRA_DOWNLOAD_STATE_AT_CANCEL, state);
         }
     }
 

@@ -9,15 +9,15 @@
 #include <string>
 
 #include "base/macros.h"
-#include "services/proxy_resolver/public/interfaces/proxy_resolver.mojom.h"
+#include "services/proxy_resolver/public/mojom/proxy_resolver.mojom.h"
 #include "services/service_manager/public/cpp/connector.h"
-#include "services/service_manager/public/interfaces/connector.mojom.h"
+#include "services/service_manager/public/mojom/connector.mojom.h"
 
 // ProxyResolverFactory that acts as a proxy to the proxy resolver service.
 // Starts the service as needed, and maintains no active mojo pipes to it,
 // so that it's automatically shut down as needed.
 //
-// ChromeMojoProxyResolverFactories must be created and used only on the IO
+// ChromeMojoProxyResolverFactories must be created and used only on the UI
 // thread.
 class ChromeMojoProxyResolverFactory
     : public proxy_resolver::mojom::ProxyResolverFactory {
@@ -38,9 +38,6 @@ class ChromeMojoProxyResolverFactory
       override;
 
  private:
-  // Initializes the ServiceManager's connector if it hasn't been already.
-  void InitServiceManagerConnector();
-
   std::unique_ptr<service_manager::Connector> service_manager_connector_;
 
   DISALLOW_COPY_AND_ASSIGN(ChromeMojoProxyResolverFactory);

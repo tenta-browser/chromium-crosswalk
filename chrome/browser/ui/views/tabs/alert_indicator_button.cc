@@ -93,9 +93,7 @@ void AlertIndicatorButton::TransitionToAlertState(TabAlertState next_state) {
   if ((alert_state_ == TabAlertState::AUDIO_PLAYING &&
        next_state == TabAlertState::AUDIO_MUTING) ||
       (alert_state_ == TabAlertState::AUDIO_MUTING &&
-       next_state == TabAlertState::AUDIO_PLAYING) ||
-      (alert_state_ == TabAlertState::AUDIO_MUTING &&
-       next_state == TabAlertState::NONE)) {
+       next_state == TabAlertState::AUDIO_PLAYING)) {
     // Instant user feedback: No fade animation.
     showing_alert_state_ = next_state;
     fade_animation_.reset();
@@ -292,7 +290,7 @@ Tab* AlertIndicatorButton::GetTab() const {
 }
 
 void AlertIndicatorButton::ResetImages(TabAlertState state) {
-  SkColor color = parent_tab_->button_color();
+  SkColor color = parent_tab_->GetAlertIndicatorColor(state);
   gfx::ImageSkia indicator_image =
       chrome::GetTabAlertIndicatorImage(state, color).AsImageSkia();
   SetImage(views::Button::STATE_NORMAL, &indicator_image);

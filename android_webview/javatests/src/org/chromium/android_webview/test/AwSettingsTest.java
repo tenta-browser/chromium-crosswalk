@@ -38,6 +38,7 @@ import org.chromium.android_webview.test.util.JSUtils;
 import org.chromium.android_webview.test.util.VideoTestUtil;
 import org.chromium.android_webview.test.util.VideoTestWebServer;
 import org.chromium.base.Callback;
+import org.chromium.base.ThreadUtils;
 import org.chromium.base.test.util.CallbackHelper;
 import org.chromium.base.test.util.CommandLineFlags;
 import org.chromium.base.test.util.DisabledTest;
@@ -53,6 +54,7 @@ import org.chromium.content_public.common.ContentUrlConstants;
 import org.chromium.net.test.EmbeddedTestServer;
 import org.chromium.net.test.util.TestWebServer;
 import org.chromium.ui.display.DisplayAndroid;
+import org.chromium.ui.display.DisplayUtil;
 
 import java.io.File;
 import java.util.concurrent.TimeUnit;
@@ -964,9 +966,7 @@ public class AwSettingsTest {
         }
 
         protected String getData() {
-            DisplayAndroid displayAndroid = DisplayAndroid.getNonMultiDisplay(mContext);
-            int displayWidth =
-                    (int) (displayAndroid.getDisplayWidth() / displayAndroid.getDipScale());
+            int displayWidth = calcDisplayWidthDp(mContext);
             int layoutWidth = (int) (displayWidth * 2.5f); // Use 2.5 as autosizing layout tests do.
             StringBuilder sb = new StringBuilder();
             sb.append("<html>"
@@ -1482,10 +1482,7 @@ public class AwSettingsTest {
             loadDataSync(getData());
             final int reportedClientWidth = Integer.parseInt(getTitleOnUiThread());
             if (value) {
-                final DisplayAndroid displayAndroid = DisplayAndroid.getNonMultiDisplay(mContext);
-                // The clientWidth is subject to pixel snapping.
-                final int displayWidth = (int) Math.ceil(
-                        displayAndroid.getDisplayWidth() / displayAndroid.getDipScale());
+                int displayWidth = calcDisplayWidthDp(mContext);
                 Assert.assertEquals(displayWidth, reportedClientWidth);
             } else {
                 Assert.assertEquals(3000, reportedClientWidth);
@@ -1506,6 +1503,13 @@ public class AwSettingsTest {
                     + "  <div id='testDiv' style='height:100%;'></div> "
                     + "</body></html>";
         }
+    }
+
+    public static int calcDisplayWidthDp(Context context) {
+        return ThreadUtils.runOnUiThreadBlockingNoException(() -> {
+            DisplayAndroid displayAndroid = DisplayAndroid.getNonMultiDisplay(context);
+            return DisplayUtil.pxToDp(displayAndroid, displayAndroid.getDisplayWidth());
+        });
     }
 
     // The test verifies that JavaScript is disabled upon WebView
@@ -1784,7 +1788,7 @@ public class AwSettingsTest {
         EmbeddedTestServer testServer = EmbeddedTestServer.createAndStartServer(
                 InstrumentationRegistry.getInstrumentation().getContext());
 
-        mActivityTestRule.enableJavaScriptOnUiThread(awContents);
+        AwActivityTestRule.enableJavaScriptOnUiThread(awContents);
 
         try {
             // Create url with echoheader echoing the User-Agent header in the the html body.
@@ -1829,7 +1833,6 @@ public class AwSettingsTest {
     @Test
     @SmallTest
     @Feature({"AndroidWebView", "Preferences"})
-    @RetryOnFailure
     public void testDatabaseEnabled() throws Throwable {
         TestAwContentsClient client = new TestAwContentsClient();
         final AwTestContainerView testContainerView =
@@ -2586,9 +2589,7 @@ public class AwSettingsTest {
                 pageTemplate,
                 "<meta name='viewport' content='width=" + viewportTagSpecifiedWidth + "' />");
 
-        DisplayAndroid displayAndroid = DisplayAndroid.getNonMultiDisplay(
-                testContainer.getContext());
-        int displayWidth = (int) (displayAndroid.getDisplayWidth() / displayAndroid.getDipScale());
+        int displayWidth = calcDisplayWidthDp(testContainer.getContext());
 
         settings.setJavaScriptEnabled(true);
         Assert.assertFalse(settings.getUseWideViewPort());
@@ -2635,6 +2636,7 @@ public class AwSettingsTest {
     @Test
     @SmallTest
     @Feature({"AndroidWebView", "Preferences"})
+    @DisabledTest(message = "crbug.com/746264")
     public void testUseWideViewportLayoutWidth() throws Throwable {
         TestAwContentsClient contentClient = new TestAwContentsClient();
         AwTestContainerView testContainerView =
@@ -2647,6 +2649,7 @@ public class AwSettingsTest {
     @Test
     @SmallTest
     @Feature({"AndroidWebView", "Preferences"})
+    @DisabledTest(message = "crbug.com/746264")
     public void testUseWideViewportLayoutWidthNoQuirks() throws Throwable {
         TestAwContentsClient contentClient = new TestAwContentsClient();
         AwTestContainerView testContainerView =
@@ -2666,9 +2669,7 @@ public class AwSettingsTest {
         AwSettings settings = mActivityTestRule.getAwSettingsOnUiThread(awContents);
         settings.setBuiltInZoomControls(true);
 
-        DisplayAndroid displayAndroid =
-                DisplayAndroid.getNonMultiDisplay(testContainerView.getContext());
-        int displayWidth = (int) (displayAndroid.getDisplayWidth() / displayAndroid.getDipScale());
+        int displayWidth = calcDisplayWidthDp(testContainerView.getContext());
         int layoutWidth = displayWidth * 2;
         final String page = "<html>"
                 + "<head><meta name='viewport' content='width=" + layoutWidth + "'>"
@@ -2722,6 +2723,7 @@ public class AwSettingsTest {
     @Test
     @SmallTest
     @Feature({"AndroidWebView", "Preferences"})
+    @DisabledTest(message = "crbug.com/746264")
     public void testZeroLayoutHeightDisablesViewportQuirkWithTwoViews() throws Throwable {
         ViewPair views = createViews();
         runPerViewSettingsTest(
@@ -2866,6 +2868,40 @@ public class AwSettingsTest {
         }
     }
 
+    private void testScrollTopLeftInteropState(boolean state) throws Throwable {
+        final TestAwContentsClient client = new TestAwContentsClient();
+        final AwTestContainerView view =
+                mActivityTestRule.createAwTestContainerViewOnMainSync(client);
+        final AwContents awContents = view.getAwContents();
+        CallbackHelper onPageFinishedHelper = client.getOnPageFinishedHelper();
+        InstrumentationRegistry.getInstrumentation().runOnMainSync(
+                () -> awContents.getSettings().setScrollTopLeftInteropEnabled(state));
+        AwActivityTestRule.enableJavaScriptOnUiThread(awContents);
+        final String page = "<!doctype html>"
+                + "<script>"
+                + "window.onload = function() {"
+                + "  document.title = document.scrollingElement === document.documentElement;"
+                + "};"
+                + "</script>";
+        mActivityTestRule.loadDataSync(awContents, onPageFinishedHelper, page, "text/html", false);
+        String actualTitle = mActivityTestRule.getTitleOnUiThread(awContents);
+        Assert.assertEquals(state ? "true" : "false", actualTitle);
+    }
+
+    @Test
+    @SmallTest
+    @Feature({"AndroidWebView", "Preferences"})
+    public void testScrollTopLeftInteropEnabled() throws Throwable {
+        testScrollTopLeftInteropState(true);
+    }
+
+    @Test
+    @SmallTest
+    @Feature({"AndroidWebView", "Preferences"})
+    public void testScrollTopLeftInteropDisabled() throws Throwable {
+        testScrollTopLeftInteropState(false);
+    }
+
     @Test
     @SmallTest
     @Feature({"AndroidWebView", "Preferences"})
@@ -2998,7 +3034,7 @@ public class AwSettingsTest {
         final AwTestContainerView mContainerView =
                 mActivityTestRule.createAwTestContainerViewOnMainSync(client);
         final AwContents awContents = mContainerView.getAwContents();
-        mActivityTestRule.enableJavaScriptOnUiThread(awContents);
+        AwActivityTestRule.enableJavaScriptOnUiThread(awContents);
         JSUtils.executeJavaScriptAndWaitForResult(InstrumentationRegistry.getInstrumentation(),
                 awContents, client.getOnEvaluateJavaScriptResultHelper(),
                 "window.emptyDocumentPersistenceTest = true;");
@@ -3034,7 +3070,7 @@ public class AwSettingsTest {
                 mActivityTestRule.createAwTestContainerViewOnMainSync(client);
         final AwContents awContents = view.getAwContents();
         CallbackHelper onPageFinishedHelper = client.getOnPageFinishedHelper();
-        mActivityTestRule.enableJavaScriptOnUiThread(awContents);
+        AwActivityTestRule.enableJavaScriptOnUiThread(awContents);
         final String expectedTitle = "false"; // https://crbug.com/618472
         final String page = "<!doctype html>"
                 + "<script>"
@@ -3069,7 +3105,7 @@ public class AwSettingsTest {
         final AwTestContainerView mContainerView =
                 mActivityTestRule.createAwTestContainerViewOnMainSync(client);
         final AwContents awContents = mContainerView.getAwContents();
-        mActivityTestRule.enableJavaScriptOnUiThread(awContents);
+        AwActivityTestRule.enableJavaScriptOnUiThread(awContents);
         final String testPageHtml =
                 "<html><head></head><body><div id='a' contenteditable></div><script>"
                 + "var cnt = 0;"
@@ -3286,7 +3322,8 @@ public class AwSettingsTest {
         final int y = (webView.getBottom() - webView.getTop()) / 2;
         final AwContents awContents = webView.getAwContents();
         InstrumentationRegistry.getInstrumentation().runOnMainSync(
-                () -> awContents.getContentViewCore().sendDoubleTapForTest(
-                        SystemClock.uptimeMillis(), x, y));
+                ()
+                        -> awContents.getWebContents().getEventForwarder().doubleTapForTest(
+                                SystemClock.uptimeMillis(), x, y));
     }
 }

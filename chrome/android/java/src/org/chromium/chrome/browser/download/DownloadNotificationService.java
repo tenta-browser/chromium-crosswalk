@@ -30,6 +30,7 @@ import android.os.Build;
 import android.os.Bundle;
 import android.os.IBinder;
 import android.service.notification.StatusBarNotification;
+import android.support.v4.app.NotificationCompat;
 import android.text.TextUtils;
 import android.util.Pair;
 
@@ -38,6 +39,7 @@ import org.chromium.base.ApplicationStatus;
 import org.chromium.base.ContextUtils;
 import org.chromium.base.Log;
 import org.chromium.base.ObserverList;
+import org.chromium.base.StrictModeContext;
 import org.chromium.base.VisibleForTesting;
 import org.chromium.base.library_loader.LibraryProcessType;
 import org.chromium.base.library_loader.ProcessInitException;
@@ -48,6 +50,7 @@ import org.chromium.chrome.browser.download.items.OfflineContentAggregatorNotifi
 import org.chromium.chrome.browser.init.BrowserParts;
 import org.chromium.chrome.browser.init.ChromeBrowserInitializer;
 import org.chromium.chrome.browser.init.EmptyBrowserParts;
+import org.chromium.chrome.browser.media.MediaViewerUtils;
 import org.chromium.chrome.browser.notifications.ChromeNotificationBuilder;
 import org.chromium.chrome.browser.notifications.NotificationBuilderFactory;
 import org.chromium.chrome.browser.notifications.NotificationConstants;
@@ -498,6 +501,7 @@ public class DownloadNotificationService extends Service {
     @VisibleForTesting
     @TargetApi(Build.VERSION_CODES.N)
     void stopForegroundInternal(boolean killNotification) {
+        Log.w(TAG, "stopForegroundInternal killNotification: " + killNotification);
         if (!useForegroundService()) return;
         stopForeground(killNotification ? STOP_FOREGROUND_REMOVE : STOP_FOREGROUND_DETACH);
     }
@@ -508,6 +512,7 @@ public class DownloadNotificationService extends Service {
      */
     @VisibleForTesting
     void startForegroundInternal() {
+        Log.w(TAG, "startForegroundInternal");
         if (!useForegroundService()) return;
         Notification notification =
                 buildSummaryNotification(getApplicationContext(), mNotificationManager);
@@ -567,6 +572,7 @@ public class DownloadNotificationService extends Service {
      * @param id The {@link ContentId} of the download that has been started and should be tracked.
      */
     private void startTrackingInProgressDownload(ContentId id) {
+        Log.w(TAG, "startTrackingInProgressDownload");
         if (mDownloadsInProgress.size() == 0) startForegroundInternal();
         if (!mDownloadsInProgress.contains(id)) mDownloadsInProgress.add(id);
     }
@@ -583,6 +589,7 @@ public class DownloadNotificationService extends Service {
      *                            potentially bad state where we cannot dismiss the notification.
      */
     private void stopTrackingInProgressDownload(ContentId id, boolean allowStopForeground) {
+        Log.w(TAG, "stopTrackingInProgressDownload");
         mDownloadsInProgress.remove(id);
         if (allowStopForeground && mDownloadsInProgress.size() == 0) stopForegroundInternal(false);
     }
@@ -627,6 +634,7 @@ public class DownloadNotificationService extends Service {
      */
     @SuppressLint("NewApi") // useForegroundService guards StatusBarNotification.getNotification
     boolean hideSummaryNotificationIfNecessary(int notificationIdToIgnore) {
+        Log.w(TAG, "hideSummaryNotificationIfNecessary id: " + notificationIdToIgnore);
         if (mDownloadsInProgress.size() > 0) return false;
 
         if (useForegroundService()) {
@@ -776,7 +784,7 @@ public class DownloadNotificationService extends Service {
                                       : android.R.drawable.stat_sys_download;
         ChromeNotificationBuilder builder = buildNotification(resId, fileName, contentText);
         builder.setOngoing(true);
-        builder.setPriority(Notification.PRIORITY_HIGH);
+        builder.setPriorityBeforeO(NotificationCompat.PRIORITY_HIGH);
 
         // Avoid animations while the download isn't progressing.
         if (!isDownloadPending) {
@@ -964,7 +972,8 @@ public class DownloadNotificationService extends Service {
                 intent.putExtra(EXTRA_DOWNLOAD_CONTENTID_ID, id.id);
                 intent.putExtra(EXTRA_DOWNLOAD_CONTENTID_NAMESPACE, id.namespace);
                 intent.putExtra(NotificationConstants.EXTRA_NOTIFICATION_ID, notificationId);
-                DownloadUtils.setOriginalUrlAndReferralExtraToIntent(intent, originalUrl, referrer);
+                MediaViewerUtils.setOriginalUrlAndReferralExtraToIntent(
+                        intent, originalUrl, referrer);
             } else {
                 intent = buildActionIntent(mContext, ACTION_DOWNLOAD_OPEN, id, false);
             }
@@ -1130,7 +1139,8 @@ public class DownloadNotificationService extends Service {
         if (entry == null
                 && !(id != null && LegacyHelpers.isLegacyOfflinePage(id)
                            && TextUtils.equals(intent.getAction(), ACTION_DOWNLOAD_OPEN))
-                && !(TextUtils.equals(intent.getAction(), ACTION_NOTIFICATION_CLICKED))) {
+                && !(TextUtils.equals(intent.getAction(), ACTION_NOTIFICATION_CLICKED))
+                && !(TextUtils.equals(intent.getAction(), ACTION_DOWNLOAD_RESUME_ALL))) {
             handleDownloadOperationForMissingNotification(intent);
             hideSummaryNotificationIfNecessary(-1);
             return;
@@ -1268,7 +1278,8 @@ public class DownloadNotificationService extends Service {
         String referrer = IntentUtils.safeGetStringExtra(intent, Intent.EXTRA_REFERRER);
         ContentId contentId = DownloadNotificationService.getContentIdFromIntent(intent);
         DownloadManagerService.openDownloadedContent(context, downloadFilename, isSupportedMimeType,
-                isOffTheRecord, contentId.id, id, originalUrl, referrer);
+                isOffTheRecord, contentId.id, id, originalUrl, referrer,
+                DownloadMetrics.NOTIFICATION);
     }
 
     /**
@@ -1318,7 +1329,10 @@ public class DownloadNotificationService extends Service {
 
     @VisibleForTesting
     void updateNotification(int id, Notification notification) {
-        mNotificationManager.notify(NOTIFICATION_NAMESPACE, id, notification);
+        // Disabling StrictMode to avoid violations (crbug.com/809864).
+        try (StrictModeContext unused = StrictModeContext.allowDiskReads()) {
+            mNotificationManager.notify(NOTIFICATION_NAMESPACE, id, notification);
+        }
     }
 
     private void updateNotification(int notificationId, Notification notification, ContentId id,

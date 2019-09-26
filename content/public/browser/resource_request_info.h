@@ -6,13 +6,13 @@
 #define CONTENT_PUBLIC_BROWSER_RESOURCE_REQUEST_INFO_H_
 
 #include "base/callback_forward.h"
+#include "base/strings/string_piece.h"
 #include "content/common/content_export.h"
 #include "content/public/browser/global_request_id.h"
 #include "content/public/browser/navigation_ui_data.h"
 #include "content/public/common/previews_state.h"
 #include "content/public/common/resource_type.h"
-#include "third_party/WebKit/common/page/page_visibility_state.mojom.h"
-#include "third_party/WebKit/public/platform/WebReferrerPolicy.h"
+#include "third_party/blink/public/platform/web_referrer_policy.h"
 #include "ui/base/page_transition_types.h"
 
 namespace net {
@@ -139,9 +139,9 @@ class ResourceRequestInfo {
   // Returns the associated referrer policy.
   virtual blink::WebReferrerPolicy GetReferrerPolicy() const = 0;
 
-  // Returns the associated visibility state at the time the request was started
-  // in the renderer.
-  virtual blink::mojom::PageVisibilityState GetVisibilityState() const = 0;
+  // Returns whether the frame that initiated this request is used for
+  // prerendering.
+  virtual bool IsPrerendering() const = 0;
 
   // Returns the associated page transition type.
   virtual ui::PageTransition GetPageTransition() const = 0;
@@ -175,8 +175,22 @@ class ResourceRequestInfo {
   // UI thread at the beginning of navigation.
   virtual NavigationUIData* GetNavigationUIData() const = 0;
 
-  // Whether this request was canceled by DevTools.
-  virtual bool CanceledByDevTools() const = 0;
+  enum class DevToolsStatus {
+    kCanceled,
+    // DevTools can internally handle a redirect, so the url request may
+    // appear never done. Mark these cases.
+    kCanceledAsRedirect,
+    kNotCanceled,
+  };
+
+  // If and why this request was canceled by DevTools.
+  virtual DevToolsStatus GetDevToolsStatus() const = 0;
+
+  // When the client of a request decides to cancel it, it may optionally
+  // provide an application-defined description of the canncellation reason.
+  // This method returns the custom reason. If no such reason has been provided,
+  // it returns an empty string.
+  virtual base::StringPiece GetCustomCancelReason() const = 0;
 
  protected:
   virtual ~ResourceRequestInfo() {}

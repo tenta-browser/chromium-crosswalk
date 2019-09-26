@@ -5,10 +5,11 @@
 #include "components/autofill/content/common/autofill_types_struct_traits.h"
 
 #include "base/i18n/rtl.h"
-#include "mojo/common/common_custom_types_struct_traits.h"
-#include "mojo/common/time_struct_traits.h"
-#include "url/mojo/origin_struct_traits.h"
-#include "url/mojo/url_gurl_struct_traits.h"
+#include "mojo/public/cpp/base/string16_mojom_traits.h"
+#include "mojo/public/cpp/base/text_direction_mojom_traits.h"
+#include "mojo/public/cpp/base/time_mojom_traits.h"
+#include "url/mojom/origin_mojom_traits.h"
+#include "url/mojom/url_gurl_mojom_traits.h"
 
 namespace mojo {
 
@@ -417,6 +418,134 @@ bool EnumTraits<autofill::mojom::PasswordFormFieldPredictionType,
 }
 
 // static
+autofill::mojom::SubmissionSource EnumTraits<
+    autofill::mojom::SubmissionSource,
+    autofill::SubmissionSource>::ToMojom(autofill::SubmissionSource input) {
+  switch (input) {
+    case autofill::SubmissionSource::SAME_DOCUMENT_NAVIGATION:
+      return autofill::mojom::SubmissionSource::SAME_DOCUMENT_NAVIGATION;
+    case autofill::SubmissionSource::XHR_SUCCEEDED:
+      return autofill::mojom::SubmissionSource::XHR_SUCCEEDED;
+    case autofill::SubmissionSource::FRAME_DETACHED:
+      return autofill::mojom::SubmissionSource::FRAME_DETACHED;
+    case autofill::SubmissionSource::DOM_MUTATION_AFTER_XHR:
+      return autofill::mojom::SubmissionSource::DOM_MUTATION_AFTER_XHR;
+    case autofill::SubmissionSource::PROBABLY_FORM_SUBMITTED:
+      return autofill::mojom::SubmissionSource::PROBABLY_FORM_SUBMITTED;
+    case autofill::SubmissionSource::FORM_SUBMISSION:
+      return autofill::mojom::SubmissionSource::FORM_SUBMISSION;
+  }
+  NOTREACHED();
+  return autofill::mojom::SubmissionSource::FORM_SUBMISSION;
+}
+
+// static
+bool EnumTraits<autofill::mojom::SubmissionSource, autofill::SubmissionSource>::
+    FromMojom(autofill::mojom::SubmissionSource input,
+              autofill::SubmissionSource* output) {
+  switch (input) {
+    case autofill::mojom::SubmissionSource::SAME_DOCUMENT_NAVIGATION:
+      *output = autofill::SubmissionSource::SAME_DOCUMENT_NAVIGATION;
+      return true;
+    case autofill::mojom::SubmissionSource::XHR_SUCCEEDED:
+      *output = autofill::SubmissionSource::XHR_SUCCEEDED;
+      return true;
+    case autofill::mojom::SubmissionSource::FRAME_DETACHED:
+      *output = autofill::SubmissionSource::FRAME_DETACHED;
+      return true;
+    case autofill::mojom::SubmissionSource::DOM_MUTATION_AFTER_XHR:
+      *output = autofill::SubmissionSource::DOM_MUTATION_AFTER_XHR;
+      return true;
+    case autofill::mojom::SubmissionSource::PROBABLY_FORM_SUBMITTED:
+      *output = autofill::SubmissionSource::PROBABLY_FORM_SUBMITTED;
+      return true;
+    case autofill::mojom::SubmissionSource::FORM_SUBMISSION:
+      *output = autofill::SubmissionSource::FORM_SUBMISSION;
+      return true;
+  }
+  NOTREACHED();
+  return false;
+}
+
+// static
+autofill::mojom::LabelSource
+EnumTraits<autofill::mojom::LabelSource, autofill::FormFieldData::LabelSource>::
+    ToMojom(autofill::FormFieldData::LabelSource input) {
+  switch (input) {
+    case autofill::FormFieldData::LabelSource::UNKNOWN:
+      return autofill::mojom::LabelSource::UNKNOWN;
+    case autofill::FormFieldData::LabelSource::LABEL_TAG:
+      return autofill::mojom::LabelSource::LABEL_TAG;
+    case autofill::FormFieldData::LabelSource::P_TAG:
+      return autofill::mojom::LabelSource::P_TAG;
+    case autofill::FormFieldData::LabelSource::DIV_TABLE:
+      return autofill::mojom::LabelSource::DIV_TABLE;
+    case autofill::FormFieldData::LabelSource::TD_TAG:
+      return autofill::mojom::LabelSource::TD_TAG;
+    case autofill::FormFieldData::LabelSource::DD_TAG:
+      return autofill::mojom::LabelSource::DD_TAG;
+    case autofill::FormFieldData::LabelSource::LI_TAG:
+      return autofill::mojom::LabelSource::LI_TAG;
+    case autofill::FormFieldData::LabelSource::PLACE_HOLDER:
+      return autofill::mojom::LabelSource::PLACE_HOLDER;
+    case autofill::FormFieldData::LabelSource::ARIA_LABEL:
+      return autofill::mojom::LabelSource::ARIA_LABEL;
+    case autofill::FormFieldData::LabelSource::COMBINED:
+      return autofill::mojom::LabelSource::COMBINED;
+    case autofill::FormFieldData::LabelSource::VALUE:
+      return autofill::mojom::LabelSource::VALUE;
+  }
+
+  NOTREACHED();
+  return autofill::mojom::LabelSource::UNKNOWN;
+}
+
+// static
+bool EnumTraits<autofill::mojom::LabelSource,
+                autofill::FormFieldData::LabelSource>::
+    FromMojom(autofill::mojom::LabelSource input,
+              autofill::FormFieldData::LabelSource* output) {
+  switch (input) {
+    case autofill::mojom::LabelSource::UNKNOWN:
+      *output = autofill::FormFieldData::LabelSource::UNKNOWN;
+      return true;
+    case autofill::mojom::LabelSource::LABEL_TAG:
+      *output = autofill::FormFieldData::LabelSource::LABEL_TAG;
+      return true;
+    case autofill::mojom::LabelSource::P_TAG:
+      *output = autofill::FormFieldData::LabelSource::P_TAG;
+      return true;
+    case autofill::mojom::LabelSource::DIV_TABLE:
+      *output = autofill::FormFieldData::LabelSource::DIV_TABLE;
+      return true;
+    case autofill::mojom::LabelSource::TD_TAG:
+      *output = autofill::FormFieldData::LabelSource::TD_TAG;
+      return true;
+    case autofill::mojom::LabelSource::DD_TAG:
+      *output = autofill::FormFieldData::LabelSource::DD_TAG;
+      return true;
+    case autofill::mojom::LabelSource::LI_TAG:
+      *output = autofill::FormFieldData::LabelSource::LI_TAG;
+      return true;
+    case autofill::mojom::LabelSource::PLACE_HOLDER:
+      *output = autofill::FormFieldData::LabelSource::PLACE_HOLDER;
+      return true;
+    case autofill::mojom::LabelSource::ARIA_LABEL:
+      *output = autofill::FormFieldData::LabelSource::ARIA_LABEL;
+      return true;
+    case autofill::mojom::LabelSource::COMBINED:
+      *output = autofill::FormFieldData::LabelSource::COMBINED;
+      return true;
+    case autofill::mojom::LabelSource::VALUE:
+      *output = autofill::FormFieldData::LabelSource::VALUE;
+      return true;
+  }
+
+  NOTREACHED();
+  return false;
+}
+
+// static
 bool StructTraits<
     autofill::mojom::FormFieldDataDataView,
     autofill::FormFieldData>::Read(autofill::mojom::FormFieldDataDataView data,
@@ -461,6 +590,9 @@ bool StructTraits<
   if (!data.ReadOptionValues(&out->option_values))
     return false;
   if (!data.ReadOptionContents(&out->option_contents))
+    return false;
+
+  if (!data.ReadLabelSource(&out->label_source))
     return false;
 
   return true;
@@ -733,10 +865,10 @@ bool StructTraits<autofill::mojom::FormsPredictionsMapDataView,
 }
 
 // static
-bool StructTraits<autofill::mojom::PossibleUsernamePairDataView,
-                  autofill::PossibleUsernamePair>::
-    Read(autofill::mojom::PossibleUsernamePairDataView data,
-         autofill::PossibleUsernamePair* out) {
+bool StructTraits<autofill::mojom::ValueElementPairDataView,
+                  autofill::ValueElementPair>::
+    Read(autofill::mojom::ValueElementPairDataView data,
+         autofill::ValueElementPair* out) {
   if (!data.ReadValue(&out->first) || !data.ReadFieldName(&out->second))
     return false;
 

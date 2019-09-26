@@ -7,6 +7,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <algorithm>
+#include <memory>
 #include <utility>
 
 #include "base/bind.h"
@@ -24,19 +25,18 @@
 #include "components/spellcheck/common/spellcheck_switches.h"
 #include "components/spellcheck/renderer/spellcheck_language.h"
 #include "components/spellcheck/renderer/spellcheck_provider.h"
-#include "components/spellcheck/spellcheck_build_features.h"
+#include "components/spellcheck/spellcheck_buildflags.h"
 #include "content/public/common/service_manager_connection.h"
 #include "content/public/common/simple_connection_filter.h"
 #include "content/public/renderer/render_frame.h"
 #include "content/public/renderer/render_frame_visitor.h"
 #include "content/public/renderer/render_thread.h"
-#include "services/service_manager/public/cpp/binder_registry.h"
-#include "third_party/WebKit/public/platform/WebString.h"
-#include "third_party/WebKit/public/platform/WebVector.h"
-#include "third_party/WebKit/public/web/WebLocalFrame.h"
-#include "third_party/WebKit/public/web/WebTextCheckingCompletion.h"
-#include "third_party/WebKit/public/web/WebTextCheckingResult.h"
-#include "third_party/WebKit/public/web/WebTextDecorationType.h"
+#include "third_party/blink/public/platform/web_string.h"
+#include "third_party/blink/public/platform/web_vector.h"
+#include "third_party/blink/public/web/web_local_frame.h"
+#include "third_party/blink/public/web/web_text_checking_completion.h"
+#include "third_party/blink/public/web/web_text_checking_result.h"
+#include "third_party/blink/public/web/web_text_decoration_type.h"
 
 using blink::WebVector;
 using blink::WebString;
@@ -58,9 +58,10 @@ class UpdateSpellcheckEnabled : public content::RenderFrameVisitor {
 };
 
 bool UpdateSpellcheckEnabled::Visit(content::RenderFrame* render_frame) {
-  SpellCheckProvider* provider = SpellCheckProvider::Get(render_frame);
-  DCHECK(provider);
-  provider->EnableSpellcheck(enabled_);
+  if (!enabled_) {
+    if (render_frame && render_frame->GetWebFrame())
+      render_frame->GetWebFrame()->RemoveSpellingMarkers();
+  }
   return true;
 }
 
@@ -170,22 +171,17 @@ class SpellCheck::SpellcheckRequest {
 // values.
 // TODO(groby): Simplify this.
 SpellCheck::SpellCheck(
+    service_manager::BinderRegistry* registry,
     service_manager::LocalInterfaceProvider* embedder_provider)
-    : embedder_provider_(embedder_provider), spellcheck_enabled_(true) {
-  if (!content::ChildThread::Get())
+    : embedder_provider_(embedder_provider),
+      spellcheck_enabled_(true),
+      weak_factory_(this) {
+  DCHECK(embedder_provider);
+  if (!registry)
     return;  // Can be NULL in tests.
-
-  auto* service_manager_connection =
-      content::ChildThread::Get()->GetServiceManagerConnection();
-  DCHECK(service_manager_connection);
-
-  auto registry = base::MakeUnique<service_manager::BinderRegistry>();
-  registry->AddInterface(
-      base::Bind(&SpellCheck::SpellCheckerRequest, base::Unretained(this)),
-      base::ThreadTaskRunnerHandle::Get());
-
-  service_manager_connection->AddConnectionFilter(
-      base::MakeUnique<content::SimpleConnectionFilter>(std::move(registry)));
+  registry->AddInterface(base::BindRepeating(&SpellCheck::SpellCheckerRequest,
+                                             weak_factory_.GetWeakPtr()),
+                         base::ThreadTaskRunnerHandle::Get());
 }
 
 SpellCheck::~SpellCheck() {
@@ -264,7 +260,7 @@ void SpellCheck::CustomDictionaryChanged(
 void SpellCheck::AddSpellcheckLanguage(base::File file,
                                        const std::string& language) {
   languages_.push_back(
-      base::MakeUnique<SpellcheckLanguage>(embedder_provider_));
+      std::make_unique<SpellcheckLanguage>(embedder_provider_));
   languages_.back()->Init(std::move(file), language);
 }
 
@@ -446,8 +442,8 @@ void SpellCheck::PostDelayedSpellCheckTask(SpellcheckRequest* request) {
     return;
 
   base::ThreadTaskRunnerHandle::Get()->PostTask(
-      FROM_HERE, base::Bind(&SpellCheck::PerformSpellCheck, AsWeakPtr(),
-                            base::Owned(request)));
+      FROM_HERE, base::BindOnce(&SpellCheck::PerformSpellCheck, AsWeakPtr(),
+                                base::Owned(request)));
 }
 #endif
 

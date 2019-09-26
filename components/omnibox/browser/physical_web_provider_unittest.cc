@@ -9,7 +9,6 @@
 #include <string>
 #include <utility>
 
-#include "base/memory/ptr_util.h"
 #include "base/metrics/field_trial.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/utf_string_conversions.h"
@@ -38,12 +37,11 @@ namespace {
 
 // An autocomplete provider client that embeds the fake Physical Web data
 // source.
-class FakeAutocompleteProviderClient
-    : public testing::NiceMock<MockAutocompleteProviderClient> {
+class FakeAutocompleteProviderClient : public MockAutocompleteProviderClient {
  public:
   FakeAutocompleteProviderClient()
       : physical_web_data_source_(
-            base::MakeUnique<FakePhysicalWebDataSource>()),
+            std::make_unique<FakePhysicalWebDataSource>()),
         is_off_the_record_(false) {}
 
   const AutocompleteSchemeClassifier& GetSchemeClassifier() const override {
@@ -96,7 +94,7 @@ class PhysicalWebProviderTest : public testing::Test {
     // DCHECK.
     field_trial_list_.reset();
     field_trial_list_.reset(new base::FieldTrialList(
-        base::MakeUnique<metrics::SHA1EntropyProvider>("foo")));
+        std::make_unique<variations::SHA1EntropyProvider>("foo")));
     variations::testing::ClearAllVariationParams();
   }
 
@@ -114,7 +112,7 @@ class PhysicalWebProviderTest : public testing::Test {
   // populated with a unique scanned URL and page metadata.
   static std::unique_ptr<physical_web::MetadataList> CreateMetadata(
       size_t metadata_count) {
-    auto metadata_list = base::MakeUnique<physical_web::MetadataList>();
+    auto metadata_list = std::make_unique<physical_web::MetadataList>();
     for (size_t i = 0; i < metadata_count; ++i) {
       std::string item_id = base::NumberToString(i);
       std::string url = "https://example.com/" + item_id;
@@ -293,7 +291,7 @@ TEST_F(PhysicalWebProviderTest, TestSingleMetadataItemCreatesOneMatch) {
   EXPECT_EQ(1U, provider_->matches().size());
   const AutocompleteMatch& metadata_match = provider_->matches().front();
   EXPECT_EQ(AutocompleteMatchType::PHYSICAL_WEB, metadata_match.type);
-  ValidateMatch(metadata_match, resolved_url, resolved_url, title, false);
+  ValidateMatch(metadata_match, resolved_url, "example.com/0", title, false);
 
   // Run the test again with a URL in the omnibox input. An additional match
   // should be added as a default match.
@@ -303,7 +301,7 @@ TEST_F(PhysicalWebProviderTest, TestSingleMetadataItemCreatesOneMatch) {
   size_t default_match_count = 0;
   for (const auto& match : provider_->matches()) {
     if (match.type == AutocompleteMatchType::PHYSICAL_WEB) {
-      ValidateMatch(match, resolved_url, resolved_url, title, false);
+      ValidateMatch(match, resolved_url, "example.com/0", title, false);
       ++metadata_match_count;
     } else {
       EXPECT_TRUE(match.allowed_to_be_default_match);

@@ -7,8 +7,23 @@ import("//mojo/public/tools/bindings/mojom.gni")
 # C++ headers and sources that can be used outside ash.
 component("cpp") {
   sources = [
+    "accelerators.cc",
+    "accelerators.h",
     "accessibility_types.h",
+    "app_list/app_list_types.cc",
+    "app_list/app_list_types.h",
+    "app_list/internal_app_id_constants.h",
+    "app_list/term_break_iterator.cc",
+    "app_list/term_break_iterator.h",
+    "app_list/tokenized_string.cc",
+    "app_list/tokenized_string.h",
+    "app_list/tokenized_string_char_iterator.cc",
+    "app_list/tokenized_string_char_iterator.h",
+    "app_list/tokenized_string_match.cc",
+    "app_list/tokenized_string_match.h",
     "app_types.h",
+    "ash_features.cc",
+    "ash_features.h",
     "ash_pref_names.cc",
     "ash_pref_names.h",
     "ash_public_export.h",
@@ -28,6 +43,9 @@ component("cpp") {
     "immersive/immersive_handler_factory.h",
     "immersive/immersive_revealed_lock.cc",
     "immersive/immersive_revealed_lock.h",
+    "login_constants.h",
+    "menu_utils.cc",
+    "menu_utils.h",
     "mus_property_mirror_ash.cc",
     "mus_property_mirror_ash.h",
     "remote_shelf_item_delegate.cc",
@@ -50,6 +68,7 @@ component("cpp") {
     "shell_window_ids.h",
     "stylus_utils.cc",
     "stylus_utils.h",
+    "wallpaper_types.h",
     "window_pin_type.cc",
     "window_pin_type.h",
     "window_properties.cc",
@@ -102,8 +121,9 @@ mojom("test_interfaces") {
 source_set("unit_tests") {
   testonly = true
   sources = [
+    "menu_utils_unittest.cc",
     "shelf_model_unittest.cc",
-    "shelf_struct_traits_unittest.cc",
+    "shelf_struct_mojom_traits_unittest.cc",
   ]
 
   deps = [

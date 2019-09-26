@@ -4,9 +4,10 @@
 
 #include "media/audio/fuchsia/audio_manager_fuchsia.h"
 
+#include <memory>
+
 #include <media/audio.h>
 
-#include "base/memory/ptr_util.h"
 #include "media/audio/fuchsia/audio_output_stream_fuchsia.h"
 
 namespace media {
@@ -17,7 +18,9 @@ AudioManagerFuchsia::AudioManagerFuchsia(
     : AudioManagerBase(std::move(audio_thread), audio_log_factory),
       fuchsia_audio_manager_(fuchsia_audio_manager_create()) {}
 
-AudioManagerFuchsia::~AudioManagerFuchsia() {}
+AudioManagerFuchsia::~AudioManagerFuchsia() {
+  fuchsia_audio_manager_free(fuchsia_audio_manager_);
+}
 
 bool AudioManagerFuchsia::HasAudioOutputDevices() {
   return fuchsia_audio_manager_get_output_devices(fuchsia_audio_manager_,
@@ -141,7 +144,7 @@ AudioInputStream* AudioManagerFuchsia::MakeLowLatencyInputStream(
 std::unique_ptr<AudioManager> CreateAudioManager(
     std::unique_ptr<AudioThread> audio_thread,
     AudioLogFactory* audio_log_factory) {
-  return base::MakeUnique<AudioManagerFuchsia>(std::move(audio_thread),
+  return std::make_unique<AudioManagerFuchsia>(std::move(audio_thread),
                                                audio_log_factory);
 }
 

@@ -2,9 +2,10 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
+import("//build/config/jumbo.gni")
 import("//build/config/ui.gni")
 
-component("manager") {
+jumbo_component("manager") {
   sources = [
     "chromeos/apply_content_protection_task.cc",
     "chromeos/apply_content_protection_task.h",
@@ -35,7 +36,6 @@ component("manager") {
     "display_manager_export.h",
     "display_manager_utilities.cc",
     "display_manager_utilities.h",
-    "display_pref_util.h",
     "fake_display_delegate.cc",
     "fake_display_delegate.h",
     "fake_display_snapshot.cc",
@@ -58,6 +58,7 @@ component("manager") {
     "//ui/base",
     "//ui/display/mojo:interfaces",
     "//ui/display/util",
+    "//ui/events:platform_event",
     "//ui/events/devices",
     "//ui/strings",
   ]

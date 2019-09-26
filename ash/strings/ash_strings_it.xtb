@@ -23,12 +23,16 @@
 <translation id="1484102317210609525"><ph name="DEVICE_NAME" /> (HDMI/DP)</translation>
 <translation id="1510238584712386396">Avvio applicazioni</translation>
 <translation id="1525508553941733066">IGNORA</translation>
+<translation id="1537254971476575106">Lente d'ingrandimento a schermo intero</translation>
 <translation id="15373452373711364">Puntatore del mouse grande</translation>
 <translation id="1550523713251050646">Fai clic per visualizzare altre opzioni</translation>
+<translation id="1567387640189251553">È stata collegata una tastiera diversa dall'ultimo inserimento della password. Potrebbe essere un tentativo di rubare i tasti premuti.</translation>
+<translation id="1608626060424371292">Rimuovi questo utente</translation>
 <translation id="1621499497873603021">Tempo rimanente all'esaurimento della batteria: <ph name="TIME_LEFT" /></translation>
 <translation id="1658406695958299976">Non è stato ancora possibile verificare la password. Nota: se l'hai modificata di recente, la nuova password verrà applicata quando esci dall'account. Utilizza qui la tua vecchia password.</translation>
 <translation id="1677472565718498478"><ph name="TIME" /> rimanenti</translation>
 <translation id="1698760176351776263">Indirizzo IPv6: <ph name="ADDRESS" /></translation>
+<translation id="170389796989115980">L'amministratore del dispositivo potrebbe essere in grado di monitorare le tue attività.</translation>
 <translation id="1734367976349034509">Questo dispositivo è gestito dall'azienda</translation>
 <translation id="1746730358044914197">I metodi di immissione vengono configurati dall'amministratore.</translation>
 <translation id="1747827819627189109">Tastiera sullo schermo attiva</translation>
@@ -39,17 +43,21 @@
 <translation id="1882897271359938046">Mirroring su <ph name="DISPLAY_NAME" /></translation>
 <translation id="1919743966458266018">La scorciatoia per aprire Task Manager è cambiata. Utilizza <ph name="NEW_SHORTCUT" /> invece di <ph name="OLD_SHORTCUT" />.</translation>
 <translation id="1923539912171292317">Clic automatici</translation>
+<translation id="1928739107511554905">Per scaricare l'aggiornamento, utilizza il touchscreen e riavvia il Chromebook con la tastiera collegata.</translation>
 <translation id="1942830294380034169">Pulsante Overflow</translation>
 <translation id="1951012854035635156">Assistente</translation>
 <translation id="1957803754585243749">0°</translation>
+<translation id="1957958912175573503">Imposta la lingua</translation>
 <translation id="1969011864782743497"><ph name="DEVICE_NAME" /> (USB)</translation>
+<translation id="1995660704900986789">Spegni</translation>
 <translation id="2012624427112548395">CTRL + tasto per la ricerca + H</translation>
 <translation id="2049639323467105390">Questo dispositivo è gestito da <ph name="DOMAIN" />.</translation>
 <translation id="2050339315714019657">Verticale</translation>
 <translation id="2067602449040652523">Luminosità della tastiera</translation>
-<translation id="207439088875642105">Si tratta di un account di minori gestito da <ph name="FIRST_PARENT_EMAIL" /> e <ph name="SECOND_PARENT_EMAIL" /></translation>
+<translation id="2081529251031312395">$1 può accedere in seguito.</translation>
 <translation id="2122028596993374965">Interrompi la trasmissione di <ph name="TAB_NAME" /> su <ph name="RECEIVER_NAME" /></translation>
 <translation id="2127372758936585790">Caricabatterie a basso consumo</translation>
+<translation id="2135456203358955318">Lente d'ingrandimento ancorata</translation>
 <translation id="2144487987174258011">Riavvia per aggiornare Adobe Flash Player</translation>
 <translation id="2208323208084708176">Modalità desktop unificato</translation>
 <translation id="2220572644011485463">PIN o password</translation>
@@ -59,6 +67,7 @@
 <translation id="2292698582925480719">Scala di visualizzazione</translation>
 <translation id="2303600792989757991">Attiva/disattiva panoramica finestra</translation>
 <translation id="2338501278241028356">Attiva il Bluetooth per trovare dispositivi nelle vicinanze</translation>
+<translation id="2351266942280602854">Lingua e immissione</translation>
 <translation id="2352467521400612932">Impostazioni di stilo</translation>
 <translation id="2354174487190027830">Attivazione di <ph name="NAME" /></translation>
 <translation id="2365393535144473978">Se attivi i dati mobili verrà attivato anche il Bluetooth.</translation>
@@ -74,7 +83,9 @@
 <translation id="2653659639078652383">Invia</translation>
 <translation id="2675319268637823299">Un amministratore ha vietato l'accesso simultaneo per <ph name="USER_EMAIL" />.
     Per continuare, devono disconnettersi tutti gli utenti.</translation>
-<translation id="2700058918926273959">La sessione terminerà tra <ph name="SESSION_TIME_REMAINING" />. Verrà eseguita la disconnessione.</translation>
+<translation id="2696763960464195425">Le tue informazioni verranno rimosse all'uscita dall'account. <ph name="LEARN_MORE" /></translation>
+<translation id="2700493154570097719">Imposta la tastiera</translation>
+<translation id="2718395828230677721">Luminosità notturna</translation>
 <translation id="2727977024730340865">Collegato a un caricabatterie a basso consumo. La carica della batteria potrebbe non essere affidabile.</translation>
 <translation id="2761704814324807722">Barra di stato, ora: <ph name="TIME" />, <ph name="BATTERY" /></translation>
 <translation id="277257480934873581">Riconnessione a <ph name="NAME" /> in corso</translation>
@@ -84,6 +95,7 @@
 <translation id="2844169650293029770">Dispositivo USB-C (porta anteriore sinistra)</translation>
 <translation id="2865888419503095837">Informazioni di rete</translation>
 <translation id="2872961005593481000">Spegni</translation>
+<translation id="2878884018241093801">Nessun elemento recente</translation>
 <translation id="2903844815300039659">Connesso a <ph name="NAME" />, <ph name="STRENGTH" /></translation>
 <translation id="2911940648265863620">Stai condividendo lo schermo</translation>
 <translation id="2942516765047364088">Posizione shelf</translation>
@@ -93,13 +105,14 @@
 <translation id="3000461861112256445">Audio in formato mono</translation>
 <translation id="3009178788565917040">Uscita</translation>
 <translation id="3019353588588144572">Tempo rimanente al caricamento completo della batteria: <ph name="TIME_REMAINING" /></translation>
-<translation id="3047477924825107454">Si tratta di un account di minori gestito da <ph name="MANAGER_EMAIL" /></translation>
 <translation id="3077734595579995578">maiusc</translation>
 <translation id="3087734570205094154">In basso</translation>
 <translation id="3105990244222795498"><ph name="DEVICE_NAME" /> (Bluetooth)</translation>
+<translation id="3112378005171663295">Comprimi</translation>
 <translation id="3126069444801937830">Riavvia per aggiornare</translation>
 <translation id="3147142846278915599">Avvio applicazioni (sincronizzazione delle app...)</translation>
 <translation id="315116470104423982">Dati mobili</translation>
+<translation id="3151786313568798007">Orientamento</translation>
 <translation id="3153444934357957346">Puoi avere massimo <ph name="MULTI_PROFILE_USER_LIMIT" /> account per l'accesso simultaneo.</translation>
 <translation id="3236488194889173876">Nessuna rete mobile disponibile</translation>
 <translation id="3294437725009624529">Ospite</translation>
@@ -111,9 +124,9 @@
 <translation id="3413817803639110246">Niente da vedere in questo momento</translation>
 <translation id="3445925074670675829">Dispositivo USB-C</translation>
 <translation id="3465566417615315331">Fai clic sulla tua foto</translation>
-<translation id="3473479545200714844">Ingrandimento dello schermo</translation>
 <translation id="3477079411857374384">CTRL + MAIUSC + barra spaziatrice</translation>
 <translation id="3510164367642747937">Evidenzia il puntatore del mouse</translation>
+<translation id="3513798432020909783">Account gestito da <ph name="MANAGER_EMAIL" /></translation>
 <translation id="3573179567135747900">Torna a "<ph name="FROM_LOCALE" />" (è necessario riavviare)</translation>
 <translation id="3582792037806681688">L'accesso simultaneo è stato vietato per un utente di questa sessione</translation>
 <translation id="3595596368722241419">Batteria carica</translation>
@@ -121,6 +134,7 @@
 <translation id="3621202678540785336">Ingresso</translation>
 <translation id="3626281679859535460">Luminosità</translation>
 <translation id="3631369015426612114">Consenti notifiche da:</translation>
+<translation id="3705722231355495246">-</translation>
 <translation id="3712407551474845318">Acquisisci area</translation>
 <translation id="371370241367527062">Microfono anteriore</translation>
 <translation id="3771549900096082774">Modalità ad alto contrasto</translation>
@@ -128,9 +142,11 @@
 <translation id="3784455785234192852">Blocca</translation>
 <translation id="3798670284305777884">Altoparlante (interno)</translation>
 <translation id="3846575436967432996">Nessuna informazione di rete disponibile</translation>
+<translation id="385051799172605136">Indietro</translation>
 <translation id="3891340733213178823">Premi due volte Ctrl+Maiusc+Q per uscire.</translation>
 <translation id="3893630138897523026">ChromeVox (lettura vocale)</translation>
 <translation id="3899995891769452915">Input vocale</translation>
+<translation id="3900355044994618856">La sessione terminerà tra <ph name="SESSION_TIME_REMAINING" /></translation>
 <translation id="3901991538546252627">Connessione a: <ph name="NAME" /></translation>
 <translation id="394485226368336402">Impostazioni audio</translation>
 <translation id="397105322502079400">Calcolo in corso...</translation>
@@ -139,6 +155,7 @@
 <translation id="4072264167173457037">Segnale medio</translation>
 <translation id="4279490309300973883">Mirroring</translation>
 <translation id="4321179778687042513">ctrl</translation>
+<translation id="4331809312908958774">Chrome OS</translation>
 <translation id="4338109981321384717">Lente d'ingrandimento</translation>
 <translation id="4351433414020964307">L'assistente è in fase di caricamento…</translation>
 <translation id="4378551569595875038">Connessione...</translation>
@@ -162,6 +179,7 @@
 <translation id="4905614135390995787">La scorciatoia per attivare/disattivare la modalità ad alto contrasto è cambiata. Usa <ph name="NEW_SHORTCUT" /> anziché <ph name="OLD_SHORTCUT" />.</translation>
 <translation id="4918086044614829423">Accetto</translation>
 <translation id="4961318399572185831">Trasmetti schermo</translation>
+<translation id="5136175204352732067">Tastiera diversa collegata</translation>
 <translation id="5168181903108465623">Dispositivi di trasmissione disponibili</translation>
 <translation id="5207949376430453814">Evidenzia il cursore di testo</translation>
 <translation id="5222676887888702881">Esci</translation>
@@ -172,6 +190,8 @@
 <translation id="5430931332414098647">Tethering istantaneo</translation>
 <translation id="5431825016875453137">OpenVPN/L2TP</translation>
 <translation id="544691375626129091">A questa sessione sono già stati aggiunti tutti gli utenti disponibili.</translation>
+<translation id="5457599981699367932">Esplora come ospite</translation>
+<translation id="54609108002486618">Gestita</translation>
 <translation id="553675580533261935">Uscita dalla sessione</translation>
 <translation id="5548285847212963613">L'estensione "<ph name="EXTENSION_NAME" />" può essere utile per il collegamento a questa rete.</translation>
 <translation id="5571066253365925590">Bluetooth attivo</translation>
@@ -182,6 +202,8 @@
 <translation id="5744083938413354016">Trascinamento al tocco</translation>
 <translation id="5777841717266010279">Interrompere la condivisione dello schermo?</translation>
 <translation id="57838592816432529">Disattiva audio</translation>
+<translation id="5820394555380036790">Chromium OS</translation>
+<translation id="5832805196449965646">Aggiungi persona</translation>
 <translation id="5860033963881614850">Off</translation>
 <translation id="5895138241574237353">Riavvia</translation>
 <translation id="5901316534475909376">MAIUSC+ESC</translation>
@@ -194,6 +216,7 @@
 <translation id="5977415296283489383">Cuffia</translation>
 <translation id="5978382165065462689">Condividi il controllo dello schermo tramite Assistenza remota.</translation>
 <translation id="5980301590375426705">Esci da sessione Ospite</translation>
+<translation id="598882571027504733">Per scaricare l'aggiornamento, riavvia il Chromebook con la tastiera collegata.</translation>
 <translation id="5992218262414051481">Modalità ad alto contrasto attivata. Premi di nuovo CTRL + tasto per la ricerca + H per disattivarla.</translation>
 <translation id="6018164090099858612">Uscita dalla modalità di mirroring</translation>
 <translation id="6043212731627905357">Questo monitor non è compatibile con il tuo dispositivo <ph name="DEVICE_TYPE" /> (il monitor non è supportato).</translation>
@@ -204,6 +227,7 @@
 <translation id="607652042414456612">Il tuo computer è rilevabile per i dispositivi Bluetooth nelle vicinanze e verrà visualizzato come "<ph name="NAME" />" con l'indirizzo <ph name="ADDRESS" /></translation>
 <translation id="6106745654298855237">In carica: <ph name="POWER_SOURCE" /></translation>
 <translation id="615957422585914272">Mostra tastiera sullo schermo</translation>
+<translation id="6164005077879661055">Tutti i file e i dati locali associati all'utente controllato verranno eliminati definitivamente in seguito alla rimozione dell'utente. Le impostazioni e i siti web visitati relativi all'utente controllato potrebbero essere ancora visibili al gestore all'indirizzo <ph name="MANAGEMENT_URL" />.</translation>
 <translation id="6165508094623778733">Ulteriori informazioni</translation>
 <translation id="6267036997247669271"><ph name="NAME" />: attivazione in corso...</translation>
 <translation id="6284232397434400372">Risoluzione modificata</translation>
@@ -229,6 +253,7 @@ Utilizza questa funzione solo con gli account che consideri attendibili.</transl
 <translation id="6650933572246256093">Il dispositivo Bluetooth "<ph name="DEVICE_NAME" />" chiede l'autorizzazione per essere accoppiato. Inserisci questa passkey sul dispositivo: <ph name="PASSKEY" /></translation>
 <translation id="6657585470893396449">Password</translation>
 <translation id="6691659475504239918">Tasto per la ricerca + MAIUSC + H</translation>
+<translation id="6696025732084565524">La tastiera rimovibile richiede un aggiornamento critico</translation>
 <translation id="6700713906295497288">Pulsante di menu IME</translation>
 <translation id="6713285437468012787">Il dispositivo Bluetooth "<ph name="DEVICE_NAME" />" è stato accoppiato ed è ora disponibile per tutti gli utenti. Puoi rimuovere tale accoppiamento utilizzando il menu Impostazioni.</translation>
 <translation id="6715542151869432661">Nessun dispositivo mobile trovato.</translation>
@@ -238,6 +263,7 @@ Utilizza questa funzione solo con gli account che consideri attendibili.</transl
 <translation id="6857811139397017780">Attiva <ph name="NETWORKSERVICE" /></translation>
 <translation id="6911468394164995108">Connetti a un'altra...</translation>
 <translation id="6981982820502123353">Accessibilità</translation>
+<translation id="698231206551913481">Tutti i file e i dati locali associati a questo utente verranno eliminati definitivamente in seguito alla rimozione dell'utente.</translation>
 <translation id="7029814467594812963">Esci da sessione</translation>
 <translation id="7034339000180558234">Trasmissione di <ph name="TAB_NAME" /> a <ph name="RECEIVER_NAME" /> in corso</translation>
 <translation id="7052914147756339792">Imposta sfondo...</translation>
@@ -245,7 +271,9 @@ Utilizza questa funzione solo con gli account che consideri attendibili.</transl
 <translation id="7066646422045619941">Questa rete è stata disattivata dall'amministratore.</translation>
 <translation id="7067196344162293536">Ruota in modo automatico</translation>
 <translation id="7098389117866926363">Dispositivo USB-C (porta posteriore sinistra)</translation>
+<translation id="7131634465328662194">Verrai disconnesso automaticamente.</translation>
 <translation id="7165278925115064263">ALT + MAIUSC + K</translation>
+<translation id="7165511658052620796">(TEMP) Mostra accesso webui; se usato, segnala bug (crbug.com) o feedback (ALT + MAIUSC + I)</translation>
 <translation id="7168224885072002358">Ripristino della risoluzione precedente tra <ph name="TIMEOUT_SECONDS" /></translation>
 <translation id="7256634071279256947">Microfono posteriore</translation>
 <translation id="726276584504105859">Trascina qui per utilizzare la modalità Schermo diviso</translation>
@@ -273,6 +301,7 @@ Utilizza questa funzione solo con gli account che consideri attendibili.</transl
 <translation id="7829386189513694949">Segnale forte</translation>
 <translation id="7904094684485781019">L'amministratore di questo account ha bloccato l'accesso simultaneo.</translation>
 <translation id="7933084174919150729">L'Assistente Google è disponibile solo per il profilo principale.</translation>
+<translation id="79341161159229895">Account gestito da <ph name="FIRST_PARENT_EMAIL" /> e <ph name="SECOND_PARENT_EMAIL" /></translation>
 <translation id="7977927628060636163">Ricerca di reti mobili...</translation>
 <translation id="7982789257301363584">Rete</translation>
 <translation id="7994370417837006925">Accesso simultaneo</translation>
@@ -289,6 +318,7 @@ Utilizza questa funzione solo con gli account che consideri attendibili.</transl
 <translation id="8261506727792406068">Elimina</translation>
 <translation id="8308637677604853869">Menu precedente</translation>
 <translation id="8351131234907093545">Crea nota</translation>
+<translation id="8392451568018454956">Menu Opzioni per <ph name="USER_EMAIL_ADDRESS" /></translation>
 <translation id="8428213095426709021">Impostazioni</translation>
 <translation id="8433186206711564395">Impostazioni di rete</translation>
 <translation id="8433977262951327081">La scorciatoia per mostrare il fumetto del menu di opzioni di immissione nella shelf è cambiata. Utilizza <ph name="NEW_SHORTCUT" /> invece di <ph name="OLD_SHORTCUT" />.</translation>
@@ -299,21 +329,26 @@ Utilizza questa funzione solo con gli account che consideri attendibili.</transl
 <translation id="8484916590211895857"><ph name="NAME" />: riconnessione in corso...</translation>
 <translation id="8517041960877371778">Il tuo dispositivo <ph name="DEVICE_TYPE" /> potrebbe non caricarsi mentre è acceso.</translation>
 <translation id="8639760480004882931"><ph name="PERCENTAGE" /> rimanente</translation>
+<translation id="8649101189709089199">Seleziona per ascoltare</translation>
 <translation id="8652175077544655965">Chiudi impostazioni</translation>
 <translation id="8673028979667498656">270°</translation>
 <translation id="8676770494376880701">Caricabatterie a basso consumo collegato</translation>
+<translation id="8734991477317290293">Potrebbe essere un tentativo di rubare i tasti premuti</translation>
+<translation id="8809737090443522491">Digita il nome di un'app o un documento</translation>
 <translation id="8814190375133053267">Wi-Fi</translation>
 <translation id="8814715559352963456">Lo spostamento delle finestre su un altro desktop potrebbe causare comportamenti imprevisti.
 
 Le finestre, le notifiche e le finestre di dialogo successive potrebbero essere divise tra i desktop.</translation>
 <translation id="8825534185036233643">Il mirroring con più di due display non è supportato.</translation>
 <translation id="8828714802988429505">90°</translation>
+<translation id="8841375032071747811">Pulsante Indietro</translation>
 <translation id="8850991929411075241">Tasto di ricerca+ESC</translation>
 <translation id="8870509716567206129">L'app non supporta la modalità Schermo diviso.</translation>
 <translation id="8878886163241303700">Estensione schermo</translation>
 <translation id="8921624153894383499">L'Assistente Google non parla questa lingua.</translation>
 <translation id="8938800817013097409">Dispositivo USB-C (porta posteriore destra)</translation>
 <translation id="8940956008527784070">Batteria in esaurimento (<ph name="PERCENTAGE" />%)</translation>
+<translation id="8995603266996330174">Gestito da <ph name="DOMAIN" /></translation>
 <translation id="9074739597929991885">Bluetooth</translation>
 <translation id="9079731690316798640">Wi-Fi: <ph name="ADDRESS" /></translation>
 <translation id="9080206825613744995">Il microfono è in uso.</translation>
@@ -321,7 +356,7 @@ Le finestre, le notifiche e le finestre di dialogo successive potrebbero essere 
 <translation id="9091626656156419976">Schermo <ph name="DISPLAY_NAME" /> rimosso</translation>
 <translation id="9111102763498581341">Sblocca</translation>
 <translation id="9151726767154816831">Riavvia ed esegui Powerwash per aggiornare</translation>
-<translation id="9194617393863864469">Accedi a un altro utente...</translation>
+<translation id="9194617393863864469">Accedi con un altro account utente...</translation>
 <translation id="9201131092683066720">Percentuale di caricamento della batteria: <ph name="PERCENTAGE" />%.</translation>
 <translation id="9210037371811586452">Uscita dalla modalità Desktop unificato</translation>
 <translation id="923686485342484400">Premi due volte Control Maiusc Q per uscire.</translation>

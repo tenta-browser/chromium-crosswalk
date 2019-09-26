@@ -47,23 +47,28 @@ NSTextField* EditableField(const base::string16& text) {
 }
 
 void FillPasswordPopup(const autofill::PasswordForm& form,
-                       bool visible,
+                       bool are_passwords_revealed,
                        NSPopUpButton* button) {
   [button removeAllItems];
-  for (const base::string16& possible_password : form.all_possible_passwords) {
+  for (const autofill::ValueElementPair& possible_password :
+       form.all_possible_passwords) {
     base::string16 text =
-        visible ? possible_password
-                : base::string16(possible_password.length(), kBulletChar);
+        are_passwords_revealed
+            ? possible_password.first
+            : base::string16(possible_password.first.length(), kBulletChar);
     base::scoped_nsobject<NSMenuItem> newItem([[NSMenuItem alloc]
         initWithTitle:base::SysUTF16ToNSString(text)
                action:NULL
         keyEquivalent:[NSString string]]);
     [[button menu] addItem:newItem];
   }
-  size_t index = std::distance(
-      form.all_possible_passwords.begin(),
-      find(form.all_possible_passwords.begin(),
-           form.all_possible_passwords.end(), form.password_value));
+  size_t index =
+      std::distance(form.all_possible_passwords.begin(),
+                    find_if(form.all_possible_passwords.begin(),
+                            form.all_possible_passwords.end(),
+                            [&form](const autofill::ValueElementPair& pair) {
+                              return pair.first == form.password_value;
+                            }));
   // Unlikely, but if we don't find the password in possible passwords,
   // we will set the default to first element.
   if (index == form.all_possible_passwords.size()) {
@@ -131,18 +136,22 @@ NSButton* EyeIcon(id target, SEL action) {
 - (void)onEyeClicked:(id)sender {
   if (!self.model)
     return;  // The view will be destroyed soon.
-  bool visible = [passwordViewButton_ state] == NSOnState;
+  bool are_passwords_revealed = [passwordViewButton_ state] == NSOnState;
+  if (are_passwords_revealed && !self.model->RevealPasswords())
+    return;
   const autofill::PasswordForm& form = self.model->pending_password();
   if (passwordSelectionField_) {
     NSInteger index = [passwordSelectionField_ indexOfSelectedItem];
     self.model->OnCredentialEdited(form.username_value,
-                                   form.all_possible_passwords[index]);
-    FillPasswordPopup(form, visible, passwordSelectionField_.get());
+                                   form.all_possible_passwords[index].first);
+    FillPasswordPopup(form, are_passwords_revealed,
+                      passwordSelectionField_.get());
   } else {
     DCHECK(passwordStaticField_);
     base::string16 text =
-        visible ? form.password_value
-                : base::string16(form.password_value.length(), kBulletChar);
+        are_passwords_revealed
+            ? form.password_value
+            : base::string16(form.password_value.length(), kBulletChar);
     [passwordStaticField_ setStringValue:base::SysUTF16ToNSString(text)];
   }
 }
@@ -156,7 +165,7 @@ NSButton* EyeIcon(id target, SEL action) {
     if (passwordSelectionField_) {
       NSInteger index = [passwordSelectionField_ indexOfSelectedItem];
       new_password =
-          self.model->pending_password().all_possible_passwords[index];
+          self.model->pending_password().all_possible_passwords[index].first;
     }
     model->OnCredentialEdited(std::move(new_username), std::move(new_password));
     model->OnSaveClicked();
@@ -180,10 +189,7 @@ NSButton* EyeIcon(id target, SEL action) {
       [[NSView alloc] initWithFrame:NSZeroRect]);
 
   // Create the elements.
-  bool enableUsernameEditing =
-      base::FeatureList::IsEnabled(
-          password_manager::features::kEnableUsernameCorrection) &&
-      self.model->enable_editing();
+  bool enableUsernameEditing = self.model->enable_editing();
   const autofill::PasswordForm& form = self.model->pending_password();
   if (enableUsernameEditing)
     usernameField_.reset([EditableField(form.username_value) retain]);
@@ -191,35 +197,36 @@ NSButton* EyeIcon(id target, SEL action) {
     usernameField_.reset([Label(GetDisplayUsername(form)) retain]);
   [container addSubview:usernameField_];
 
-  bool enablePasswordEditing = base::FeatureList::IsEnabled(
-      password_manager::features::kEnablePasswordSelection);
   if (form.federation_origin.unique()) {
-    if (enablePasswordEditing) {
-      if (form.all_possible_passwords.size() > 1) {
-        passwordSelectionField_.reset(
-            [[NSPopUpButton alloc] initWithFrame:NSZeroRect pullsDown:NO]);
-        FillPasswordPopup(form, false, passwordSelectionField_.get());
-        [passwordSelectionField_ sizeToFit];
+    if (form.all_possible_passwords.size() > 1) {
+      passwordSelectionField_.reset(
+          [[NSPopUpButton alloc] initWithFrame:NSZeroRect pullsDown:NO]);
+      FillPasswordPopup(
+          form, self.model->are_passwords_revealed_when_bubble_is_opened(),
+          passwordSelectionField_.get());
+      [passwordSelectionField_ sizeToFit];
+    } else {  //  Only one password.
+      if (self.model->are_passwords_revealed_when_bubble_is_opened()) {
+        passwordStaticField_.reset([Label(form.password_value) retain]);
       } else {
         passwordStaticField_.reset([Label(
             base::string16(form.password_value.length(), kBulletChar)) retain]);
-        // Overwrite the height of the password field because it's higher in the
-        // editable mode.
-        [passwordStaticField_
-            setFrameSize:NSMakeSize(
-                             NSWidth([passwordStaticField_ frame]),
-                             std::max(NSHeight([passwordStaticField_ frame]),
-                                      NSHeight([EditableField(
-                                          form.password_value) frame])))];
       }
-      if (!self.model->hide_eye_icon()) {
-        passwordViewButton_.reset(
-            [EyeIcon(self, @selector(onEyeClicked:)) retain]);
-        [container addSubview:passwordViewButton_];
-      }
-    } else {
-      passwordStaticField_.reset([PasswordLabel(form.password_value) retain]);
+      // Overwrite the height of the password field because it's higher in the
+      // editable mode.
+      [passwordStaticField_
+          setFrameSize:NSMakeSize(
+                           NSWidth([passwordStaticField_ frame]),
+                           std::max(NSHeight([passwordStaticField_ frame]),
+                                    NSHeight([EditableField(form.password_value)
+                                        frame])))];
     }
+    passwordViewButton_.reset([EyeIcon(self, @selector(onEyeClicked:)) retain]);
+    if (self.model->are_passwords_revealed_when_bubble_is_opened())
+      [passwordViewButton_ setState:NSOnState];
+    else
+      [passwordViewButton_ setState:NSOffState];
+    [container addSubview:passwordViewButton_];
   } else {
     base::string16 text = l10n_util::GetStringFUTF16(
         IDS_PASSWORDS_VIA_FEDERATION,

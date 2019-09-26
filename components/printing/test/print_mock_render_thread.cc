@@ -12,7 +12,7 @@
 #include "build/build_config.h"
 #include "components/printing/test/mock_printer.h"
 #include "ipc/ipc_sync_message.h"
-#include "printing/features/features.h"
+#include "printing/buildflags/buildflags.h"
 #include "printing/page_range.h"
 #include "printing/print_job_constants.h"
 #include "printing/units.h"
@@ -59,7 +59,7 @@ bool PrintMockRenderThread::OnMessageReceived(const IPC::Message& msg) {
     IPC_MESSAGE_HANDLER(PrintHostMsg_UpdatePrintSettings, OnUpdatePrintSettings)
     IPC_MESSAGE_HANDLER(PrintHostMsg_DidGetPrintedPagesCount,
                         OnDidGetPrintedPagesCount)
-    IPC_MESSAGE_HANDLER(PrintHostMsg_DidPrintPage, OnDidPrintPage)
+    IPC_MESSAGE_HANDLER(PrintHostMsg_DidPrintDocument, OnDidPrintDocument)
 #if BUILDFLAG(ENABLE_PRINT_PREVIEW)
     IPC_MESSAGE_HANDLER(PrintHostMsg_DidGetPreviewPageCount,
                         OnDidGetPreviewPageCount)
@@ -93,8 +93,8 @@ void PrintMockRenderThread::OnDidGetPrintedPagesCount(int cookie,
   printer_->SetPrintedPagesCount(cookie, number_pages);
 }
 
-void PrintMockRenderThread::OnDidPrintPage(
-    const PrintHostMsg_DidPrintPage_Params& params) {
+void PrintMockRenderThread::OnDidPrintDocument(
+    const PrintHostMsg_DidPrintDocument_Params& params) {
   printer_->PrintPage(params);
 }
 

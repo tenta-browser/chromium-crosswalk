@@ -10,16 +10,12 @@
   <template>
     <style include="md-select"></style>
     <div id="media-controls">
-      <!--
-        TODO(crbug.com/786208): Remove the div below and always render the
-        description in the details element.  And, possibly combine details and
-        controls elements.
-      -->
       <div class="ellipsis" id="route-description"
            title="[[routeDescription_]]">
         [[routeDescription_]]
       </div>
-      <div class="ellipsis" id="route-title" title="[[routeStatus.title]]">
+      <div class="ellipsis" id="route-title" title="[[routeStatus.title]]"
+           hidden$="[[!shouldShowRouteStatusTitle_]]">
         [[routeStatus.title]]
       </div>
       <div>

@@ -14,8 +14,6 @@
 #include "chrome/utility/safe_browsing/mac/dmg_analyzer.h"
 #endif
 
-namespace chrome {
-
 SafeArchiveAnalyzer::SafeArchiveAnalyzer(
     std::unique_ptr<service_manager::ServiceContextRef> service_ref)
     : service_ref_(std::move(service_ref)) {}
@@ -46,4 +44,15 @@ void SafeArchiveAnalyzer::AnalyzeDmgFile(base::File dmg_file,
 #endif
 }
 
-}  // namespace chrome
+void SafeArchiveAnalyzer::AnalyzeRarFile(const base::FilePath& rar_file_path,
+                                         AnalyzeRarFileCallback callback) {
+  DCHECK(!rar_file_path.value().empty());
+
+  safe_browsing::ArchiveAnalyzerResults results;
+  base::File file(rar_file_path, base::File::FLAG_OPEN | base::File::FLAG_READ);
+  if (!file.IsValid()) {
+    results.success = false;
+  }
+  // TODO(crbug/750327): Inspect |file|.
+  std::move(callback).Run(results);
+}

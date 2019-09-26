@@ -3,16 +3,27 @@
     {
       "name": "LayoutView #document",
       "bounds": [800, 600],
+      "drawsContent": false,
+      "backgroundColor": "#FFFFFF"
+    },
+    {
+      "name": "Scrolling Layer",
+      "bounds": [800, 600],
+      "drawsContent": false
+    },
+    {
+      "name": "Scrolling Contents Layer",
+      "bounds": [800, 600],
       "contentsOpaque": true,
       "backgroundColor": "#FFFFFF",
       "paintInvalidations": [
         {
-          "object": "LayoutBlockFlow DIV",
+          "object": "HorizontalScrollbar",
           "rect": [8, 93, 85, 15],
           "reason": "scroll control"
         },
         {
-          "object": "LayoutBlockFlow DIV",
+          "object": "VerticalScrollbar",
           "rect": [93, 8, 15, 85],
           "reason": "scroll control"
         }

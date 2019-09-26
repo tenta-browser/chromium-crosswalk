@@ -4,7 +4,9 @@
 
 #include "components/viz/host/hit_test/hit_test_query.h"
 
+#include "base/metrics/histogram_macros.h"
 #include "services/viz/public/interfaces/hit_test/hit_test_region_list.mojom.h"
+#include "ui/gfx/geometry/point_conversions.h"
 
 namespace viz {
 namespace {
@@ -17,7 +19,8 @@ bool ShouldUseTouchBounds(EventSource event_source) {
 
 }  // namespace
 
-HitTestQuery::HitTestQuery() = default;
+HitTestQuery::HitTestQuery(base::RepeatingClosure bad_message_gpu_callback)
+    : bad_message_gpu_callback_(std::move(bad_message_gpu_callback)) {}
 
 HitTestQuery::~HitTestQuery() = default;
 
@@ -26,7 +29,10 @@ void HitTestQuery::OnAggregatedHitTestRegionListUpdated(
     uint32_t active_handle_size,
     mojo::ScopedSharedBufferHandle idle_handle,
     uint32_t idle_handle_size) {
-  DCHECK(active_handle.is_valid() && idle_handle.is_valid());
+  if (!active_handle.is_valid() || !idle_handle.is_valid()) {
+    ReceivedBadMessageFromGpuProcess();
+    return;
+  }
   handle_buffer_sizes_[0] = active_handle_size;
   handle_buffers_[0] = active_handle->Map(handle_buffer_sizes_[0] *
                                           sizeof(AggregatedHitTestRegion));
@@ -34,8 +40,10 @@ void HitTestQuery::OnAggregatedHitTestRegionListUpdated(
   handle_buffers_[1] = idle_handle->Map(handle_buffer_sizes_[1] *
                                         sizeof(AggregatedHitTestRegion));
   if (!handle_buffers_[0] || !handle_buffers_[1]) {
-    // TODO(riajiang): Report security fault. http://crbug.com/746470
-    NOTREACHED();
+    handle_buffer_sizes_[0] = handle_buffer_sizes_[1] = 0;
+    handle_buffers_[0] = {};
+    handle_buffers_[1] = {};
+    ReceivedBadMessageFromGpuProcess();
     return;
   }
   SwitchActiveAggregatedHitTestRegionList(0);
@@ -43,7 +51,10 @@ void HitTestQuery::OnAggregatedHitTestRegionListUpdated(
 
 void HitTestQuery::SwitchActiveAggregatedHitTestRegionList(
     uint8_t active_handle_index) {
-  DCHECK(active_handle_index == 0u || active_handle_index == 1u);
+  if (active_handle_index != 0u && active_handle_index != 1u) {
+    ReceivedBadMessageFromGpuProcess();
+    return;
+  }
   active_hit_test_list_ = static_cast<AggregatedHitTestRegion*>(
       handle_buffers_[active_handle_index].get());
   active_hit_test_list_size_ = handle_buffer_sizes_[active_handle_index];
@@ -51,7 +62,9 @@ void HitTestQuery::SwitchActiveAggregatedHitTestRegionList(
 
 Target HitTestQuery::FindTargetForLocation(
     EventSource event_source,
-    const gfx::Point& location_in_root) const {
+    const gfx::PointF& location_in_root) const {
+  SCOPED_UMA_HISTOGRAM_TIMER("Event.VizHitTest.TargetTime");
+
   Target target;
   if (!active_hit_test_list_size_)
     return target;
@@ -61,35 +74,38 @@ Target HitTestQuery::FindTargetForLocation(
   return target;
 }
 
-gfx::Point HitTestQuery::TransformLocationForTarget(
+bool HitTestQuery::TransformLocationForTarget(
     EventSource event_source,
     const std::vector<FrameSinkId>& target_ancestors,
-    const gfx::Point& location_in_root) const {
-  if (!active_hit_test_list_size_)
-    return location_in_root;
+    const gfx::PointF& location_in_root,
+    gfx::PointF* transformed_location) const {
+  SCOPED_UMA_HISTOGRAM_TIMER("Event.VizHitTest.TransformTime");
 
-  gfx::Point location_in_target(location_in_root);
+  if (!active_hit_test_list_size_)
+    return false;
+
+  if (target_ancestors.size() == 0u ||
+      target_ancestors[target_ancestors.size() - 1] !=
+          active_hit_test_list_->frame_sink_id) {
+    return false;
+  }
+
   // TODO(riajiang): Cache the matrix product such that the transform can be
   // done immediately. crbug/758062.
-  DCHECK(target_ancestors.size() > 0u &&
-         target_ancestors[target_ancestors.size() - 1] ==
-             active_hit_test_list_->frame_sink_id);
-  bool success = TransformLocationForTargetRecursively(
+  *transformed_location = location_in_root;
+  return TransformLocationForTargetRecursively(
       event_source, target_ancestors, target_ancestors.size() - 1,
-      active_hit_test_list_, &location_in_target);
-  // Must provide a valid target.
-  DCHECK(success);
-  return location_in_target;
+      active_hit_test_list_, transformed_location);
 }
 
 bool HitTestQuery::FindTargetInRegionForLocation(
     EventSource event_source,
-    const gfx::Point& location_in_parent,
+    const gfx::PointF& location_in_parent,
     AggregatedHitTestRegion* region,
     Target* target) const {
-  gfx::Point location_transformed(location_in_parent);
-  region->transform.TransformPoint(&location_transformed);
-  if (!region->rect.Contains(location_transformed))
+  gfx::PointF location_transformed(location_in_parent);
+  region->transform().TransformPoint(&location_transformed);
+  if (!gfx::RectF(region->rect).Contains(location_transformed))
     return false;
 
   if (region->child_count < 0 ||
@@ -100,8 +116,8 @@ bool HitTestQuery::FindTargetInRegionForLocation(
   AggregatedHitTestRegion* child_region = region + 1;
   AggregatedHitTestRegion* child_region_end =
       child_region + region->child_count;
-  gfx::Point location_in_target(location_transformed);
-  location_in_target.Offset(-region->rect.x(), -region->rect.y());
+  gfx::PointF location_in_target =
+      location_transformed - region->rect.OffsetFromOrigin();
   while (child_region < child_region_end) {
     if (FindTargetInRegionForLocation(event_source, location_in_target,
                                       child_region, target)) {
@@ -119,7 +135,9 @@ bool HitTestQuery::FindTargetInRegionForLocation(
       ShouldUseTouchBounds(event_source)
           ? (region->flags & mojom::kHitTestTouch) != 0u
           : (region->flags & mojom::kHitTestMouse) != 0u;
-  if ((region->flags & mojom::kHitTestMine) && match_touch_or_mouse_region) {
+  if (!match_touch_or_mouse_region)
+    return false;
+  if (region->flags & (mojom::kHitTestMine | mojom::kHitTestAsk)) {
     target->frame_sink_id = region->frame_sink_id;
     target->location_in_target = location_in_target;
     target->flags = region->flags;
@@ -133,7 +151,7 @@ bool HitTestQuery::TransformLocationForTargetRecursively(
     const std::vector<FrameSinkId>& target_ancestors,
     size_t target_ancestor,
     AggregatedHitTestRegion* region,
-    gfx::Point* location_in_target) const {
+    gfx::PointF* location_in_target) const {
   bool match_touch_or_mouse_region =
       ShouldUseTouchBounds(event_source)
           ? (region->flags & mojom::kHitTestTouch) != 0u
@@ -143,7 +161,7 @@ bool HitTestQuery::TransformLocationForTargetRecursively(
     return false;
   }
 
-  region->transform.TransformPoint(location_in_target);
+  region->transform().TransformPoint(location_in_target);
   location_in_target->Offset(-region->rect.x(), -region->rect.y());
   if (!target_ancestor)
     return true;
@@ -171,6 +189,11 @@ bool HitTestQuery::TransformLocationForTargetRecursively(
   }
 
   return false;
+}
+
+void HitTestQuery::ReceivedBadMessageFromGpuProcess() const {
+  if (!bad_message_gpu_callback_.is_null())
+    bad_message_gpu_callback_.Run();
 }
 
 }  // namespace viz

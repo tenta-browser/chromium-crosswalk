@@ -7,6 +7,7 @@
 #include <algorithm>
 
 #include "base/bind.h"
+#include "base/files/file_path.h"
 #include "base/memory/ptr_util.h"
 #include "components/offline_pages/core/client_policy_controller.h"
 #include "components/offline_pages/core/offline_store_utils.h"
@@ -234,12 +235,74 @@ ReadResult ReadPagesByOfflineId(int64_t offline_id, sql::Connection* db) {
   return result;
 }
 
+ReadResult ReadPagesByGuid(const std::string& guid, sql::Connection* db) {
+  ReadResult result;
+  if (!db) {
+    result.success = false;
+    return result;
+  }
+
+  static const char kSql[] = "SELECT " OFFLINE_PAGE_PROJECTION
+                             " FROM offlinepages_v1"
+                             " WHERE client_id = ?";
+  sql::Statement statement(db->GetCachedStatement(SQL_FROM_HERE, kSql));
+  statement.BindString(0, guid);
+  while (statement.Step())
+    result.pages.emplace_back(MakeOfflinePageItem(&statement));
+
+  result.success = true;
+  return result;
+}
+
+ReadResult ReadPagesBySizeAndDigest(int64_t file_size,
+                                    const std::string& digest,
+                                    sql::Connection* db) {
+  ReadResult result;
+  if (!db) {
+    result.success = false;
+    return result;
+  }
+
+  static const char kSql[] = "SELECT " OFFLINE_PAGE_PROJECTION
+                             " FROM offlinepages_v1"
+                             " WHERE file_size = ? AND digest = ?";
+  sql::Statement statement(db->GetCachedStatement(SQL_FROM_HERE, kSql));
+  statement.BindInt64(0, file_size);
+  statement.BindString(1, digest);
+  while (statement.Step())
+    result.pages.emplace_back(MakeOfflinePageItem(&statement));
+
+  result.success = true;
+  return result;
+}
+
 void WrapInMultipleItemsCallback(const SingleOfflinePageItemCallback& callback,
                                  const std::vector<OfflinePageItem>& pages) {
   if (pages.size() == 0)
     callback.Run(nullptr);
   else
     callback.Run(&pages[0]);
+}
+
+ReadResult SelectItemsForUpgrade(sql::Connection* db) {
+  ReadResult result;
+  if (!db) {
+    result.success = false;
+    return result;
+  }
+
+  static const char kSql[] =
+      "SELECT " OFFLINE_PAGE_PROJECTION
+      " FROM offlinepages_v1"
+      " WHERE upgrade_attempt > 0"
+      " ORDER BY upgrade_attempt DESC, creation_time DESC";
+  sql::Statement statement(db->GetCachedStatement(SQL_FROM_HERE, kSql));
+
+  while (statement.Step())
+    result.pages.emplace_back(MakeOfflinePageItem(&statement));
+
+  result.success = true;
+  return result;
 }
 
 }  // namespace
@@ -333,6 +396,36 @@ std::unique_ptr<GetPagesTask> GetPagesTask::CreateTaskMatchingOfflineId(
   return std::unique_ptr<GetPagesTask>(
       new GetPagesTask(store, base::BindOnce(&ReadPagesByOfflineId, offline_id),
                        base::Bind(&WrapInMultipleItemsCallback, callback)));
+}
+
+// static
+std::unique_ptr<GetPagesTask> GetPagesTask::CreateTaskMatchingGuid(
+    OfflinePageMetadataStoreSQL* store,
+    const SingleOfflinePageItemCallback& callback,
+    const std::string& guid) {
+  return base::WrapUnique(
+      new GetPagesTask(store, base::BindOnce(&ReadPagesByGuid, guid),
+                       base::Bind(&WrapInMultipleItemsCallback, callback)));
+}
+
+// static
+std::unique_ptr<GetPagesTask> GetPagesTask::CreateTaskMatchingSizeAndDigest(
+    OfflinePageMetadataStoreSQL* store,
+    const SingleOfflinePageItemCallback& callback,
+    int64_t file_size,
+    const std::string& digest) {
+  return std::unique_ptr<GetPagesTask>(new GetPagesTask(
+      store, base::BindOnce(&ReadPagesBySizeAndDigest, file_size, digest),
+      base::Bind(&WrapInMultipleItemsCallback, callback)));
+}
+
+// static
+std::unique_ptr<GetPagesTask>
+GetPagesTask::CreateTaskSelectingItemsMarkedForUpgrade(
+    OfflinePageMetadataStoreSQL* store,
+    const MultipleOfflinePageItemCallback& callback) {
+  return std::unique_ptr<GetPagesTask>(new GetPagesTask(
+      store, base::BindOnce(&SelectItemsForUpgrade), callback));
 }
 
 GetPagesTask::GetPagesTask(OfflinePageMetadataStoreSQL* store,

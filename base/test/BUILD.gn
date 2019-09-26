@@ -2,6 +2,7 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
+import("//build/compiled_action.gni")
 import("//build/config/ui.gni")
 import("//build/config/nacl/config.gni")
 
@@ -28,6 +29,9 @@ static_library("test_support") {
     "../trace_event/trace_config_memory_test_util.h",
     "android/java_handler_thread_helpers.cc",
     "android/java_handler_thread_helpers.h",
+    "android/url_utils.cc",
+    "android/url_utils.h",
+    "bind_test_util.h",
     "copy_only_int.h",
     "fuzzed_data_provider.cc",
     "fuzzed_data_provider.h",
@@ -57,13 +61,10 @@ static_library("test_support") {
     "mock_log.cc",
     "mock_log.h",
     "move_only_int.h",
-    "multiprocess_test.cc",
     "multiprocess_test.h",
     "multiprocess_test_android.cc",
     "null_task_runner.cc",
     "null_task_runner.h",
-    "opaque_ref_counted.cc",
-    "opaque_ref_counted.h",
     "perf_log.cc",
     "perf_log.h",
     "perf_test_suite.cc",
@@ -88,8 +89,6 @@ static_library("test_support") {
     "scoped_task_environment.h",
     "sequenced_task_runner_test_template.cc",
     "sequenced_task_runner_test_template.h",
-    "sequenced_worker_pool_owner.cc",
-    "sequenced_worker_pool_owner.h",
     "simple_test_clock.cc",
     "simple_test_clock.h",
     "simple_test_tick_clock.cc",
@@ -117,6 +116,8 @@ static_library("test_support") {
     "test_pending_task.h",
     "test_reg_util_win.cc",
     "test_reg_util_win.h",
+    "test_shared_memory_util.cc",
+    "test_shared_memory_util.h",
     "test_shortcut_win.cc",
     "test_shortcut_win.h",
     "test_simple_task_runner.cc",
@@ -151,6 +152,7 @@ static_library("test_support") {
       "launcher/test_launcher_tracer.h",
       "launcher/test_results_tracker.cc",
       "launcher/unit_test_launcher.cc",
+      "multiprocess_test.cc",
     ]
   }
 
@@ -176,11 +178,22 @@ static_library("test_support") {
     "//third_party/libxml",
   ]
 
-  if (!is_posix) {
+  if (!is_posix && !is_fuchsia) {
     sources -= [
       "scoped_locale.cc",
       "scoped_locale.h",
     ]
+  }
+
+  if (is_linux) {
+    public_deps += [ ":fontconfig_util_linux" ]
+    data_deps = [
+      "//third_party/test_fonts",
+    ]
+    if (current_toolchain == host_toolchain) {
+      data_deps += [ ":do_generate_fontconfig_caches" ]
+      data += [ "$root_out_dir/fontconfig_caches/" ]
+    }
   }
 
   if (is_ios) {
@@ -316,6 +329,43 @@ static_library("run_all_base_unittests") {
 }
 
 if (is_linux) {
+  source_set("fontconfig_util_linux") {
+    sources = [
+      "fontconfig_util_linux.cc",
+      "fontconfig_util_linux.h",
+    ]
+    deps = [
+      "//base",
+      "//third_party/fontconfig",
+    ]
+  }
+
+  if (current_toolchain == host_toolchain) {
+    executable("generate_fontconfig_caches") {
+      testonly = true
+      sources = [
+        "generate_fontconfig_caches.cc",
+      ]
+      deps = [
+        ":fontconfig_util_linux",
+        "//base",
+        "//build/config:exe_and_shlib_deps",
+      ]
+    }
+
+    compiled_action("do_generate_fontconfig_caches") {
+      testonly = true
+      tool = ":generate_fontconfig_caches"
+      data_deps = [
+        "//third_party/test_fonts",
+      ]
+      args = []
+      outputs = [
+        "$root_out_dir/fontconfig_caches/STAMP",
+      ]
+    }
+  }
+
   shared_library("malloc_wrapper") {
     testonly = true
     sources = [
@@ -342,6 +392,7 @@ if (is_android) {
     sources = [
       "android/java/src/org/chromium/base/MainReturnCodeResult.java",
       "android/java/src/org/chromium/base/MultiprocessTestClientLauncher.java",
+      "android/javatests/src/org/chromium/base/test/util/UrlUtils.java",
     ]
     jni_package = "base"
   }

@@ -2,24 +2,26 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifndef CC_TEST_PIXEL_TEST_H_
+#define CC_TEST_PIXEL_TEST_H_
+
 #include "base/files/file_util.h"
 #include "cc/test/pixel_comparator.h"
 #include "cc/trees/layer_tree_settings.h"
 #include "components/viz/common/quads/render_pass.h"
 #include "components/viz/service/display/gl_renderer.h"
 #include "components/viz/service/display/output_surface.h"
+#include "components/viz/service/display/skia_renderer.h"
 #include "components/viz/service/display/software_renderer.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/gfx/geometry/size.h"
 #include "ui/gl/gl_implementation.h"
 
-#ifndef CC_TEST_PIXEL_TEST_H_
-#define CC_TEST_PIXEL_TEST_H_
-
 namespace viz {
 class CopyOutputResult;
 class DirectRenderer;
 class TestGpuMemoryBufferManager;
+class TestSharedBitmapManager;
 }
 
 namespace cc {
@@ -28,7 +30,6 @@ class FakeOutputSurfaceClient;
 class LayerTreeResourceProvider;
 class OutputSurface;
 class TestInProcessContextProvider;
-class TestSharedBitmapManager;
 
 class PixelTest : public testing::Test {
  protected:
@@ -64,7 +65,7 @@ class PixelTest : public testing::Test {
   bool disable_picture_quad_image_filtering_;
   std::unique_ptr<FakeOutputSurfaceClient> output_surface_client_;
   std::unique_ptr<viz::OutputSurface> output_surface_;
-  std::unique_ptr<TestSharedBitmapManager> shared_bitmap_manager_;
+  std::unique_ptr<viz::TestSharedBitmapManager> shared_bitmap_manager_;
   std::unique_ptr<viz::TestGpuMemoryBufferManager> gpu_memory_buffer_manager_;
   std::unique_ptr<DisplayResourceProvider> resource_provider_;
   scoped_refptr<TestInProcessContextProvider> child_context_provider_;
@@ -75,6 +76,7 @@ class PixelTest : public testing::Test {
 
   void SetUpGLWithoutRenderer(bool flipped_output_surface);
   void SetUpGLRenderer(bool flipped_output_surface);
+  void SetUpSkiaRenderer();
   void SetUpSoftwareRenderer();
 
   void EnableExternalStencilTest();
@@ -95,6 +97,8 @@ class RendererPixelTest : public PixelTest {
   RendererType* renderer() {
     return static_cast<RendererType*>(renderer_.get());
   }
+
+  bool use_gpu() { return !!child_context_provider_; }
 
  protected:
   void SetUp() override;
@@ -162,8 +166,14 @@ inline void RendererPixelTest<SoftwareRendererWithExpandedViewport>::SetUp() {
   SetUpSoftwareRenderer();
 }
 
+template <>
+inline void RendererPixelTest<viz::SkiaRenderer>::SetUp() {
+  SetUpSkiaRenderer();
+}
+
 typedef RendererPixelTest<viz::GLRenderer> GLRendererPixelTest;
 typedef RendererPixelTest<viz::SoftwareRenderer> SoftwareRendererPixelTest;
+typedef RendererPixelTest<viz::SkiaRenderer> SkiaRendererPixelTest;
 
 }  // namespace cc
 

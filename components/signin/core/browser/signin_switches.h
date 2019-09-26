@@ -5,7 +5,7 @@
 #ifndef COMPONENTS_SIGNIN_CORE_BROWSER_SIGNIN_SWITCHES_H_
 #define COMPONENTS_SIGNIN_CORE_BROWSER_SIGNIN_SWITCHES_H_
 
-#include "components/signin/core/browser/signin_features.h"
+#include "components/signin/core/browser/signin_buildflags.h"
 
 namespace switches {
 
@@ -17,7 +17,6 @@ namespace switches {
 // alongside the definition of their values in the .cc file.
 extern const char kClearTokenService[];
 extern const char kDisableSigninScopedDeviceId[];
-extern const char kEnableRefreshTokenAnnotationRequest[];
 extern const char kExtensionsMultiAccount[];
 
 #if !BUILDFLAG(ENABLE_MIRROR)

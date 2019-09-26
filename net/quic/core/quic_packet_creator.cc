@@ -12,14 +12,15 @@
 #include "net/quic/core/quic_data_writer.h"
 #include "net/quic/core/quic_utils.h"
 #include "net/quic/platform/api/quic_aligned.h"
+#include "net/quic/platform/api/quic_arraysize.h"
 #include "net/quic/platform/api/quic_bug_tracker.h"
 #include "net/quic/platform/api/quic_flag_utils.h"
 #include "net/quic/platform/api/quic_flags.h"
 #include "net/quic/platform/api/quic_logging.h"
 #include "net/quic/platform/api/quic_ptr_util.h"
+#include "net/quic/platform/api/quic_string.h"
 #include "net/quic/platform/api/quic_string_piece.h"
 
-using std::string;
 
 // If true, enforce that QUIC CHLOs fit in one packet.
 bool FLAGS_quic_enforce_single_packet_chlo = true;
@@ -43,7 +44,8 @@ QuicPacketCreator::QuicPacketCreator(QuicConnectionId connection_id,
       connection_id_(connection_id),
       packet_(0, PACKET_1BYTE_PACKET_NUMBER, nullptr, 0, false, false),
       pending_padding_bytes_(0),
-      needs_full_padding_(false) {
+      needs_full_padding_(false),
+      can_set_transmission_type_(false) {
   SetMaxPacketLength(kDefaultMaxPacketSize);
 }
 
@@ -52,8 +54,8 @@ QuicPacketCreator::~QuicPacketCreator() {
 }
 
 void QuicPacketCreator::SetEncrypter(EncryptionLevel level,
-                                     QuicEncrypter* encrypter) {
-  framer_->SetEncrypter(level, encrypter);
+                                     std::unique_ptr<QuicEncrypter> encrypter) {
+  framer_->SetEncrypter(level, std::move(encrypter));
   max_plaintext_size_ = framer_->GetMaxPlaintextSize(max_packet_length_);
 }
 
@@ -129,7 +131,8 @@ bool QuicPacketCreator::ConsumeData(QuicStreamId id,
   if (FLAGS_quic_enforce_single_packet_chlo &&
       StreamFrameStartsWithChlo(*frame->stream_frame) &&
       frame->stream_frame->data_length < write_length) {
-    const string error_details = "Client hello won't fit in a single packet.";
+    const QuicString error_details =
+        "Client hello won't fit in a single packet.";
     QUIC_BUG << error_details << " Constructed stream frame length: "
              << frame->stream_frame->data_length
              << " CHLO length: " << write_length;
@@ -179,7 +182,7 @@ void QuicPacketCreator::CreateStreamFrame(QuicStreamId id,
                                           QuicFrame* frame) {
   DCHECK_GT(max_packet_length_,
             StreamFramePacketOverhead(framer_->transport_version(),
-                                      connection_id_length_, kIncludeVersion,
+                                      GetConnectionIdLength(), kIncludeVersion,
                                       IncludeNonceInPublicHeader(),
                                       PACKET_6BYTE_PACKET_NUMBER, offset));
 
@@ -263,7 +266,7 @@ void QuicPacketCreator::Flush() {
 
 void QuicPacketCreator::OnSerializedPacket() {
   if (packet_.encrypted_buffer == nullptr) {
-    const string error_details = "Failed to SerializePacket.";
+    const QuicString error_details = "Failed to SerializePacket.";
     QUIC_BUG << error_details;
     delegate_->OnUnrecoverableError(QUIC_FAILED_TO_SERIALIZE_PACKET,
                                     error_details,
@@ -282,7 +285,9 @@ void QuicPacketCreator::ClearPacket() {
   packet_.has_crypto_handshake = NOT_HANDSHAKE;
   packet_.num_padding_bytes = 0;
   packet_.original_packet_number = 0;
-  packet_.transmission_type = NOT_RETRANSMISSION;
+  if (!can_set_transmission_type_) {
+    packet_.transmission_type = NOT_RETRANSMISSION;
+  }
   packet_.encrypted_buffer = nullptr;
   packet_.encrypted_length = 0;
   DCHECK(packet_.retransmittable_frames.empty());
@@ -302,7 +307,7 @@ void QuicPacketCreator::CreateAndSerializeStreamFrame(
   QuicPacketHeader header;
   FillPacketHeader(&header);
   QUIC_CACHELINE_ALIGNED char encrypted_buffer[kMaxPacketSize];
-  QuicDataWriter writer(arraysize(encrypted_buffer), encrypted_buffer,
+  QuicDataWriter writer(QUIC_ARRAYSIZE(encrypted_buffer), encrypted_buffer,
                         framer_->endianness());
   if (!framer_->AppendPacketHeader(header, &writer)) {
     QUIC_BUG << "AppendPacketHeader failed";
@@ -343,7 +348,7 @@ void QuicPacketCreator::CreateAndSerializeStreamFrame(
   size_t encrypted_length = framer_->EncryptInPlace(
       packet_.encryption_level, packet_.packet_number,
       GetStartOfEncryptedData(framer_->transport_version(), header),
-      writer.length(), arraysize(encrypted_buffer), encrypted_buffer);
+      writer.length(), QUIC_ARRAYSIZE(encrypted_buffer), encrypted_buffer);
   if (encrypted_length == 0) {
     QUIC_BUG << "Failed to encrypt packet number " << header.packet_number;
     return;
@@ -393,10 +398,10 @@ size_t QuicPacketCreator::PacketSize() {
   if (!queued_frames_.empty()) {
     return packet_size_;
   }
-  packet_size_ =
-      GetPacketHeaderSize(framer_->transport_version(), connection_id_length_,
-                          send_version_in_packet_, IncludeNonceInPublicHeader(),
-                          packet_.packet_number_length);
+  packet_size_ = GetPacketHeaderSize(
+      framer_->transport_version(), GetConnectionIdLength(),
+      IncludeVersionInHeader(), IncludeNonceInPublicHeader(),
+      GetPacketNumberLength());
   return packet_size_;
 }
 
@@ -462,17 +467,18 @@ void QuicPacketCreator::SerializePacket(char* encrypted_buffer,
 
 std::unique_ptr<QuicEncryptedPacket>
 QuicPacketCreator::SerializeVersionNegotiationPacket(
-    const QuicTransportVersionVector& supported_versions) {
+    bool ietf_quic,
+    const ParsedQuicVersionVector& supported_versions) {
   DCHECK_EQ(Perspective::IS_SERVER, framer_->perspective());
   std::unique_ptr<QuicEncryptedPacket> encrypted =
-      QuicFramer::BuildVersionNegotiationPacket(connection_id_,
+      QuicFramer::BuildVersionNegotiationPacket(connection_id_, ietf_quic,
                                                 supported_versions);
   DCHECK(encrypted);
   DCHECK_GE(max_packet_length_, encrypted->length());
   return encrypted;
 }
 
-std::unique_ptr<QuicEncryptedPacket>
+OwningSerializedPacketPointer
 QuicPacketCreator::SerializeConnectivityProbingPacket() {
   QuicPacketHeader header;
   // FillPacketHeader increments packet_number_.
@@ -480,7 +486,7 @@ QuicPacketCreator::SerializeConnectivityProbingPacket() {
 
   std::unique_ptr<char[]> buffer(new char[kMaxPacketSize]);
   size_t length = framer_->BuildConnectivityProbingPacket(header, buffer.get(),
-                                                          max_packet_length_);
+                                                          max_plaintext_size_);
   DCHECK(length);
 
   const size_t encrypted_length = framer_->EncryptInPlace(
@@ -489,21 +495,35 @@ QuicPacketCreator::SerializeConnectivityProbingPacket() {
       kMaxPacketSize, buffer.get());
   DCHECK(encrypted_length);
 
-  return QuicMakeUnique<QuicEncryptedPacket>(buffer.release(), encrypted_length,
-                                             /*owns_buffer = */ true);
+  OwningSerializedPacketPointer serialize_packet(new SerializedPacket(
+      header.packet_number, header.packet_number_length, buffer.release(),
+      encrypted_length, /*has_ack=*/false, /*has_stop_waiting=*/false));
+
+  serialize_packet->encryption_level = packet_.encryption_level;
+  serialize_packet->transmission_type = NOT_RETRANSMISSION;
+
+  return serialize_packet;
 }
 
-// TODO(jri): Make this a public method of framer?
+// TODO(b/74062209): Make this a public method of framer?
 SerializedPacket QuicPacketCreator::NoPacket() {
   return SerializedPacket(0, PACKET_1BYTE_PACKET_NUMBER, nullptr, 0, false,
                           false);
 }
 
+QuicConnectionIdLength QuicPacketCreator::GetConnectionIdLength() const {
+  return connection_id_length_;
+}
+
+QuicPacketNumberLength QuicPacketCreator::GetPacketNumberLength() const {
+  return packet_.packet_number_length;
+}
+
 void QuicPacketCreator::FillPacketHeader(QuicPacketHeader* header) {
   header->connection_id = connection_id_;
-  header->connection_id_length = connection_id_length_;
+  header->connection_id_length = GetConnectionIdLength();
   header->reset_flag = false;
-  header->version_flag = send_version_in_packet_;
+  header->version_flag = IncludeVersionInHeader();
   if (IncludeNonceInPublicHeader()) {
     DCHECK_EQ(Perspective::IS_SERVER, framer_->perspective());
     header->nonce = &diversification_nonce_;
@@ -532,7 +552,8 @@ bool QuicPacketCreator::AddFrame(const QuicFrame& frame,
   if (frame.type == STREAM_FRAME &&
       frame.stream_frame->stream_id != kCryptoStreamId &&
       packet_.encryption_level == ENCRYPTION_NONE) {
-    const string error_details = "Cannot send stream data without encryption.";
+    const QuicString error_details =
+        "Cannot send stream data without encryption.";
     QUIC_BUG << error_details;
     delegate_->OnUnrecoverableError(
         QUIC_ATTEMPT_TO_SEND_UNENCRYPTED_STREAM_DATA, error_details,
@@ -541,7 +562,7 @@ bool QuicPacketCreator::AddFrame(const QuicFrame& frame,
   }
   size_t frame_len = framer_->GetSerializedFrameLength(
       frame, BytesFree(), queued_frames_.empty(), true,
-      packet_.packet_number_length);
+      GetPacketNumberLength());
   if (frame_len == 0) {
     // Current open packet is full.
     Flush();
@@ -606,9 +627,13 @@ void QuicPacketCreator::MaybeAddPadding() {
   DCHECK(success);
 }
 
-bool QuicPacketCreator::IncludeNonceInPublicHeader() {
+bool QuicPacketCreator::IncludeNonceInPublicHeader() const {
   return have_diversification_nonce_ &&
          packet_.encryption_level == ENCRYPTION_INITIAL;
+}
+
+bool QuicPacketCreator::IncludeVersionInHeader() const {
+  return send_version_in_packet_;
 }
 
 void QuicPacketCreator::AddPendingPadding(QuicByteCount size) {
@@ -628,6 +653,14 @@ void QuicPacketCreator::SetConnectionIdLength(QuicConnectionIdLength length) {
   DCHECK(framer_->perspective() == Perspective::IS_SERVER ||
          length != PACKET_0BYTE_CONNECTION_ID);
   connection_id_length_ = length;
+}
+
+void QuicPacketCreator::SetTransmissionType(TransmissionType type) {
+  DCHECK(can_set_transmission_type_);
+  QUIC_DVLOG_IF(1, type != packet_.transmission_type)
+      << "Setting Transmission type to "
+      << QuicUtils::TransmissionTypeToString(type);
+  packet_.transmission_type = type;
 }
 
 }  // namespace net

@@ -7,7 +7,6 @@
 
 #include <memory>
 
-#include "base/mac/scoped_nsobject.h"
 #include "base/macros.h"
 #include "base/strings/string16.h"
 #include "components/infobars/core/confirm_infobar_delegate.h"
@@ -15,7 +14,6 @@
 #include "ios/chrome/browser/sync/sync_setup_service.h"
 #include "ui/gfx/image/image.h"
 
-@class GenericChromeCommand;
 @protocol SyncPresenter;
 
 namespace gfx {
@@ -62,7 +60,6 @@ class SyncErrorInfoBarDelegate : public ConfirmInfoBarDelegate,
   SyncSetupService::SyncServiceState error_state_;
   base::string16 message_;
   base::string16 button_text_;
-  base::scoped_nsobject<GenericChromeCommand> command_;
   id<SyncPresenter> presenter_;
 
   DISALLOW_COPY_AND_ASSIGN(SyncErrorInfoBarDelegate);

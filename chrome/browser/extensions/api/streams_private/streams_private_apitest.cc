@@ -16,9 +16,10 @@
 #include "chrome/common/extensions/api/streams_private.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/test/base/ui_test_utils.h"
+#include "components/download/public/common/download_item.h"
 #include "components/prefs/pref_service.h"
-#include "content/public/browser/download_item.h"
 #include "content/public/browser/download_manager.h"
+#include "content/public/browser/download_request_utils.h"
 #include "content/public/browser/render_process_host.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/test/download_test_observer.h"
@@ -35,10 +36,10 @@
 
 using content::BrowserContext;
 using content::BrowserThread;
-using content::DownloadItem;
 using content::DownloadManager;
-using content::DownloadUrlParameters;
 using content::WebContents;
+using download::DownloadItem;
+using download::DownloadUrlParameters;
 using extensions::Event;
 using extensions::ExtensionSystem;
 using extensions::ResultCatcher;
@@ -152,14 +153,8 @@ class StreamsPrivateApiTest : public ExtensionApiTest {
   }
 
   void InitializeDownloadSettings() {
-    base::ScopedAllowBlockingForTesting allow_blocking;
     ASSERT_TRUE(browser());
-    ASSERT_TRUE(downloads_dir_.CreateUniqueTempDir());
 
-    // Setup default downloads directory to the scoped tmp directory created for
-    // the test.
-    browser()->profile()->GetPrefs()->SetFilePath(
-        prefs::kDownloadDefaultDirectory, downloads_dir_.GetPath());
     // Ensure there are no prompts for download during the test.
     browser()->profile()->GetPrefs()->SetBoolean(
         prefs::kPromptForDownload, false);
@@ -227,17 +222,15 @@ class StreamsPrivateApiTest : public ExtensionApiTest {
   // The |manager| should have |download| in its list of downloads.
   void DeleteDownloadAndWaitForFlush(DownloadItem* download,
                                      DownloadManager* manager) {
-    scoped_refptr<content::DownloadTestFlushObserver> flush_observer(
-        new content::DownloadTestFlushObserver(manager));
+    content::DownloadTestFlushObserver flush_observer(manager);
     download->Remove();
-    flush_observer->WaitForFlush();
+    flush_observer.WaitForFlush();
   }
 
  protected:
   std::string test_extension_id_;
   // The HTTP server used in the tests.
   std::unique_ptr<net::EmbeddedTestServer> test_server_;
-  base::ScopedTempDir downloads_dir_;
 };
 
 // Tests that navigating to a resource with a MIME type handleable by an
@@ -393,15 +386,18 @@ IN_PROC_BROWSER_TEST_F(StreamsPrivateApiTest, MAYBE_DirectDownload) {
 
   // The download's target file path.
   base::FilePath target_path =
-      downloads_dir_.GetPath().Append(FILE_PATH_LITERAL("download_target.txt"));
+      DownloadPrefs(browser()->profile())
+          .DownloadPath()
+          .Append(FILE_PATH_LITERAL("download_target.txt"));
 
   // Set the downloads parameters.
   content::WebContents* web_contents =
       browser()->tab_strip_model()->GetActiveWebContents();
   ASSERT_TRUE(web_contents);
   std::unique_ptr<DownloadUrlParameters> params(
-      DownloadUrlParameters::CreateForWebContentsMainFrame(
+      content::DownloadRequestUtils::CreateDownloadForWebContentsMainFrame(
           web_contents, url, TRAFFIC_ANNOTATION_FOR_TESTS));
+
   params->set_file_path(target_path);
 
   // Start download of the URL with a path "/text_path.txt" on the test server.

@@ -10,6 +10,7 @@
 #include "base/path_service.h"
 #include "base/process/process_handle.h"
 #include "build/build_config.h"
+#include "chrome/browser/browser_process.h"
 #include "chrome/browser/chrome_content_browser_client.h"
 #include "chrome/browser/profiles/profile_shortcut_manager.h"
 #include "chrome/browser/ui/webui/chrome_web_ui_controller_factory.h"
@@ -21,7 +22,7 @@
 #include "components/component_updater/component_updater_paths.h"
 #include "components/update_client/update_query_params.h"
 #include "content/public/common/content_paths.h"
-#include "extensions/features/features.h"
+#include "extensions/buildflags/buildflags.h"
 #include "gpu/ipc/service/image_transport_surface.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/base/resource/resource_bundle.h"
@@ -30,7 +31,11 @@
 #include "ui/gl/test/gl_surface_test_support.h"
 
 #if defined(OS_CHROMEOS)
+#include "ash/public/cpp/config.h"
+#include "ash/test/ash_test_helper.h"
 #include "chromeos/chromeos_paths.h"
+#include "ui/aura/env.h"
+#include "ui/aura/test/aura_test_context_factory.h"
 #endif
 
 #if BUILDFLAG(ENABLE_EXTENSIONS)
@@ -61,6 +66,10 @@ class ChromeUnitTestSuiteInitializer : public testing::EmptyTestEventListener {
     content::SetUtilityClientForTesting(utility_content_client_.get());
 
     TestingBrowserProcess::CreateInstance();
+
+    // Force TabManager creation before the first tab is created. In production,
+    // that happens in ChromeBrowserMainParts::PreBrowserStart().
+    g_browser_process->GetTabManager();
   }
 
   void OnTestEnd(const testing::TestInfo& test_info) override {
@@ -107,6 +116,16 @@ void ChromeUnitTestSuite::Initialize() {
 
   base::DiscardableMemoryAllocator::SetInstance(&discardable_memory_allocator_);
   ProfileShortcutManager::DisableForUnitTests();
+
+#if defined(OS_CHROMEOS)
+  aura::Env* env = aura::Env::GetInstance();
+  if (env->mode() == aura::Env::Mode::MUS) {
+    ash::AshTestHelper::set_config(ash::Config::MUS);
+    context_factory_ = std::make_unique<aura::test::AuraTestContextFactory>();
+    env->set_context_factory(context_factory_.get());
+    env->set_context_factory_private(nullptr);
+  }
+#endif
 }
 
 void ChromeUnitTestSuite::Shutdown() {

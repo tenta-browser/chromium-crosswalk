@@ -17,7 +17,6 @@
 #include "base/logging.h"
 #include "base/mac/mac_logging.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/strings/stringprintf.h"
 #include "base/sys_byteorder.h"
@@ -279,7 +278,7 @@ bool GetImageBufferProperty(CVImageBufferRef image_buffer,
 }
 
 gfx::ColorSpace GetImageBufferColorSpace(CVImageBufferRef image_buffer) {
-  // The named primaries. Default to BT708.
+  // The named primaries. Default to BT709.
   gfx::ColorSpace::PrimaryID primary_id = gfx::ColorSpace::PrimaryID::BT709;
   struct {
     const CFStringRef cfstr;
@@ -312,7 +311,7 @@ gfx::ColorSpace GetImageBufferColorSpace(CVImageBufferRef image_buffer) {
   } transfers[] = {
       {
           kCVImageBufferTransferFunction_ITU_R_709_2,
-          gfx::ColorSpace::TransferID::BT709,
+          gfx::ColorSpace::TransferID::BT709_APPLE,
       },
       {
           kCVImageBufferTransferFunction_SMPTE_240M_1995,
@@ -421,10 +420,8 @@ bool VTVideoDecodeAccelerator::FrameOrder::operator()(
 }
 
 VTVideoDecodeAccelerator::VTVideoDecodeAccelerator(
-    const MakeGLContextCurrentCallback& make_context_current_cb,
     const BindGLImageCallback& bind_image_cb)
-    : make_context_current_cb_(make_context_current_cb),
-      bind_image_cb_(bind_image_cb),
+    : bind_image_cb_(bind_image_cb),
       gpu_task_runner_(base::ThreadTaskRunnerHandle::Get()),
       decoder_thread_("VTDecoderThread"),
       weak_this_factory_(this) {
@@ -466,7 +463,7 @@ bool VTVideoDecodeAccelerator::Initialize(const Config& config,
   DVLOG(1) << __func__;
   DCHECK(gpu_task_runner_->BelongsToCurrentThread());
 
-  if (make_context_current_cb_.is_null() || bind_image_cb_.is_null()) {
+  if (bind_image_cb_.is_null()) {
     NOTREACHED() << "GL callbacks are required for this VDA";
     return false;
   }
@@ -762,8 +759,8 @@ void VTVideoDecodeAccelerator::DecodeTask(const BitstreamBuffer& bitstream,
           frame->pic_order_cnt = *pic_order_cnt;
           frame->reorder_window = ComputeReorderWindow(sps);
         }
+        FALLTHROUGH;
 
-      // Intentional fallthrough.
       default:
         nalus.push_back(nalu);
         data_size += kNALUHeaderLength + nalu.size;
@@ -1036,7 +1033,7 @@ void VTVideoDecodeAccelerator::AssignPictureBuffers(
     DCHECK_LE(1u, picture.service_texture_ids().size());
     picture_info_map_.insert(std::make_pair(
         picture.id(),
-        base::MakeUnique<PictureInfo>(picture.client_texture_ids()[0],
+        std::make_unique<PictureInfo>(picture.client_texture_ids()[0],
                                       picture.service_texture_ids()[0])));
   }
 
@@ -1240,12 +1237,6 @@ bool VTVideoDecodeAccelerator::SendFrame(const Frame& frame) {
   DCHECK(!picture_info->cv_image);
   DCHECK(!picture_info->gl_image);
 
-  if (!make_context_current_cb_.Run()) {
-    DLOG(ERROR) << "Failed to make GL context current";
-    NotifyError(PLATFORM_FAILURE, SFT_PLATFORM_ERROR);
-    return false;
-  }
-
   scoped_refptr<gl::GLImageIOSurface> gl_image(
       gl::GLImageIOSurface::Create(frame.image_size, GL_BGRA_EXT));
   if (!gl_image->InitializeWithCVPixelBuffer(
@@ -1331,8 +1322,6 @@ void VTVideoDecodeAccelerator::Destroy() {
 
   // For a graceful shutdown, return assigned buffers and flush before
   // destructing |this|.
-  // TODO(sandersd): Prevent the decoder from reading buffers before discarding
-  // them.
   for (int32_t bitstream_id : assigned_bitstream_ids_)
     client_->NotifyEndOfBitstreamBuffer(bitstream_id);
   assigned_bitstream_ids_.clear();

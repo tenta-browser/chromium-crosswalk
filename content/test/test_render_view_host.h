@@ -69,10 +69,8 @@ class TestRenderWidgetHostView : public RenderWidgetHostViewBase,
 
   // RenderWidgetHostView:
   void InitAsChild(gfx::NativeView parent_view) override {}
-  RenderWidgetHost* GetRenderWidgetHost() const override;
   void SetSize(const gfx::Size& size) override {}
   void SetBounds(const gfx::Rect& rect) override {}
-  gfx::Vector2dF GetLastScrollOffset() const override;
   gfx::NativeView GetNativeView() const override;
   gfx::NativeViewAccessible GetNativeViewAccessible() override;
   ui::TextInputClient* GetTextInputClient() override;
@@ -86,13 +84,9 @@ class TestRenderWidgetHostView : public RenderWidgetHostViewBase,
   void SetBackgroundColor(SkColor color) override;
   SkColor background_color() const override;
 #if defined(OS_MACOSX)
-  ui::AcceleratedWidgetMac* GetAcceleratedWidgetMac() const override;
   void SetActive(bool active) override;
   void ShowDefinitionForSelection() override {}
-  bool SupportsSpeech() const override;
   void SpeakSelection() override;
-  bool IsSpeaking() const override;
-  void StopSpeaking() override;
 #endif  // defined(OS_MACOSX)
   void DidCreateNewRendererCompositorFrameSink(
       viz::mojom::CompositorFrameSinkClient* renderer_compositor_frame_sink)
@@ -103,6 +97,8 @@ class TestRenderWidgetHostView : public RenderWidgetHostViewBase,
       viz::mojom::HitTestRegionListPtr hit_test_region_list) override;
   void ClearCompositorFrame() override {}
   void SetNeedsBeginFrames(bool needs_begin_frames) override {}
+  void SetWantsAnimateOnlyBeginFrames() override {}
+  void TakeFallbackContentFrom(RenderWidgetHostView* view) override;
 
   // RenderWidgetHostViewBase:
   void InitAsPopup(RenderWidgetHostView* parent_host_view,
@@ -115,11 +111,12 @@ class TestRenderWidgetHostView : public RenderWidgetHostViewBase,
                          int error_code) override;
   void Destroy() override;
   void SetTooltipText(const base::string16& tooltip_text) override {}
-  bool HasAcceleratedSurface(const gfx::Size& desired_size) override;
+  gfx::Vector2d GetOffsetFromRootSurface() override;
   gfx::Rect GetBoundsInRootWindow() override;
   bool LockMouse() override;
   void UnlockMouse() override;
   viz::FrameSinkId GetFrameSinkId() override;
+  viz::SurfaceId GetCurrentSurfaceId() const override;
 
   bool is_showing() const { return is_showing_; }
   bool is_occluded() const { return is_occluded_; }
@@ -131,13 +128,16 @@ class TestRenderWidgetHostView : public RenderWidgetHostViewBase,
   void reset_did_change_compositor_frame_sink() {
     did_change_compositor_frame_sink_ = false;
   }
-
+#if defined(USE_AURA)
+  void ScheduleEmbed(ui::mojom::WindowTreeClientPtr client,
+                     base::OnceCallback<void(const base::UnguessableToken&)>
+                         callback) override {}
+#endif
   // viz::HostFrameSinkClient implementation.
   void OnFirstSurfaceActivation(const viz::SurfaceInfo& surface_info) override;
   void OnFrameTokenChanged(uint32_t frame_token) override;
 
  protected:
-  RenderWidgetHostImpl* rwh_;
   viz::FrameSinkId frame_sink_id_;
 
  private:

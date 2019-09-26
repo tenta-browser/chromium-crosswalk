@@ -20,11 +20,10 @@
 #include "components/keyed_service/content/browser_context_keyed_service_shutdown_notifier_factory.h"
 #include "components/printing/browser/print_manager_utils.h"
 #include "components/printing/common/print_messages.h"
-#include "content/public/browser/browser_thread.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/child_process_host.h"
-#include "printing/features/features.h"
+#include "printing/buildflags/buildflags.h"
 
 #if BUILDFLAG(ENABLE_PRINT_PREVIEW)
 #include "chrome/browser/ui/webui/print_preview/print_preview_ui.h"
@@ -42,23 +41,24 @@ namespace printing {
 
 namespace {
 
-class ShutdownNotifierFactory
+class PrintingMessageFilterShutdownNotifierFactory
     : public BrowserContextKeyedServiceShutdownNotifierFactory {
  public:
-  static ShutdownNotifierFactory* GetInstance() {
-    return base::Singleton<ShutdownNotifierFactory>::get();
+  static PrintingMessageFilterShutdownNotifierFactory* GetInstance() {
+    return base::Singleton<PrintingMessageFilterShutdownNotifierFactory>::get();
   }
 
  private:
-  friend struct base::DefaultSingletonTraits<ShutdownNotifierFactory>;
+  friend struct base::DefaultSingletonTraits<
+      PrintingMessageFilterShutdownNotifierFactory>;
 
-  ShutdownNotifierFactory()
+  PrintingMessageFilterShutdownNotifierFactory()
       : BrowserContextKeyedServiceShutdownNotifierFactory(
-          "PrintingMessageFilter") {}
+            "PrintingMessageFilter") {}
 
-  ~ShutdownNotifierFactory() override {}
+  ~PrintingMessageFilterShutdownNotifierFactory() override {}
 
-  DISALLOW_COPY_AND_ASSIGN(ShutdownNotifierFactory);
+  DISALLOW_COPY_AND_ASSIGN(PrintingMessageFilterShutdownNotifierFactory);
 };
 
 #if defined(OS_ANDROID) || (defined(OS_WIN) && BUILDFLAG(ENABLE_PRINT_PREVIEW))
@@ -101,9 +101,10 @@ PrintingMessageFilter::PrintingMessageFilter(int render_process_id,
       queue_(g_browser_process->print_job_manager()->queue()) {
   DCHECK(queue_.get());
   printing_shutdown_notifier_ =
-      ShutdownNotifierFactory::GetInstance()->Get(profile)->Subscribe(
-          base::Bind(&PrintingMessageFilter::ShutdownOnUIThread,
-                     base::Unretained(this)));
+      PrintingMessageFilterShutdownNotifierFactory::GetInstance()
+          ->Get(profile)
+          ->Subscribe(base::Bind(&PrintingMessageFilter::ShutdownOnUIThread,
+                                 base::Unretained(this)));
   is_printing_enabled_.Init(prefs::kPrintingEnabled, profile->GetPrefs());
   is_printing_enabled_.MoveToThread(
       BrowserThread::GetTaskRunnerForThread(BrowserThread::IO));
@@ -267,7 +268,7 @@ void PrintingMessageFilter::OnScriptedPrintReply(
   }
   PrintHostMsg_ScriptedPrint::WriteReplyParams(reply_msg, params);
   Send(reply_msg);
-  if (params.params.dpi && params.params.document_cookie) {
+  if (!params.params.dpi.IsEmpty() && params.params.document_cookie) {
 #if defined(OS_ANDROID)
     int file_descriptor;
     const base::string16& device_name = printer_query->settings().device_name();
@@ -307,14 +308,8 @@ void PrintingMessageFilter::OnUpdatePrintSettings(
   }
   printer_query = queue_->PopPrinterQuery(document_cookie);
   if (!printer_query.get()) {
-    int host_id;
-    int routing_id;
-    if (!new_settings->GetInteger(kPreviewInitiatorHostId, &host_id) ||
-        !new_settings->GetInteger(kPreviewInitiatorRoutingId, &routing_id)) {
-      host_id = content::ChildProcessHost::kInvalidUniqueID;
-      routing_id = MSG_ROUTING_NONE;
-    }
-    printer_query = queue_->CreatePrinterQuery(host_id, routing_id);
+    printer_query = queue_->CreatePrinterQuery(
+        content::ChildProcessHost::kInvalidUniqueID, MSG_ROUTING_NONE);
   }
   printer_query->SetSettings(
       std::move(new_settings),

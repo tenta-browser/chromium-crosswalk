@@ -2,7 +2,7 @@
 <script src="../resources/testharness.js"></script>
 <script src="../resources/testharnessreport.js"></script>
 <script src="file:///gen/layout_test_data/mojo/public/js/mojo_bindings.js"></script>
-<script src="file:///gen/services/device/public/interfaces/sensor_provider.mojom.js"></script>
+<script src="file:///gen/services/device/public/mojom/sensor_provider.mojom.js"></script>
 <script src="resources/sensor-helpers.js"></script>
 <script src="resources/generic-sensor-tests.js"></script>
 <script>
@@ -24,5 +24,9 @@ function verify_sensor_reading({illuminance, timestamp}, is_null) {
   return illuminance === kDefaultReadingValue && timestamp !== null;
 }
 
-runGenericSensorTests(AmbientLightSensor, update_sensor_reading, verify_sensor_reading);
+runGenericSensorTests(AmbientLightSensor,
+                      update_sensor_reading,
+                      verify_sensor_reading,
+                      null,
+                      ['ambient-light-sensor']);
 </script>

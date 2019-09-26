@@ -6,12 +6,13 @@
 
 #include <stddef.h>
 
+#include <algorithm>
+#include <memory>
 #include <utility>
 #include <vector>
 
 #include "base/i18n/rtl.h"
 #include "base/lazy_instance.h"
-#include "base/memory/ptr_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/time/time.h"
@@ -145,8 +146,9 @@ tabs::Tab SessionsGetRecentlyClosedFunction::CreateTabModel(
     const sessions::TabRestoreService::Tab& tab,
     bool active) {
   return CreateTabModelHelper(tab.navigations[tab.current_navigation_index],
-                              base::IntToString(tab.id), tab.tabstrip_index,
-                              tab.pinned, active, extension());
+                              base::IntToString(tab.id.id()),
+                              tab.tabstrip_index, tab.pinned, active,
+                              extension());
 }
 
 std::unique_ptr<windows::Window>
@@ -154,14 +156,14 @@ SessionsGetRecentlyClosedFunction::CreateWindowModel(
     const sessions::TabRestoreService::Window& window) {
   DCHECK(!window.tabs.empty());
 
-  auto tabs = base::MakeUnique<std::vector<tabs::Tab>>();
+  auto tabs = std::make_unique<std::vector<tabs::Tab>>();
   for (const auto& tab : window.tabs)
     tabs->push_back(
         CreateTabModel(*tab, tab->tabstrip_index == window.selected_tab_index));
 
-  return CreateWindowModelHelper(std::move(tabs), base::IntToString(window.id),
-                                 windows::WINDOW_TYPE_NORMAL,
-                                 windows::WINDOW_STATE_NORMAL);
+  return CreateWindowModelHelper(
+      std::move(tabs), base::IntToString(window.id.id()),
+      windows::WINDOW_TYPE_NORMAL, windows::WINDOW_STATE_NORMAL);
 }
 
 std::unique_ptr<api::sessions::Session>
@@ -380,8 +382,8 @@ ExtensionFunction::ResponseAction SessionsGetDevicesFunction::Run() {
 
 ExtensionFunction::ResponseValue SessionsRestoreFunction::GetRestoredTabResult(
     content::WebContents* contents) {
-  std::unique_ptr<tabs::Tab> tab(
-      ExtensionTabUtil::CreateTabObject(contents, extension()));
+  std::unique_ptr<tabs::Tab> tab(ExtensionTabUtil::CreateTabObject(
+      contents, ExtensionTabUtil::kScrubTab, extension()));
   std::unique_ptr<api::sessions::Session> restored_session(
       CreateSessionModelHelper(base::Time::Now().ToTimeT(), std::move(tab),
                                std::unique_ptr<windows::Window>()));
@@ -390,14 +392,15 @@ ExtensionFunction::ResponseValue SessionsRestoreFunction::GetRestoredTabResult(
 
 ExtensionFunction::ResponseValue
 SessionsRestoreFunction::GetRestoredWindowResult(int window_id) {
-  WindowController* controller = NULL;
+  Browser* browser = nullptr;
   std::string error;
-  if (!windows_util::GetWindowFromWindowID(this, window_id, 0, &controller,
-                                           &error)) {
+  if (!windows_util::GetBrowserFromWindowID(this, window_id, 0, &browser,
+                                            &error)) {
     return Error(error);
   }
   std::unique_ptr<base::DictionaryValue> window_value(
-      controller->CreateWindowValueWithTabs(extension()));
+      ExtensionTabUtil::CreateWindowValueForExtension(
+          *browser, extension(), ExtensionTabUtil::kPopulateTabs));
   std::unique_ptr<windows::Window> window(
       windows::Window::FromValue(*window_value));
   return ArgumentList(Restore::Results::Create(*CreateSessionModelHelper(
@@ -449,7 +452,7 @@ ExtensionFunction::ResponseValue SessionsRestoreFunction::RestoreLocalSession(
   // Check if the recently closed list contains an entry with the provided id.
   bool is_window = false;
   for (const auto& entry : entries) {
-    if (entry->id == session_id.id()) {
+    if (entry->id.id() == session_id.id()) {
       // A full window is being restored only if the entry ID
       // matches the provided ID and the entry type is Window.
       is_window = is_window_entry(*entry);
@@ -461,8 +464,9 @@ ExtensionFunction::ResponseValue SessionsRestoreFunction::RestoreLocalSession(
       BrowserLiveTabContext::FindContextForWebContents(
           browser->tab_strip_model()->GetActiveWebContents());
   std::vector<sessions::LiveTab*> restored_tabs =
-      tab_restore_service->RestoreEntryById(context, session_id.id(),
-                                            WindowOpenDisposition::UNKNOWN);
+      tab_restore_service->RestoreEntryById(
+          context, SessionID::FromSerializedValue(session_id.id()),
+          WindowOpenDisposition::UNKNOWN);
   // If the ID is invalid, restored_tabs will be empty.
   if (restored_tabs.empty())
     return Error(kInvalidSessionIdError, session_id.ToString());
@@ -494,7 +498,7 @@ ExtensionFunction::ResponseValue SessionsRestoreFunction::RestoreForeignSession(
 
   const sessions::SessionTab* tab = NULL;
   if (open_tabs->GetForeignTab(session_id.session_tag(),
-                               session_id.id(),
+                               SessionID::FromSerializedValue(session_id.id()),
                                &tab)) {
     TabStripModel* tab_strip = browser->tab_strip_model();
     content::WebContents* contents = tab_strip->GetActiveWebContents();
@@ -570,7 +574,7 @@ SessionsEventRouter::~SessionsEventRouter() {
 void SessionsEventRouter::TabRestoreServiceChanged(
     sessions::TabRestoreService* service) {
   std::unique_ptr<base::ListValue> args(new base::ListValue());
-  EventRouter::Get(profile_)->BroadcastEvent(base::MakeUnique<Event>(
+  EventRouter::Get(profile_)->BroadcastEvent(std::make_unique<Event>(
       events::SESSIONS_ON_CHANGED, api::sessions::OnChanged::kEventName,
       std::move(args)));
 }

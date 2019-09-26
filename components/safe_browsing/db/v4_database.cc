@@ -2,16 +2,17 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "components/safe_browsing/db/v4_database.h"
+
 #include <memory>
+#include <utility>
 
 #include "base/callback.h"
 #include "base/files/file_util.h"
 #include "base/lazy_instance.h"
-#include "base/memory/ptr_util.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/task_runner_util.h"
 #include "base/threading/thread_task_runner_handle.h"
-#include "components/safe_browsing/db/v4_database.h"
 #include "components/safe_browsing/proto/webui.pb.h"
 #include "content/public/browser/browser_thread.h"
 
@@ -83,12 +84,12 @@ void V4Database::CreateOnTaskRunner(
   DCHECK(db_task_runner->RunsTasksInCurrentSequence());
 
   if (!g_store_factory.Get())
-    g_store_factory.Get() = base::MakeUnique<V4StoreFactory>();
+    g_store_factory.Get() = std::make_unique<V4StoreFactory>();
 
   if (!base::CreateDirectory(base_path))
     NOTREACHED();
 
-  std::unique_ptr<StoreMap> store_map = base::MakeUnique<StoreMap>();
+  std::unique_ptr<StoreMap> store_map = std::make_unique<StoreMap>();
   for (const auto& it : list_infos) {
     if (!it.fetch_updates()) {
       // This list doesn't need to be fetched or stored on disk.
@@ -101,7 +102,7 @@ void V4Database::CreateOnTaskRunner(
   }
 
   if (!g_db_factory.Get())
-    g_db_factory.Get() = base::MakeUnique<V4DatabaseFactory>();
+    g_db_factory.Get() = std::make_unique<V4DatabaseFactory>();
 
   std::unique_ptr<V4Database> v4_database =
       g_db_factory.Get()->Create(db_task_runner, std::move(store_map));
@@ -109,7 +110,7 @@ void V4Database::CreateOnTaskRunner(
   // Database is done loading, pass it to the new_db_callback on the caller's
   // thread. This would unblock resource loads.
   callback_task_runner->PostTask(
-      FROM_HERE, base::Bind(new_db_callback, base::Passed(&v4_database)));
+      FROM_HERE, base::BindOnce(new_db_callback, std::move(v4_database)));
 
   UMA_HISTOGRAM_TIMES("SafeBrowsing.V4DatabaseOpen.Time",
                       TimeTicks::Now() - create_start_time);
@@ -177,10 +178,10 @@ void V4Database::ApplyUpdate(
             base::Bind(&V4Database::UpdatedStoreReady,
                        weak_factory_on_io_.GetWeakPtr(), identifier);
         db_task_runner_->PostTask(
-            FROM_HERE,
-            base::Bind(&V4Store::ApplyUpdate, base::Unretained(old_store.get()),
-                       base::Passed(std::move(response)), current_task_runner,
-                       store_ready_callback));
+            FROM_HERE, base::BindOnce(&V4Store::ApplyUpdate,
+                                      base::Unretained(old_store.get()),
+                                      std::move(response), current_task_runner,
+                                      store_ready_callback));
       }
     } else {
       NOTREACHED() << "Got update for unexpected identifier: " << identifier;
@@ -212,7 +213,7 @@ void V4Database::UpdatedStoreReady(ListIdentifier identifier,
 
 std::unique_ptr<StoreStateMap> V4Database::GetStoreStateMap() {
   std::unique_ptr<StoreStateMap> store_state_map =
-      base::MakeUnique<StoreStateMap>();
+      std::make_unique<StoreStateMap>();
   for (const auto& store_map_iter : *store_map_) {
     (*store_state_map)[store_map_iter.first] = store_map_iter.second->state();
   }

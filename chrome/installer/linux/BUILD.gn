@@ -13,7 +13,13 @@ import("//chrome/process_version_rc_template.gni")  # For branding_file_path.
 import("//components/nacl/features.gni")
 
 if (current_cpu == "x86" || current_cpu == "x64") {
-  import("//media/cdm/ppapi/cdm_paths.gni")
+  import("//media/cdm/library_cdm/cdm_paths.gni")
+}
+
+declare_args() {
+  # Enables checks that ensure the packages are installable on all supported
+  # distributions.
+  enable_distro_version_check = true
 }
 
 assert(is_linux)
@@ -43,10 +49,8 @@ if (enable_nacl) {
 
 # The widevine BUILD.gn only produces shared libraries for x86 and x64
 if (is_chrome_branded && (current_cpu == "x86" || current_cpu == "x64")) {
-  packaging_files_shlibs += [
-    "$root_out_dir/$widevine_cdm_path/libwidevinecdmadapter.so",
-    "$root_out_dir/$widevine_cdm_path/libwidevinecdm.so",
-  ]
+  packaging_files_shlibs +=
+      [ "$root_out_dir/$widevine_cdm_path/libwidevinecdm.so" ]
 }
 
 if (!libcpp_is_static && use_custom_libcxx) {
@@ -61,6 +65,8 @@ packaging_files = packaging_files_binaries + [
                     "$root_out_dir/xdg-mime",
                     "$root_out_dir/xdg-settings",
                     "$root_out_dir/locales/en-US.pak",
+                    "$root_out_dir/MEIPreload/manifest.json",
+                    "$root_out_dir/MEIPreload/preloaded_data.pb",
                   ]
 
 action_foreach("calculate_deb_dependencies") {
@@ -83,7 +89,7 @@ action_foreach("calculate_deb_dependencies") {
     target_cpu,
     "deb_{{source_name_part}}.deps",
   ]
-  if (is_desktop_linux && target_cpu == "x64") {
+  if (is_desktop_linux && target_cpu == "x64" && enable_distro_version_check) {
     args += [ "--distro-check" ]
   }
 }
@@ -127,7 +133,7 @@ action_foreach("calculate_rpm_dependencies") {
     "rpm_{{source_name_part}}.deps",
   ]
   args += rebase_path(packaging_files_shlibs, root_build_dir)
-  if (is_desktop_linux && target_cpu == "x64") {
+  if (is_desktop_linux && target_cpu == "x64" && enable_distro_version_check) {
     args += [ "--distro-check" ]
   }
 }
@@ -348,6 +354,7 @@ group("installer_deps") {
     ":theme_files",
     "//chrome",
     "//chrome:packed_resources",
+    "//chrome/browser/resources/media/mei_preload:component",
     "//sandbox/linux:chrome_sandbox",
   ]
   if (enable_nacl) {
@@ -361,10 +368,7 @@ group("installer_deps") {
     ]
   }
   if (current_cpu == "x86" || current_cpu == "x64") {
-    public_deps += [
-      "//third_party/widevine/cdm:widevinecdm",
-      "//third_party/widevine/cdm:widevinecdmadapter",
-    ]
+    public_deps += [ "//third_party/widevine/cdm" ]
   }
   if (!is_chromeos) {
     public_deps += [ ":rpm_packaging_files" ]
@@ -403,6 +407,8 @@ template("linux_package") {
       deb_arch = "arm"
     } else if (current_cpu == "mipsel") {
       deb_arch = "mipsel"
+    } else if (current_cpu == "mips64el") {
+      deb_arch = "mips64el"
     } else {
       assert(false, "Linux installer not configured for this architecture.")
     }
@@ -431,6 +437,8 @@ template("linux_package") {
       rebase_path(root_out_dir, root_build_dir),
       "-s",
       rebase_path(sysroot, root_build_dir),
+      "-t",
+      target_os,
     ]
     if (is_official_build) {
       args += [ "-f" ]
@@ -455,6 +463,8 @@ template("linux_package") {
         rpm_arch = "arm"
       } else if (current_cpu == "mipsel") {
         rpm_arch = "mipsel"
+      } else if (current_cpu == "mips64el") {
+        rpm_arch = "mips64el"
       } else {
         assert(false, "Linux installer not configured for this architecture.")
       }
@@ -481,6 +491,8 @@ template("linux_package") {
         branding_path_component,
         "-o",
         rebase_path(root_out_dir, root_build_dir),
+        "-t",
+        target_os,
       ]
       if (is_official_build) {
         args += [ "-f" ]

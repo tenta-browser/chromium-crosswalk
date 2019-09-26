@@ -13,13 +13,13 @@ suite('cr-dialog', function() {
 
   test('focuses title on show', function() {
     document.body.innerHTML = `
-      <dialog is="cr-dialog">
+      <cr-dialog>
         <div slot="title">title</div>
         <div slot="body"><button>button</button></div>
-      </dialog>`;
+      </cr-dialog>`;
 
-    var dialog = document.body.querySelector('dialog');
-    var button = document.body.querySelector('button');
+    const dialog = document.body.querySelector('cr-dialog');
+    const button = document.body.querySelector('button');
 
     assertNotEquals(dialog, document.activeElement);
     assertNotEquals(button, document.activeElement);
@@ -32,21 +32,21 @@ suite('cr-dialog', function() {
 
   test('enter keys should trigger action buttons once', function() {
     document.body.innerHTML = `
-      <dialog is="cr-dialog">
+      <cr-dialog>
         <div slot="title">title</div>
         <div slot="body">
           <button class="action-button">button</button>
           <button id="other-button">other button</button>
         </div>
-      </dialog>`;
+      </cr-dialog>`;
 
-    var dialog = document.body.querySelector('dialog');
-    var actionButton = document.body.querySelector('.action-button');
+    const dialog = document.body.querySelector('cr-dialog');
+    const actionButton = document.body.querySelector('.action-button');
 
     dialog.showModal();
 
     // MockInteractions triggers event listeners synchronously.
-    var clickedCounter = 0;
+    let clickedCounter = 0;
     actionButton.addEventListener('click', function() {
       clickedCounter++;
     });
@@ -57,7 +57,7 @@ suite('cr-dialog', function() {
 
     // Enter keys on other buttons should be ignored.
     clickedCounter = 0;
-    var otherButton = document.body.querySelector('#other-button');
+    const otherButton = document.body.querySelector('#other-button');
     assertTrue(!!otherButton);
     pressEnter(otherButton);
     assertEquals(0, clickedCounter);
@@ -69,7 +69,7 @@ suite('cr-dialog', function() {
 
   test('enter keys find the first non-hidden non-disabled button', function() {
     document.body.innerHTML = `
-      <dialog is="cr-dialog">
+      <cr-dialog>
         <div slot="title">title</div>
         <div slot="body">
           <button id="hidden" class="action-button" hidden>hidden</button>
@@ -77,18 +77,18 @@ suite('cr-dialog', function() {
           <button class="action-button" disabled hidden>disabled hidden</button>
           <button id="active" class="action-button">active</button>
         </div>
-      </dialog>`;
+      </cr-dialog>`;
 
-    var dialog = document.body.querySelector('dialog');
-    var hiddenButton = document.body.querySelector('#hidden');
-    var actionButton = document.body.querySelector('#active');
+    const dialog = document.body.querySelector('cr-dialog');
+    const hiddenButton = document.body.querySelector('#hidden');
+    const actionButton = document.body.querySelector('#active');
     dialog.showModal();
 
     // MockInteractions triggers event listeners synchronously.
     hiddenButton.addEventListener('click', function() {
       assertNotReached('Hidden button received a click.');
     });
-    var clicked = false;
+    let clicked = false;
     actionButton.addEventListener('click', function() {
       clicked = true;
     });
@@ -99,26 +99,26 @@ suite('cr-dialog', function() {
 
   test('enter keys from paper-inputs (only) are processed', function() {
     document.body.innerHTML = `
-      <dialog is="cr-dialog">
+      <cr-dialog>
         <div slot="title">title</div>
         <div slot="body">
           <paper-input></paper-input>
           <foobar></foobar>
           <button class="action-button">active</button>
         </div>
-      </dialog>`;
+      </cr-dialog>`;
 
-    var dialog = document.body.querySelector('dialog');
+    const dialog = document.body.querySelector('cr-dialog');
 
-    var inputElement = document.body.querySelector('paper-input');
-    var otherElement = document.body.querySelector('foobar');
-    var actionButton = document.body.querySelector('.action-button');
+    const inputElement = document.body.querySelector('paper-input');
+    const otherElement = document.body.querySelector('foobar');
+    const actionButton = document.body.querySelector('.action-button');
     assertTrue(!!inputElement);
     assertTrue(!!otherElement);
     assertTrue(!!actionButton);
 
     // MockInteractions triggers event listeners synchronously.
-    var clickedCounter = 0;
+    let clickedCounter = 0;
     actionButton.addEventListener('click', function() {
       clickedCounter++;
     });
@@ -132,13 +132,13 @@ suite('cr-dialog', function() {
 
   test('focuses [autofocus] instead of title when present', function() {
     document.body.innerHTML = `
-      <dialog is="cr-dialog">
+      <cr-dialog>
         <div slot="title">title</div>
         <div slot="body"><button autofocus>button</button></div>
-      </dialog>`;
+      </cr-dialog>`;
 
-    var dialog = document.body.querySelector('dialog');
-    var button = document.body.querySelector('button');
+    const dialog = document.body.querySelector('cr-dialog');
+    const button = document.body.querySelector('button');
 
     assertNotEquals(dialog, document.activeElement);
     assertNotEquals(button, document.activeElement);
@@ -153,14 +153,14 @@ suite('cr-dialog', function() {
   // dialog has been opened.
   test('body scrollable border not added before modal shown', function(done) {
     document.body.innerHTML = `
-      <dialog is="cr-dialog">
+      <cr-dialog>
         <div slot="title">title</div>
         <div slot="body">body</div>
-      </dialog>`;
+      </cr-dialog>`;
 
-    var dialog = document.body.querySelector('dialog');
+    const dialog = document.body.querySelector('cr-dialog');
     assertFalse(dialog.open);
-    var bodyContainer = dialog.$$('.body-container');
+    const bodyContainer = dialog.$$('.body-container');
     assertTrue(!!bodyContainer);
 
     // Waiting for 1ms because IntersectionObserver fires one message loop after
@@ -174,24 +174,24 @@ suite('cr-dialog', function() {
 
   test('dialog body scrollable border when appropriate', function(done) {
     document.body.innerHTML = `
-      <dialog is="cr-dialog">
+      <cr-dialog>
         <div slot="title">title</div>
         <div slot="body">
           <div style="height: 100px">tall content</div>
         </div>
-      </dialog>`;
+      </cr-dialog>`;
 
-    var dialog = document.body.querySelector('dialog');
-    var bodyContainer = dialog.$$('.body-container');
+    const dialog = document.body.querySelector('cr-dialog');
+    const bodyContainer = dialog.$$('.body-container');
     assertTrue(!!bodyContainer);
 
     dialog.showModal();  // Attach the dialog for the first time here.
 
-    var observerCount = 0;
+    let observerCount = 0;
 
     // Needs to setup the observer before attaching, since InteractionObserver
     // calls callback before MutationObserver does.
-    var observer = new MutationObserver(function(changes) {
+    const observer = new MutationObserver(function(changes) {
       // Only care about class mutations.
       if (changes[0].attributeName != 'class')
         return;
@@ -225,24 +225,26 @@ suite('cr-dialog', function() {
 
   test('dialog cannot be cancelled when `no-cancel` is set', function() {
     document.body.innerHTML = `
-      <dialog is="cr-dialog" no-cancel>
+      <cr-dialog no-cancel>
         <div slot="title">title</div>
-      </dialog>`;
+      </cr-dialog>`;
 
-    var dialog = document.body.querySelector('dialog');
+    const dialog = document.body.querySelector('cr-dialog');
     dialog.showModal();
 
-    assertTrue(dialog.getCloseButton().hidden);
+    // The paper-icon-button-light is the hidden element which is the
+    // parentElement of the button.
+    assertTrue(dialog.getCloseButton().parentElement.hidden);
 
     // Hitting escape fires a 'cancel' event. Cancelling that event prevents the
     // dialog from closing.
-    var e = new Event('cancel', {cancelable: true});
+    let e = new Event('cancel', {cancelable: true});
     dialog.dispatchEvent(e);
     assertTrue(e.defaultPrevented);
 
     dialog.noCancel = false;
 
-    var e = new Event('cancel', {cancelable: true});
+    e = new Event('cancel', {cancelable: true});
     dialog.dispatchEvent(e);
     assertFalse(e.defaultPrevented);
   });

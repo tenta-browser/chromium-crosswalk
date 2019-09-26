@@ -7,9 +7,9 @@
 
 #include "base/callback.h"
 #include "base/macros.h"
+#include "device/vr/public/mojom/vr_service.mojom.h"
 #include "device/vr/vr_device.h"
 #include "device/vr/vr_export.h"
-#include "device/vr/vr_service.mojom.h"
 
 namespace device {
 
@@ -37,8 +37,10 @@ class DEVICE_VR_EXPORT VRDeviceBase : public VRDevice {
       VRDisplayImpl* display,
       mojom::VRSubmitFrameClientPtr submit_client,
       mojom::VRPresentationProviderRequest request,
+      mojom::VRRequestPresentOptionsPtr present_options,
       mojom::VRDisplayHost::RequestPresentCallback callback);
   virtual void ExitPresent();
+  bool IsFallbackDevice() override;
 
   void AddDisplay(VRDisplayImpl* display);
   void RemoveDisplay(VRDisplayImpl* display);
@@ -67,19 +69,6 @@ class DEVICE_VR_EXPORT VRDeviceBase : public VRDevice {
 
   VRDisplayImpl* presenting_display_ = nullptr;
   VRDisplayImpl* listening_for_activate_diplay_ = nullptr;
-
-  // On Android display activate is triggered after the Device ON flow that
-  // pauses Chrome, which unfocuses the webvr page, which lets us know that that
-  // page is no longer listening to displayActivate. We then have a race between
-  // blink-side getting focus back and letting us know the page is listening for
-  // displayactivate, and the browser sending displayactivate.
-  // We resolve this by remembering which display was last listening for
-  // displayactivate most recently, and sending the activation there so long as
-  // the WebContents it belongs to is focused and nothing has more recently
-  // started listening for displayactivate.
-  // This is safe because if the page is /actually/ not listening for activate
-  // anymore, the displayactivate signal will just be ignored.
-  VRDisplayImpl* last_listening_for_activate_diplay_ = nullptr;
 
   mojom::VRDisplayInfoPtr display_info_;
 

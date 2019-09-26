@@ -81,21 +81,26 @@ class QuicClientEpollNetworkHelper : public QuicClientBase::NetworkHelper,
   // Otherwise, return -1.
   int GetLatestFD() const;
 
+  // Create socket for connection to |server_address| with default socket
+  // options.
+  // Return fd index.
+  virtual int CreateUDPSocket(QuicSocketAddress server_address,
+                              bool* overflow_supported);
+
   QuicClientBase* client() { return client_; }
 
   void set_max_reads_per_epoll_loop(int num_reads) {
     max_reads_per_epoll_loop_ = num_reads;
   }
+  // If |fd| is an open UDP socket, unregister and close it. Otherwise, do
+  // nothing.
+  void CleanUpUDPSocket(int fd);
 
  private:
   friend class test::QuicClientPeer;
 
   // Used for testing.
   void SetClientPort(int port);
-
-  // If |fd| is an open UDP socket, unregister and close it. Otherwise, do
-  // nothing.
-  void CleanUpUDPSocket(int fd);
 
   // Actually clean up |fd|.
   void CleanUpUDPSocketImpl(int fd);

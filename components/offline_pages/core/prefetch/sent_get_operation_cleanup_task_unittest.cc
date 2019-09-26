@@ -4,15 +4,16 @@
 
 #include "components/offline_pages/core/prefetch/sent_get_operation_cleanup_task.h"
 
+#include <memory>
 #include <string>
 
 #include "base/time/time.h"
 #include "components/offline_pages/core/prefetch/prefetch_item.h"
 #include "components/offline_pages/core/prefetch/prefetch_network_request_factory.h"
+#include "components/offline_pages/core/prefetch/prefetch_task_test_base.h"
 #include "components/offline_pages/core/prefetch/prefetch_types.h"
 #include "components/offline_pages/core/prefetch/store/prefetch_store.h"
 #include "components/offline_pages/core/prefetch/store/prefetch_store_test_util.h"
-#include "components/offline_pages/core/prefetch/task_test_base.h"
 #include "sql/connection.h"
 #include "sql/statement.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -24,7 +25,7 @@ class TestingPrefetchNetworkRequestFactory
     : public PrefetchNetworkRequestFactory {
  public:
   TestingPrefetchNetworkRequestFactory() {
-    ongoing_operation_names_ = base::MakeUnique<std::set<std::string>>();
+    ongoing_operation_names_ = std::make_unique<std::set<std::string>>();
   }
   ~TestingPrefetchNetworkRequestFactory() override = default;
 
@@ -46,7 +47,7 @@ class TestingPrefetchNetworkRequestFactory
   }
   std::unique_ptr<std::set<std::string>> GetAllOperationNamesRequested()
       const override {
-    return base::MakeUnique<std::set<std::string>>(*ongoing_operation_names_);
+    return std::make_unique<std::set<std::string>>(*ongoing_operation_names_);
   }
 
   void AddOngoingOperation(const std::string& operation_name) {
@@ -58,7 +59,7 @@ class TestingPrefetchNetworkRequestFactory
 };
 }  // namespace
 
-class SentGetOperationCleanupTaskTest : public TaskTestBase {
+class SentGetOperationCleanupTaskTest : public PrefetchTaskTestBase {
  public:
   SentGetOperationCleanupTaskTest() = default;
   ~SentGetOperationCleanupTaskTest() override = default;
@@ -68,9 +69,7 @@ TEST_F(SentGetOperationCleanupTaskTest, StoreFailure) {
   store_util()->SimulateInitializationError();
 
   SentGetOperationCleanupTask task(store(), prefetch_request_factory());
-  ExpectTaskCompletes(&task);
-  task.Run();
-  RunUntilIdle();
+  RunTask(&task);
 }
 
 TEST_F(SentGetOperationCleanupTaskTest, Retry) {
@@ -81,9 +80,7 @@ TEST_F(SentGetOperationCleanupTaskTest, Retry) {
   ASSERT_TRUE(store_util()->InsertPrefetchItem(item));
 
   SentGetOperationCleanupTask task(store(), prefetch_request_factory());
-  ExpectTaskCompletes(&task);
-  task.Run();
-  RunUntilIdle();
+  RunTask(&task);
 
   std::unique_ptr<PrefetchItem> store_item =
       store_util()->GetPrefetchItem(item.offline_id);
@@ -100,13 +97,11 @@ TEST_F(SentGetOperationCleanupTaskTest, NoRetryForOngoingRequest) {
   ASSERT_TRUE(store_util()->InsertPrefetchItem(item));
 
   std::unique_ptr<TestingPrefetchNetworkRequestFactory> request_factory =
-      base::MakeUnique<TestingPrefetchNetworkRequestFactory>();
+      std::make_unique<TestingPrefetchNetworkRequestFactory>();
   request_factory->AddOngoingOperation(item.operation_name);
 
   SentGetOperationCleanupTask task(store(), request_factory.get());
-  ExpectTaskCompletes(&task);
-  task.Run();
-  RunUntilIdle();
+  RunTask(&task);
 
   std::unique_ptr<PrefetchItem> store_item =
       store_util()->GetPrefetchItem(item.offline_id);
@@ -122,9 +117,7 @@ TEST_F(SentGetOperationCleanupTaskTest, ErrorOnMaxAttempts) {
   ASSERT_TRUE(store_util()->InsertPrefetchItem(item));
 
   SentGetOperationCleanupTask task(store(), prefetch_request_factory());
-  ExpectTaskCompletes(&task);
-  task.Run();
-  RunUntilIdle();
+  RunTask(&task);
 
   std::unique_ptr<PrefetchItem> store_item =
       store_util()->GetPrefetchItem(item.offline_id);
@@ -143,13 +136,11 @@ TEST_F(SentGetOperationCleanupTaskTest, SkipForOngoingRequestWithMaxAttempts) {
   ASSERT_TRUE(store_util()->InsertPrefetchItem(item));
 
   std::unique_ptr<TestingPrefetchNetworkRequestFactory> request_factory =
-      base::MakeUnique<TestingPrefetchNetworkRequestFactory>();
+      std::make_unique<TestingPrefetchNetworkRequestFactory>();
   request_factory->AddOngoingOperation(item.operation_name);
 
   SentGetOperationCleanupTask task(store(), request_factory.get());
-  ExpectTaskCompletes(&task);
-  task.Run();
-  RunUntilIdle();
+  RunTask(&task);
 
   std::unique_ptr<PrefetchItem> store_item =
       store_util()->GetPrefetchItem(item.offline_id);
@@ -160,7 +151,7 @@ TEST_F(SentGetOperationCleanupTaskTest, SkipForOngoingRequestWithMaxAttempts) {
 TEST_F(SentGetOperationCleanupTaskTest, NoUpdateForOtherStates) {
   std::set<PrefetchItem> items;
   std::vector<PrefetchItemState> all_other_states =
-      TaskTestBase::GetAllStatesExcept(PrefetchItemState::SENT_GET_OPERATION);
+      GetAllStatesExcept({PrefetchItemState::SENT_GET_OPERATION});
   for (const auto& state : all_other_states) {
     PrefetchItem item = item_generator()->CreateItem(state);
     item.get_operation_attempts =
@@ -170,9 +161,7 @@ TEST_F(SentGetOperationCleanupTaskTest, NoUpdateForOtherStates) {
   }
 
   SentGetOperationCleanupTask task(store(), prefetch_request_factory());
-  ExpectTaskCompletes(&task);
-  task.Run();
-  RunUntilIdle();
+  RunTask(&task);
 
   std::set<PrefetchItem> store_items;
   store_util()->GetAllItems(&store_items);

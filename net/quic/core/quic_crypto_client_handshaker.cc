@@ -6,16 +6,15 @@
 
 #include <memory>
 
+#include "base/metrics/histogram_functions.h"
 #include "base/metrics/histogram_macros.h"
-#include "base/metrics/sparse_histogram.h"
 #include "net/quic/core/crypto/crypto_protocol.h"
 #include "net/quic/core/crypto/crypto_utils.h"
 #include "net/quic/core/quic_session.h"
 #include "net/quic/platform/api/quic_flags.h"
 #include "net/quic/platform/api/quic_logging.h"
 #include "net/quic/platform/api/quic_str_cat.h"
-
-using std::string;
+#include "net/quic/platform/api/quic_string.h"
 
 namespace net {
 
@@ -54,7 +53,7 @@ QuicCryptoClientHandshaker::ProofVerifierCallbackImpl::
 
 void QuicCryptoClientHandshaker::ProofVerifierCallbackImpl::Run(
     bool ok,
-    const string& error_details,
+    const QuicString& error_details,
     std::unique_ptr<ProofVerifyDetails>* details) {
   if (parent_ == nullptr) {
     return;
@@ -162,7 +161,7 @@ bool QuicCryptoClientHandshaker::WasChannelIDSourceCallbackRun() const {
   return channel_id_source_callback_run_;
 }
 
-string QuicCryptoClientHandshaker::chlo_hash() const {
+QuicString QuicCryptoClientHandshaker::chlo_hash() const {
   return chlo_hash_;
 }
 
@@ -186,7 +185,7 @@ CryptoMessageParser* QuicCryptoClientHandshaker::crypto_message_parser() {
 void QuicCryptoClientHandshaker::HandleServerConfigUpdateMessage(
     const CryptoHandshakeMessage& server_config_update) {
   DCHECK(server_config_update.tag() == kSCUP);
-  string error_details;
+  QuicString error_details;
   QuicCryptoClientConfig::CachedState* cached =
       crypto_config_->LookupOrCreate(server_id_);
   QuicErrorCode error = crypto_config_->ProcessServerConfigUpdate(
@@ -318,7 +317,8 @@ void QuicCryptoClientHandshaker::DoSendCHLO(
 
   if (!cached->IsComplete(session()->connection()->clock()->WallNow())) {
     crypto_config_->FillInchoateClientHello(
-        server_id_, session()->connection()->supported_versions().front(),
+        server_id_,
+        session()->connection()->supported_versions().front().transport_version,
         cached, session()->connection()->random_generator(),
         /* demand_x509_proof= */ true, crypto_negotiated_params_, &out);
     // Pad the inchoate client hello to fill up a packet.
@@ -328,12 +328,14 @@ void QuicCryptoClientHandshaker::DoSendCHLO(
     if (max_packet_size <= kFramingOverhead) {
       QUIC_DLOG(DFATAL) << "max_packet_length (" << max_packet_size
                         << ") has no room for framing overhead.";
+      RecordInternalErrorLocation(QUIC_CRYPTO_CLIENT_HANDSHAKER_MAX_PACKET);
       stream_->CloseConnectionWithDetails(QUIC_INTERNAL_ERROR,
                                           "max_packet_size too smalll");
       return;
     }
     if (kClientHelloMinimumSize > max_packet_size - kFramingOverhead) {
       QUIC_DLOG(DFATAL) << "Client hello won't fit in a single packet.";
+      RecordInternalErrorLocation(QUIC_CRYPTO_CLIENT_HANDSHAKER_CHLO);
       stream_->CloseConnectionWithDetails(QUIC_INTERNAL_ERROR,
                                           "CHLO too large");
       return;
@@ -350,18 +352,18 @@ void QuicCryptoClientHandshaker::DoSendCHLO(
 
   // If the server nonce is empty, copy over the server nonce from a previous
   // SREJ, if there is one.
-  if (FLAGS_quic_reloadable_flag_enable_quic_stateless_reject_support &&
+  if (GetQuicReloadableFlag(enable_quic_stateless_reject_support) &&
       crypto_negotiated_params_->server_nonce.empty() &&
       cached->has_server_nonce()) {
     crypto_negotiated_params_->server_nonce = cached->GetNextServerNonce();
     DCHECK(!crypto_negotiated_params_->server_nonce.empty());
   }
 
-  string error_details;
+  QuicString error_details;
   QuicErrorCode error = crypto_config_->FillClientHello(
       server_id_, session()->connection()->connection_id(),
-      session()->connection()->supported_versions().front(), cached,
-      session()->connection()->clock()->WallNow(),
+      session()->connection()->supported_versions().front().transport_version,
+      cached, session()->connection()->clock()->WallNow(),
       session()->connection()->random_generator(), channel_id_key_.get(),
       crypto_negotiated_params_, &out, &error_details);
   if (error != QUIC_NO_ERROR) {
@@ -382,13 +384,13 @@ void QuicCryptoClientHandshaker::DoSendCHLO(
   // Be prepared to decrypt with the new server write key.
   session()->connection()->SetAlternativeDecrypter(
       ENCRYPTION_INITIAL,
-      crypto_negotiated_params_->initial_crypters.decrypter.release(),
+      std::move(crypto_negotiated_params_->initial_crypters.decrypter),
       true /* latch once used */);
   // Send subsequent packets under encryption on the assumption that the
   // server will accept the handshake.
   session()->connection()->SetEncrypter(
       ENCRYPTION_INITIAL,
-      crypto_negotiated_params_->initial_crypters.encrypter.release());
+      std::move(crypto_negotiated_params_->initial_crypters.encrypter));
   session()->connection()->SetDefaultEncryptionLevel(ENCRYPTION_INITIAL);
 
   // TODO(ianswett): Merge ENCRYPTION_REESTABLISHED and
@@ -426,19 +428,19 @@ void QuicCryptoClientHandshaker::DoReceiveREJ(
     }
     DVLOG(1) << "Reasons for rejection: " << packed_error;
     if (num_client_hellos_ == QuicCryptoClientStream::kMaxClientHellos) {
-      UMA_HISTOGRAM_SPARSE_SLOWLY("Net.QuicClientHelloRejectReasons.TooMany",
-                                  packed_error);
+      base::UmaHistogramSparse("Net.QuicClientHelloRejectReasons.TooMany",
+                               packed_error);
     }
-    UMA_HISTOGRAM_SPARSE_SLOWLY("Net.QuicClientHelloRejectReasons.Secure",
-                                packed_error);
+    base::UmaHistogramSparse("Net.QuicClientHelloRejectReasons.Secure",
+                             packed_error);
   }
 
   // Receipt of a REJ message means that the server received the CHLO
   // so we can cancel and retransmissions.
-  session()->connection()->NeuterUnencryptedPackets();
+  session()->NeuterUnencryptedData();
 
   stateless_reject_received_ = in->tag() == kSREJ;
-  string error_details;
+  QuicString error_details;
   QuicErrorCode error = crypto_config_->ProcessRejection(
       *in, session()->connection()->clock()->WallNow(),
       session()->connection()->transport_version(), chlo_hash_, cached,
@@ -615,12 +617,13 @@ void QuicCryptoClientHandshaker::DoReceiveSHLO(
     return;
   }
 
-  string error_details;
+  QuicString error_details;
   QuicErrorCode error = crypto_config_->ProcessServerHello(
       *in, session()->connection()->connection_id(),
       session()->connection()->transport_version(),
-      session()->connection()->server_supported_versions(), cached,
-      crypto_negotiated_params_, &error_details);
+      ParsedVersionsToTransportVersions(
+          session()->connection()->server_supported_versions()),
+      cached, crypto_negotiated_params_, &error_details);
 
   if (error != QUIC_NO_ERROR) {
     stream_->CloseConnectionWithDetails(
@@ -641,10 +644,10 @@ void QuicCryptoClientHandshaker::DoReceiveSHLO(
   // with the FORWARD_SECURE key until it receives a FORWARD_SECURE
   // packet from the client.
   session()->connection()->SetAlternativeDecrypter(
-      ENCRYPTION_FORWARD_SECURE, crypters->decrypter.release(),
+      ENCRYPTION_FORWARD_SECURE, std::move(crypters->decrypter),
       false /* don't latch */);
   session()->connection()->SetEncrypter(ENCRYPTION_FORWARD_SECURE,
-                                        crypters->encrypter.release());
+                                        std::move(crypters->encrypter));
   session()->connection()->SetDefaultEncryptionLevel(ENCRYPTION_FORWARD_SECURE);
 
   handshake_confirmed_ = true;

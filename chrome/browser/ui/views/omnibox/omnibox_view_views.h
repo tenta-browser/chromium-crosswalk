@@ -28,10 +28,9 @@
 #include "ui/base/ime/chromeos/input_method_manager.h"
 #endif
 
-class CommandUpdater;
 class LocationBarView;
 class OmniboxClient;
-class OmniboxPopupView;
+class OmniboxPopupContentsView;
 
 namespace content {
 class WebContents;
@@ -60,7 +59,6 @@ class OmniboxViewViews : public OmniboxView,
 
   OmniboxViewViews(OmniboxEditController* controller,
                    std::unique_ptr<OmniboxClient> client,
-                   CommandUpdater* command_updater,
                    bool popup_window_mode,
                    LocationBarView* location_bar,
                    const gfx::FontList& font_list);
@@ -87,6 +85,7 @@ class OmniboxViewViews : public OmniboxView,
   void ResetTabState(content::WebContents* web_contents);
 
   // OmniboxView:
+  void EmphasizeURLComponents() override;
   void Update() override;
   base::string16 GetText() const override;
   using OmniboxView::SetUserText;
@@ -104,16 +103,25 @@ class OmniboxViewViews : public OmniboxView,
   // views::Textfield:
   gfx::Size GetMinimumSize() const override;
   void OnPaint(gfx::Canvas* canvas) override;
-  void OnNativeThemeChanged(const ui::NativeTheme* theme) override;
   void ExecuteCommand(int command_id, int event_flags) override;
   ui::TextInputType GetTextInputType() const override;
   void AddedToWidget() override;
   void RemovedFromWidget() override;
 
+ protected:
+  // For testing only.
+  OmniboxPopupContentsView* GetPopupContentsView() const {
+    return popup_view_.get();
+  }
+
  private:
   FRIEND_TEST_ALL_PREFIXES(OmniboxViewViewsTest, CloseOmniboxPopupOnTextDrag);
+  FRIEND_TEST_ALL_PREFIXES(OmniboxViewViewsTest, FriendlyAccessibleLabel);
+  FRIEND_TEST_ALL_PREFIXES(OmniboxViewViewsTest, AccessiblePopup);
   FRIEND_TEST_ALL_PREFIXES(OmniboxViewViewsTest, MaintainCursorAfterFocusCycle);
   FRIEND_TEST_ALL_PREFIXES(OmniboxViewViewsTest, OnBlur);
+  FRIEND_TEST_ALL_PREFIXES(OmniboxViewViewsTest, DoNotNavigateOnDrop);
+  friend class OmniboxViewViewsSteadyStateElisionsTest;
 
   // Update the field with |text| and set the selection.
   void SetTextAndSelectedRange(const base::string16& text,
@@ -135,6 +143,13 @@ class OmniboxViewViews : public OmniboxView,
   // Updates |security_level_| based on the toolbar model's current value.
   void UpdateSecurityLevel();
 
+  void ClearAccessibilityLabel();
+
+  // Returns true if the user text was updated with the full URL (without
+  // steady-state elisions). |home_key_pressed| is true if we are uneliding
+  // because the user has pressed the Home key.
+  bool UnapplySteadyStateElisions(bool home_key_pressed);
+
   // OmniboxView:
   void SetWindowTextAndCaretPos(const base::string16& text,
                                 size_t caret_pos,
@@ -142,7 +157,6 @@ class OmniboxViewViews : public OmniboxView,
                                 bool notify_text_changed) override;
   void SetCaretPos(size_t caret_pos) override;
   bool IsSelectAll() const override;
-  bool DeleteAtEndPressed() override;
   void UpdatePopup() override;
   void ApplyCaretVisibility() override;
   void OnTemporaryTextMaybeChanged(const base::string16& display_text,
@@ -161,7 +175,6 @@ class OmniboxViewViews : public OmniboxView,
   bool IsImeShowingPopup() const override;
   void ShowImeIfNeeded() override;
   int GetOmniboxTextLength() const override;
-  void EmphasizeURLComponents() override;
   void SetEmphasis(bool emphasize, const gfx::Range& range) override;
   void UpdateSchemeStyle(const gfx::Range& range) override;
 
@@ -222,7 +235,7 @@ class OmniboxViewViews : public OmniboxView,
   // different presentation (smaller font size). This is used for popups.
   bool popup_window_mode_;
 
-  std::unique_ptr<OmniboxPopupView> popup_view_;
+  std::unique_ptr<OmniboxPopupContentsView> popup_view_;
 
   security_state::SecurityLevel security_level_;
 
@@ -237,9 +250,6 @@ class OmniboxViewViews : public OmniboxView,
   State state_before_change_;
   bool ime_composing_before_change_;
 
-  // Was the delete key pressed with an empty selection at the end of the edit?
-  bool delete_at_end_pressed_;
-
   // |location_bar_view_| can be NULL in tests.
   LocationBarView* location_bar_view_;
 
@@ -247,6 +257,9 @@ class OmniboxViewViews : public OmniboxView,
   // avoid showing the popup. So far, the candidate window is detected only
   // on Chrome OS.
   bool ime_candidate_window_open_;
+
+  // True if any mouse button is currently depressed.
+  bool is_mouse_pressed_;
 
   // Should we select all the text when we see the mouse button get released?
   // We select in response to a click that focuses the omnibox, but we defer
@@ -272,6 +285,17 @@ class OmniboxViewViews : public OmniboxView,
     COMPOSITING_COMMIT,   // Compositing was committed after OnPaint().
     COMPOSITING_STARTED,  // Compositing was started.
   } latency_histogram_state_;
+
+  // The currently selected match, if any, with additional labelling text
+  // such as the document title and the type of search, for example:
+  // "Google https://google.com location from bookmark", or
+  // "cats are liquid search suggestion".
+  base::string16 friendly_suggestion_text_;
+
+  // The number of added labelling characters before editable text begins.
+  // For example,  "Google https://google.com location from history",
+  // this is set to 7 (the length of "Google ").
+  int friendly_suggestion_text_prefix_length_;
 
   ScopedObserver<ui::Compositor, ui::CompositorObserver> scoped_observer_;
 

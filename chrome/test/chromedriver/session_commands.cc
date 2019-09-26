@@ -11,7 +11,6 @@
 #include "base/callback.h"
 #include "base/files/file_util.h"
 #include "base/logging.h"  // For CHECK macros.
-#include "base/memory/ptr_util.h"
 #include "base/memory/ref_counted.h"
 #include "base/strings/string_util.h"
 #include "base/synchronization/lock.h"
@@ -132,7 +131,8 @@ std::unique_ptr<base::DictionaryValue> CreateCapabilities(
   caps->SetBoolean("cssSelectorsEnabled", true);
   caps->SetBoolean("webStorageEnabled", true);
   caps->SetBoolean("rotatable", false);
-  caps->SetBoolean("acceptSslCerts", true);
+  caps->SetBoolean("acceptSslCerts", capabilities.accept_insecure_certs);
+  caps->SetBoolean("acceptInsecureCerts", capabilities.accept_insecure_certs);
   caps->SetBoolean("nativeEvents", true);
   caps->SetBoolean("hasTouchScreen", session->chrome->HasTouchScreen());
   caps->SetString("unexpectedAlertBehaviour",
@@ -273,6 +273,12 @@ Status InitSessionHelper(const InitSessionParams& bound_params,
                    &session->chrome, session->w3c_compliant);
   if (status.IsError())
     return status;
+
+  if (capabilities.accept_insecure_certs) {
+    status = session->chrome->SetAcceptInsecureCerts();
+    if (status.IsError())
+      return status;
+  }
 
   status = session->chrome->GetWebViewIdForFirstTab(&session->window,
                                                     session->w3c_compliant);
@@ -957,6 +963,22 @@ Status ExecuteMaximizeWindow(Session* session,
     return status;
 
   return extension->MaximizeWindow();
+}
+
+Status ExecuteMinimizeWindow(Session* session,
+                             const base::DictionaryValue& params,
+                             std::unique_ptr<base::Value>* value) {
+  ChromeDesktopImpl* desktop = NULL;
+  Status status = session->chrome->GetAsDesktop(&desktop);
+  if (status.IsError())
+    return status;
+
+  status = desktop->MinimizeWindow(session->window);
+  if (status.IsError())
+    return status;
+
+  ExecuteGetWindowRect(session, params, value);
+  return Status(kOk);
 }
 
 Status ExecuteFullScreenWindow(Session* session,

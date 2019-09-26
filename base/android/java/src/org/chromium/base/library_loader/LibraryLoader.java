@@ -4,15 +4,24 @@
 
 package org.chromium.base.library_loader;
 
+import static org.chromium.base.metrics.CachedMetrics.EnumeratedHistogramSample;
+
 import android.annotation.SuppressLint;
 import android.content.Context;
 import android.os.AsyncTask;
+import android.os.Build;
+import android.os.Build.VERSION_CODES;
+import android.os.Process;
 import android.os.StrictMode;
 import android.os.SystemClock;
+import android.support.annotation.NonNull;
+import android.system.Os;
 
+import org.chromium.base.BuildConfig;
 import org.chromium.base.CommandLine;
 import org.chromium.base.ContextUtils;
 import org.chromium.base.Log;
+import org.chromium.base.ResourceExtractor;
 import org.chromium.base.SysUtils;
 import org.chromium.base.TraceEvent;
 import org.chromium.base.VisibleForTesting;
@@ -40,7 +49,6 @@ import javax.annotation.Nullable;
  * the native counterpart to this class.
  */
 @JNINamespace("base::android")
-@MainDex
 public class LibraryLoader {
     private static final String TAG = "LibraryLoader";
 
@@ -59,6 +67,9 @@ public class LibraryLoader {
 
     // The singleton instance of LibraryLoader.
     private static volatile LibraryLoader sInstance;
+
+    private static final EnumeratedHistogramSample sRelinkerCountHistogram =
+            new EnumeratedHistogramSample("ChromiumAndroidLinker.RelinkerFallbackCount", 2);
 
     // One-way switch becomes true when the libraries are loaded.
     private boolean mLoaded;
@@ -287,43 +298,47 @@ public class LibraryLoader {
             return;
         }
 
-        new AsyncTask<Void, Void, Void>() {
-            @Override
-            protected Void doInBackground(Void... params) {
-                try (TraceEvent e =
-                                TraceEvent.scoped("LibraryLoader.asyncPrefetchLibrariesToMemory")) {
-                    int percentage = nativePercentageOfResidentNativeLibraryCode();
-                    boolean success = false;
-                    // Arbitrary percentage threshold. If most of the native library is already
-                    // resident (likely with monochrome), don't bother creating a prefetch process.
-                    boolean prefetch = coldStart && percentage < 90;
-                    if (prefetch) {
-                        success = nativeForkAndPrefetchNativeLibrary();
-                        if (!success) {
-                            Log.w(TAG, "Forking a process to prefetch the native library failed.");
-                        }
-                    }
-                    // As this runs in a background thread, it can be called before histograms are
-                    // initialized. In this instance, histograms are dropped.
-                    RecordHistogram.initialize();
-                    if (prefetch) {
-                        RecordHistogram.recordBooleanHistogram(
-                                "LibraryLoader.PrefetchStatus", success);
-                    }
-                    if (percentage != -1) {
-                        String histogram = "LibraryLoader.PercentageOfResidentCodeBeforePrefetch"
-                                + (coldStart ? ".ColdStartup" : ".WarmStartup");
-                        RecordHistogram.recordPercentageHistogram(histogram, percentage);
+        new LibraryPrefetchTask(coldStart).executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR);
+    }
+
+    private static class LibraryPrefetchTask extends AsyncTask<Void, Void, Void> {
+        private final boolean mColdStart;
+
+        public LibraryPrefetchTask(boolean coldStart) {
+            mColdStart = coldStart;
+        }
+
+        @Override
+        protected Void doInBackground(Void... params) {
+            try (TraceEvent e = TraceEvent.scoped("LibraryLoader.asyncPrefetchLibrariesToMemory")) {
+                int percentage = nativePercentageOfResidentNativeLibraryCode();
+                boolean success = false;
+                // Arbitrary percentage threshold. If most of the native library is already
+                // resident (likely with monochrome), don't bother creating a prefetch process.
+                boolean prefetch = mColdStart && percentage < 90;
+                if (prefetch) {
+                    success = nativeForkAndPrefetchNativeLibrary();
+                    if (!success) {
+                        Log.w(TAG, "Forking a process to prefetch the native library failed.");
                     }
                 }
-                return null;
+                if (prefetch) {
+                    RecordHistogram.recordBooleanHistogram("LibraryLoader.PrefetchStatus", success);
+                }
+                if (percentage != -1) {
+                    String histogram = "LibraryLoader.PercentageOfResidentCodeBeforePrefetch"
+                            + (mColdStart ? ".ColdStartup" : ".WarmStartup");
+                    RecordHistogram.recordPercentageHistogram(histogram, percentage);
+                }
             }
-        }.executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR);
+            return null;
+        }
     }
 
     // Helper for loadAlreadyLocked(). Load a native shared library with the Chromium linker.
     // Sets UMA flags depending on the results of loading.
-    private void loadLibrary(Linker linker, @Nullable String zipFilePath, String libFilePath) {
+    private void loadLibraryWithCustomLinker(
+            Linker linker, @Nullable String zipFilePath, String libFilePath) {
         if (linker.isUsingBrowserSharedRelros()) {
             // If the browser is set to attempt shared RELROs then we try first with shared
             // RELROs enabled, and if that fails then retry without.
@@ -346,10 +361,30 @@ public class LibraryLoader {
         }
     }
 
-    // Invoke either Linker.loadLibrary(...) or System.loadLibrary(...), triggering
-    // JNI_OnLoad in native code
+    static void incrementRelinkerCountHitHistogram() {
+        sRelinkerCountHistogram.record(1);
+    }
+
+    static void incrementRelinkerCountNotHitHistogram() {
+        sRelinkerCountHistogram.record(0);
+    }
+
+    // Experience shows that on some devices, the system sometimes fails to extract native libraries
+    // at installation or update time from the APK. This function will extract the library and
+    // return the extracted file path.
+    static String getExtractedLibraryPath(Context appContext, String libName) {
+        assert ResourceExtractor.PLATFORM_REQUIRES_NATIVE_FALLBACK_EXTRACTION;
+        Log.w(TAG, "Failed to load libName %s, attempting fallback extraction then trying again",
+                libName);
+        String libraryEntry = LibraryLoader.makeLibraryPathInZipFile(libName, false, false);
+        return ResourceExtractor.extractFileIfStale(
+                appContext, libraryEntry, ResourceExtractor.makeLibraryDirAndSetPermission());
+    }
+
+    // Invoke either Linker.loadLibrary(...), System.loadLibrary(...) or System.load(...),
+    // triggering JNI_OnLoad in native code.
     // TODO(crbug.com/635567): Fix this properly.
-    @SuppressLint("DefaultLocale")
+    @SuppressLint({"DefaultLocale", "NewApi", "UnsafeDynamicallyLoadedCode"})
     private void loadAlreadyLocked(Context appContext) throws ProcessInitException {
         try (TraceEvent te = TraceEvent.scoped("LibraryLoader.loadAlreadyLocked")) {
             if (!mLoaded) {
@@ -385,20 +420,52 @@ public class LibraryLoader {
 
                         try {
                             // Load the library using this Linker. May throw UnsatisfiedLinkError.
-                            loadLibrary(linker, zipFilePath, libFilePath);
+                            loadLibraryWithCustomLinker(linker, zipFilePath, libFilePath);
+                            incrementRelinkerCountNotHitHistogram();
                         } catch (UnsatisfiedLinkError e) {
-                            Log.e(TAG, "Unable to load library: " + library);
-                            throw(e);
+                            if (!Linker.isInZipFile()
+                                    && ResourceExtractor
+                                               .PLATFORM_REQUIRES_NATIVE_FALLBACK_EXTRACTION) {
+                                loadLibraryWithCustomLinker(
+                                        linker, null, getExtractedLibraryPath(appContext, library));
+                                incrementRelinkerCountHitHistogram();
+                            } else {
+                                Log.e(TAG, "Unable to load library: " + library);
+                                throw(e);
+                            }
                         }
                     }
 
                     linker.finishLibraryLoad();
                 } else {
+                    setEnvForNative();
                     preloadAlreadyLocked(appContext);
+
+                    // If the libraries are located in the zip file, assert that the device API
+                    // level is M or higher. On devices lower than M, the libraries should
+                    // always be loaded by LegacyLinker.
+                    assert !Linker.isInZipFile() || Build.VERSION.SDK_INT >= VERSION_CODES.M;
+
                     // Load libraries using the system linker.
                     for (String library : NativeLibraries.LIBRARIES) {
                         try {
-                            System.loadLibrary(library);
+                            if (!Linker.isInZipFile()) {
+                                // The extract and retry logic isn't needed because this path is
+                                // used only for local development.
+                                System.loadLibrary(library);
+                            } else {
+                                // Load directly from the APK.
+                                boolean is64Bit = Process.is64Bit();
+                                String zipFilePath = appContext.getApplicationInfo().sourceDir;
+                                // In API level 23 and above, it’s possible to open a .so file
+                                // directly from the APK of the path form
+                                // "my_zip_file.zip!/libs/libstuff.so". See:
+                                // https://android.googlesource.com/platform/bionic/+/master/android-changes-for-ndk-developers.md#opening-shared-libraries-directly-from-an-apk
+                                String libraryName = zipFilePath + "!/"
+                                        + makeLibraryPathInZipFile(library, true, is64Bit);
+                                Log.i(TAG, "libraryName: " + libraryName);
+                                System.load(libraryName);
+                            }
                         } catch (UnsatisfiedLinkError e) {
                             Log.e(TAG, "Unable to load library: " + library);
                             throw(e);
@@ -418,6 +485,45 @@ public class LibraryLoader {
         } catch (UnsatisfiedLinkError e) {
             throw new ProcessInitException(LoaderErrors.LOADER_ERROR_NATIVE_LIBRARY_LOAD_FAILED, e);
         }
+    }
+
+    /**
+     * @param library The library name that is looking for.
+     * @param crazyPrefix true iff adding crazy linker prefix to the file name.
+     * @param is64Bit true if the caller think it's run on a 64 bit device.
+     * @return the library path name in the zip file.
+     */
+    @NonNull
+    public static String makeLibraryPathInZipFile(
+            String library, boolean crazyPrefix, boolean is64Bit) {
+        // Determine the ABI string that Android uses to find native libraries. Values are described
+        // in: https://developer.android.com/ndk/guides/abis.html
+        // The 'armeabi' is omitted here because it is not supported in Chrome/WebView, while Cronet
+        // and Cast load the native library via other paths.
+        String cpuAbi;
+        switch (NativeLibraries.sCpuFamily) {
+            case NativeLibraries.CPU_FAMILY_ARM:
+                cpuAbi = is64Bit ? "arm64-v8a" : "armeabi-v7a";
+                break;
+            case NativeLibraries.CPU_FAMILY_X86:
+                cpuAbi = is64Bit ? "x86_64" : "x86";
+                break;
+            case NativeLibraries.CPU_FAMILY_MIPS:
+                cpuAbi = is64Bit ? "mips64" : "mips";
+                break;
+            default:
+                throw new RuntimeException("Unknown CPU ABI for native libraries");
+        }
+
+        // When both the Chromium linker and zip-uncompressed native libraries are used,
+        // the build system renames the native shared libraries with a 'crazy.' prefix
+        // (e.g. "/lib/armeabi-v7a/libfoo.so" -> "/lib/armeabi-v7a/crazy.libfoo.so").
+        //
+        // This prevents the package manager from extracting them at installation/update time
+        // to the /data directory. The libraries can still be accessed directly by the Chromium
+        // linker from the APK.
+        String crazyPart = crazyPrefix ? "crazy." : "";
+        return String.format("lib/%s/%s%s", cpuAbi, crazyPart, System.mapLibraryName(library));
     }
 
     // The WebView requires the Command Line to be switched over before
@@ -481,7 +587,7 @@ public class LibraryLoader {
     // Record Chromium linker histogram state for the main browser process. Called from
     // onNativeInitializationComplete().
     private void recordBrowserProcessHistogram() {
-        if (Linker.getInstance().isUsed()) {
+        if (Linker.isUsed()) {
             nativeRecordChromiumAndroidLinkerBrowserHistogram(
                     mIsUsingBrowserSharedRelros,
                     mLoadAtFixedAddressFailed,
@@ -496,7 +602,7 @@ public class LibraryLoader {
     // Returns the device's status for loading a library directly from the APK file.
     // This method can only be called when the Chromium linker is used.
     private int getLibraryLoadFromApkStatus() {
-        assert Linker.getInstance().isUsed();
+        assert Linker.isUsed();
 
         if (mLibraryWasLoadedFromApk) {
             return LibraryLoadFromApkStatusCodes.SUCCESSFUL;
@@ -512,7 +618,7 @@ public class LibraryLoader {
     // RecordChromiumAndroidLinkerRendererHistogram() will record it correctly.
     public void registerRendererProcessHistogram(boolean requestedSharedRelro,
                                                  boolean loadAtFixedAddressFailed) {
-        if (Linker.getInstance().isUsed()) {
+        if (Linker.isUsed()) {
             nativeRegisterChromiumAndroidLinkerRendererHistogram(requestedSharedRelro,
                                                                  loadAtFixedAddressFailed,
                                                                  mLibraryLoadTimeMs);
@@ -527,6 +633,7 @@ public class LibraryLoader {
      *         for possible values.
      */
     @CalledByNative
+    @MainDex
     public static int getLibraryProcessType() {
         if (sInstance == null) return LibraryProcessType.PROCESS_UNINITIALIZED;
         return sInstance.mLibraryProcessType;
@@ -539,6 +646,27 @@ public class LibraryLoader {
     @VisibleForTesting
     public static void setLibraryLoaderForTesting(LibraryLoader loader) {
         sInstance = loader;
+    }
+
+    /**
+     * Configure ubsan using $UBSAN_OPTIONS. This function needs to be called before any native
+     * libraries are loaded because ubsan reads its configuration from $UBSAN_OPTIONS when the
+     * native library is loaded.
+     */
+    public static void setEnvForNative() {
+        // The setenv API was added in L. On older versions of Android, we should still see ubsan
+        // reports, but they will not have stack traces.
+        if (BuildConfig.IS_UBSAN && Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+            try {
+                // This value is duplicated in build/android/pylib/constants/__init__.py.
+                Os.setenv("UBSAN_OPTIONS",
+                        "print_stacktrace=1 stack_trace_format='#%n pc %o %m' "
+                                + "handle_segv=0 handle_sigbus=0 handle_sigfpe=0",
+                        true);
+            } catch (Exception e) {
+                Log.w(TAG, "failed to set UBSAN_OPTIONS", e);
+            }
+        }
     }
 
     // Only methods needed before or during normal JNI registration are during System.OnLoad.

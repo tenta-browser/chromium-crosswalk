@@ -4,12 +4,14 @@
 
 #include "components/safe_browsing/db/v4_test_util.h"
 
+#include <algorithm>
 #include <string>
 #include <utility>
 
-#include "base/memory/ptr_util.h"
+#include "base/strings/strcat.h"
 #include "components/safe_browsing/db/util.h"
 #include "crypto/sha2.h"
+#include "services/network/public/cpp/shared_url_loader_factory.h"
 
 namespace safe_browsing {
 
@@ -48,7 +50,16 @@ bool TestV4Store::HasValidData() const {
 }
 
 void TestV4Store::MarkPrefixAsBad(HashPrefix prefix) {
-  hash_prefix_map_[prefix.size()] += prefix;
+  auto& vec = mock_prefixes_[prefix.size()];
+  vec.insert(std::upper_bound(vec.begin(), vec.end(), prefix), prefix);
+  hash_prefix_map_[prefix.size()] = base::StrCat(vec);
+}
+
+void TestV4Store::SetPrefixes(std::vector<HashPrefix> prefixes,
+                              PrefixSize size) {
+  std::sort(prefixes.begin(), prefixes.end());
+  mock_prefixes_[size] = prefixes;
+  hash_prefix_map_[size] = base::StrCat(prefixes);
 }
 
 TestV4Database::TestV4Database(
@@ -70,7 +81,7 @@ TestV4StoreFactory::~TestV4StoreFactory() = default;
 std::unique_ptr<V4Store> TestV4StoreFactory::CreateV4Store(
     const scoped_refptr<base::SequencedTaskRunner>& task_runner,
     const base::FilePath& store_path) {
-  auto new_store = base::MakeUnique<TestV4Store>(task_runner, store_path);
+  auto new_store = std::make_unique<TestV4Store>(task_runner, store_path);
   new_store->Initialize();
   return std::move(new_store);
 }
@@ -83,7 +94,7 @@ std::unique_ptr<V4Database> TestV4DatabaseFactory::Create(
     const scoped_refptr<base::SequencedTaskRunner>& db_task_runner,
     std::unique_ptr<StoreMap> store_map) {
   auto v4_db =
-      base::MakeUnique<TestV4Database>(db_task_runner, std::move(store_map));
+      std::make_unique<TestV4Database>(db_task_runner, std::move(store_map));
   v4_db_ = v4_db.get();
   return std::move(v4_db);
 }
@@ -94,12 +105,10 @@ void TestV4DatabaseFactory::MarkPrefixAsBad(ListIdentifier list_id,
 }
 
 TestV4GetHashProtocolManager::TestV4GetHashProtocolManager(
-    net::URLRequestContextGetter* request_context_getter,
+    scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory,
     const StoresToCheck& stores_to_check,
     const V4ProtocolConfig& config)
-    : V4GetHashProtocolManager(request_context_getter,
-                               stores_to_check,
-                               config) {}
+    : V4GetHashProtocolManager(url_loader_factory, stores_to_check, config) {}
 
 void TestV4GetHashProtocolManager::AddToFullHashCache(FullHashInfo fhi) {
   full_hash_cache_[fhi.full_hash].full_hash_infos.push_back(fhi);
@@ -113,11 +122,11 @@ TestV4GetHashProtocolManagerFactory::~TestV4GetHashProtocolManagerFactory() =
 
 std::unique_ptr<V4GetHashProtocolManager>
 TestV4GetHashProtocolManagerFactory::CreateProtocolManager(
-    net::URLRequestContextGetter* request_context_getter,
+    scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory,
     const StoresToCheck& stores_to_check,
     const V4ProtocolConfig& config) {
-  auto pm = base::MakeUnique<TestV4GetHashProtocolManager>(
-      request_context_getter, stores_to_check, config);
+  auto pm = std::make_unique<TestV4GetHashProtocolManager>(
+      url_loader_factory, stores_to_check, config);
   pm_ = pm.get();
   return std::move(pm);
 }

@@ -16,12 +16,9 @@
 
 #include "base/bind.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/memory/ref_counted.h"
 #include "base/message_loop/message_loop.h"
 #include "build/build_config.h"
-#include "cc/test/test_context_provider.h"
-#include "cc/test/test_web_graphics_context_3d.h"
 #include "content/browser/renderer_host/media/video_capture_controller.h"
 #include "media/base/video_frame.h"
 #include "media/capture/video/video_capture_buffer_pool_impl.h"
@@ -37,9 +34,9 @@ struct PixelFormatAndStorage {
 };
 
 static const PixelFormatAndStorage kCapturePixelFormatAndStorages[] = {
-    {media::PIXEL_FORMAT_I420, media::PIXEL_STORAGE_CPU},
-    {media::PIXEL_FORMAT_ARGB, media::PIXEL_STORAGE_CPU},
-    {media::PIXEL_FORMAT_Y16, media::PIXEL_STORAGE_CPU},
+    {media::PIXEL_FORMAT_I420, media::VideoPixelStorage::CPU},
+    {media::PIXEL_FORMAT_ARGB, media::VideoPixelStorage::CPU},
+    {media::PIXEL_FORMAT_Y16, media::VideoPixelStorage::CPU},
 };
 
 static const int kTestBufferPoolSize = 3;

@@ -14,6 +14,7 @@
 #include "build/build_config.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/common/result_codes.h"
+#include "content/public/common/zygote_buildflags.h"
 #include "mojo/edk/embedder/embedder.h"
 #include "mojo/edk/embedder/outgoing_broker_client_invitation.h"
 #include "mojo/edk/embedder/scoped_platform_handle.h"
@@ -29,12 +30,12 @@
 #include "content/public/browser/posix_file_descriptor_info.h"
 #endif
 
-#if defined(OS_LINUX)
-#include "content/public/common/zygote_handle.h"
-#endif
-
 #if defined(OS_MACOSX)
 #include "sandbox/mac/seatbelt_exec.h"
+#endif
+
+#if BUILDFLAG(USE_ZYGOTE_HANDLE)
+#include "content/public/common/zygote_handle.h"
 #endif
 
 namespace base {
@@ -76,9 +77,9 @@ class ChildProcessLauncherHelper :
 
     base::Process process;
 
-#if defined(OS_LINUX)
+#if BUILDFLAG(USE_ZYGOTE_HANDLE)
     ZygoteHandle zygote = nullptr;
-#endif
+#endif  // BUILDFLAG(USE_ZYGOTE_HANDLE)
   };
 
   ChildProcessLauncherHelper(
@@ -129,8 +130,8 @@ class ChildProcessLauncherHelper :
       int* launch_result);
 
   // Called right after the process has been launched, whether it was created
-  // yet or not.
-  // Platform specific.
+  // successfully or not. If the process launch is asynchronous, the process may
+  // not yet be created. Platform specific.
   void AfterLaunchOnLauncherThread(
       const ChildProcessLauncherHelper::Process& process,
       const base::LaunchOptions& options);
@@ -155,10 +156,8 @@ class ChildProcessLauncherHelper :
   // Terminates |process|.
   // Returns true if the process was stopped, false if the process had not been
   // started yet or could not be stopped.
-  // Note that |exit_code| and |wait| are not used on Android.
-  static bool TerminateProcess(const base::Process& process,
-                               int exit_code,
-                               bool wait);
+  // Note that |exit_code| is not used on Android.
+  static bool TerminateProcess(const base::Process& process, int exit_code);
 
   // Terminates the process with the normal exit code and ensures it has been
   // stopped. By returning a normal exit code this ensures UMA won't treat this

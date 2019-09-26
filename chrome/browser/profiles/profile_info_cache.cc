@@ -21,12 +21,13 @@
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/profiles/profile_avatar_icon_util.h"
 #include "chrome/browser/profiles/profiles_state.h"
-#include "chrome/common/features.h"
+#include "chrome/common/buildflags.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/grit/generated_resources.h"
 #include "components/prefs/pref_registry_simple.h"
 #include "components/prefs/pref_service.h"
 #include "components/prefs/scoped_user_pref_update.h"
+#include "components/signin/core/account_id/account_id.h"
 #include "components/signin/core/browser/profile_management_switches.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/resource/resource_bundle.h"
@@ -43,17 +44,13 @@ const char kNameKey[] = "name";
 const char kGAIANameKey[] = "gaia_name";
 const char kGAIAGivenNameKey[] = "gaia_given_name";
 const char kGAIAIdKey[] = "gaia_id";
-const char kUserNameKey[] = "user_name";
 const char kIsUsingDefaultNameKey[] = "is_using_default_name";
 const char kIsUsingDefaultAvatarKey[] = "is_using_default_avatar";
-const char kAvatarIconKey[] = "avatar_icon";
 const char kUseGAIAPictureKey[] = "use_gaia_picture";
-const char kBackgroundAppsKey[] = "background_apps";
 const char kGAIAPictureFileNameKey[] = "gaia_picture_file_name";
 const char kIsOmittedFromProfileListKey[] = "is_omitted_from_profile_list";
 const char kSigninRequiredKey[] = "signin_required";
 const char kSupervisedUserId[] = "managed_user_id";
-const char kProfileIsEphemeral[] = "is_ephemeral";
 
 // TODO(dullweber): Remove these constants after the stored data is removed.
 const char kStatsBrowsingHistoryKeyDeprecated[] = "stats_browsing_history";
@@ -124,14 +121,14 @@ void ProfileInfoCache::AddProfileToCache(
   std::unique_ptr<base::DictionaryValue> info(new base::DictionaryValue);
   info->SetString(kNameKey, name);
   info->SetString(kGAIAIdKey, gaia_id);
-  info->SetString(kUserNameKey, user_name);
-  info->SetString(kAvatarIconKey,
-      profiles::GetDefaultAvatarIconUrl(icon_index));
+  info->SetString(ProfileAttributesEntry::kUserNameKey, user_name);
+  info->SetString(ProfileAttributesEntry::kAvatarIconKey,
+                  profiles::GetDefaultAvatarIconUrl(icon_index));
   // Default value for whether background apps are running is false.
-  info->SetBoolean(kBackgroundAppsKey, false);
+  info->SetBoolean(ProfileAttributesEntry::kBackgroundAppsKey, false);
   info->SetString(kSupervisedUserId, supervised_user_id);
   info->SetBoolean(kIsOmittedFromProfileListKey, !supervised_user_id.empty());
-  info->SetBoolean(kProfileIsEphemeral, false);
+  info->SetBoolean(ProfileAttributesEntry::kProfileIsEphemeral, false);
   info->SetBoolean(kIsUsingDefaultNameKey, IsDefaultProfileName(name));
   // Assume newly created profiles use a default avatar.
   info->SetBoolean(kIsUsingDefaultAvatarKey, true);
@@ -207,7 +204,8 @@ base::FilePath ProfileInfoCache::GetPathOfProfileAtIndex(size_t index) const {
 base::string16 ProfileInfoCache::GetUserNameOfProfileAtIndex(
     size_t index) const {
   base::string16 user_name;
-  GetInfoForProfileAtIndex(index)->GetString(kUserNameKey, &user_name);
+  GetInfoForProfileAtIndex(index)->GetString(
+      ProfileAttributesEntry::kUserNameKey, &user_name);
   return user_name;
 }
 
@@ -236,8 +234,8 @@ const gfx::Image& ProfileInfoCache::GetAvatarIconOfProfileAtIndex(
 bool ProfileInfoCache::GetBackgroundStatusOfProfileAtIndex(
     size_t index) const {
   bool background_app_status;
-  if (!GetInfoForProfileAtIndex(index)->GetBoolean(kBackgroundAppsKey,
-                                                   &background_app_status)) {
+  if (!GetInfoForProfileAtIndex(index)->GetBoolean(
+          ProfileAttributesEntry::kBackgroundAppsKey, &background_app_status)) {
     return false;
   }
   return background_app_status;
@@ -350,7 +348,8 @@ bool ProfileInfoCache::IsGAIAPictureOfProfileAtIndexLoaded(size_t index) const {
 size_t ProfileInfoCache::GetAvatarIconIndexOfProfileAtIndex(size_t index)
     const {
   std::string icon_url;
-  GetInfoForProfileAtIndex(index)->GetString(kAvatarIconKey, &icon_url);
+  GetInfoForProfileAtIndex(index)->GetString(
+      ProfileAttributesEntry::kAvatarIconKey, &icon_url);
   size_t icon_index = 0;
   if (!profiles::IsDefaultAvatarIconUrl(icon_url, &icon_index))
     DLOG(WARNING) << "Unknown avatar icon: " << icon_url;
@@ -396,7 +395,7 @@ void ProfileInfoCache::SetAuthInfoOfProfileAtIndex(
       GetInfoForProfileAtIndex(index)->DeepCopy());
 
   info->SetString(kGAIAIdKey, gaia_id);
-  info->SetString(kUserNameKey, user_name);
+  info->SetString(ProfileAttributesEntry::kUserNameKey, user_name);
 
   SetInfoForProfileAtIndex(index, std::move(info));
 
@@ -414,8 +413,8 @@ void ProfileInfoCache::SetAvatarIconOfProfileAtIndex(size_t index,
   }
   std::unique_ptr<base::DictionaryValue> info(
       GetInfoForProfileAtIndex(index)->DeepCopy());
-  info->SetString(kAvatarIconKey,
-      profiles::GetDefaultAvatarIconUrl(icon_index));
+  info->SetString(ProfileAttributesEntry::kAvatarIconKey,
+                  profiles::GetDefaultAvatarIconUrl(icon_index));
   SetInfoForProfileAtIndex(index, std::move(info));
 
   base::FilePath profile_path = GetPathOfProfileAtIndex(index);
@@ -463,7 +462,8 @@ void ProfileInfoCache::SetBackgroundStatusOfProfileAtIndex(
     return;
   std::unique_ptr<base::DictionaryValue> info(
       GetInfoForProfileAtIndex(index)->DeepCopy());
-  info->SetBoolean(kBackgroundAppsKey, running_background_apps);
+  info->SetBoolean(ProfileAttributesEntry::kBackgroundAppsKey,
+                   running_background_apps);
   SetInfoForProfileAtIndex(index, std::move(info));
 }
 
@@ -738,6 +738,31 @@ void ProfileInfoCache::AddProfile(
     const std::string& supervised_user_id) {
   AddProfileToCache(
       profile_path, name, gaia_id, user_name, icon_index, supervised_user_id);
+}
+
+void ProfileInfoCache::RemoveProfileByAccountId(const AccountId& account_id) {
+  // TODO(rsorokin): https://crbug.com/810167 profile.info_cache entries for
+  // AD accounts should have enough information to be deletable.
+  if (account_id.GetAccountType() == AccountType::ACTIVE_DIRECTORY) {
+    LOG(ERROR)
+        << "Removing of AD profile.info_cache entries is NOTIMPLEMENTED.";
+  }
+
+  for (size_t i = 0; i < GetNumberOfProfiles(); i++) {
+    std::string gaia_id;
+    std::string user_name;
+    const base::DictionaryValue* info = GetInfoForProfileAtIndex(i);
+    if ((info->GetString(kGAIAIdKey, &gaia_id) && !gaia_id.empty() &&
+         account_id.GetGaiaId() == gaia_id) ||
+        (info->GetString(ProfileAttributesEntry::kUserNameKey, &user_name) &&
+         !user_name.empty() && account_id.GetUserEmail() == user_name)) {
+      RemoveProfile(GetPathOfProfileAtIndex(i));
+      return;
+    }
+  }
+  LOG(ERROR) << "Failed to remove profile.info_cache entry for account type "
+             << static_cast<int>(account_id.GetAccountType())
+             << ": matching entry not found.";
 }
 
 void ProfileInfoCache::RemoveProfile(const base::FilePath& profile_path) {

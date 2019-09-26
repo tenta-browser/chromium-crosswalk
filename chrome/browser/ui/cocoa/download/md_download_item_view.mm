@@ -3,10 +3,12 @@
 // found in the LICENSE file.
 
 #import "chrome/browser/ui/cocoa/download/md_download_item_view.h"
+#import "chrome/browser/ui/cocoa/download/md_download_item_view_testing.h"
 
 #include "base/strings/sys_string_conversions.h"
 #include "chrome/app/vector_icons/vector_icons.h"
 #include "chrome/browser/download/download_item_model.h"
+#import "chrome/browser/download/download_shelf_context_menu.h"
 #include "chrome/browser/download/download_stats.h"
 #import "chrome/browser/themes/theme_properties.h"
 #import "chrome/browser/ui/cocoa/download/download_item_controller.h"
@@ -34,7 +36,8 @@
 namespace {
 
 // Size of a download item in a non-dangerous state.
-constexpr CGSize kNormalSize = {239, 44};
+constexpr CGSize kNormalSize = {245, 44};
+constexpr CGFloat kTrailingPadding = 12;
 
 constexpr CGFloat kDangerousDownloadIconX = 16;
 constexpr CGFloat kDangerousDownloadIconSize = 16;
@@ -58,7 +61,6 @@ constexpr CGFloat kFilenameWithStatusY = 22;
 constexpr CGFloat kStatusTextY = 8;
 constexpr CGFloat kMenuButtonSpacing = 8;
 
-constexpr CGFloat kMenuButtonTrailingMargin = 12;
 constexpr CGFloat kMenuButtonSize = 24;
 constexpr const gfx::VectorIcon* kMenuButtonIcon = &kHorizontalMenuIcon;
 
@@ -77,6 +79,15 @@ NSTextField* MakeLabel(
   return label;
 }
 }  // namespace
+
+@interface MDDownloadItemButton : MDHoverButton
+@end
+
+@implementation MDDownloadItemButton
+- (BOOL)shouldDelayWindowOrderingForEvent:(NSEvent*)event {
+  return YES;
+}
+@end
 
 @interface MDDownloadItemMenuButton : MDHoverButton
 @end
@@ -132,14 +143,16 @@ NSTextField* MakeLabel(
 @end
 
 @interface MDDownloadItemDangerView : NSView
-@property(nonatomic, assign) NSButton* button;
+@property(nonatomic, assign) NSButton* discardButton;
+@property(nonatomic, assign) NSButton* saveButton;
 @end
 
 @implementation MDDownloadItemDangerView {
   NSImageView* iconView_;
   NSTextField* label_;
 }
-@synthesize button = button_;
+@synthesize discardButton = discardButton_;
+@synthesize saveButton = saveButton_;
 
 - (instancetype)initWithFrame:(NSRect)frameRect {
   if ((self = [super initWithFrame:frameRect])) {
@@ -159,23 +172,30 @@ NSTextField* MakeLabel(
     [self addSubview:iconView_];
 
     label_ = MakeLabel([NSFont systemFontOfSize:10], NSLineBreakByWordWrapping);
-    label_.frame = NSInsetRect(self.bounds, 0, kDangerousDownloadLabelYInset);
+    label_.frame =
+        [self cr_localizedRect:NSInsetRect(self.bounds, 0,
+                                           kDangerousDownloadLabelYInset)];
     label_.autoresizingMask =
         [NSView cr_localizedAutoresizingMask:NSViewMaxXMargin];
     [self addSubview:label_];
 
-    base::scoped_nsobject<HarmonyButton> button(
+    base::scoped_nsobject<HarmonyButton> discardButton(
         [[HarmonyButton alloc] initWithFrame:NSZeroRect]);
-    button_ = button;
-    button_.title = l10n_util::GetNSString(IDS_DISCARD_DOWNLOAD);
-    [button_ sizeToFit];
-    NSRect buttonRect = button_.frame;
-    buttonRect.origin.x = NSWidth(self.bounds) - NSWidth(buttonRect);
-    buttonRect.origin.y = NSMidY(self.bounds) - NSMidY(button_.bounds);
-    button_.frame = [self cr_localizedRect:buttonRect];
-    button_.autoresizingMask =
-        [NSView cr_localizedAutoresizingMask:NSViewMinXMargin];
-    [self addSubview:button_];
+    discardButton_ = discardButton;
+    discardButton_.title = l10n_util::GetNSString(IDS_DISCARD_DOWNLOAD);
+    [discardButton_ sizeToFit];
+    discardButton_.autoresizingMask =
+        [NSView cr_localizedAutoresizingMask:NSViewMaxXMargin];
+    [self addSubview:discardButton_];
+
+    base::scoped_nsobject<HarmonyButton> saveButton(
+        [[HarmonyButton alloc] initWithFrame:NSZeroRect]);
+    saveButton_ = saveButton;
+    [saveButton_ sizeToFit];
+    saveButton_.autoresizingMask =
+        [NSView cr_localizedAutoresizingMask:NSViewMaxXMargin];
+    saveButton_.hidden = YES;
+    [self addSubview:saveButton_];
   }
   return self;
 }
@@ -183,7 +203,10 @@ NSTextField* MakeLabel(
 - (CGFloat)preferredWidth {
   CGFloat preferredWidth = kDangerousDownloadLabelX + NSWidth(label_.frame) +
                            kDangerousDownloadLabelButtonSpacing +
-                           NSWidth(button_.frame);
+                           NSWidth(discardButton_.frame);
+  if (!saveButton_.hidden)
+    preferredWidth +=
+        kDangerousDownloadLabelButtonSpacing + NSWidth(saveButton_.frame);
   return NSWidth([self backingAlignedRect:NSMakeRect(0, 0, preferredWidth, 0)
                                   options:NSAlignAllEdgesOutward]);
 }
@@ -194,10 +217,33 @@ NSTextField* MakeLabel(
   [GTMUILocalizerAndLayoutTweaker
       sizeToFitFixedHeightTextField:label_
                            minWidth:kDangerousDownloadLabelMinWidth];
-  NSRect labelRect = label_.frame;
+
+  // Flip the rect back to LTR if applicable.
+  NSRect labelRect = [self cr_localizedRect:label_.frame];
   labelRect.origin.x = kDangerousDownloadLabelX;
   labelRect.origin.y = NSMidY(self.bounds) - NSMidY(label_.bounds);
   label_.frame = [self cr_localizedRect:labelRect];
+
+  NSRect discardButtonRect = [self cr_localizedRect:discardButton_.frame];
+  discardButtonRect.origin.x =
+      NSMaxX(labelRect) + kDangerousDownloadLabelButtonSpacing;
+  discardButtonRect.origin.y =
+      NSMidY(self.bounds) - NSMidY(discardButton_.bounds);
+  discardButton_.frame = [self cr_localizedRect:discardButtonRect];
+
+  if (downloadModel->MightBeMalicious()) {
+    saveButton_.hidden = YES;
+  } else {
+    saveButton_.hidden = NO;
+    saveButton_.title =
+        base::SysUTF16ToNSString(downloadModel->GetWarningConfirmButtonText());
+    [saveButton_ sizeToFit];
+    NSRect saveButtonRect = [self cr_localizedRect:saveButton_.frame];
+    saveButtonRect.origin.x =
+        NSMaxX(discardButtonRect) + kDangerousDownloadLabelButtonSpacing;
+    saveButtonRect.origin.y = NSMidY(self.bounds) - NSMidY(saveButton_.bounds);
+    saveButton_.frame = [self cr_localizedRect:saveButtonRect];
+  }
 }
 
 // NSView overrides
@@ -228,6 +274,7 @@ NSTextField* MakeLabel(
   MDDownloadItemProgressIndicator* progressIndicator_;
   NSTextField* filenameView_;
   NSTextField* statusTextView_;
+  BOOL finished_;
 
   // Danger state
   MDDownloadItemDangerView* dangerView_;
@@ -241,7 +288,7 @@ NSTextField* MakeLabel(
     const NSRect buttonRect = NSMakeRect(kButtonXInset, kButtonYInset,
                                          NSWidth(bounds) - kButtonXInset * 2,
                                          NSHeight(bounds) - kButtonYInset * 2);
-    base::scoped_nsobject<MDHoverButton> button([[MDHoverButton alloc]
+    base::scoped_nsobject<MDHoverButton> button([[MDDownloadItemButton alloc]
         initWithFrame:[self cr_localizedRect:buttonRect]]);
     button_ = button;
     button_.imagePosition = NSImageOnly;
@@ -270,7 +317,7 @@ NSTextField* MakeLabel(
     [self addSubview:progressIndicator_];
 
     NSRect menuButtonRect = NSMakeRect(
-        NSMaxX(bounds) - kMenuButtonSize - kMenuButtonTrailingMargin,
+        NSMaxX(bounds) - kMenuButtonSize - kTrailingPadding,
         NSMidY(bounds) - kMenuButtonSize / 2, kMenuButtonSize, kMenuButtonSize);
     base::scoped_nsobject<MDDownloadItemMenuButton> menuButton(
         [[MDDownloadItemMenuButton alloc]
@@ -310,7 +357,15 @@ NSTextField* MakeLabel(
         [NSView cr_localizedAutoresizingMask:NSViewMaxXMargin];
     [self addSubview:filenameView_];
 
-    statusTextView_ = MakeLabel([NSFont systemFontOfSize:12]);
+    NSFont* statusFont;
+    if (@available(macOS 10.11, *)) {
+      statusFont = [NSFont monospacedDigitSystemFontOfSize:12
+                                                    weight:NSFontWeightRegular];
+    } else {
+      statusFont = [NSFont systemFontOfSize:12];
+    }
+    statusTextView_ = MakeLabel(statusFont);
+
     NSRect statusTextRect =
         NSMakeRect(kTextX, kStatusTextY, NSWidth(filenameRect),
                    NSHeight(statusTextView_.bounds));
@@ -337,8 +392,9 @@ NSTextField* MakeLabel(
 
 - (CGFloat)preferredWidth {
   if (dangerView_) {
-    CGFloat delta = [dangerView_ preferredWidth] - NSWidth(dangerView_.frame);
-    return NSWidth(self.frame) + delta;
+    return NSWidth(dangerView_.frame) +
+           (menuButton_.hidden ? 0 : kMenuButtonSpacing + kMenuButtonSize) +
+           kTrailingPadding;
   } else {
     return kNormalSize.width;
   }
@@ -393,6 +449,7 @@ NSTextField* MakeLabel(
 }
 
 - (void)finish {
+  finished_ = YES;
   dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 1 * NSEC_PER_SEC),
                  dispatch_get_main_queue(), ^{
                    [NSAnimationContext
@@ -407,6 +464,8 @@ NSTextField* MakeLabel(
 }
 
 - (void)setCanceled:(BOOL)canceled {
+  if (finished_)
+    return;
   if (progressIndicator_.hidden == canceled)
     return;
   [NSAnimationContext runAnimationGroup:^(NSAnimationContext* context) {
@@ -441,29 +500,33 @@ NSTextField* MakeLabel(
 }
 
 - (void)setStateFromDownload:(DownloadItemModel*)downloadModel {
-  const content::DownloadItem& download = *downloadModel->download();
-  const content::DownloadItem::DownloadState state = download.GetState();
+  const download::DownloadItem& download = *downloadModel->download();
+  const download::DownloadItem::DownloadState state = download.GetState();
+
+  menuButton_.hidden =
+      !DownloadShelfContextMenu::WantsContextMenu(*downloadModel);
+
   if (download.IsDangerous()) {
     if (!dangerView_) {
       for (NSView* view in [self normalViews]) {
         view.hidden = YES;
       }
-      NSRect dangerViewRect =
-          NSMakeRect(0, 0,
-                     NSWidth(self.bounds) - NSWidth(menuButton_.frame) -
-                         kMenuButtonSpacing - kMenuButtonTrailingMargin,
-                     NSHeight(self.bounds));
       base::scoped_nsobject<MDDownloadItemDangerView> dangerView(
           [[MDDownloadItemDangerView alloc]
-              initWithFrame:[self cr_localizedRect:dangerViewRect]]);
+              initWithFrame:NSMakeRect(0, 0, 0, NSHeight(self.bounds))]);
       dangerView_ = dangerView;
       dangerView_.autoresizingMask =
-          [NSView cr_localizedAutoresizingMask:NSViewWidthSizable];
-      dangerView_.button.target = controller_;
-      dangerView_.button.action = @selector(discardDownload:);
+          [NSView cr_localizedAutoresizingMask:NSViewMaxXMargin];
+      dangerView_.discardButton.target = controller_;
+      dangerView_.discardButton.action = @selector(discardDownload:);
+      dangerView_.saveButton.target = controller_;
+      dangerView_.saveButton.action = @selector(saveDownload:);
       [self addSubview:dangerView_];
     }
     [dangerView_ setStateFromDownload:downloadModel];
+    dangerView_.frame =
+        [self cr_localizedRect:NSMakeRect(0, 0, dangerView_.preferredWidth,
+                                          NSHeight(self.bounds))];
     return;
   } else if (dangerView_) {
     for (NSView* view in [self normalViews]) {
@@ -474,7 +537,7 @@ NSTextField* MakeLabel(
   }
   downloadPath_ = download.GetFullPath();
   button_.dragDelegate =
-      (state == content::DownloadItem::COMPLETE ? self : nil);
+      (state == download::DownloadItem::COMPLETE ? self : nil);
 
   [button_
       cr_setAccessibilityLabel:l10n_util::GetNSStringWithFixup(
@@ -486,39 +549,38 @@ NSTextField* MakeLabel(
       cr_setAccessibilityLabel:base::SysUTF8ToNSString(
                                    download.GetFileNameToReportUser().value())];
 
-  button_.enabled = ^{
+  button_.enabled = [&] {
     switch (state) {
-      case content::DownloadItem::IN_PROGRESS:
-      case content::DownloadItem::COMPLETE:
+      case download::DownloadItem::IN_PROGRESS:
+      case download::DownloadItem::COMPLETE:
         return YES;
       default:
         return NO;
     }
-  }();
+  }() && !download.GetFileExternallyRemoved();
+
+  NSString* statusString =
+      base::SysUTF16ToNSString(downloadModel->GetStatusText());
 
   switch (state) {
-    case content::DownloadItem::COMPLETE:
+    case download::DownloadItem::COMPLETE:
       [self setCanceled:NO];
       [progressIndicator_
           setState:MDDownloadItemProgressIndicatorState::kComplete
           progress:1
           animations:^{
-            // Explicitly animate position.y so that x position isn't animated
-            // for a new download (which would happen with view.animator).
-            [filenameView_.layer
-                addAnimation:[CABasicAnimation
-                                 animationWithKeyPath:@"position.y"]
-                      forKey:nil];
-            [filenameView_
-                setFrameOrigin:NSMakePoint(NSMinX(filenameView_.frame),
-                                           kFilenameY)];
-            statusTextView_.animator.hidden = YES;
+            NSRect filenameRect = [self cr_localizedRect:filenameView_.frame];
+            filenameRect.origin = NSMakePoint(
+                NSMinX(filenameView_.frame),
+                statusString.length ? kFilenameWithStatusY : kFilenameY);
+            filenameView_.animator.frame = [self cr_localizedRect:filenameRect];
+            statusTextView_.animator.hidden = !statusString.length;
           }
           completion:^{
             [self finish];
           }];
       break;
-    case content::DownloadItem::IN_PROGRESS:
+    case download::DownloadItem::IN_PROGRESS:
       [self setCanceled:NO];
       [progressIndicator_
             setState:MDDownloadItemProgressIndicatorState::kInProgress
@@ -526,8 +588,8 @@ NSTextField* MakeLabel(
           animations:nil
           completion:nil];
       break;
-    case content::DownloadItem::CANCELLED:
-    case content::DownloadItem::INTERRUPTED:
+    case download::DownloadItem::CANCELLED:
+    case download::DownloadItem::INTERRUPTED:
       [self setCanceled:YES];
       [progressIndicator_
             setState:MDDownloadItemProgressIndicatorState::kInProgress
@@ -535,7 +597,7 @@ NSTextField* MakeLabel(
           animations:nil
           completion:nil];
       break;
-    case content::DownloadItem::MAX_DOWNLOAD_STATE:
+    case download::DownloadItem::MAX_DOWNLOAD_STATE:
       NOTREACHED();
       break;
   }
@@ -547,14 +609,11 @@ NSTextField* MakeLabel(
   filenameView_.stringValue = base::SysUTF16ToNSString(
       gfx::ElideFilename(downloadModel->download()->GetFileNameToReportUser(),
                          gfx::FontList(gfx::Font(filenameView_.font)),
-                         NSWidth(filenameView_.bounds) - lineFragmentPadding));
+                         NSWidth(filenameView_.bounds) - lineFragmentPadding,
+                         gfx::Typesetter::BROWSER));
 
-  NSString* statusString =
-      base::SysUTF16ToNSString(downloadModel->GetStatusText());
-
-  // Never make the status label blank. For example, GetStatusText() will
-  // return the empty string on completion, but -finish hides the label with an
-  // animation instead.
+  // Never make the status label blank. Instead, let the code above hide or show
+  // the label with an animation.
   if (statusString.length)
     statusTextView_.stringValue = statusString;
 
@@ -575,44 +634,59 @@ NSTextField* MakeLabel(
 
 - (void)beginDragFromHoverButton:(HoverButton*)button event:(NSEvent*)event {
   NSAttributedString* filename = filenameView_.attributedStringValue;
-  NSSize filenameSize = filename.size;
-  NSRect imageRect = NSMakeRect(0, 0, 32, 32);
-  NSRect labelRect = [self
-      backingAlignedRect:NSMakeRect(35, 32 / 2 - filenameSize.height / 2,
-                                    filenameSize.width, filenameSize.height)
-                 options:NSAlignAllEdgesOutward];
+  NSRect imageRect = imageView_.frame;
+  NSRect labelRect = filenameView_.frame;
+
+  // Hug the label content in an RTL-friendly way.
+  labelRect = [self cr_localizedRect:labelRect];
+  labelRect.size = filename.size;
+  labelRect = [self cr_localizedRect:labelRect];
+
   NSDraggingItem* draggingItem = [[[NSDraggingItem alloc]
       initWithPasteboardWriter:[NSURL
                                    fileURLWithPath:base::SysUTF8ToNSString(
                                                        downloadPath_.value())]]
       autorelease];
-  draggingItem.imageComponentsProvider = ^{
-    NSDraggingImageComponent* imageComponent =
-        [[[NSDraggingImageComponent alloc]
-            initWithKey:NSDraggingImageComponentIconKey] autorelease];
-    NSImage* image = imageView_.image;
-    imageComponent.contents = image;
-    imageComponent.frame = imageRect;
-    NSDraggingImageComponent* labelComponent =
-        [[[NSDraggingImageComponent alloc]
-            initWithKey:NSDraggingImageComponentLabelKey] autorelease];
 
-    labelComponent.contents = [NSImage imageWithSize:labelRect.size
-                                             flipped:NO
-                                      drawingHandler:^(NSRect rect) {
-                                        [filename drawAtPoint:NSZeroPoint];
-                                        return YES;
-                                      }];
-    labelComponent.frame = labelRect;
-    return @[ imageComponent, labelComponent ];
+  // draggingFrame must be set to avoid triggering an AppKit crash. See
+  // https://crbug.com/826632.
+  NSRect dragRect = NSUnionRect(imageRect, labelRect);
+  draggingItem.draggingFrame = dragRect;
+
+  draggingItem.imageComponentsProvider = ^{
+    // If either component is zero sized (which shouldn't generally happen, but
+    // apparently can… maybe a missing icon or empty string title?), omit it,
+    // else the dragging session will create layers with NaN components and
+    // crash.
+    auto* components = [NSMutableArray<NSDraggingImageComponent*> array];
+    if (imageRect.size.width != 0 && imageRect.size.height != 0) {
+      NSDraggingImageComponent* imageComponent =
+          [[[NSDraggingImageComponent alloc]
+              initWithKey:NSDraggingImageComponentIconKey] autorelease];
+      NSImage* image = imageView_.image;
+      imageComponent.contents = image;
+      imageComponent.frame =
+          NSOffsetRect(imageRect, -dragRect.origin.x, -dragRect.origin.y);
+      [components addObject:imageComponent];
+    }
+    if (labelRect.size.width != 0 && labelRect.size.height != 0) {
+      NSDraggingImageComponent* labelComponent =
+          [[[NSDraggingImageComponent alloc]
+              initWithKey:NSDraggingImageComponentLabelKey] autorelease];
+
+      labelComponent.contents = [NSImage imageWithSize:labelRect.size
+                                               flipped:NO
+                                        drawingHandler:^(NSRect rect) {
+                                          [filename drawAtPoint:NSZeroPoint];
+                                          return YES;
+                                        }];
+      labelComponent.frame =
+          NSOffsetRect(labelRect, -dragRect.origin.x, -dragRect.origin.y);
+      [components addObject:labelComponent];
+    }
+
+    return components;
   };
-  NSPoint dragOrigin =
-      [self convertPoint:[self.window mouseLocationOutsideOfEventStream]
-                fromView:nil];
-  draggingItem.draggingFrame =
-      [self backingAlignedRect:NSOffsetRect(imageRect, dragOrigin.x - 16,
-                                            dragOrigin.y - 16)
-                       options:NSAlignAllEdgesOutward];
   [self beginDraggingSessionWithItems:@[ draggingItem ]
                                 event:event
                                source:self];
@@ -630,6 +704,22 @@ NSTextField* MakeLabel(
   RecordDownloadShelfDragEvent(operation == NSDragOperationNone
                                    ? DownloadShelfDragEvent::CANCELED
                                    : DownloadShelfDragEvent::DROPPED);
+}
+
+@end
+
+@implementation MDDownloadItemView (Testing)
+
+- (NSButton*)primaryButton {
+  return button_;
+}
+
+- (NSButton*)menuButton {
+  return menuButton_;
+}
+
+- (NSView*)dangerView {
+  return dangerView_;
 }
 
 @end

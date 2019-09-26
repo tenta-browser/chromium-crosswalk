@@ -4,6 +4,8 @@
 
 #include "chrome/browser/safe_browsing/safe_browsing_navigation_observer.h"
 
+#include <memory>
+
 #include "base/test/histogram_tester.h"
 #include "chrome/browser/safe_browsing/safe_browsing_navigation_observer_manager.h"
 #include "chrome/browser/sessions/session_tab_helper.h"
@@ -42,16 +44,17 @@ class SBNavigationObserverTest : public BrowserWithTestWindowTest {
     delete navigation_observer_;
     BrowserWithTestWindowTest::TearDown();
   }
-  void VerifyNavigationEvent(const GURL& expected_source_url,
-                             const GURL& expected_source_main_frame_url,
-                             const GURL& expected_original_request_url,
-                             const GURL& expected_destination_url,
-                             int expected_source_tab,
-                             int expected_target_tab,
-                             bool expected_is_user_initiated,
-                             bool expected_has_committed,
-                             bool expected_has_server_redirect,
-                             NavigationEvent* actual_nav_event) {
+  void VerifyNavigationEvent(
+      const GURL& expected_source_url,
+      const GURL& expected_source_main_frame_url,
+      const GURL& expected_original_request_url,
+      const GURL& expected_destination_url,
+      SessionID expected_source_tab,
+      SessionID expected_target_tab,
+      ReferrerChainEntry::NavigationInitiation expected_nav_initiation,
+      bool expected_has_committed,
+      bool expected_has_server_redirect,
+      NavigationEvent* actual_nav_event) {
     EXPECT_EQ(expected_source_url, actual_nav_event->source_url);
     EXPECT_EQ(expected_source_main_frame_url,
               actual_nav_event->source_main_frame_url);
@@ -60,7 +63,7 @@ class SBNavigationObserverTest : public BrowserWithTestWindowTest {
     EXPECT_EQ(expected_destination_url, actual_nav_event->GetDestinationUrl());
     EXPECT_EQ(expected_source_tab, actual_nav_event->source_tab_id);
     EXPECT_EQ(expected_target_tab, actual_nav_event->target_tab_id);
-    EXPECT_EQ(expected_is_user_initiated, actual_nav_event->is_user_initiated);
+    EXPECT_EQ(expected_nav_initiation, actual_nav_event->navigation_initiation);
     EXPECT_EQ(expected_has_committed, actual_nav_event->has_committed);
     EXPECT_EQ(expected_has_server_redirect,
               !actual_nav_event->server_redirect_urls.empty());
@@ -85,7 +88,7 @@ class SBNavigationObserverTest : public BrowserWithTestWindowTest {
   std::unique_ptr<NavigationEvent> CreateNavigationEventUniquePtr(
       const GURL& destination_url, const base::Time& timestamp) {
     std::unique_ptr<NavigationEvent> nav_event_ptr =
-        base::MakeUnique<NavigationEvent>();
+        std::make_unique<NavigationEvent>();
     nav_event_ptr->original_request_url = destination_url;
     nav_event_ptr->source_url = GURL("http://dummy.com");
     nav_event_ptr->last_updated = timestamp;
@@ -116,7 +119,8 @@ TEST_F(SBNavigationObserverTest, TestNavigationEventList) {
   NavigationEventList events(3);
 
   EXPECT_EQ(nullptr,
-            events.FindNavigationEvent(GURL("http://invalid.com"), GURL(), -1));
+            events.FindNavigationEvent(GURL("http://invalid.com"), GURL(),
+                                       SessionID::InvalidValue()));
   EXPECT_EQ(0U, events.CleanUpNavigationEvents());
   EXPECT_EQ(0U, events.Size());
 
@@ -130,9 +134,10 @@ TEST_F(SBNavigationObserverTest, TestNavigationEventList) {
       CreateNavigationEventUniquePtr(GURL("http://foo1.com"), now));
   EXPECT_EQ(2U, events.Size());
   // FindNavigationEvent should return the latest matching event.
-  EXPECT_EQ(now,
-            events.FindNavigationEvent(GURL("http://foo1.com"), GURL(), -1)
-                ->last_updated);
+  EXPECT_EQ(now, events
+                     .FindNavigationEvent(GURL("http://foo1.com"), GURL(),
+                                          SessionID::InvalidValue())
+                     ->last_updated);
   // One event should get removed.
   EXPECT_EQ(1U, events.CleanUpNavigationEvents());
   EXPECT_EQ(1U, events.Size());
@@ -161,7 +166,7 @@ TEST_F(SBNavigationObserverTest, BasicNavigationAndCommit) {
                              WindowOpenDisposition::CURRENT_TAB,
                              ui::PAGE_TRANSITION_AUTO_BOOKMARK, false));
   CommitPendingLoad(controller);
-  int tab_id = SessionTabHelper::IdForTab(controller->GetWebContents());
+  SessionID tab_id = SessionTabHelper::IdForTab(controller->GetWebContents());
   auto* nav_list = navigation_event_list();
   ASSERT_EQ(1U, nav_list->Size());
   VerifyNavigationEvent(GURL(),                // source_url
@@ -170,9 +175,9 @@ TEST_F(SBNavigationObserverTest, BasicNavigationAndCommit) {
                         GURL("http://foo/1"),  // destination_url
                         tab_id,                // source_tab_id
                         tab_id,                // target_tab_id
-                        true,                  // is_user_initiated
-                        true,                  // has_committed
-                        false,                 // has_server_redirect
+                        ReferrerChainEntry::BROWSER_INITIATED,
+                        true,   // has_committed
+                        false,  // has_server_redirect
                         nav_list->Get(0U));
 }
 
@@ -183,20 +188,21 @@ TEST_F(SBNavigationObserverTest, ServerRedirect) {
   navigation->Start();
   navigation->Redirect(GURL("http://redirect/1"));
   navigation->Commit();
-  int tab_id = SessionTabHelper::IdForTab(
+  SessionID tab_id = SessionTabHelper::IdForTab(
       browser()->tab_strip_model()->GetWebContentsAt(0));
   auto* nav_list = navigation_event_list();
   ASSERT_EQ(1U, nav_list->Size());
-  VerifyNavigationEvent(GURL("http://foo/0"),       // source_url
-                        GURL("http://foo/0"),       // source_main_frame_url
-                        GURL("http://foo/3"),       // original_request_url
-                        GURL("http://redirect/1"),  // destination_url
-                        tab_id,                     // source_tab_id
-                        tab_id,                     // target_tab_id
-                        false,                      // is_user_initiated
-                        true,                       // has_committed
-                        true,                       // has_server_redirect
-                        nav_list->Get(0U));
+  VerifyNavigationEvent(
+      GURL("http://foo/0"),       // source_url
+      GURL("http://foo/0"),       // source_main_frame_url
+      GURL("http://foo/3"),       // original_request_url
+      GURL("http://redirect/1"),  // destination_url
+      tab_id,                     // source_tab_id
+      tab_id,                     // target_tab_id
+      ReferrerChainEntry::RENDERER_INITIATED_WITHOUT_USER_GESTURE,
+      true,  // has_committed
+      true,  // has_server_redirect
+      nav_list->Get(0U));
 }
 
 TEST_F(SBNavigationObserverTest, TestCleanUpStaleNavigationEvents) {
@@ -234,8 +240,8 @@ TEST_F(SBNavigationObserverTest, TestCleanUpStaleNavigationEvents) {
 
   // Verifies all stale and invalid navigation events are removed.
   ASSERT_EQ(2U, navigation_event_list()->Size());
-  EXPECT_EQ(nullptr,
-            navigation_event_list()->FindNavigationEvent(url_1, GURL(), -1));
+  EXPECT_EQ(nullptr, navigation_event_list()->FindNavigationEvent(
+                         url_1, GURL(), SessionID::InvalidValue()));
   EXPECT_THAT(histograms.GetAllSamples(kNavigationEventCleanUpHistogramName),
               testing::ElementsAre(base::Bucket(4, 1)));
 }

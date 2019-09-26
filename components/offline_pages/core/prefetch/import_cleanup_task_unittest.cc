@@ -6,9 +6,9 @@
 
 #include "components/offline_pages/core/prefetch/prefetch_importer.h"
 #include "components/offline_pages/core/prefetch/prefetch_item.h"
+#include "components/offline_pages/core/prefetch/prefetch_task_test_base.h"
 #include "components/offline_pages/core/prefetch/prefetch_types.h"
 #include "components/offline_pages/core/prefetch/store/prefetch_store.h"
-#include "components/offline_pages/core/prefetch/task_test_base.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace offline_pages {
@@ -38,7 +38,7 @@ class TestPrefetchImporter : public PrefetchImporter {
 
 }  // namespace
 
-class ImportCleanupTaskTest : public TaskTestBase {
+class ImportCleanupTaskTest : public PrefetchTaskTestBase {
  public:
   ImportCleanupTaskTest() = default;
   ~ImportCleanupTaskTest() override = default;
@@ -52,9 +52,7 @@ class ImportCleanupTaskTest : public TaskTestBase {
 TEST_F(ImportCleanupTaskTest, StoreFailure) {
   store_util()->SimulateInitializationError();
 
-  ImportCleanupTask task(store(), importer());
-  task.Run();
-  RunUntilIdle();
+  RunTask(std::make_unique<ImportCleanupTask>(store(), importer()));
 }
 
 TEST_F(ImportCleanupTaskTest, DoCleanup) {
@@ -74,9 +72,7 @@ TEST_F(ImportCleanupTaskTest, DoCleanup) {
   EXPECT_TRUE(store_util()->InsertPrefetchItem(item3));
 
   // Clean up the imports.
-  ImportCleanupTask task(store(), importer());
-  task.Run();
-  RunUntilIdle();
+  RunTask(std::make_unique<ImportCleanupTask>(store(), importer()));
 
   // Item 1 is cleaned up.
   std::unique_ptr<PrefetchItem> store_item1 =
@@ -127,9 +123,7 @@ TEST_F(ImportCleanupTaskTest, NoCleanupForOutstandingImport) {
   importer()->ImportArchive(archive_info3);
 
   // Clean up the imports.
-  ImportCleanupTask task(store(), importer());
-  task.Run();
-  RunUntilIdle();
+  RunTask(std::make_unique<ImportCleanupTask>(store(), importer()));
 
   // Item 1 is intact since it is in the outstanding list.
   std::unique_ptr<PrefetchItem> store_item1 =
@@ -154,9 +148,7 @@ TEST_F(ImportCleanupTaskTest, NoCleanupForOutstandingImport) {
   importer()->MarkImportCompleted(item1.offline_id);
 
   // Trigger another import cleanup.
-  ImportCleanupTask task2(store(), importer());
-  task2.Run();
-  RunUntilIdle();
+  RunTask(std::make_unique<ImportCleanupTask>(store(), importer()));
 
   // Item 1 should now be cleaned up.
   store_item1 = store_util()->GetPrefetchItem(item1.offline_id);

@@ -5,18 +5,23 @@
 #include "ui/app_list/views/app_list_item_view.h"
 
 #include <algorithm>
+#include <utility>
+#include <vector>
 
 #include "ash/app_list/model/app_list_folder_item.h"
 #include "ash/app_list/model/app_list_item.h"
+#include "ash/public/cpp/menu_utils.h"
+#include "base/metrics/histogram_macros.h"
 #include "base/strings/utf_string_conversions.h"
 #include "build/build_config.h"
 #include "ui/accessibility/ax_node_data.h"
 #include "ui/app_list/app_list_constants.h"
-#include "ui/app_list/app_list_features.h"
 #include "ui/app_list/app_list_switches.h"
+#include "ui/app_list/app_list_view_delegate.h"
 #include "ui/app_list/views/apps_grid_view.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/resource/resource_bundle.h"
+#include "ui/base/ui_base_features.h"
 #include "ui/compositor/layer.h"
 #include "ui/compositor/scoped_layer_animation_settings.h"
 #include "ui/gfx/animation/throb_animation.h"
@@ -51,23 +56,31 @@ constexpr int kMouseDragUIDelayInMs = 200;
 // 650ms.
 constexpr int kTouchLongpressDelayInMs = 300;
 
+// The color of the title for the tiles within folder.
+constexpr SkColor kFolderGridTitleColor = SK_ColorBLACK;
+
+// The color of the selected item view within folder.
+constexpr SkColor kFolderGridSelectedColor = SkColorSetARGBMacro(31, 0, 0, 0);
+
 }  // namespace
 
 // static
 const char AppListItemView::kViewClassName[] = "ui/app_list/AppListItemView";
 
 AppListItemView::AppListItemView(AppsGridView* apps_grid_view,
-                                 AppListItem* item)
+                                 AppListItem* item,
+                                 AppListViewDelegate* delegate)
     : Button(apps_grid_view),
       is_folder_(item->GetItemType() == AppListFolderItem::kItemType),
       is_in_folder_(item->IsInFolder()),
       item_weak_(item),
+      delegate_(delegate),
       apps_grid_view_(apps_grid_view),
       icon_(new views::ImageView),
       title_(new views::Label),
-      progress_bar_(new views::ProgressBar) {
-  if (features::IsAppListFocusEnabled())
-    SetFocusBehavior(FocusBehavior::ALWAYS);
+      progress_bar_(new views::ProgressBar),
+      weak_ptr_factory_(this) {
+  SetFocusBehavior(FocusBehavior::ALWAYS);
 
   icon_->set_can_process_events_within_subtree(false);
   icon_->SetVerticalAlignment(views::ImageView::LEADING);
@@ -79,7 +92,9 @@ AppListItemView::AppListItemView(AppsGridView* apps_grid_view,
   title_->SetFontList(font);
   title_->SetLineHeight(font.GetHeight());
   title_->SetHorizontalAlignment(gfx::ALIGN_CENTER);
-  title_->SetEnabledColor(kGridTitleColor);
+  title_->SetEnabledColor(apps_grid_view_->is_in_folder()
+                              ? kFolderGridTitleColor
+                              : kGridTitleColor);
 
   SetTitleSubpixelAA();
 
@@ -264,25 +279,89 @@ void AppListItemView::SetItemPercentDownloaded(int percent_downloaded) {
   progress_bar_->SetValue(percent_downloaded / 100.0);
 }
 
-void AppListItemView::ShowContextMenuForView(views::View* source,
-                                             const gfx::Point& point,
-                                             ui::MenuSourceType source_type) {
-  if (context_menu_runner_ && context_menu_runner_->IsRunning())
+void AppListItemView::OnContextMenuClosed(const base::TimeTicks& open_time) {
+  UMA_HISTOGRAM_TIMES("Apps.ContextMenuUserJourneyTime.AppGrid",
+                      base::TimeTicks::Now() - open_time);
+}
+
+void AppListItemView::OnContextMenuModelReceived(
+    const gfx::Point& point,
+    ui::MenuSourceType source_type,
+    std::vector<ash::mojom::MenuItemPtr> menu) {
+  if (menu.empty() ||
+      (context_menu_runner_ && context_menu_runner_->IsRunning()))
     return;
 
-  ui::MenuModel* menu_model =
-      item_weak_ ? item_weak_->GetContextMenuModel() : NULL;
-  if (!menu_model)
-    return;
+  // Reset and populate the context menu model.
+  context_menu_model_ = std::make_unique<ui::SimpleMenuModel>(this);
+  ash::menu_utils::PopulateMenuFromMojoMenuItems(
+      context_menu_model_.get(), this, menu, &context_submenu_models_);
+  context_menu_items_ = std::move(menu);
+
+  UMA_HISTOGRAM_ENUMERATION("Apps.ContextMenuShowSource.AppGrid", source_type,
+                            ui::MENU_SOURCE_TYPE_LAST);
 
   if (!apps_grid_view_->IsSelectedView(this))
     apps_grid_view_->ClearAnySelectedView();
-  int run_types = views::MenuRunner::HAS_MNEMONICS |
-                  views::MenuRunner::SEND_GESTURE_EVENTS_TO_OWNER;
-  context_menu_runner_.reset(new views::MenuRunner(menu_model, run_types));
-  context_menu_runner_->RunMenuAt(GetWidget(), NULL,
-                                  gfx::Rect(point, gfx::Size()),
-                                  views::MENU_ANCHOR_TOPLEFT, source_type);
+  int run_types = views::MenuRunner::HAS_MNEMONICS;
+
+  if (source_type == ui::MENU_SOURCE_TOUCH)
+    run_types |= views::MenuRunner::SEND_GESTURE_EVENTS_TO_OWNER;
+
+  views::MenuAnchorPosition anchor_position = views::MENU_ANCHOR_TOPLEFT;
+  gfx::Rect anchor_rect = gfx::Rect(point, gfx::Size());
+
+  if (features::IsTouchableAppContextMenuEnabled()) {
+    run_types |= views::MenuRunner::USE_TOUCHABLE_LAYOUT |
+                 views::MenuRunner::FIXED_ANCHOR |
+                 views::MenuRunner::CONTEXT_MENU;
+    anchor_position = views::MENU_ANCHOR_BUBBLE_TOUCHABLE_LEFT;
+    if (source_type == ui::MENU_SOURCE_TOUCH) {
+      // When a context menu is shown by touch, the app icon is temporarily
+      // enlarged, so use the ideal bounds instead of the current bounds for the
+      // anchor rect.
+      anchor_rect = apps_grid_view_->GetIdealBounds(this);
+      // Anchor the menu to the same rect that is used for selection highlight.
+      anchor_rect.ClampToCenteredSize(
+          gfx::Size(kGridSelectedSize, kGridSelectedSize));
+      views::View::ConvertRectToScreen(apps_grid_view_, &anchor_rect);
+    }
+  }
+
+  context_menu_runner_.reset(new views::MenuRunner(
+      context_menu_model_.get(), run_types,
+      base::Bind(&AppListItemView::OnContextMenuClosed,
+                 weak_ptr_factory_.GetWeakPtr(), base::TimeTicks::Now())));
+  context_menu_runner_->RunMenuAt(GetWidget(), nullptr, anchor_rect,
+                                  anchor_position, source_type);
+}
+
+void AppListItemView::ShowContextMenuForView(views::View* source,
+                                             const gfx::Point& point,
+                                             ui::MenuSourceType source_type) {
+  delegate_->GetContextMenuModel(
+      item_weak_->id(),
+      base::BindOnce(&AppListItemView::OnContextMenuModelReceived,
+                     weak_ptr_factory_.GetWeakPtr(), point, source_type));
+}
+
+bool AppListItemView::IsCommandIdChecked(int command_id) const {
+  return ash::menu_utils::GetMenuItemByCommandId(context_menu_items_,
+                                                 command_id)
+      ->checked;
+}
+
+bool AppListItemView::IsCommandIdEnabled(int command_id) const {
+  return ash::menu_utils::GetMenuItemByCommandId(context_menu_items_,
+                                                 command_id)
+      ->enabled;
+}
+
+void AppListItemView::ExecuteCommand(int command_id, int event_flags) {
+  if (item_weak_) {
+    delegate_->ContextMenuItemSelected(item_weak_->id(), command_id,
+                                       event_flags);
+  }
 }
 
 void AppListItemView::StateChanged(ButtonState old_state) {
@@ -318,18 +397,16 @@ void AppListItemView::PaintButtonContents(gfx::Canvas* canvas) {
 
   gfx::Rect rect(GetContentsBounds());
   if (apps_grid_view_->IsSelectedView(this)) {
-    rect.Inset((rect.width() - kGridSelectedSize) / 2,
-               (rect.height() - kGridSelectedSize) / 2);
+    rect.ClampToCenteredSize(gfx::Size(kGridSelectedSize, kGridSelectedSize));
     cc::PaintFlags flags;
     flags.setAntiAlias(true);
-    flags.setColor(kGridSelectedColor);
+    flags.setColor(apps_grid_view_->is_in_folder() ? kFolderGridSelectedColor
+                                                   : kGridSelectedColor);
     flags.setStyle(cc::PaintFlags::kFill_Style);
     canvas->DrawRoundRect(gfx::RectF(rect), kGridSelectedCornerRadius, flags);
   }
 
   if (ui_state_ == UI_STATE_DROPPING_IN_FOLDER) {
-    DCHECK(apps_grid_view_->model()->folders_enabled());
-
     // Draw folder dropping preview circle.
     gfx::Point center = gfx::Point(icon_->x() + icon_->size().width() / 2,
                                    icon_->y() + icon_->size().height() / 2);

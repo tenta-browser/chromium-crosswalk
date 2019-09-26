@@ -4,6 +4,9 @@
 
 #include "chrome/browser/ui/views/autofill/autofill_popup_view_native_views.h"
 
+#include <memory>
+
+#include "base/strings/string_util.h"
 #include "build/build_config.h"
 #include "chrome/browser/ui/autofill/autofill_popup_controller.h"
 #include "chrome/browser/ui/autofill/autofill_popup_layout_model.h"
@@ -15,6 +18,8 @@
 #include "ui/events/base_event_utils.h"
 #include "ui/events/test/event_generator.h"
 #include "ui/views/test/views_test_base.h"
+
+namespace {
 
 struct TypeClicks {
   autofill::PopupItemId id;
@@ -61,6 +66,7 @@ class MockAutofillPopupController : public autofill::AutofillPopupController {
     return suggestions_;
   }
 #if !defined(OS_ANDROID)
+  MOCK_METHOD1(SetTypesetter, void(gfx::Typesetter typesetter));
   MOCK_METHOD1(GetElidedValueWidthForRow, int(int row));
   MOCK_METHOD1(GetElidedLabelWidthForRow, int(int row));
 #endif
@@ -78,12 +84,17 @@ class MockAutofillPopupController : public autofill::AutofillPopupController {
   const base::string16& GetElidedValueAt(int i) const override {
     return suggestions_[i].value;
   }
-  MOCK_CONST_METHOD1(GetElidedLabelAt, const base::string16&(int row));
+
+  const base::string16& GetElidedLabelAt(int row) const override {
+    return base::EmptyString16();
+  }
+
   MOCK_METHOD3(GetRemovalConfirmationText,
                bool(int index, base::string16* title, base::string16* body));
   MOCK_METHOD1(RemoveSuggestion, bool(int index));
   MOCK_CONST_METHOD1(GetBackgroundColorIDForRow,
                      ui::NativeTheme::ColorId(int index));
+  MOCK_METHOD1(SetSelectedLine, void(base::Optional<int> selected_line));
   MOCK_CONST_METHOD0(selected_line, base::Optional<int>());
   const autofill::AutofillPopupLayoutModel& layout_model() const override {
     return *layout_model_;
@@ -121,7 +132,7 @@ class AutofillPopupViewNativeViewsTest : public views::ViewsTestBase {
 
   void CreateAndShowView(const std::vector<int>& ids) {
     autofill_popup_controller_.set_suggestions(ids);
-    view_ = base::MakeUnique<autofill::AutofillPopupViewNativeViews>(
+    view_ = std::make_unique<autofill::AutofillPopupViewNativeViews>(
         &autofill_popup_controller_, &widget_);
     widget_.SetContentsView(view_.get());
 
@@ -164,7 +175,8 @@ TEST_P(AutofillPopupViewNativeViewsForEveryTypeTest, ShowClickTest) {
   CreateAndShowView({click.id});
   EXPECT_CALL(autofill_popup_controller_, AcceptSuggestion(::testing::_))
       .Times(click.click);
-  gfx::Point center = view()->child_at(0)->GetLocalBounds().CenterPoint();
+  gfx::Point center =
+      view()->GetRowsForTesting()[0]->GetLocalBounds().CenterPoint();
   generator_->set_current_location(center);
   generator_->ClickLeftButton();
   view()->RemoveAllChildViews(true /* delete_children */);
@@ -174,3 +186,5 @@ INSTANTIATE_TEST_CASE_P(
     /* no prefix */,
     AutofillPopupViewNativeViewsForEveryTypeTest,
     ::testing::ValuesIn(kClickTestCase));
+
+}  // namespace

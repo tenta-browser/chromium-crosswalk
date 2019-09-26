@@ -24,7 +24,8 @@ class BleScanner {
    public:
     virtual void OnReceivedAdvertisementFromDevice(
         const cryptauth::RemoteDevice& remote_device,
-        device::BluetoothDevice* bluetooth_device) {}
+        device::BluetoothDevice* bluetooth_device,
+        bool is_background_advertisement) {}
     virtual void OnDiscoverySessionStateChanged(bool discovery_session_active) {
     }
   };
@@ -35,13 +36,11 @@ class BleScanner {
   // Registers a scan filter for the given device. The scan filter will remain
   // active until a subsequent call to UnregisterScanFilterForDevice() is made.
   // Returns whether the scan filter was successfully registered.
-  virtual bool RegisterScanFilterForDevice(
-      const cryptauth::RemoteDevice& remote_device) = 0;
+  virtual bool RegisterScanFilterForDevice(const std::string& device_id) = 0;
 
   // Unregisters a scan filter for |device|. Returns whether the scan filter was
   // successfully unregistered.
-  virtual bool UnregisterScanFilterForDevice(
-      const cryptauth::RemoteDevice& remote_device) = 0;
+  virtual bool UnregisterScanFilterForDevice(const std::string& device_id) = 0;
 
   // A discovery session should be active if at least one device has been
   // registered. However, discovery sessions are started and stopped
@@ -55,7 +54,8 @@ class BleScanner {
  protected:
   void NotifyReceivedAdvertisementFromDevice(
       const cryptauth::RemoteDevice& remote_device,
-      device::BluetoothDevice* bluetooth_device);
+      device::BluetoothDevice* bluetooth_device,
+      bool is_background_advertisement);
   void NotifyDiscoverySessionStateChanged(bool discovery_session_active);
 
  private:

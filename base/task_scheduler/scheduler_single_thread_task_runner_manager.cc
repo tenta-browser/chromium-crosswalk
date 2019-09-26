@@ -224,29 +224,24 @@ class SchedulerWorkerCOMDelegate : public SchedulerWorkerDelegate {
     const TimeDelta sleep_time = GetSleepTimeout();
     const DWORD milliseconds_wait =
         sleep_time.is_max() ? INFINITE : sleep_time.InMilliseconds();
-    HANDLE wake_up_event_handle = wake_up_event->handle();
-    DWORD result = MsgWaitForMultipleObjectsEx(
-        1, &wake_up_event_handle, milliseconds_wait, QS_ALLINPUT, 0);
-    if (result == WAIT_OBJECT_0) {
-      // Reset the event since we woke up due to it.
-      wake_up_event->Reset();
-    }
+    const HANDLE wake_up_event_handle = wake_up_event->handle();
+    MsgWaitForMultipleObjectsEx(1, &wake_up_event_handle, milliseconds_wait,
+                                QS_ALLINPUT, 0);
   }
 
  private:
   scoped_refptr<Sequence> GetWorkFromWindowsMessageQueue() {
     MSG msg;
     if (PeekMessage(&msg, nullptr, 0, 0, PM_REMOVE) != FALSE) {
-      auto pump_message_task =
-          std::make_unique<Task>(FROM_HERE,
-                                 Bind(
-                                     [](MSG msg) {
-                                       TranslateMessage(&msg);
-                                       DispatchMessage(&msg);
-                                     },
-                                     std::move(msg)),
-                                 TaskTraits(MayBlock()), TimeDelta());
-      if (task_tracker_->WillPostTask(pump_message_task.get())) {
+      Task pump_message_task(FROM_HERE,
+                             Bind(
+                                 [](MSG msg) {
+                                   TranslateMessage(&msg);
+                                   DispatchMessage(&msg);
+                                 },
+                                 std::move(msg)),
+                             TaskTraits(MayBlock()), TimeDelta());
+      if (task_tracker_->WillPostTask(pump_message_task)) {
         bool was_empty =
             message_pump_sequence_->PushTask(std::move(pump_message_task));
         DCHECK(was_empty) << "GetWorkFromWindowsMessageQueue() does not expect "
@@ -294,14 +289,13 @@ class SchedulerSingleThreadTaskRunnerManager::SchedulerSingleThreadTaskRunner
     if (!g_manager_is_alive)
       return false;
 
-    auto task =
-        std::make_unique<Task>(from_here, std::move(closure), traits_, delay);
-    task->single_thread_task_runner_ref = this;
+    Task task(from_here, std::move(closure), traits_, delay);
+    task.single_thread_task_runner_ref = this;
 
-    if (!outer_->task_tracker_->WillPostTask(task.get()))
+    if (!outer_->task_tracker_->WillPostTask(task))
       return false;
 
-    if (task->delayed_run_time.is_null()) {
+    if (task.delayed_run_time.is_null()) {
       PostTaskNow(std::move(task));
     } else {
       outer_->delayed_task_manager_->AddDelayedTask(
@@ -351,7 +345,7 @@ class SchedulerSingleThreadTaskRunnerManager::SchedulerSingleThreadTaskRunner
     }
   }
 
-  void PostTaskNow(std::unique_ptr<Task> task) {
+  void PostTaskNow(Task task) {
     scoped_refptr<Sequence> sequence = GetDelegate()->sequence();
     // If |sequence| is null, then the thread is effectively gone (either
     // shutdown or joined).
@@ -392,6 +386,10 @@ SchedulerSingleThreadTaskRunnerManager::SchedulerSingleThreadTaskRunnerManager(
                     arraysize(shared_scheduler_workers_),
                 "The size of |shared_com_scheduler_workers_| must match "
                 "|shared_scheduler_workers_|");
+  static_assert(arraysize(shared_com_scheduler_workers_[0]) ==
+                    arraysize(shared_scheduler_workers_[0]),
+                "The size of |shared_com_scheduler_workers_| must match "
+                "|shared_scheduler_workers_|");
 #endif  // defined(OS_WIN)
   DCHECK(!g_manager_is_alive);
   g_manager_is_alive = true;
@@ -421,29 +419,35 @@ void SchedulerSingleThreadTaskRunnerManager::Start() {
 
 scoped_refptr<SingleThreadTaskRunner>
 SchedulerSingleThreadTaskRunnerManager::CreateSingleThreadTaskRunnerWithTraits(
-    const std::string& name,
     const TaskTraits& traits,
     SingleThreadTaskRunnerThreadMode thread_mode) {
-  return CreateTaskRunnerWithTraitsImpl<SchedulerWorkerDelegate>(name, traits,
+  return CreateTaskRunnerWithTraitsImpl<SchedulerWorkerDelegate>(traits,
                                                                  thread_mode);
 }
 
 #if defined(OS_WIN)
 scoped_refptr<SingleThreadTaskRunner>
 SchedulerSingleThreadTaskRunnerManager::CreateCOMSTATaskRunnerWithTraits(
-    const std::string& name,
     const TaskTraits& traits,
     SingleThreadTaskRunnerThreadMode thread_mode) {
   return CreateTaskRunnerWithTraitsImpl<SchedulerWorkerCOMDelegate>(
-      name, traits, thread_mode);
+      traits, thread_mode);
 }
 #endif  // defined(OS_WIN)
+
+// static
+SchedulerSingleThreadTaskRunnerManager::ContinueOnShutdown
+SchedulerSingleThreadTaskRunnerManager::TraitsToContinueOnShutdown(
+    const TaskTraits& traits) {
+  if (traits.shutdown_behavior() == TaskShutdownBehavior::CONTINUE_ON_SHUTDOWN)
+    return IS_CONTINUE_ON_SHUTDOWN;
+  return IS_NOT_CONTINUE_ON_SHUTDOWN;
+}
 
 template <typename DelegateType>
 scoped_refptr<
     SchedulerSingleThreadTaskRunnerManager::SchedulerSingleThreadTaskRunner>
 SchedulerSingleThreadTaskRunnerManager::CreateTaskRunnerWithTraitsImpl(
-    const std::string& name,
     const TaskTraits& traits,
     SingleThreadTaskRunnerThreadMode thread_mode) {
   DCHECK(thread_mode != SingleThreadTaskRunnerThreadMode::SHARED ||
@@ -469,12 +473,12 @@ SchedulerSingleThreadTaskRunnerManager::CreateTaskRunnerWithTraitsImpl(
     if (!worker) {
       const auto& environment_params =
           kEnvironmentParams[GetEnvironmentIndexForTraits(traits)];
-      std::string processed_name =
-          thread_mode == SingleThreadTaskRunnerThreadMode::DEDICATED
-              ? name + environment_params.name_suffix
-              : "Shared" + name + environment_params.name_suffix;
+      std::string worker_name;
+      if (thread_mode == SingleThreadTaskRunnerThreadMode::SHARED)
+        worker_name += "Shared";
+      worker_name += environment_params.name_suffix;
       worker = CreateAndRegisterSchedulerWorker<DelegateType>(
-          processed_name, environment_params.priority_hint);
+          worker_name, environment_params.priority_hint);
       new_worker = true;
     }
     started = started_;
@@ -550,7 +554,8 @@ template <>
 SchedulerWorker*&
 SchedulerSingleThreadTaskRunnerManager::GetSharedSchedulerWorkerForTraits<
     SchedulerWorkerDelegate>(const TaskTraits& traits) {
-  return shared_scheduler_workers_[GetEnvironmentIndexForTraits(traits)];
+  return shared_scheduler_workers_[GetEnvironmentIndexForTraits(traits)]
+                                  [TraitsToContinueOnShutdown(traits)];
 }
 
 #if defined(OS_WIN)
@@ -558,7 +563,8 @@ template <>
 SchedulerWorker*&
 SchedulerSingleThreadTaskRunnerManager::GetSharedSchedulerWorkerForTraits<
     SchedulerWorkerCOMDelegate>(const TaskTraits& traits) {
-  return shared_com_scheduler_workers_[GetEnvironmentIndexForTraits(traits)];
+  return shared_com_scheduler_workers_[GetEnvironmentIndexForTraits(traits)]
+                                      [TraitsToContinueOnShutdown(traits)];
 }
 #endif  // defined(OS_WIN)
 
@@ -594,22 +600,27 @@ void SchedulerSingleThreadTaskRunnerManager::ReleaseSharedSchedulerWorkers() {
   {
     AutoSchedulerLock auto_lock(lock_);
     for (size_t i = 0; i < arraysize(shared_scheduler_workers_); ++i) {
-      local_shared_scheduler_workers[i] = shared_scheduler_workers_[i];
-      shared_scheduler_workers_[i] = nullptr;
+      for (size_t j = 0; j < arraysize(shared_scheduler_workers_[i]); ++j) {
+        local_shared_scheduler_workers[i][j] = shared_scheduler_workers_[i][j];
+        shared_scheduler_workers_[i][j] = nullptr;
 #if defined(OS_WIN)
-      local_shared_com_scheduler_workers[i] = shared_com_scheduler_workers_[i];
-      shared_com_scheduler_workers_[i] = nullptr;
+        local_shared_com_scheduler_workers[i][j] =
+            shared_com_scheduler_workers_[i][j];
+        shared_com_scheduler_workers_[i][j] = nullptr;
 #endif
+    }
     }
   }
 
   for (size_t i = 0; i < arraysize(local_shared_scheduler_workers); ++i) {
-    if (local_shared_scheduler_workers[i])
-      UnregisterSchedulerWorker(local_shared_scheduler_workers[i]);
+    for (size_t j = 0; j < arraysize(local_shared_scheduler_workers[i]); ++j) {
+      if (local_shared_scheduler_workers[i][j])
+        UnregisterSchedulerWorker(local_shared_scheduler_workers[i][j]);
 #if defined(OS_WIN)
-    if (local_shared_com_scheduler_workers[i])
-      UnregisterSchedulerWorker(local_shared_com_scheduler_workers[i]);
+      if (local_shared_com_scheduler_workers[i][j])
+        UnregisterSchedulerWorker(local_shared_com_scheduler_workers[i][j]);
 #endif
+  }
   }
 }
 

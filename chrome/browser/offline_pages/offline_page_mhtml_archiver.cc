@@ -6,7 +6,6 @@
 
 #include "base/bind.h"
 #include "base/bind_helpers.h"
-#include "base/files/file.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/guid.h"
@@ -15,44 +14,18 @@
 #include "base/strings/string16.h"
 #include "base/task_scheduler/post_task.h"
 #include "base/threading/thread_task_runner_handle.h"
+#include "chrome/browser/offline_pages/offline_page_utils.h"
 #include "chrome/browser/ssl/security_state_tab_helper.h"
+#include "components/offline_pages/core/archive_validator.h"
 #include "components/security_state/core/security_state.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/navigation_entry.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/mhtml_generation_params.h"
-#include "crypto/secure_hash.h"
-#include "crypto/sha2.h"
 #include "net/base/filename_util.h"
 
 namespace offline_pages {
 namespace {
-const base::FilePath::CharType kMHTMLExtension[] = FILE_PATH_LITERAL("mhtml");
-
-std::string ComputeDigest(const base::FilePath& file_path) {
-  base::File file(file_path, base::File::FLAG_OPEN | base::File::FLAG_READ);
-  if (!file.IsValid())
-    return std::string();
-
-  std::unique_ptr<crypto::SecureHash> secure_hash(
-      crypto::SecureHash::Create(crypto::SecureHash::SHA256));
-
-  const int kMaxBufferSize = 1024;
-  std::vector<char> buffer(kMaxBufferSize);
-  int bytes_read;
-  do {
-    bytes_read = file.ReadAtCurrentPos(buffer.data(), kMaxBufferSize);
-    if (bytes_read > 0)
-      secure_hash->Update(buffer.data(), bytes_read);
-  } while (bytes_read > 0);
-  if (bytes_read < 0)
-    return std::string();
-
-  std::string result_bytes(crypto::kSHA256Length, 0);
-  secure_hash->Finish(&(result_bytes[0]), result_bytes.size());
-  return result_bytes;
-}
-
 void DeleteFileOnFileThread(const base::FilePath& file_path,
                             const base::Closure& callback) {
   base::PostTaskWithTraitsAndReply(
@@ -70,22 +43,13 @@ void ComputeDigestOnFileThread(
     const base::Callback<void(const std::string&)>& callback) {
   base::PostTaskWithTraitsAndReplyWithResult(
       FROM_HERE, {base::MayBlock(), base::TaskPriority::BACKGROUND},
-      base::Bind(&ComputeDigest, file_path), callback);
+      base::Bind(&ArchiveValidator::ComputeDigest, file_path), callback);
 }
 }  // namespace
 
 // static
-OfflinePageMHTMLArchiver::OfflinePageMHTMLArchiver(
-    content::WebContents* web_contents)
-    : web_contents_(web_contents),
-      weak_ptr_factory_(this) {
-  DCHECK(web_contents_);
-}
-
 OfflinePageMHTMLArchiver::OfflinePageMHTMLArchiver()
-    : web_contents_(nullptr),
-      weak_ptr_factory_(this) {
-}
+    : weak_ptr_factory_(this) {}
 
 OfflinePageMHTMLArchiver::~OfflinePageMHTMLArchiver() {
 }
@@ -93,6 +57,7 @@ OfflinePageMHTMLArchiver::~OfflinePageMHTMLArchiver() {
 void OfflinePageMHTMLArchiver::CreateArchive(
     const base::FilePath& archives_dir,
     const CreateArchiveParams& create_archive_params,
+    content::WebContents* web_contents,
     const CreateArchiveCallback& callback) {
   DCHECK(callback_.is_null());
   DCHECK(!callback.is_null());
@@ -100,29 +65,30 @@ void OfflinePageMHTMLArchiver::CreateArchive(
 
   // TODO(chili): crbug/710248 These checks should probably be done inside
   // the offliner.
-  if (HasConnectionSecurityError()) {
+  if (HasConnectionSecurityError(web_contents)) {
     ReportFailure(ArchiverResult::ERROR_SECURITY_CERTIFICATE);
     return;
   }
 
   // Don't save chrome error pages.
-  if (GetPageType() == content::PageType::PAGE_TYPE_ERROR) {
+  if (GetPageType(web_contents) == content::PageType::PAGE_TYPE_ERROR) {
     ReportFailure(ArchiverResult::ERROR_ERROR_PAGE);
     return;
   }
 
   // Don't save chrome-injected interstitial info pages
   // i.e. "This site may be dangerous. Are you sure you want to continue?"
-  if (GetPageType() == content::PageType::PAGE_TYPE_INTERSTITIAL) {
+  if (GetPageType(web_contents) == content::PageType::PAGE_TYPE_INTERSTITIAL) {
     ReportFailure(ArchiverResult::ERROR_INTERSTITIAL_PAGE);
     return;
   }
 
-  GenerateMHTML(archives_dir, create_archive_params);
+  GenerateMHTML(archives_dir, web_contents, create_archive_params);
 }
 
 void OfflinePageMHTMLArchiver::GenerateMHTML(
     const base::FilePath& archives_dir,
+    content::WebContents* web_contents,
     const CreateArchiveParams& create_archive_params) {
   if (archives_dir.empty()) {
     DVLOG(1) << "Archive path was empty. Can't create archive.";
@@ -130,32 +96,33 @@ void OfflinePageMHTMLArchiver::GenerateMHTML(
     return;
   }
 
-  if (!web_contents_) {
+  if (!web_contents) {
     DVLOG(1) << "WebContents is missing. Can't create archive.";
     ReportFailure(ArchiverResult::ERROR_CONTENT_UNAVAILABLE);
     return;
   }
 
-  if (!web_contents_->GetRenderViewHost()) {
+  if (!web_contents->GetRenderViewHost()) {
     DVLOG(1) << "RenderViewHost is not created yet. Can't create archive.";
     ReportFailure(ArchiverResult::ERROR_CONTENT_UNAVAILABLE);
     return;
   }
 
-  GURL url(web_contents_->GetLastCommittedURL());
-  base::string16 title(web_contents_->GetTitle());
+  GURL url(web_contents->GetLastCommittedURL());
+  base::string16 title(web_contents->GetTitle());
   base::FilePath file_path(
-      archives_dir.Append(base::GenerateGUID()).AddExtension(kMHTMLExtension));
+      archives_dir.Append(base::GenerateGUID())
+          .AddExtension(OfflinePageUtils::kMHTMLExtension));
   content::MHTMLGenerationParams params(file_path);
   params.use_binary_encoding = true;
   params.remove_popup_overlay = create_archive_params.remove_popup_overlay;
   params.use_page_problem_detectors =
       create_archive_params.use_page_problem_detectors;
 
-  web_contents_->GenerateMHTML(
+  web_contents->GenerateMHTML(
       params,
-      base::Bind(&OfflinePageMHTMLArchiver::OnGenerateMHTMLDone,
-                 weak_ptr_factory_.GetWeakPtr(), url, file_path, title));
+      base::BindOnce(&OfflinePageMHTMLArchiver::OnGenerateMHTMLDone,
+                     weak_ptr_factory_.GetWeakPtr(), url, file_path, title));
 }
 
 void OfflinePageMHTMLArchiver::OnGenerateMHTMLDone(
@@ -168,10 +135,7 @@ void OfflinePageMHTMLArchiver::OnGenerateMHTMLDone(
                                ArchiverResult::ERROR_ARCHIVE_CREATION_FAILED);
     return;
   }
-  // TODO(jianli): if the file is not in internal directory, there may be a
-  // chance that the file gets modified before it has digest computed. So when
-  // we support archiving to public directory, we should first put it in
-  // internal directory, compute digest, and then move to public directory.
+
   ComputeDigestOnFileThread(
       file_path, base::Bind(&OfflinePageMHTMLArchiver::OnComputeDigestDone,
                             weak_ptr_factory_.GetWeakPtr(), url, file_path,
@@ -195,10 +159,11 @@ void OfflinePageMHTMLArchiver::OnComputeDigestDone(
                  file_path, title, file_size, digest));
 }
 
-bool OfflinePageMHTMLArchiver::HasConnectionSecurityError() {
-  SecurityStateTabHelper::CreateForWebContents(web_contents_);
+bool OfflinePageMHTMLArchiver::HasConnectionSecurityError(
+    content::WebContents* web_contents) {
+  SecurityStateTabHelper::CreateForWebContents(web_contents);
   SecurityStateTabHelper* helper =
-      SecurityStateTabHelper::FromWebContents(web_contents_);
+      SecurityStateTabHelper::FromWebContents(web_contents);
   DCHECK(helper);
   security_state::SecurityInfo security_info;
   helper->GetSecurityInfo(&security_info);
@@ -206,8 +171,9 @@ bool OfflinePageMHTMLArchiver::HasConnectionSecurityError() {
          security_info.security_level;
 }
 
-content::PageType OfflinePageMHTMLArchiver::GetPageType() {
-  return web_contents_->GetController().GetVisibleEntry()->GetPageType();
+content::PageType OfflinePageMHTMLArchiver::GetPageType(
+    content::WebContents* web_contents) {
+  return web_contents->GetController().GetVisibleEntry()->GetPageType();
 }
 
 void OfflinePageMHTMLArchiver::DeleteFileAndReportFailure(

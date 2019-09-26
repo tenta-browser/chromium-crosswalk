@@ -5,7 +5,6 @@
 #include "gpu/command_buffer/client/client_discardable_manager.h"
 
 #include "base/containers/flat_set.h"
-#include "base/memory/ptr_util.h"
 #include "base/sys_info.h"
 
 namespace gpu {
@@ -180,6 +179,14 @@ ClientDiscardableHandle ClientDiscardableManager::GetHandle(
   auto found = handles_.find(handle_id);
   DCHECK(found != handles_.end());
   return found->second;
+}
+
+bool ClientDiscardableManager::HandleIsDeletedForTracing(
+    ClientDiscardableHandle::Id handle_id) const {
+  auto found = handles_.find(handle_id);
+  if (found == handles_.end())
+    return true;
+  return found->second.IsDeletedForTracing();
 }
 
 bool ClientDiscardableManager::FindAllocation(CommandBuffer* command_buffer,

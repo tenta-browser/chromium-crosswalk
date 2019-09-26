@@ -11,7 +11,6 @@
 #include "base/callback.h"
 #include "base/compiler_specific.h"
 #include "base/files/scoped_temp_dir.h"
-#include "base/memory/ptr_util.h"
 #include "base/sequenced_task_runner.h"
 #include "base/test/test_mock_time_task_runner.h"
 #include "base/time/time.h"
@@ -108,10 +107,10 @@ ComponentCloudPolicyUpdaterTest::ComponentCloudPolicyUpdaterTest() {
 
   PolicyMap& policy = expected_bundle_.Get(kTestPolicyNS);
   policy.Set("Name", POLICY_LEVEL_MANDATORY, POLICY_SCOPE_USER,
-             POLICY_SOURCE_CLOUD, base::MakeUnique<base::Value>("disabled"),
+             POLICY_SOURCE_CLOUD, std::make_unique<base::Value>("disabled"),
              nullptr);
   policy.Set("Second", POLICY_LEVEL_RECOMMENDED, POLICY_SCOPE_USER,
-             POLICY_SOURCE_CLOUD, base::MakeUnique<base::Value>("maybe"),
+             POLICY_SOURCE_CLOUD, std::make_unique<base::Value>("maybe"),
              nullptr);
 }
 
@@ -120,10 +119,9 @@ void ComponentCloudPolicyUpdaterTest::SetUp() {
   task_runner_ = new base::TestMockTimeTaskRunner();
   cache_.reset(new ResourceCache(temp_dir_.GetPath(), task_runner_));
   store_.reset(new ComponentCloudPolicyStore(&store_delegate_, cache_.get()));
-  store_->SetCredentials(ComponentPolicyBuilder::kFakeUsername,
+  store_->SetCredentials(ComponentPolicyBuilder::GetFakeAccountId(),
                          ComponentPolicyBuilder::kFakeToken,
-                         ComponentPolicyBuilder::kFakeDeviceId,
-                         public_key_,
+                         ComponentPolicyBuilder::kFakeDeviceId, public_key_,
                          ComponentPolicyBuilder::kFakePublicKeyVersion);
   fetcher_factory_.set_remove_fetcher_on_delete(true);
   fetcher_backend_.reset(new ExternalPolicyDataFetcherBackend(
@@ -144,7 +142,7 @@ void ComponentCloudPolicyUpdaterTest::TearDown() {
 std::unique_ptr<em::PolicyFetchResponse>
 ComponentCloudPolicyUpdaterTest::CreateResponse() {
   builder_.Build();
-  return base::MakeUnique<em::PolicyFetchResponse>(builder_.policy());
+  return std::make_unique<em::PolicyFetchResponse>(builder_.policy());
 }
 
 TEST_F(ComponentCloudPolicyUpdaterTest, FetchAndCache) {
@@ -203,10 +201,12 @@ TEST_F(ComponentCloudPolicyUpdaterTest, PolicyFetchResponseTooLarge) {
 TEST_F(ComponentCloudPolicyUpdaterTest, PolicyFetchResponseInvalid) {
   // Submit an invalid policy fetch response.
   builder_.policy_data().set_username("wronguser@example.com");
+  builder_.policy_data().set_gaia_id("wrong-gaia-id");
   updater_->UpdateExternalPolicy(kTestPolicyNS, CreateResponse());
 
   // Submit two valid policy fetch responses.
   builder_.policy_data().set_username(ComponentPolicyBuilder::kFakeUsername);
+  builder_.policy_data().set_gaia_id(ComponentPolicyBuilder::kFakeGaiaId);
   builder_.policy_data().set_settings_entity_id(kTestExtension2);
   builder_.payload().set_download_url(kTestDownload2);
   updater_->UpdateExternalPolicy(

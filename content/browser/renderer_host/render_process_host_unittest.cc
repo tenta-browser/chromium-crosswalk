@@ -9,7 +9,9 @@
 #include <vector>
 
 #include "base/command_line.h"
-#include "base/memory/ptr_util.h"
+#include "base/macros.h"
+#include "base/run_loop.h"
+#include "base/test/histogram_tester.h"
 #include "build/build_config.h"
 #include "content/common/frame_messages.h"
 #include "content/common/frame_owner_properties.h"
@@ -25,7 +27,8 @@
 #include "content/test/test_render_frame_host.h"
 #include "content/test/test_render_view_host.h"
 #include "content/test/test_web_contents.h"
-#include "third_party/WebKit/common/frame_policy.h"
+#include "testing/gmock/include/gmock/gmock.h"
+#include "third_party/blink/public/common/frame/frame_policy.h"
 
 namespace content {
 
@@ -43,9 +46,8 @@ TEST_F(RenderProcessHostUnitTest, GuestsAreNotSuitableHosts) {
       &guest_host, browser_context(), test_url));
   EXPECT_TRUE(RenderProcessHostImpl::IsSuitableHost(
       process(), browser_context(), test_url));
-  EXPECT_EQ(
-      process(),
-      RenderProcessHost::GetExistingProcessHost(browser_context(), test_url));
+  EXPECT_EQ(process(), RenderProcessHostImpl::GetExistingProcessHost(
+                           browser_context(), test_url));
 }
 
 #if !defined(OS_ANDROID) && !defined(OS_CHROMEOS)
@@ -249,6 +251,9 @@ TEST_F(RenderProcessHostUnitTest,
   ContentBrowserClient* regular_client =
       SetBrowserClientForTesting(&modified_client);
 
+  // Discard the spare, so it cannot be considered by the GetProcess call below.
+  RenderProcessHostImpl::DiscardSpareRenderProcessHostForTesting();
+
   // Now, getting a RenderProcessHost for a navigation to the same site should
   // not reuse the unmatched service worker's process (i.e., |sw_host|), as
   // it's unsuitable.
@@ -426,11 +431,8 @@ TEST_F(RenderProcessHostUnitTest, DoNotReuseHostThatIsNeverSuitableForReuse) {
 }
 
 // Tests that RenderProcessHost reuse considers navigations correctly.
-TEST_F(RenderProcessHostUnitTest, ReuseNavigationProcess) {
-  // This is only applicable to PlzNavigate.
-  if (!IsBrowserSideNavigationEnabled())
-    return;
-
+// Disabled for flakiness: see https://crbug.com/826595
+TEST_F(RenderProcessHostUnitTest, DISABLED_ReuseNavigationProcess) {
   const GURL kUrl1("http://foo.com");
   const GURL kUrl2("http://bar.com");
 
@@ -484,10 +486,6 @@ TEST_F(RenderProcessHostUnitTest, ReuseNavigationProcess) {
 // https://crbug.com/773809.
 TEST_F(RenderProcessHostUnitTest,
        ReuseNavigationProcessRedirectsRendererInitiated) {
-  // This is only applicable to PlzNavigate.
-  if (!IsBrowserSideNavigationEnabled())
-    return;
-
   const GURL kUrl("http://foo.com");
   const GURL kRedirectUrl1("http://foo.com/redirect");
   const GURL kRedirectUrl2("http://bar.com");
@@ -572,10 +570,6 @@ TEST_F(RenderProcessHostUnitTest,
 // redirects in a browser-initiated navigation.
 TEST_F(RenderProcessHostUnitTest,
        ReuseNavigationProcessRedirectsBrowserInitiated) {
-  // This is only applicable to PlzNavigate.
-  if (!IsBrowserSideNavigationEnabled())
-    return;
-
   const GURL kInitialUrl("http://google.com");
   const GURL kUrl("http://foo.com");
   const GURL kRedirectUrl1("http://foo.com/redirect");
@@ -727,9 +721,7 @@ TEST_F(RenderProcessHostUnitTest, ReuseSiteURLChanges) {
 // Tests that RenderProcessHost reuse works correctly even if the site URL of a
 // URL we're navigating to changes.
 TEST_F(RenderProcessHostUnitTest, ReuseExpectedSiteURLChanges) {
-  // This is only applicable to PlzNavigate.
-  // TODO(clamy): This test should work with --site-per-process.
-  if (!IsBrowserSideNavigationEnabled() || AreAllSitesIsolatedForTesting())
+  if (AreAllSitesIsolatedForTesting())
     return;
 
   const GURL kUrl("http://foo.com");
@@ -854,7 +846,7 @@ TEST_F(RenderProcessHostUnitTest,
 
   // Create a foo.com SiteInstance and check that its process does not
   // reuse the foo process from the first navigation, since it's now in a
-  // different StoragePartiiton.
+  // different StoragePartition.
   scoped_refptr<SiteInstanceImpl> site_instance =
       SiteInstanceImpl::CreateForURL(browser_context(), kUrl);
   site_instance->set_process_reuse_policy(
@@ -897,18 +889,36 @@ TEST_F(RenderProcessHostUnitTest,
 }
 
 class SpareRenderProcessHostUnitTest : public RenderViewHostImplTestHarness {
+ public:
+  SpareRenderProcessHostUnitTest() {}
+
  protected:
   void SetUp() override {
     SetRenderProcessHostFactory(&rph_factory_);
     RenderViewHostImplTestHarness::SetUp();
     SetContents(nullptr);  // Start with no renderers.
+    RenderProcessHostImpl::DiscardSpareRenderProcessHostForTesting();
     while (!rph_factory_.GetProcesses()->empty()) {
       rph_factory_.Remove(rph_factory_.GetProcesses()->back().get());
     }
   }
 
   MockRenderProcessHostFactory rph_factory_;
+
+ private:
+  DISALLOW_COPY_AND_ASSIGN(SpareRenderProcessHostUnitTest);
 };
+
+using SpareProcessMaybeTakeAction =
+    RenderProcessHostImpl::SpareProcessMaybeTakeAction;
+void ExpectSpareProcessMaybeTakeActionBucket(
+    const base::HistogramTester& histograms,
+    SpareProcessMaybeTakeAction expected_action) {
+  EXPECT_THAT(
+      histograms.GetAllSamples(
+          "BrowserRenderProcessHost.SpareProcessMaybeTakeAction"),
+      testing::ElementsAre(base::Bucket(static_cast<int>(expected_action), 1)));
+}
 
 TEST_F(SpareRenderProcessHostUnitTest, TestRendererTaken) {
   RenderProcessHost::WarmupSpareRenderProcessHost(browser_context());
@@ -918,24 +928,183 @@ TEST_F(SpareRenderProcessHostUnitTest, TestRendererTaken) {
   EXPECT_EQ(spare_rph, rph_factory_.GetProcesses()->at(0).get());
 
   const GURL kUrl1("http://foo.com");
+  base::HistogramTester histograms;
   SetContents(CreateTestWebContents());
   NavigateAndCommit(kUrl1);
   EXPECT_EQ(spare_rph, main_test_rfh()->GetProcess());
-  ASSERT_EQ(1U, rph_factory_.GetProcesses()->size());
+  ExpectSpareProcessMaybeTakeActionBucket(
+      histograms, SpareProcessMaybeTakeAction::kSpareTaken);
+
+  EXPECT_NE(spare_rph,
+            RenderProcessHostImpl::GetSpareRenderProcessHostForTesting());
+  if (RenderProcessHostImpl::IsSpareProcessKeptAtAllTimes()) {
+    EXPECT_NE(nullptr,
+              RenderProcessHostImpl::GetSpareRenderProcessHostForTesting());
+    EXPECT_EQ(2U, rph_factory_.GetProcesses()->size());
+  } else {
+    EXPECT_EQ(nullptr,
+              RenderProcessHostImpl::GetSpareRenderProcessHostForTesting());
+    EXPECT_EQ(1U, rph_factory_.GetProcesses()->size());
+  }
 }
 
 TEST_F(SpareRenderProcessHostUnitTest, TestRendererNotTaken) {
   std::unique_ptr<BrowserContext> alternate_context(new TestBrowserContext());
   RenderProcessHost::WarmupSpareRenderProcessHost(alternate_context.get());
   ASSERT_EQ(1U, rph_factory_.GetProcesses()->size());
+  RenderProcessHost* old_spare =
+      RenderProcessHostImpl::GetSpareRenderProcessHostForTesting();
+  EXPECT_EQ(alternate_context.get(), old_spare->GetBrowserContext());
+  EXPECT_EQ(old_spare, rph_factory_.GetProcesses()->at(0).get());
+
+  const GURL kUrl1("http://foo.com");
+  base::HistogramTester histograms;
+  SetContents(CreateTestWebContents());
+  NavigateAndCommit(kUrl1);
+  EXPECT_NE(old_spare, main_test_rfh()->GetProcess());
+  ExpectSpareProcessMaybeTakeActionBucket(
+      histograms, SpareProcessMaybeTakeAction::kMismatchedBrowserContext);
+
+  // Pumping the message loop here accounts for the delay between calling
+  // RPH::Cleanup on the spare and the time when the posted delete actually
+  // happens.  Without pumping, the spare would still be present in
+  // rph_factory_.GetProcesses().
+  base::RunLoop().RunUntilIdle();
+
+  RenderProcessHost* new_spare =
+      RenderProcessHostImpl::GetSpareRenderProcessHostForTesting();
+  EXPECT_NE(old_spare, new_spare);
+  if (RenderProcessHostImpl::IsSpareProcessKeptAtAllTimes()) {
+    EXPECT_EQ(2U, rph_factory_.GetProcesses()->size());
+    ASSERT_NE(nullptr, new_spare);
+    EXPECT_EQ(GetBrowserContext(), new_spare->GetBrowserContext());
+  } else {
+    EXPECT_EQ(1U, rph_factory_.GetProcesses()->size());
+    EXPECT_EQ(nullptr, new_spare);
+  }
+}
+
+TEST_F(SpareRenderProcessHostUnitTest, SpareMissing) {
+  RenderProcessHostImpl::DiscardSpareRenderProcessHostForTesting();
+  ASSERT_EQ(0U, rph_factory_.GetProcesses()->size());
   RenderProcessHost* spare_rph =
       RenderProcessHostImpl::GetSpareRenderProcessHostForTesting();
-  EXPECT_EQ(spare_rph, rph_factory_.GetProcesses()->at(0).get());
+  EXPECT_FALSE(spare_rph);
 
+  const GURL kUrl1("http://foo.com");
+  base::HistogramTester histograms;
+  SetContents(CreateTestWebContents());
+  NavigateAndCommit(kUrl1);
+  EXPECT_TRUE(main_test_rfh()->GetProcess());
+  ExpectSpareProcessMaybeTakeActionBucket(
+      histograms, SpareProcessMaybeTakeAction::kNoSparePresent);
+
+  spare_rph = RenderProcessHostImpl::GetSpareRenderProcessHostForTesting();
+  if (RenderProcessHostImpl::IsSpareProcessKeptAtAllTimes()) {
+    EXPECT_TRUE(spare_rph);
+    EXPECT_EQ(2U, rph_factory_.GetProcesses()->size());
+  } else {
+    EXPECT_FALSE(spare_rph);
+    EXPECT_EQ(1U, rph_factory_.GetProcesses()->size());
+  }
+}
+
+TEST_F(SpareRenderProcessHostUnitTest,
+       SpareShouldNotLaunchInParallelWithOtherProcess) {
+  std::unique_ptr<BrowserContext> alternate_context(new TestBrowserContext());
+  RenderProcessHost::WarmupSpareRenderProcessHost(alternate_context.get());
+  ASSERT_EQ(1U, rph_factory_.GetProcesses()->size());
+  RenderProcessHost* old_spare =
+      RenderProcessHostImpl::GetSpareRenderProcessHostForTesting();
+  EXPECT_EQ(alternate_context.get(), old_spare->GetBrowserContext());
+  EXPECT_EQ(old_spare, rph_factory_.GetProcesses()->at(0).get());
+
+  // When we try to get a process for foo.com, we won't be able to use the spare
+  // (because it is associated with the alternate, mismatched BrowserContext)
+  // and therefore we will have to spawn a new process.  This test verifies that
+  // we don't at the same time try to warm-up a new spare (leading to
+  // unnecessary resource contention when 2 processes try to launch at the same
+  // time).
+  scoped_refptr<SiteInstanceImpl> site_instance =
+      SiteInstanceImpl::CreateForURL(browser_context(), GURL("http://foo.com"));
+  RenderProcessHost* site_instance_process = site_instance->GetProcess();
+  // We need to ensure the MockRenderProcessHost gets destroyed at the end of
+  // the test.
+  std::unique_ptr<MockRenderProcessHost> owned_mock_process(
+      static_cast<MockRenderProcessHost*>(site_instance_process));
+
+  // The SiteInstance shouldn't get the old spare, because of BrowserContext
+  // mismatch.  The SiteInstance will get a new process instead.
+  EXPECT_NE(old_spare, site_instance_process);
+  EXPECT_FALSE(site_instance_process->IsReady());
+
+  // There should be no new spare at this point to avoid launching 2 processes
+  // at the same time.  Note that the spare might still be created later during
+  // a navigation (e.g. after cross-site redirects or when committing).
+  RenderProcessHost* new_spare =
+      RenderProcessHostImpl::GetSpareRenderProcessHostForTesting();
+  if (new_spare != old_spare)
+    EXPECT_FALSE(new_spare);
+}
+
+// This unit test looks at the simplified equivalent of what
+// CtrlClickShouldEndUpInSameProcessTest.BlankTarget test would have
+// encountered.  The test verifies that the spare RPH is not launched if 1) we
+// need to create another renderer process anyway (e.g. because the spare is
+// missing when MaybeTakeSpareRenderProcessHost is called) and 2) creating the
+// other renderer process will put as at the process limit.  Launching the spare
+// in this scenario would put us over the process limit and is therefore
+// undesirable.
+TEST_F(SpareRenderProcessHostUnitTest, JustBelowProcessLimit) {
+  RenderProcessHostImpl::SetMaxRendererProcessCount(1);
+
+  // No spare or any other renderer process at the start of the test.
+  EXPECT_FALSE(RenderProcessHostImpl::GetSpareRenderProcessHostForTesting());
+  EXPECT_EQ(0U, rph_factory_.GetProcesses()->size());
+
+  // Navigation can't take a spare (none present) and needs to launch a new
+  // renderer process.
   const GURL kUrl1("http://foo.com");
   SetContents(CreateTestWebContents());
   NavigateAndCommit(kUrl1);
-  EXPECT_NE(spare_rph, main_test_rfh()->GetProcess());
+
+  // We should still be below the process limit.
+  EXPECT_EQ(1U, rph_factory_.GetProcesses()->size());
+
+  // There should be no spare - having one would put us over the process limit.
+  EXPECT_FALSE(RenderProcessHostImpl::GetSpareRenderProcessHostForTesting());
+}
+
+// This unit test verifies that a mismatched spare RenderProcessHost is dropped
+// before considering process reuse due to the process limit.
+TEST_F(SpareRenderProcessHostUnitTest, AtProcessLimit) {
+  RenderProcessHostImpl::SetMaxRendererProcessCount(2);
+
+  // Create and navigate the 1st WebContents.
+  const GURL kUrl1("http://foo.com");
+  std::unique_ptr<WebContents> contents1(CreateTestWebContents());
+  static_cast<TestWebContents*>(contents1.get())->NavigateAndCommit(kUrl1);
+  EXPECT_NE(RenderProcessHostImpl::GetSpareRenderProcessHostForTesting(),
+            contents1->GetMainFrame()->GetProcess());
+
+  // Warm up a mismatched spare.
+  std::unique_ptr<BrowserContext> alternate_context(new TestBrowserContext());
+  RenderProcessHost::WarmupSpareRenderProcessHost(alternate_context.get());
+  base::RunLoop().RunUntilIdle();
+  EXPECT_EQ(2U, rph_factory_.GetProcesses()->size());
+
+  // Create and navigate the 2nd WebContents.
+  const GURL kUrl2("http://bar.com");
+  std::unique_ptr<WebContents> contents2(CreateTestWebContents());
+  static_cast<TestWebContents*>(contents2.get())->NavigateAndCommit(kUrl2);
+  base::RunLoop().RunUntilIdle();
+
+  // Creating a 2nd WebContents shouldn't share a renderer process with the 1st
+  // one - instead the spare should be dropped to stay under the process limit.
+  EXPECT_EQ(2U, rph_factory_.GetProcesses()->size());
+  EXPECT_FALSE(RenderProcessHostImpl::GetSpareRenderProcessHostForTesting());
+  EXPECT_NE(contents1->GetMainFrame()->GetProcess(),
+            contents2->GetMainFrame()->GetProcess());
 }
 
 }  // namespace content

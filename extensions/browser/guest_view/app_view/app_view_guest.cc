@@ -141,12 +141,13 @@ void AppViewGuest::RequestMediaAccessPermission(
                                               guest_extension);
 }
 
-bool AppViewGuest::CheckMediaAccessPermission(WebContents* web_contents,
-                                              const GURL& security_origin,
-                                              content::MediaStreamType type) {
+bool AppViewGuest::CheckMediaAccessPermission(
+    content::RenderFrameHost* render_frame_host,
+    const GURL& security_origin,
+    content::MediaStreamType type) {
   if (!app_delegate_) {
     return WebContentsDelegate::CheckMediaAccessPermission(
-        web_contents, security_origin, type);
+        render_frame_host, security_origin, type);
   }
   const ExtensionSet& enabled_extensions =
       ExtensionRegistry::Get(browser_context())->enabled_extensions();
@@ -154,7 +155,7 @@ bool AppViewGuest::CheckMediaAccessPermission(WebContents* web_contents,
       enabled_extensions.GetByID(guest_extension_id_);
 
   return app_delegate_->CheckMediaAccessPermission(
-      web_contents, security_origin, type, guest_extension);
+      render_frame_host, security_origin, type, guest_extension);
 }
 
 void AppViewGuest::CreateWebContents(
@@ -183,7 +184,7 @@ void AppViewGuest::CreateWebContents(
       enabled_extensions.GetByID(GetOwnerSiteURL().host());
 
   if (!guest_extension || !guest_extension->is_platform_app() ||
-      !embedder_extension | !embedder_extension->is_platform_app()) {
+      !embedder_extension || !embedder_extension->is_platform_app()) {
     callback.Run(nullptr);
     return;
   }

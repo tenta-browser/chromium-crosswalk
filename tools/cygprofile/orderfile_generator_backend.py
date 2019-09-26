@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env vpython
 # Copyright (c) 2013 The Chromium Authors. All rights reserved.
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
@@ -14,10 +14,10 @@ Example usage:
     --target-arch=arm
 """
 
+import argparse
 import hashlib
 import json
 import logging
-import optparse
 import os
 import re
 import shutil
@@ -27,8 +27,10 @@ import tempfile
 import time
 
 import cygprofile_utils
+import patch_orderfile
 import process_profiles
 import profile_android_startup
+import symbol_extractor
 
 
 _SRC_PATH = os.path.join(os.path.dirname(os.path.realpath(__file__)),
@@ -248,7 +250,7 @@ class ClankCompiler(object):
   """Handles compilation of clank."""
 
   def __init__(self, out_dir, step_recorder, arch, jobs, max_load, use_goma,
-               goma_dir, lightweight_instrumentation):
+               goma_dir):
     self._out_dir = out_dir
     self._step_recorder = step_recorder
     self._arch = arch
@@ -256,7 +258,6 @@ class ClankCompiler(object):
     self._max_load = max_load
     self._use_goma = use_goma
     self._goma_dir = goma_dir
-    self._lightweight_instrumentation = lightweight_instrumentation
     lib_chrome_so_dir = 'lib.unstripped'
     self.lib_chrome_so = os.path.join(
         self._out_dir, 'Release', lib_chrome_so_dir, 'libchrome.so')
@@ -286,8 +287,6 @@ class ClankCompiler(object):
         'use_goma=' + str(self._use_goma).lower(),
         'use_order_profiling=' + str(instrumented).lower(),
     ]
-    if instrumented and self._lightweight_instrumentation:
-      args.append('use_lightweight_order_profiling=true')
     if self._goma_dir:
       args += ['goma_dir="%s"' % self._goma_dir]
 
@@ -418,13 +417,9 @@ class OrderfileGenerator(object):
   generates an updated orderfile.
   """
   _CLANK_REPO = os.path.join(constants.DIR_SOURCE_ROOT, 'clank')
-  _MERGE_TRACES_SCRIPT = os.path.join(
-      constants.DIR_SOURCE_ROOT, 'tools', 'cygprofile', 'mergetraces.py')
   _CYGLOG_TO_ORDERFILE_SCRIPT = os.path.join(
       constants.DIR_SOURCE_ROOT, 'tools', 'cygprofile',
       'cyglog_to_orderfile.py')
-  _PATCH_ORDERFILE_SCRIPT = os.path.join(
-      constants.DIR_SOURCE_ROOT, 'tools', 'cygprofile', 'patch_orderfile.py')
   _CHECK_ORDERFILE_SCRIPT = os.path.join(
       constants.DIR_SOURCE_ROOT, 'tools', 'cygprofile', 'check_orderfile.py')
   _BUILD_ROOT = os.path.abspath(os.path.dirname(os.path.dirname(
@@ -434,8 +429,6 @@ class OrderfileGenerator(object):
       _CLANK_REPO, 'orderfiles', 'unpatched_orderfile.%s')
   _MERGED_CYGLOG_FILENAME = os.path.join(
       constants.GetOutDirectory(), 'merged_cyglog')
-  _TEMP_ORDERFILE_FILENAME = os.path.join(
-      constants.GetOutDirectory(), 'tmp_orderfile')
 
   _PATH_TO_ORDERFILE = os.path.join(_CLANK_REPO, 'orderfiles',
                                     'orderfile.%s.out')
@@ -460,8 +453,16 @@ class OrderfileGenerator(object):
         self._BUILD_ROOT, self._options.arch + '_uninstrumented_out')
 
     if options.profile:
+      output_directory = os.path.join(self._instrumented_out_dir, 'Release')
+      host_cyglog_dir = os.path.join(output_directory, 'cyglog_data')
+      urls = [profile_android_startup.AndroidProfileTool.TEST_URL]
+      use_wpr = True
+      simulate_user = False
+      urls = options.urls
+      use_wpr = not options.no_wpr
+      simulate_user = options.simulate_user
       self._profiler = profile_android_startup.AndroidProfileTool(
-          os.path.join(self._instrumented_out_dir, 'Release'))
+          output_directory, host_cyglog_dir, use_wpr, urls, simulate_user)
 
     self._output_data = {}
     self._step_recorder = StepRecorder(options.buildbot)
@@ -472,27 +473,7 @@ class OrderfileGenerator(object):
                                                       options.branch,
                                                       options.netrc)
     assert os.path.isdir(constants.DIR_SOURCE_ROOT), 'No src directory found'
-
-  def _RunCygprofileUnitTests(self):
-    """Builds, deploys and runs cygprofile_unittests."""
-    # There an no unittests (yet) for the lightweight instrumentation.
-    # TODO(lizeb): Fix this.
-    if self._options.lightweight_instrumentation:
-      return
-    tools_compiler = ClankCompiler(
-        os.path.dirname(constants.GetOutDirectory()),
-        self._step_recorder, self._options.arch, self._options.jobs,
-        self._options.max_load, self._options.use_goma, self._options.goma_dir,
-        self._options.lightweight_instrumentation)
-    tools_compiler.Build(instrumented=False, target='android_tools')
-    self._compiler.Build(instrumented=True, target='cygprofile_unittests')
-
-    self._step_recorder.BeginStep('Deploy and run cygprofile_unittests')
-    exit_code = self._profiler.RunCygprofileTests()
-
-    if exit_code != 0:
-      self._step_recorder.FailStep(
-          'cygprofile_unittests exited with non-0 status: %d' % exit_code)
+    symbol_extractor.SetArchitecture(options.arch)
 
   @staticmethod
   def _RemoveBlanks(src_file, dest_file):
@@ -524,16 +505,15 @@ class OrderfileGenerator(object):
           self._compiler.chrome_apk,
           constants.PACKAGE_INFO['chrome'])
       self._step_recorder.BeginStep('Process cyglog')
-      if self._options.lightweight_instrumentation:
-        assert os.path.exists(self._compiler.lib_chrome_so)
-        process_profiles.GetReachedSymbolsFromDumpsAndMaybeWriteOffsets(
-            files, self._compiler.lib_chrome_so, self._MERGED_CYGLOG_FILENAME)
-      else:
-        with open(self._MERGED_CYGLOG_FILENAME, 'w') as merged_cyglog:
-          self._step_recorder.RunCommand([self._MERGE_TRACES_SCRIPT] + files,
-                                         constants.DIR_SOURCE_ROOT,
-                                         stdout=merged_cyglog)
-    except CommandError:
+      assert os.path.exists(self._compiler.lib_chrome_so)
+      offsets = process_profiles.GetReachedOffsetsFromDumpFiles(
+          files, self._compiler.lib_chrome_so)
+      if not offsets:
+        raise Exception('No profiler offsets found in {}'.format(
+            '\n'.join(files)))
+      with open(self._MERGED_CYGLOG_FILENAME, 'w') as f:
+        f.write('\n'.join(map(str, offsets)))
+    except Exception:
       for f in files:
         self._SaveForDebugging(f)
       raise
@@ -546,10 +526,7 @@ class OrderfileGenerator(object):
           '--target-arch=' + self._options.arch,
           '--native-library=' + self._compiler.lib_chrome_so,
           '--output=' + self._GetUnpatchedOrderfileFilename()]
-      if self._options.lightweight_instrumentation:
-        command_args.append('--reached-offsets=' + self._MERGED_CYGLOG_FILENAME)
-      else:
-        command_args.append('--merged-cyglog=' + self._MERGED_CYGLOG_FILENAME)
+      command_args.append('--reached-offsets=' + self._MERGED_CYGLOG_FILENAME)
       self._step_recorder.RunCommand(
           [self._CYGLOG_TO_ORDERFILE_SCRIPT] + command_args)
     except CommandError:
@@ -567,25 +544,9 @@ class OrderfileGenerator(object):
   def _PatchOrderfile(self):
     """Patches the orderfile using clean version of libchrome.so."""
     self._step_recorder.BeginStep('Patch Orderfile')
-    try:
-      tmp_out = open(self._TEMP_ORDERFILE_FILENAME, 'w')
-      self._step_recorder.RunCommand([self._PATCH_ORDERFILE_SCRIPT,
-                                      self._GetUnpatchedOrderfileFilename(),
-                                      self._compiler.lib_chrome_so,
-                                      '--target-arch=' + self._options.arch],
-                                     constants.DIR_SOURCE_ROOT, stdout=tmp_out)
-      tmp_out.close()
-
-      self._RemoveBlanks(self._TEMP_ORDERFILE_FILENAME,
-                         self._GetPathToOrderfile())
-    except CommandError:
-      self._SaveForDebugging(self._GetUnpatchedOrderfileFilename())
-      self._SaveForDebuggingWithOverwrite(self._compiler.lib_chrome_so)
-      raise
-    finally:
-      tmp_out.close()
-      if os.path.isfile(self._TEMP_ORDERFILE_FILENAME):
-        os.unlink(self._TEMP_ORDERFILE_FILENAME)
+    patch_orderfile.GeneratePatchedOrderfile(
+        self._GetUnpatchedOrderfileFilename(), self._compiler.lib_chrome_so,
+        self._GetPathToOrderfile())
 
   def _VerifySymbolOrder(self):
     self._step_recorder.BeginStep('Verify Symbol Order')
@@ -686,13 +647,9 @@ class OrderfileGenerator(object):
             self._instrumented_out_dir,
             self._step_recorder, self._options.arch, self._options.jobs,
             self._options.max_load, self._options.use_goma,
-            self._options.goma_dir,
-            self._options.lightweight_instrumentation)
-        self._RunCygprofileUnitTests()
-        if self._options.lightweight_instrumentation:
-          _EnsureOrderfileStartsWithAnchorSection(self._GetPathToOrderfile())
-        self._compiler.CompileChromeApk(
-            True, self._options.lightweight_instrumentation)
+            self._options.goma_dir)
+        _EnsureOrderfileStartsWithAnchorSection(self._GetPathToOrderfile())
+        self._compiler.CompileChromeApk(True)
         self._GenerateAndProcessProfile()
         self._MaybeArchiveOrderfile(self._GetUnpatchedOrderfileFilename())
         profile_uploaded = True
@@ -708,8 +665,7 @@ class OrderfileGenerator(object):
         self._compiler = ClankCompiler(
             self._uninstrumented_out_dir, self._step_recorder,
             self._options.arch, self._options.jobs, self._options.max_load,
-            self._options.use_goma, self._options.goma_dir,
-            self._options.lightweight_instrumentation)
+            self._options.use_goma, self._options.goma_dir)
         self._compiler.CompileLibchrome(False)
         self._PatchOrderfile()
         # Because identical code folding is a bit different with and without
@@ -742,47 +698,46 @@ class OrderfileGenerator(object):
     return self._output_data
 
 
-def CreateOptionParser():
-  parser = optparse.OptionParser()
-  parser.add_option(
-      '--lightweight-instrumentation', action='store_true', default=False,
-      help='Use the lightweight instrumentation path')
-  parser.add_option(
+def CreateArgumentParser():
+  """Creates and returns the argument parser."""
+  parser = argparse.ArgumentParser()
+  parser.add_argument(
       '--buildbot', action='store_true',
       help='If true, the script expects to be run on a buildbot')
-  parser.add_option(
+  parser.add_argument(
       '--verify', action='store_true',
       help='If true, the script only verifies the current orderfile')
-  parser.add_option('--target-arch', action='store', dest='arch',
-                    default=cygprofile_utils.DetectArchitecture(),
-                    choices=['arm', 'arm64', 'x86', 'x86_64', 'x64', 'mips'],
-                    help='The target architecture for which to build')
-  parser.add_option('--output-json', action='store', dest='json_file',
-                    help='Location to save stats in json format')
-  parser.add_option(
+  parser.add_argument('--target-arch', action='store', dest='arch',
+                      default=cygprofile_utils.DetectArchitecture(),
+                      choices=['arm', 'arm64', 'x86', 'x86_64', 'x64', 'mips'],
+                      help='The target architecture for which to build')
+  parser.add_argument('--output-json', action='store', dest='json_file',
+                      help='Location to save stats in json format')
+  parser.add_argument(
       '--skip-profile', action='store_false', dest='profile', default=True,
       help='Don\'t generate a profile on the device. Only patch from the '
       'existing profile.')
-  parser.add_option(
+  parser.add_argument(
       '--skip-patch', action='store_false', dest='patch', default=True,
       help='Only generate the raw (unpatched) orderfile, don\'t patch it.')
-  parser.add_option(
+  parser.add_argument(
       '--netrc', action='store',
       help='A custom .netrc file to use for git checkin. Only used on bots.')
-  parser.add_option(
+  parser.add_argument(
       '--branch', action='store', default='master',
       help='When running on buildbot with a netrc, the branch orderfile '
       'hashes get checked into.')
   # Note: -j50 was causing issues on the bot.
-  parser.add_option(
+  parser.add_argument(
       '-j', '--jobs', action='store', default=20,
       help='Number of jobs to use for compilation.')
-  parser.add_option(
+  parser.add_argument(
       '-l', '--max-load', action='store', default=4, help='Max cpu load.')
-  parser.add_option('--goma-dir', help='GOMA directory.')
-  parser.add_option(
+  parser.add_argument('--goma-dir', help='GOMA directory.')
+  parser.add_argument(
       '--use-goma', action='store_true', help='Enable GOMA.', default=False)
-  parser.add_option('--adb-path', help='Path to the adb binary.')
+  parser.add_argument('--adb-path', help='Path to the adb binary.')
+  profile_android_startup.AddProfileCollectionArguments(parser)
   return parser
 
 
@@ -815,11 +770,11 @@ def CreateOrderfile(options, orderfile_updater_class):
   return False
 
 
-def main(argv):
-  parser = CreateOptionParser()
-  options, _ = parser.parse_args(argv)
+def main():
+  parser = CreateArgumentParser()
+  options = parser.parse_args()
   return 0 if CreateOrderfile(options, OrderfileUpdater) else 1
 
 
 if __name__ == '__main__':
-  sys.exit(main(sys.argv))
+  sys.exit(main())

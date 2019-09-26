@@ -19,7 +19,7 @@
 #include "content/common/service_worker/service_worker_status_code.h"
 #include "content/public/browser/stored_payment_app.h"
 #include "mojo/public/cpp/bindings/binding.h"
-#include "third_party/WebKit/public/platform/modules/payments/payment_app.mojom.h"
+#include "third_party/blink/public/platform/modules/payments/payment_app.mojom.h"
 
 namespace content {
 
@@ -42,9 +42,11 @@ class CONTENT_EXPORT PaymentAppDatabase {
       base::OnceCallback<void(payments::mojom::PaymentHandlerStatus)>;
   using WritePaymentInstrumentCallback =
       base::OnceCallback<void(payments::mojom::PaymentHandlerStatus)>;
-  using FetchAndWritePaymentAppInfoCallback =
+  using FetchAndUpdatePaymentAppInfoCallback =
       base::OnceCallback<void(payments::mojom::PaymentHandlerStatus)>;
   using ClearPaymentInstrumentsCallback =
+      base::OnceCallback<void(payments::mojom::PaymentHandlerStatus)>;
+  using SetPaymentAppInfoCallback =
       base::OnceCallback<void(payments::mojom::PaymentHandlerStatus)>;
 
   explicit PaymentAppDatabase(
@@ -68,14 +70,20 @@ class CONTENT_EXPORT PaymentAppDatabase {
                               const std::string& instrument_key,
                               payments::mojom::PaymentInstrumentPtr instrument,
                               WritePaymentInstrumentCallback callback);
-  void FetchAndWritePaymentAppInfo(
+  void FetchAndUpdatePaymentAppInfo(
       const GURL& context,
       const GURL& scope,
-      const std::string& user_hint,
-      FetchAndWritePaymentAppInfoCallback callback);
+      FetchAndUpdatePaymentAppInfoCallback callback);
   void ClearPaymentInstruments(const GURL& scope,
                                ClearPaymentInstrumentsCallback callback);
   void SetPaymentAppUserHint(const GURL& scope, const std::string& user_hint);
+  void SetPaymentAppInfoForRegisteredServiceWorker(
+      int64_t registration_id,
+      const std::string& instrument_key,
+      const std::string& name,
+      const std::string& icon,
+      const std::string& method,
+      SetPaymentAppInfoCallback callback);
 
  private:
   // ReadAllPaymentApps callbacks
@@ -143,21 +151,25 @@ class CONTENT_EXPORT PaymentAppDatabase {
   void DidWritePaymentInstrument(WritePaymentInstrumentCallback callback,
                                  ServiceWorkerStatusCode status);
 
-  // FetchAndWritePaymentAppInfo callbacks.
+  // FetchAndUpdatePaymentAppInfo callbacks.
   void FetchPaymentAppInfoCallback(
       const GURL& scope,
-      const std::string& user_hint,
-      FetchAndWritePaymentAppInfoCallback callback,
+      FetchAndUpdatePaymentAppInfoCallback callback,
       std::unique_ptr<PaymentAppInfoFetcher::PaymentAppInfo> app_info);
-  void DidFindRegistrationToWritePaymentAppInfo(
-      const std::string& user_hint,
-      FetchAndWritePaymentAppInfoCallback callback,
+  void DidFindRegistrationToUpdatePaymentAppInfo(
+      FetchAndUpdatePaymentAppInfoCallback callback,
       std::unique_ptr<PaymentAppInfoFetcher::PaymentAppInfo> app_info,
       ServiceWorkerStatusCode status,
       scoped_refptr<ServiceWorkerRegistration> registration);
-  void DidWritePaymentApp(FetchAndWritePaymentAppInfoCallback callback,
-                          bool fetch_app_info_failed,
-                          ServiceWorkerStatusCode status);
+  void DidGetPaymentAppInfoToUpdatePaymentAppInfo(
+      FetchAndUpdatePaymentAppInfoCallback callback,
+      std::unique_ptr<PaymentAppInfoFetcher::PaymentAppInfo> app_info,
+      scoped_refptr<ServiceWorkerRegistration> registration,
+      const std::vector<std::string>& data,
+      ServiceWorkerStatusCode status);
+  void DidUpdatePaymentApp(FetchAndUpdatePaymentAppInfoCallback callback,
+                           bool fetch_app_info_failed,
+                           ServiceWorkerStatusCode status);
 
   // PaymentInstrumentIconFetcherCallback.
   void DidFetchedPaymentInstrumentIcon(
@@ -193,7 +205,25 @@ class CONTENT_EXPORT PaymentAppDatabase {
                                          ServiceWorkerStatusCode status);
   void DidSetPaymentAppUserHint(ServiceWorkerStatusCode status);
 
-  scoped_refptr<PaymentAppInfoFetcher> payment_app_info_fetcher_;
+  // SetPaymentAppInfoForRegisteredServiceWorker callbacks.
+  void DidFindRegistrationToSetPaymentApp(
+      const std::string& instrument_key,
+      const std::string& name,
+      const std::string& icon,
+      const std::string& method,
+      SetPaymentAppInfoCallback callback,
+      ServiceWorkerStatusCode status,
+      scoped_refptr<ServiceWorkerRegistration> registration);
+  void DidWritePaymentAppForSetPaymentApp(
+      const std::string& instrument_key,
+      const std::string& method,
+      SetPaymentAppInfoCallback callback,
+      scoped_refptr<ServiceWorkerRegistration> registration,
+      ServiceWorkerStatusCode status);
+  void DidWritePaymentInstrumentForSetPaymentApp(
+      SetPaymentAppInfoCallback callback,
+      ServiceWorkerStatusCode status);
+
   scoped_refptr<ServiceWorkerContextWrapper> service_worker_context_;
   base::WeakPtrFactory<PaymentAppDatabase> weak_ptr_factory_;
 

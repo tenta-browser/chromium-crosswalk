@@ -62,9 +62,9 @@ layer at (0,0) size 785x1369 backgroundClip at (0,0) size 785x600 clip at (0,0) 
           text run at (622,5) width 127: "The color of all four"
           text run at (5,25) width 204: "sides should be based on purple."
       LayoutBlockFlow {P} at (0,693) size 769x50 [border: (5px double #800080) (5px groove #800080) (5px ridge #800080) (5px inset #800080)]
-        LayoutText {#text} at (5,5) size 727x39
-          text run at (5,5) width 702: "This paragraph should have, in clockwise order from the top, a double, grooved, ridged, and inset thick border. "
-          text run at (706,5) width 26: "The"
+        LayoutText {#text} at (5,5) size 726x39
+          text run at (5,5) width 701: "This paragraph should have, in clockwise order from the top, a double, grooved, ridged, and inset thick border. "
+          text run at (706,5) width 25: "The"
           text run at (5,25) width 306: "color of all four sides should be based on purple."
       LayoutBlockFlow {P} at (0,759) size 769x20
         LayoutText {#text} at (0,0) size 278x19
@@ -111,9 +111,9 @@ layer at (0,0) size 785x1369 backgroundClip at (0,0) size 785x600 clip at (0,0) 
                   text run at (622,5) width 97: "The color of all"
                   text run at (5,25) width 234: "four sides should be based on purple."
               LayoutBlockFlow {P} at (4,438) size 747x50 [border: (5px double #800080) (5px groove #800080) (5px ridge #800080) (5px inset #800080)]
-                LayoutText {#text} at (5,5) size 727x39
-                  text run at (5,5) width 702: "This paragraph should have, in clockwise order from the top, a double, grooved, ridged, and inset thick border. "
-                  text run at (706,5) width 26: "The"
+                LayoutText {#text} at (5,5) size 726x39
+                  text run at (5,5) width 701: "This paragraph should have, in clockwise order from the top, a double, grooved, ridged, and inset thick border. "
+                  text run at (706,5) width 25: "The"
                   text run at (5,25) width 306: "color of all four sides should be based on purple."
               LayoutBlockFlow {P} at (4,504) size 747x20
                 LayoutText {#text} at (0,0) size 278x19

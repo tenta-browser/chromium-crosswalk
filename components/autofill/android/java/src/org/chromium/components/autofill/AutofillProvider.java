@@ -76,7 +76,7 @@ public abstract class AutofillProvider {
             FormData formData, int focus, float x, float y, float width, float height);
 
     /**
-     * Invoked when text field's value is changed.
+     * Invoked when form field's value is changed.
      *
      * @param index index of field in current form.
      * @param x the boundary of focus field.
@@ -86,7 +86,7 @@ public abstract class AutofillProvider {
      *
      */
     @CalledByNative
-    protected abstract void onTextFieldDidChange(
+    protected abstract void onFormFieldDidChange(
             int index, float x, float y, float width, float height);
 
     /**
@@ -105,10 +105,11 @@ public abstract class AutofillProvider {
 
     /**
      * Invoked when current form will be submitted.
-     *
+     * @param submissionSource the submission source, could be any member defined in
+     * SubmissionSource.java
      */
     @CalledByNative
-    protected abstract void onWillSubmitForm();
+    protected abstract void onFormSubmitted(int submissionSource);
 
     /**
      * Invoked when focus field changed.

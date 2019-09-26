@@ -5,6 +5,7 @@
 #include "android_webview/browser/aw_safe_browsing_whitelist_manager.h"
 
 #include <map>
+#include <memory>
 
 #include "base/bind.h"
 #include "base/logging.h"
@@ -68,7 +69,7 @@ void InsertRuleToTrie(const std::vector<base::StringPiece>& components,
     std::string component = hostcomp->as_string();
     auto child_node = node->children.find(component);
     if (child_node == node->children.end()) {
-      std::unique_ptr<TrieNode> temp = base::MakeUnique<TrieNode>();
+      std::unique_ptr<TrieNode> temp = std::make_unique<TrieNode>();
       TrieNode* current = temp.get();
       node->children.emplace(component, std::move(temp));
       node = current;
@@ -183,7 +184,7 @@ AwSafeBrowsingWhitelistManager::AwSafeBrowsingWhitelistManager(
     : background_task_runner_(background_task_runner),
       io_task_runner_(io_task_runner),
       ui_task_runner_(base::ThreadTaskRunnerHandle::Get()),
-      whitelist_(base::MakeUnique<TrieNode>()) {}
+      whitelist_(std::make_unique<TrieNode>()) {}
 
 AwSafeBrowsingWhitelistManager::~AwSafeBrowsingWhitelistManager() {}
 
@@ -196,42 +197,42 @@ void AwSafeBrowsingWhitelistManager::SetWhitelist(
 // A task that builds the whitelist on a background thread.
 void AwSafeBrowsingWhitelistManager::BuildWhitelist(
     const std::vector<std::string>& rules,
-    const base::Callback<void(bool)>& callback) {
+    base::OnceCallback<void(bool)> callback) {
   DCHECK(background_task_runner_->RunsTasksInCurrentSequence());
 
-  std::unique_ptr<TrieNode> whitelist(base::MakeUnique<TrieNode>());
+  std::unique_ptr<TrieNode> whitelist(std::make_unique<TrieNode>());
   bool success = AddRules(rules, whitelist.get());
   DCHECK(!whitelist->is_terminal);
   DCHECK(!whitelist->match_prefix);
 
-  ui_task_runner_->PostTask(FROM_HERE, base::Bind(callback, success));
+  ui_task_runner_->PostTask(FROM_HERE,
+                            base::BindOnce(std::move(callback), success));
 
   if (success) {
     // use base::Unretained as AwSafeBrowsingWhitelistManager is a singleton and
     // not cleaned.
     io_task_runner_->PostTask(
         FROM_HERE,
-        base::Bind(&AwSafeBrowsingWhitelistManager::SetWhitelist,
-                   base::Unretained(this), base::Passed(std::move(whitelist))));
+        base::BindOnce(&AwSafeBrowsingWhitelistManager::SetWhitelist,
+                       base::Unretained(this), std::move(whitelist)));
   }
 }
 
 void AwSafeBrowsingWhitelistManager::SetWhitelistOnUIThread(
     std::vector<std::string>&& rules,
-    const base::Callback<void(bool)>& callback) {
+    base::OnceCallback<void(bool)> callback) {
   DCHECK(ui_task_runner_->RunsTasksInCurrentSequence());
   // use base::Unretained as AwSafeBrowsingWhitelistManager is a singleton and
   // not cleaned.
   background_task_runner_->PostTask(
-      FROM_HERE, base::Bind(&AwSafeBrowsingWhitelistManager::BuildWhitelist,
-                            base::Unretained(this),
-                            base::Passed(std::move(rules)), callback));
+      FROM_HERE, base::BindOnce(&AwSafeBrowsingWhitelistManager::BuildWhitelist,
+                                base::Unretained(this), std::move(rules),
+                                std::move(callback)));
 }
 
 bool AwSafeBrowsingWhitelistManager::IsURLWhitelisted(const GURL& url) const {
   DCHECK(io_task_runner_->RunsTasksInCurrentSequence());
-  if (!(url.SchemeIsHTTPOrHTTPS() || url.SchemeIsWSOrWSS() ||
-        url.SchemeIs(url::kFtpScheme))) {
+  if (!url.has_host()) {
     return false;
   }
   return IsWhitelisted(url, whitelist_.get());

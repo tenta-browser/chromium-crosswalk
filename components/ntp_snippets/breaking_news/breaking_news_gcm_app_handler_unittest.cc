@@ -7,8 +7,8 @@
 #include <memory>
 #include <string>
 
+#include "base/bind_helpers.h"
 #include "base/json/json_reader.h"
-#include "base/memory/ptr_util.h"
 #include "base/message_loop/message_loop.h"
 #include "base/test/histogram_tester.h"
 #include "base/test/mock_callback.h"
@@ -32,6 +32,7 @@
 #include "google_apis/gcm/engine/account_mapping.h"
 #include "testing/gmock/include/gmock/gmock.h"
 
+using base::Clock;
 using base::TestMockTimeTaskRunner;
 using base::TickClock;
 using base::TimeTicks;
@@ -44,6 +45,7 @@ using testing::AtMost;
 using testing::ElementsAre;
 using testing::IsEmpty;
 using testing::NiceMock;
+using testing::SaveArg;
 using testing::StrictMock;
 
 namespace ntp_snippets {
@@ -202,13 +204,13 @@ void ParseJson(
 ACTION_TEMPLATE(InvokeCallbackArgument,
                 HAS_1_TEMPLATE_PARAMS(int, k),
                 AND_1_VALUE_PARAMS(p0)) {
-  ::std::tr1::get<k>(args).Run(p0);
+  std::get<k>(args).Run(p0);
 }
 
 ACTION_TEMPLATE(InvokeCallbackArgument,
                 HAS_1_TEMPLATE_PARAMS(int, k),
                 AND_2_VALUE_PARAMS(p0, p1)) {
-  ::std::tr1::get<k>(args).Run(p0, p1);
+  std::get<k>(args).Run(p0, p1);
 }
 
 base::Time GetDummyNow() {
@@ -239,9 +241,9 @@ class BreakingNewsGCMAppHandlerTest : public testing::Test {
     // Our app handler obtains InstanceID through InstanceIDDriver. We mock
     // InstanceIDDriver and return MockInstanceID through it.
     mock_instance_id_driver_ =
-        base::MakeUnique<StrictMock<MockInstanceIDDriver>>();
-    mock_instance_id_ = base::MakeUnique<StrictMock<MockInstanceID>>();
-    mock_gcm_driver_ = base::MakeUnique<StrictMock<MockGCMDriver>>();
+        std::make_unique<StrictMock<MockInstanceIDDriver>>();
+    mock_instance_id_ = std::make_unique<StrictMock<MockInstanceID>>();
+    mock_gcm_driver_ = std::make_unique<StrictMock<MockGCMDriver>>();
     BreakingNewsGCMAppHandler::RegisterProfilePrefs(
         utils_.pref_service()->registry());
 
@@ -252,24 +254,23 @@ class BreakingNewsGCMAppHandlerTest : public testing::Test {
 
   std::unique_ptr<BreakingNewsGCMAppHandler> MakeHandler(
       scoped_refptr<TestMockTimeTaskRunner> timer_mock_task_runner) {
-    tick_clock_ = timer_mock_task_runner->GetMockTickClock();
     message_loop_.SetTaskRunner(timer_mock_task_runner);
 
     // TODO(vitaliii): Initialize MockSubscriptionManager in the constructor, so
     // that one could set up expectations before creating the handler.
     auto wrapped_mock_subscription_manager =
-        base::MakeUnique<NiceMock<MockSubscriptionManager>>();
+        std::make_unique<NiceMock<MockSubscriptionManager>>();
     mock_subscription_manager_ = wrapped_mock_subscription_manager.get();
 
-    auto token_validation_timer =
-        base::MakeUnique<base::OneShotTimer>(tick_clock_.get());
+    auto token_validation_timer = std::make_unique<base::OneShotTimer>(
+        timer_mock_task_runner->GetMockTickClock());
     token_validation_timer->SetTaskRunner(timer_mock_task_runner);
 
-    auto forced_subscription_timer =
-        base::MakeUnique<base::OneShotTimer>(tick_clock_.get());
+    auto forced_subscription_timer = std::make_unique<base::OneShotTimer>(
+        timer_mock_task_runner->GetMockTickClock());
     forced_subscription_timer->SetTaskRunner(timer_mock_task_runner);
 
-    return base::MakeUnique<BreakingNewsGCMAppHandler>(
+    return std::make_unique<BreakingNewsGCMAppHandler>(
         mock_gcm_driver_.get(), mock_instance_id_driver_.get(), pref_service(),
         std::move(wrapped_mock_subscription_manager), base::Bind(&ParseJson),
         timer_mock_task_runner->GetMockClock(),
@@ -309,7 +310,6 @@ class BreakingNewsGCMAppHandlerTest : public testing::Test {
   std::unique_ptr<StrictMock<MockGCMDriver>> mock_gcm_driver_;
   std::unique_ptr<StrictMock<MockInstanceIDDriver>> mock_instance_id_driver_;
   std::unique_ptr<StrictMock<MockInstanceID>> mock_instance_id_;
-  std::unique_ptr<TickClock> tick_clock_;
 };
 
 TEST_F(BreakingNewsGCMAppHandlerTest,
@@ -327,7 +327,7 @@ TEST_F(BreakingNewsGCMAppHandlerTest,
                             "token");
   scoped_refptr<TestMockTimeTaskRunner> task_runner(
       new TestMockTimeTaskRunner(GetDummyNow(), TimeTicks::Now()));
-  auto handler = MakeHandler(task_runner);
+  std::unique_ptr<BreakingNewsGCMAppHandler> handler = MakeHandler(task_runner);
 
   // Check that the handler validates the token through GetToken. ValidateToken
   // always returns true on Android, so it's not useful. Instead, the handler
@@ -336,9 +336,7 @@ TEST_F(BreakingNewsGCMAppHandlerTest,
       .WillOnce(
           InvokeCallbackArgument<3>("token", InstanceID::Result::SUCCESS));
   EXPECT_CALL(*mock_instance_id(), ValidateToken(_, _, _, _)).Times(0);
-  handler->StartListening(
-      base::Bind([](std::unique_ptr<RemoteSuggestion> remote_suggestion) {}),
-      base::Bind([]() {}));
+  handler->StartListening(base::DoNothing(), base::DoNothing());
   task_runner->RunUntilIdle();
 }
 
@@ -359,14 +357,12 @@ TEST_F(BreakingNewsGCMAppHandlerTest,
 
   scoped_refptr<TestMockTimeTaskRunner> task_runner(
       new TestMockTimeTaskRunner(GetDummyNow(), TimeTicks::Now()));
-  auto handler = MakeHandler(task_runner);
+  std::unique_ptr<BreakingNewsGCMAppHandler> handler = MakeHandler(task_runner);
 
   // Check that handler does not validate the token yet.
   EXPECT_CALL(*mock_instance_id(), GetToken(_, _, _, _)).Times(0);
   EXPECT_CALL(*mock_instance_id(), ValidateToken(_, _, _, _)).Times(0);
-  handler->StartListening(
-      base::Bind([](std::unique_ptr<RemoteSuggestion> remote_suggestion) {}),
-      base::Bind([]() {}));
+  handler->StartListening(base::DoNothing(), base::DoNothing());
   task_runner->FastForwardBy(time_to_validation -
                              base::TimeDelta::FromSeconds(1));
 
@@ -394,7 +390,7 @@ TEST_F(BreakingNewsGCMAppHandlerTest, ShouldNotValidateTokenBeforeListening) {
   // though a validation is due.
   EXPECT_CALL(*mock_instance_id(), GetToken(_, _, _, _)).Times(0);
   EXPECT_CALL(*mock_instance_id(), ValidateToken(_, _, _, _)).Times(0);
-  auto handler = MakeHandler(task_runner);
+  std::unique_ptr<BreakingNewsGCMAppHandler> handler = MakeHandler(task_runner);
   task_runner->FastForwardBy(10 * GetTokenValidationPeriod());
 }
 
@@ -420,10 +416,8 @@ TEST_F(BreakingNewsGCMAppHandlerTest,
   // though a validation is due.
   EXPECT_CALL(*mock_instance_id(), GetToken(_, _, _, _)).Times(0);
   EXPECT_CALL(*mock_instance_id(), ValidateToken(_, _, _, _)).Times(0);
-  auto handler = MakeHandler(task_runner);
-  handler->StartListening(
-      base::Bind([](std::unique_ptr<RemoteSuggestion> remote_suggestion) {}),
-      base::Bind([]() {}));
+  std::unique_ptr<BreakingNewsGCMAppHandler> handler = MakeHandler(task_runner);
+  handler->StartListening(base::DoNothing(), base::DoNothing());
   handler->StopListening();
   task_runner->FastForwardBy(10 * GetTokenValidationPeriod());
 }
@@ -442,15 +436,13 @@ TEST_F(BreakingNewsGCMAppHandlerTest,
 
   scoped_refptr<TestMockTimeTaskRunner> task_runner(
       new TestMockTimeTaskRunner(GetDummyNow(), TimeTicks::Now()));
-  auto handler = MakeHandler(task_runner);
+  std::unique_ptr<BreakingNewsGCMAppHandler> handler = MakeHandler(task_runner);
 
   // There is no token yet, thus, handler retrieves it on StartListening.
   EXPECT_CALL(*mock_instance_id(), GetToken(_, _, _, _))
       .WillOnce(
           InvokeCallbackArgument<3>("token", InstanceID::Result::SUCCESS));
-  handler->StartListening(
-      base::Bind([](std::unique_ptr<RemoteSuggestion> remote_suggestion) {}),
-      base::Bind([]() {}));
+  handler->StartListening(base::DoNothing(), base::DoNothing());
 
   // Check that the validation schedule has changed. "Old validation" should not
   // happen because the token was retrieved recently.
@@ -482,10 +474,8 @@ TEST_F(BreakingNewsGCMAppHandlerTest,
 
   scoped_refptr<TestMockTimeTaskRunner> task_runner(
       new TestMockTimeTaskRunner(GetDummyNow(), TimeTicks::Now()));
-  auto handler = MakeHandler(task_runner);
-  handler->StartListening(
-      base::Bind([](std::unique_ptr<RemoteSuggestion> remote_suggestion) {}),
-      base::Bind([]() {}));
+  std::unique_ptr<BreakingNewsGCMAppHandler> handler = MakeHandler(task_runner);
+  handler->StartListening(base::DoNothing(), base::DoNothing());
 
   // Handler validates the token.
   EXPECT_CALL(*mock_instance_id(), GetToken(_, _, _, _))
@@ -521,10 +511,8 @@ TEST_F(BreakingNewsGCMAppHandlerTest,
 
   scoped_refptr<TestMockTimeTaskRunner> task_runner(
       new TestMockTimeTaskRunner(GetDummyNow(), TimeTicks::Now()));
-  auto handler = MakeHandler(task_runner);
-  handler->StartListening(
-      base::Bind([](std::unique_ptr<RemoteSuggestion> remote_suggestion) {}),
-      base::Bind([]() {}));
+  std::unique_ptr<BreakingNewsGCMAppHandler> handler = MakeHandler(task_runner);
+  handler->StartListening(base::DoNothing(), base::DoNothing());
 
   // Check that handler resubscribes with the new token after a validation, if
   // old is invalid.
@@ -553,10 +541,8 @@ TEST_F(BreakingNewsGCMAppHandlerTest,
 
   scoped_refptr<TestMockTimeTaskRunner> task_runner(
       new TestMockTimeTaskRunner(GetDummyNow(), TimeTicks::Now()));
-  auto handler = MakeHandler(task_runner);
-  handler->StartListening(
-      base::Bind([](std::unique_ptr<RemoteSuggestion> remote_suggestion) {}),
-      base::Bind([]() {}));
+  std::unique_ptr<BreakingNewsGCMAppHandler> handler = MakeHandler(task_runner);
+  handler->StartListening(base::DoNothing(), base::DoNothing());
 
   // Check that provider does not resubscribe if the old token is still valid
   // after validation.
@@ -570,13 +556,108 @@ TEST_F(BreakingNewsGCMAppHandlerTest,
 }
 
 TEST_F(BreakingNewsGCMAppHandlerTest,
+       ShouldIgnoreTokenReceivedAfterStopListening) {
+  // The last validation time is used to ensure that GetToken callback is
+  // ignored. Thus, enable validation.
+  SetFeatureParams(/*enable_token_validation=*/true,
+                   /*enable_forced_subscription=*/false);
+
+  // The next validation won't be soon.
+  const base::TimeDelta time_to_validation = base::TimeDelta::FromDays(5);
+  const base::Time last_validation =
+      GetDummyNow() - (GetTokenValidationPeriod() - time_to_validation);
+  pref_service()->SetInt64(prefs::kBreakingNewsGCMLastTokenValidationTime,
+                           SerializeTime(last_validation));
+
+  scoped_refptr<TestMockTimeTaskRunner> task_runner(
+      new TestMockTimeTaskRunner(GetDummyNow(), TimeTicks::Now()));
+  std::unique_ptr<BreakingNewsGCMAppHandler> handler = MakeHandler(task_runner);
+
+  // Save the GetToken callback during the subscription.
+  base::RepeatingCallback<void(const std::string&, InstanceID::Result)>
+      get_token_callback;
+  EXPECT_CALL(*mock_instance_id(), GetToken(_, _, _, _))
+      .WillOnce(SaveArg<3>(&get_token_callback));
+  handler->StartListening(
+      base::BindRepeating(
+          [](std::unique_ptr<RemoteSuggestion> remote_suggestion) {}),
+      base::DoNothing());
+
+  // The client stops listening for the push updates.
+  handler->StopListening();
+
+  // The GCM returns the new token (it does not know that we are not interested
+  // anymore). Imitate an asynchronous call via time delay.
+  task_runner->FastForwardBy(base::TimeDelta::FromSeconds(1));
+  get_token_callback.Run("new_token", InstanceID::Result::SUCCESS);
+
+  // The new token must be completely ignored. It should not be saved.
+  EXPECT_EQ("", pref_service()->GetString(
+                    prefs::kBreakingNewsGCMSubscriptionTokenCache));
+  // The validation should not be rescheduled.
+  EXPECT_EQ(last_validation,
+            DeserializeTime(pref_service()->GetInt64(
+                prefs::kBreakingNewsGCMLastTokenValidationTime)));
+}
+
+TEST_F(BreakingNewsGCMAppHandlerTest,
+       ShouldIgnoreTokenReceivedForValidationAfterStopListening) {
+  SetFeatureParams(/*enable_token_validation=*/true,
+                   /*enable_forced_subscription=*/false);
+
+  // The next validation will be soon.
+  const base::TimeDelta time_to_validation = base::TimeDelta::FromHours(1);
+  const base::Time last_validation =
+      GetDummyNow() - (GetTokenValidationPeriod() - time_to_validation);
+  pref_service()->SetInt64(prefs::kBreakingNewsGCMLastTokenValidationTime,
+                           SerializeTime(last_validation));
+  // Omit receiving the token by putting it there directly.
+  pref_service()->SetString(prefs::kBreakingNewsGCMSubscriptionTokenCache,
+                            "old_token");
+
+  scoped_refptr<TestMockTimeTaskRunner> task_runner(
+      new TestMockTimeTaskRunner(GetDummyNow(), TimeTicks::Now()));
+  std::unique_ptr<BreakingNewsGCMAppHandler> handler = MakeHandler(task_runner);
+  handler->StartListening(
+      base::BindRepeating(
+          [](std::unique_ptr<RemoteSuggestion> remote_suggestion) {}),
+      base::DoNothing());
+
+  task_runner->FastForwardBy(time_to_validation -
+                             base::TimeDelta::FromSeconds(1));
+
+  // Save the GetToken callback during the validation.
+  base::RepeatingCallback<void(const std::string&, InstanceID::Result)>
+      get_token_callback;
+  EXPECT_CALL(*mock_instance_id(), GetToken(_, _, _, _))
+      .WillOnce(SaveArg<3>(&get_token_callback));
+  task_runner->FastForwardBy(base::TimeDelta::FromSeconds(1));
+
+  // The client stops listening for the push updates.
+  handler->StopListening();
+
+  // The GCM returns the new token (it does not know that we are not interested
+  // anymore).
+  task_runner->FastForwardBy(base::TimeDelta::FromSeconds(1));
+  get_token_callback.Run("new_token", InstanceID::Result::SUCCESS);
+
+  // The new token must be completely ignored. It should not be saved.
+  EXPECT_EQ("old_token", pref_service()->GetString(
+                             prefs::kBreakingNewsGCMSubscriptionTokenCache));
+  // The validation should not occur.
+  EXPECT_EQ(last_validation,
+            DeserializeTime(pref_service()->GetInt64(
+                prefs::kBreakingNewsGCMLastTokenValidationTime)));
+}
+
+TEST_F(BreakingNewsGCMAppHandlerTest,
        IsListeningShouldReturnFalseBeforeListening) {
   SetFeatureParams(/*enable_token_validation=*/false,
                    /*enable_forced_subscription=*/false);
 
   scoped_refptr<TestMockTimeTaskRunner> task_runner(
       new TestMockTimeTaskRunner(GetDummyNow(), TimeTicks::Now()));
-  auto handler = MakeHandler(task_runner);
+  std::unique_ptr<BreakingNewsGCMAppHandler> handler = MakeHandler(task_runner);
 
   EXPECT_FALSE(handler->IsListening());
 }
@@ -588,15 +669,13 @@ TEST_F(BreakingNewsGCMAppHandlerTest,
 
   scoped_refptr<TestMockTimeTaskRunner> task_runner(
       new TestMockTimeTaskRunner(GetDummyNow(), TimeTicks::Now()));
-  auto handler = MakeHandler(task_runner);
+  std::unique_ptr<BreakingNewsGCMAppHandler> handler = MakeHandler(task_runner);
   ASSERT_FALSE(handler->IsListening());
 
   EXPECT_CALL(*mock_instance_id(), GetToken(_, _, _, _))
       .WillRepeatedly(
           InvokeCallbackArgument<3>("token", InstanceID::Result::SUCCESS));
-  handler->StartListening(
-      base::Bind([](std::unique_ptr<RemoteSuggestion> remote_suggestion) {}),
-      base::Bind([]() {}));
+  handler->StartListening(base::DoNothing(), base::DoNothing());
 
   EXPECT_TRUE(handler->IsListening());
 }
@@ -608,15 +687,13 @@ TEST_F(BreakingNewsGCMAppHandlerTest,
 
   scoped_refptr<TestMockTimeTaskRunner> task_runner(
       new TestMockTimeTaskRunner(GetDummyNow(), TimeTicks::Now()));
-  auto handler = MakeHandler(task_runner);
+  std::unique_ptr<BreakingNewsGCMAppHandler> handler = MakeHandler(task_runner);
   ASSERT_FALSE(handler->IsListening());
 
   EXPECT_CALL(*mock_instance_id(), GetToken(_, _, _, _))
       .WillRepeatedly(
           InvokeCallbackArgument<3>("token", InstanceID::Result::SUCCESS));
-  handler->StartListening(
-      base::Bind([](std::unique_ptr<RemoteSuggestion> remote_suggestion) {}),
-      base::Bind([]() {}));
+  handler->StartListening(base::DoNothing(), base::DoNothing());
   ASSERT_TRUE(handler->IsListening());
 
   handler->StopListening();
@@ -631,23 +708,19 @@ TEST_F(BreakingNewsGCMAppHandlerTest,
 
   scoped_refptr<TestMockTimeTaskRunner> task_runner(
       new TestMockTimeTaskRunner(GetDummyNow(), TimeTicks::Now()));
-  auto handler = MakeHandler(task_runner);
+  std::unique_ptr<BreakingNewsGCMAppHandler> handler = MakeHandler(task_runner);
   ASSERT_FALSE(handler->IsListening());
 
   EXPECT_CALL(*mock_instance_id(), GetToken(_, _, _, _))
       .WillRepeatedly(
           InvokeCallbackArgument<3>("token", InstanceID::Result::SUCCESS));
-  handler->StartListening(
-      base::Bind([](std::unique_ptr<RemoteSuggestion> remote_suggestion) {}),
-      base::Bind([]() {}));
+  handler->StartListening(base::DoNothing(), base::DoNothing());
   ASSERT_TRUE(handler->IsListening());
 
   handler->StopListening();
   ASSERT_FALSE(handler->IsListening());
 
-  handler->StartListening(
-      base::Bind([](std::unique_ptr<RemoteSuggestion> remote_suggestion) {}),
-      base::Bind([]() {}));
+  handler->StartListening(base::DoNothing(), base::DoNothing());
 
   EXPECT_TRUE(handler->IsListening());
 }
@@ -666,11 +739,9 @@ TEST_F(BreakingNewsGCMAppHandlerTest, ShouldForceSubscribeImmediatelyIfDue) {
                             "token");
   scoped_refptr<TestMockTimeTaskRunner> task_runner(
       new TestMockTimeTaskRunner(GetDummyNow(), TimeTicks::Now()));
-  auto handler = MakeHandler(task_runner);
+  std::unique_ptr<BreakingNewsGCMAppHandler> handler = MakeHandler(task_runner);
 
-  handler->StartListening(
-      base::Bind([](std::unique_ptr<RemoteSuggestion> remote_suggestion) {}),
-      base::Bind([]() {}));
+  handler->StartListening(base::DoNothing(), base::DoNothing());
   EXPECT_CALL(*mock_subscription_manager(), Subscribe("token"));
   task_runner->RunUntilIdle();
 }
@@ -691,12 +762,10 @@ TEST_F(BreakingNewsGCMAppHandlerTest,
                             "token");
   scoped_refptr<TestMockTimeTaskRunner> task_runner(
       new TestMockTimeTaskRunner(GetDummyNow(), TimeTicks::Now()));
-  auto handler = MakeHandler(task_runner);
+  std::unique_ptr<BreakingNewsGCMAppHandler> handler = MakeHandler(task_runner);
 
   // Check that handler does not force subscribe yet.
-  handler->StartListening(
-      base::Bind([](std::unique_ptr<RemoteSuggestion> remote_suggestion) {}),
-      base::Bind([]() {}));
+  handler->StartListening(base::DoNothing(), base::DoNothing());
   // TODO(vitaliii): Consider making FakeSubscriptionManager, because
   // IsSubscribed() affects forced subscriptions. Currently we have to carefully
   // avoid the initial subscription.
@@ -727,7 +796,7 @@ TEST_F(BreakingNewsGCMAppHandlerTest, ShouldNotForceSubscribeBeforeListening) {
 
   // Check that handler does not force subscribe before StartListening even
   // though a forced subscription is due.
-  auto handler = MakeHandler(task_runner);
+  std::unique_ptr<BreakingNewsGCMAppHandler> handler = MakeHandler(task_runner);
   EXPECT_CALL(*mock_subscription_manager(), Subscribe("token")).Times(0);
   task_runner->FastForwardBy(10 * GetForcedSubscriptionPeriod());
 }
@@ -751,10 +820,8 @@ TEST_F(BreakingNewsGCMAppHandlerTest,
 
   // Check that handler does not force subscribe after StopListening even
   // though a forced subscription is due.
-  auto handler = MakeHandler(task_runner);
-  handler->StartListening(
-      base::Bind([](std::unique_ptr<RemoteSuggestion> remote_suggestion) {}),
-      base::Bind([]() {}));
+  std::unique_ptr<BreakingNewsGCMAppHandler> handler = MakeHandler(task_runner);
+  handler->StartListening(base::DoNothing(), base::DoNothing());
   handler->StopListening();
   EXPECT_CALL(*mock_subscription_manager(), Subscribe("token")).Times(0);
   task_runner->FastForwardBy(10 * GetForcedSubscriptionPeriod());
@@ -777,10 +844,8 @@ TEST_F(BreakingNewsGCMAppHandlerTest,
 
   scoped_refptr<TestMockTimeTaskRunner> task_runner(
       new TestMockTimeTaskRunner(GetDummyNow(), TimeTicks::Now()));
-  auto handler = MakeHandler(task_runner);
-  handler->StartListening(
-      base::Bind([](std::unique_ptr<RemoteSuggestion> remote_suggestion) {}),
-      base::Bind([]() {}));
+  std::unique_ptr<BreakingNewsGCMAppHandler> handler = MakeHandler(task_runner);
+  handler->StartListening(base::DoNothing(), base::DoNothing());
 
   // Handler force subscribes.
   EXPECT_CALL(*mock_subscription_manager(), Subscribe("token"));
@@ -820,10 +885,8 @@ TEST_F(BreakingNewsGCMAppHandlerTest,
 
   scoped_refptr<TestMockTimeTaskRunner> task_runner(
       new TestMockTimeTaskRunner(GetDummyNow(), TimeTicks::Now()));
-  auto handler = MakeHandler(task_runner);
-  handler->StartListening(
-      base::Bind([](std::unique_ptr<RemoteSuggestion> remote_suggestion) {}),
-      base::Bind([]() {}));
+  std::unique_ptr<BreakingNewsGCMAppHandler> handler = MakeHandler(task_runner);
+  handler->StartListening(base::DoNothing(), base::DoNothing());
 
   // Check that the next validation is scheduled in time.
   EXPECT_CALL(*mock_instance_id(), GetToken(_, _, _, _)).Times(0);
@@ -855,10 +918,8 @@ TEST_F(BreakingNewsGCMAppHandlerTest, ShouldReportMissingAction) {
 
   scoped_refptr<TestMockTimeTaskRunner> task_runner(
       new TestMockTimeTaskRunner(GetDummyNow(), TimeTicks::Now()));
-  auto handler = MakeHandler(task_runner);
-  handler->StartListening(
-      base::Bind([](std::unique_ptr<RemoteSuggestion> remote_suggestion) {}),
-      base::Bind([]() {}));
+  std::unique_ptr<BreakingNewsGCMAppHandler> handler = MakeHandler(task_runner);
+  handler->StartListening(base::DoNothing(), base::DoNothing());
 
   handler->OnMessage("com.google.breakingnews.gcm", gcm::IncomingMessage());
 
@@ -866,7 +927,8 @@ TEST_F(BreakingNewsGCMAppHandlerTest, ShouldReportMissingAction) {
       histogram_tester.GetAllSamples(
           "NewTabPage.ContentSuggestions.BreakingNews.ReceivedMessageAction"),
       ElementsAre(base::Bucket(
-          /*min=*/metrics::ReceivedMessageAction::NO_ACTION, /*count=*/1)));
+          /*min=*/static_cast<int>(metrics::ReceivedMessageAction::NO_ACTION),
+          /*count=*/1)));
 }
 
 TEST_F(BreakingNewsGCMAppHandlerTest, ShouldReportInvalidAction) {
@@ -880,10 +942,8 @@ TEST_F(BreakingNewsGCMAppHandlerTest, ShouldReportInvalidAction) {
 
   scoped_refptr<TestMockTimeTaskRunner> task_runner(
       new TestMockTimeTaskRunner(GetDummyNow(), TimeTicks::Now()));
-  auto handler = MakeHandler(task_runner);
-  handler->StartListening(
-      base::Bind([](std::unique_ptr<RemoteSuggestion> remote_suggestion) {}),
-      base::Bind([]() {}));
+  std::unique_ptr<BreakingNewsGCMAppHandler> handler = MakeHandler(task_runner);
+  handler->StartListening(base::DoNothing(), base::DoNothing());
 
   gcm::IncomingMessage message;
   message.data[kPushedActionKey] = "invalid_action";
@@ -894,7 +954,8 @@ TEST_F(BreakingNewsGCMAppHandlerTest, ShouldReportInvalidAction) {
       histogram_tester.GetAllSamples(
           "NewTabPage.ContentSuggestions.BreakingNews.ReceivedMessageAction"),
       ElementsAre(
-          base::Bucket(/*min=*/metrics::ReceivedMessageAction::INVALID_ACTION,
+          base::Bucket(/*min=*/static_cast<int>(
+                           metrics::ReceivedMessageAction::INVALID_ACTION),
                        /*count=*/1)));
 }
 
@@ -909,10 +970,8 @@ TEST_F(BreakingNewsGCMAppHandlerTest, ShouldReportPushToRefreshAction) {
 
   scoped_refptr<TestMockTimeTaskRunner> task_runner(
       new TestMockTimeTaskRunner(GetDummyNow(), TimeTicks::Now()));
-  auto handler = MakeHandler(task_runner);
-  handler->StartListening(
-      base::Bind([](std::unique_ptr<RemoteSuggestion> remote_suggestion) {}),
-      base::Bind([]() {}));
+  std::unique_ptr<BreakingNewsGCMAppHandler> handler = MakeHandler(task_runner);
+  handler->StartListening(base::DoNothing(), base::DoNothing());
 
   gcm::IncomingMessage message;
   message.data[kPushedActionKey] = "push-to-refresh";
@@ -923,7 +982,8 @@ TEST_F(BreakingNewsGCMAppHandlerTest, ShouldReportPushToRefreshAction) {
       histogram_tester.GetAllSamples(
           "NewTabPage.ContentSuggestions.BreakingNews.ReceivedMessageAction"),
       ElementsAre(
-          base::Bucket(/*min=*/metrics::ReceivedMessageAction::PUSH_TO_REFRESH,
+          base::Bucket(/*min=*/static_cast<int>(
+                           metrics::ReceivedMessageAction::PUSH_TO_REFRESH),
                        /*count=*/1)));
 }
 
@@ -938,10 +998,8 @@ TEST_F(BreakingNewsGCMAppHandlerTest, ShouldReportPushByValueAction) {
 
   scoped_refptr<TestMockTimeTaskRunner> task_runner(
       new TestMockTimeTaskRunner(GetDummyNow(), TimeTicks::Now()));
-  auto handler = MakeHandler(task_runner);
-  handler->StartListening(
-      base::Bind([](std::unique_ptr<RemoteSuggestion> remote_suggestion) {}),
-      base::Bind([]() {}));
+  std::unique_ptr<BreakingNewsGCMAppHandler> handler = MakeHandler(task_runner);
+  handler->StartListening(base::DoNothing(), base::DoNothing());
 
   gcm::IncomingMessage message;
   message.data[kPushedActionKey] = "push-by-value";
@@ -953,7 +1011,9 @@ TEST_F(BreakingNewsGCMAppHandlerTest, ShouldReportPushByValueAction) {
       histogram_tester.GetAllSamples(
           "NewTabPage.ContentSuggestions.BreakingNews.ReceivedMessageAction"),
       ElementsAre(base::Bucket(
-          /*min=*/metrics::ReceivedMessageAction::PUSH_BY_VALUE, /*count=*/1)));
+          /*min=*/static_cast<int>(
+              metrics::ReceivedMessageAction::PUSH_BY_VALUE),
+          /*count=*/1)));
 }
 
 TEST_F(BreakingNewsGCMAppHandlerTest,
@@ -984,12 +1044,12 @@ TEST_F(BreakingNewsGCMAppHandlerTest,
 
   scoped_refptr<TestMockTimeTaskRunner> task_runner(
       new TestMockTimeTaskRunner(GetDummyNow(), TimeTicks::Now()));
-  auto handler = MakeHandler(task_runner);
+  std::unique_ptr<BreakingNewsGCMAppHandler> handler = MakeHandler(task_runner);
 
   MockOnNewRemoteSuggestionCallback mock_on_new_remote_suggestion_callback;
 
   handler->StartListening(mock_on_new_remote_suggestion_callback.Get(),
-                          base::Bind([]() {}));
+                          base::DoNothing());
 
   gcm::IncomingMessage message;
   message.data[kPushedActionKey] = "push-by-value";
@@ -1010,14 +1070,13 @@ TEST_F(BreakingNewsGCMAppHandlerTest,
 
   scoped_refptr<TestMockTimeTaskRunner> task_runner(
       new TestMockTimeTaskRunner(GetDummyNow(), TimeTicks::Now()));
-  auto handler = MakeHandler(task_runner);
+  std::unique_ptr<BreakingNewsGCMAppHandler> handler = MakeHandler(task_runner);
 
   base::MockCallback<BreakingNewsListener::OnRefreshRequestedCallback>
       on_refresh_requested_callback;
 
-  handler->StartListening(
-      base::Bind([](std::unique_ptr<RemoteSuggestion> remote_suggestion) {}),
-      on_refresh_requested_callback.Get());
+  handler->StartListening(base::DoNothing(),
+                          on_refresh_requested_callback.Get());
 
   gcm::IncomingMessage message;
   message.data[kPushedActionKey] = "push-to-refresh";
@@ -1033,14 +1092,12 @@ TEST_F(BreakingNewsGCMAppHandlerTest, ShouldReportTokenRetrievalResult) {
 
   scoped_refptr<TestMockTimeTaskRunner> task_runner(
       new TestMockTimeTaskRunner(GetDummyNow(), TimeTicks::Now()));
-  auto handler = MakeHandler(task_runner);
+  std::unique_ptr<BreakingNewsGCMAppHandler> handler = MakeHandler(task_runner);
 
   EXPECT_CALL(*mock_instance_id(), GetToken(_, _, _, _))
       .WillOnce(InvokeCallbackArgument<3>(/*token=*/"",
                                           InstanceID::Result::NETWORK_ERROR));
-  handler->StartListening(
-      base::Bind([](std::unique_ptr<RemoteSuggestion> remote_suggestion) {}),
-      base::Bind([]() {}));
+  handler->StartListening(base::DoNothing(), base::DoNothing());
 
   EXPECT_THAT(
       histogram_tester.GetAllSamples(
@@ -1068,10 +1125,8 @@ TEST_F(BreakingNewsGCMAppHandlerTest,
 
   scoped_refptr<TestMockTimeTaskRunner> task_runner(
       new TestMockTimeTaskRunner(GetDummyNow(), TimeTicks::Now()));
-  auto handler = MakeHandler(task_runner);
-  handler->StartListening(
-      base::Bind([](std::unique_ptr<RemoteSuggestion> remote_suggestion) {}),
-      base::Bind([]() {}));
+  std::unique_ptr<BreakingNewsGCMAppHandler> handler = MakeHandler(task_runner);
+  handler->StartListening(base::DoNothing(), base::DoNothing());
 
   // Check that handler does not report the metric before the validation.
   task_runner->FastForwardBy(time_to_validation -
@@ -1115,10 +1170,8 @@ TEST_F(BreakingNewsGCMAppHandlerTest,
 
   scoped_refptr<TestMockTimeTaskRunner> task_runner(
       new TestMockTimeTaskRunner(GetDummyNow(), TimeTicks::Now()));
-  auto handler = MakeHandler(task_runner);
-  handler->StartListening(
-      base::Bind([](std::unique_ptr<RemoteSuggestion> remote_suggestion) {}),
-      base::Bind([]() {}));
+  std::unique_ptr<BreakingNewsGCMAppHandler> handler = MakeHandler(task_runner);
+  handler->StartListening(base::DoNothing(), base::DoNothing());
 
   // Check that handler does not report the metric before the validation.
   task_runner->FastForwardBy(time_to_validation -

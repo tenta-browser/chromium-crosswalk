@@ -9,7 +9,6 @@
 #include <string>
 
 #include "base/macros.h"
-#include "base/metrics/user_metrics.h"
 #include "base/strings/utf_string_conversions.h"
 #include "build/build_config.h"
 #include "chrome/app/vector_icons/vector_icons.h"
@@ -21,14 +20,16 @@
 #include "chrome/browser/profiles/profile_metrics.h"
 #include "chrome/browser/profiles/profile_window.h"
 #include "chrome/browser/profiles/profiles_state.h"
+#include "chrome/browser/signin/account_consistency_mode_manager.h"
+#include "chrome/browser/signin/account_tracker_service_factory.h"
 #include "chrome/browser/signin/chrome_signin_helper.h"
+#include "chrome/browser/signin/gaia_cookie_manager_service_factory.h"
 #include "chrome/browser/signin/profile_oauth2_token_service_factory.h"
 #include "chrome/browser/signin/signin_error_controller_factory.h"
 #include "chrome/browser/signin/signin_manager_factory.h"
 #include "chrome/browser/signin/signin_promo.h"
 #include "chrome/browser/signin/signin_ui_util.h"
 #include "chrome/browser/sync/profile_sync_service_factory.h"
-#include "chrome/browser/sync/sync_ui_util.h"
 #include "chrome/browser/themes/theme_service.h"
 #include "chrome/browser/themes/theme_service_factory.h"
 #include "chrome/browser/ui/browser.h"
@@ -38,13 +39,16 @@
 #include "chrome/browser/ui/chrome_pages.h"
 #include "chrome/browser/ui/profile_chooser_constants.h"
 #include "chrome/browser/ui/singleton_tabs.h"
+#include "chrome/browser/ui/sync/sync_promo_ui.h"
 #include "chrome/browser/ui/user_manager.h"
+#include "chrome/browser/ui/views/accessibility/non_accessible_image_view.h"
 #include "chrome/browser/ui/views/harmony/chrome_layout_provider.h"
 #include "chrome/browser/ui/views/harmony/chrome_typography.h"
 #include "chrome/browser/ui/views/hover_button.h"
 #include "chrome/browser/ui/views/profiles/badged_profile_photo.h"
 #include "chrome/browser/ui/views/profiles/signin_view_controller_delegate_views.h"
 #include "chrome/browser/ui/views/profiles/user_manager_view.h"
+#include "chrome/browser/ui/views/sync/dice_signin_button_view.h"
 #include "chrome/browser/ui/webui/signin/login_ui_service.h"
 #include "chrome/browser/ui/webui/signin/login_ui_service_factory.h"
 #include "chrome/common/pref_names.h"
@@ -54,11 +58,13 @@
 #include "chrome/grit/theme_resources.h"
 #include "components/browser_sync/profile_sync_service.h"
 #include "components/prefs/pref_service.h"
-#include "components/signin/core/browser/profile_management_switches.h"
+#include "components/signin/core/browser/account_tracker_service.h"
+#include "components/signin/core/browser/gaia_cookie_manager_service.h"
 #include "components/signin/core/browser/profile_oauth2_token_service.h"
 #include "components/signin/core/browser/signin_error_controller.h"
 #include "components/signin/core/browser/signin_header_helper.h"
 #include "components/signin/core/browser/signin_manager.h"
+#include "components/signin/core/browser/signin_metrics.h"
 #include "components/sync/driver/sync_error_controller.h"
 #include "components/vector_icons/vector_icons.h"
 #include "content/public/browser/render_widget_host_view.h"
@@ -100,15 +106,19 @@ namespace {
 
 // Helpers --------------------------------------------------------------------
 
-const int kButtonHeight = 32;
-const int kFixedAccountRemovalViewWidth = 280;
-const int kFixedMenuWidth = 240;
+constexpr int kButtonHeight = 32;
+constexpr int kFixedAccountRemovalViewWidth = 280;
+constexpr int kFixedMenuWidthPreDice = 240;
+constexpr int kFixedMenuWidthDice = 288;
 
 // Spacing between the edge of the material design user menu and the
 // top/bottom or left/right of the menu items.
-const int kMenuEdgeMargin = 16;
+constexpr int kMenuEdgeMargin = 16;
 
-const int kVerticalSpacing = 16;
+constexpr int kVerticalSpacing = 16;
+
+// Number of times the Dice sign-in promo illustration should be shown.
+constexpr int kDiceSigninPromoIllustrationShowCountMax = 10;
 
 bool IsProfileChooser(profiles::BubbleViewMode mode) {
   return mode == profiles::BUBBLE_VIEW_MODE_PROFILE_CHOOSER;
@@ -118,7 +128,8 @@ bool IsProfileChooser(profiles::BubbleViewMode mode) {
 // Creates a GridLayout with a single column. This ensures that all the child
 // views added get auto-expanded to fill the full width of the bubble.
 views::GridLayout* CreateSingleColumnLayout(views::View* view, int width) {
-  views::GridLayout* layout = views::GridLayout::CreateAndInstall(view);
+  views::GridLayout* layout =
+      view->SetLayoutManager(std::make_unique<views::GridLayout>(view));
 
   views::ColumnSet* columns = layout->AddColumnSet(0);
   columns->AddColumn(views::GridLayout::FILL, views::GridLayout::FILL, 0,
@@ -167,14 +178,31 @@ views::ImageButton* CreateBackButton(views::ButtonListener* listener) {
   return back_button;
 }
 
-BadgedProfilePhoto::BadgeType GetProfileBadgeType(const Profile* profile) {
-  if (!profile->IsSupervised()) {
-    return signin::IsDiceEnabledForProfile(profile->GetPrefs())
-               ? BadgedProfilePhoto::BADGE_TYPE_SYNC_COMPLETE
-               : BadgedProfilePhoto::BADGE_TYPE_NONE;
+BadgedProfilePhoto::BadgeType GetProfileBadgeType(Profile* profile) {
+  if (profile->IsSupervised()) {
+    return profile->IsChild() ? BadgedProfilePhoto::BADGE_TYPE_CHILD
+                              : BadgedProfilePhoto::BADGE_TYPE_SUPERVISOR;
   }
-  return profile->IsChild() ? BadgedProfilePhoto::BADGE_TYPE_CHILD
-                            : BadgedProfilePhoto::BADGE_TYPE_SUPERVISOR;
+  // |Profile::IsSyncAllowed| is needed to check whether sync is allowed by GPO
+  // policy.
+  if (AccountConsistencyModeManager::IsDiceEnabledForProfile(profile) &&
+      profile->IsSyncAllowed() &&
+      SigninManagerFactory::GetForProfile(profile)->IsAuthenticated()) {
+    return BadgedProfilePhoto::BADGE_TYPE_SYNC_COMPLETE;
+  }
+  return BadgedProfilePhoto::BADGE_TYPE_NONE;
+}
+
+std::vector<gfx::Image> GetImagesForAccounts(
+    const std::vector<AccountInfo>& accounts,
+    Profile* profile) {
+  AccountTrackerService* tracker_service =
+      AccountTrackerServiceFactory::GetForProfile(profile);
+  std::vector<gfx::Image> images;
+  for (auto account : accounts) {
+    images.push_back(tracker_service->GetAccountImage(account.account_id));
+  }
+  return images;
 }
 
 }  // namespace
@@ -202,8 +230,8 @@ class TitleCard : public views::View {
                                          TitleCard* title_card,
                                          int width) {
     views::View* titled_view = new views::View();
-    views::GridLayout* layout =
-        views::GridLayout::CreateAndInstall(titled_view);
+    views::GridLayout* layout = titled_view->SetLayoutManager(
+        std::make_unique<views::GridLayout>(titled_view));
 
     ChromeLayoutProvider* provider = ChromeLayoutProvider::Get();
     const gfx::Insets dialog_insets =
@@ -277,7 +305,7 @@ void ProfileChooserView::ShowBubble(
     profiles::BubbleViewMode view_mode,
     const signin::ManageAccountsParams& manage_accounts_params,
     signin_metrics::AccessPoint access_point,
-    views::View* anchor_view,
+    views::Button* anchor_button,
     gfx::NativeView parent_window,
     const gfx::Rect& anchor_rect,
     Browser* browser,
@@ -286,13 +314,17 @@ void ProfileChooserView::ShowBubble(
     return;
 
   profile_bubble_ =
-      new ProfileChooserView(anchor_view, browser, view_mode,
+      new ProfileChooserView(anchor_button, browser, view_mode,
                              manage_accounts_params.service_type, access_point);
-  if (!anchor_view) {
+  if (!anchor_button) {
     DCHECK(parent_window);
     profile_bubble_->SetAnchorRect(anchor_rect);
     profile_bubble_->set_parent_window(parent_window);
   }
+
+  if (anchor_button && ui::MaterialDesignController::IsNewerMaterialUi())
+    anchor_button->AnimateInkDrop(views::InkDropState::ACTIVATED, nullptr);
+
   views::Widget* widget =
       views::BubbleDialogDelegateView::CreateBubble(profile_bubble_);
   profile_bubble_->SetAlignment(views::BubbleBorder::ALIGN_EDGE_TO_ANCHOR_EDGE);
@@ -318,17 +350,22 @@ void ProfileChooserView::Hide() {
     profile_bubble_->GetWidget()->Close();
 }
 
-ProfileChooserView::ProfileChooserView(views::View* anchor_view,
+ProfileChooserView::ProfileChooserView(views::Button* anchor_button,
                                        Browser* browser,
                                        profiles::BubbleViewMode view_mode,
                                        signin::GAIAServiceType service_type,
                                        signin_metrics::AccessPoint access_point)
-    : BubbleDialogDelegateView(anchor_view, views::BubbleBorder::TOP_RIGHT),
+    : BubbleDialogDelegateView(anchor_button, views::BubbleBorder::TOP_RIGHT),
       browser_(browser),
+      anchor_button_(anchor_button),
       view_mode_(view_mode),
       gaia_service_type_(service_type),
       access_point_(access_point),
-      close_bubble_helper_(this, browser) {
+      close_bubble_helper_(this, browser),
+      dice_enabled_(AccountConsistencyModeManager::IsDiceEnabledForProfile(
+          browser->profile())),
+      menu_width_(dice_enabled_ ? kFixedMenuWidthDice
+                                : kFixedMenuWidthPreDice) {
   // The sign in webview will be clipped on the bottom corners without these
   // margins, see related bug <http://crbug.com/593203>.
   set_margins(gfx::Insets(0, 0, 2, 0));
@@ -351,6 +388,7 @@ void ProfileChooserView::ResetView() {
   manage_accounts_link_ = nullptr;
   manage_accounts_button_ = nullptr;
   signin_current_profile_button_ = nullptr;
+  signin_with_gaia_account_button_ = nullptr;
   current_profile_card_ = nullptr;
   first_profile_button_ = nullptr;
   guest_profile_button_ = nullptr;
@@ -362,6 +400,8 @@ void ProfileChooserView::ResetView() {
   gaia_signin_cancel_button_ = nullptr;
   remove_account_button_ = nullptr;
   account_removal_cancel_button_ = nullptr;
+  sync_to_another_account_button_ = nullptr;
+  dice_signin_button_view_ = nullptr;
 }
 
 void ProfileChooserView::Init() {
@@ -475,7 +515,7 @@ void ProfileChooserView::ShowView(profiles::BubbleViewMode view_to_display,
       break;
     case profiles::BUBBLE_VIEW_MODE_ACCOUNT_MANAGEMENT:
     case profiles::BUBBLE_VIEW_MODE_PROFILE_CHOOSER:
-      layout = CreateSingleColumnLayout(this, kFixedMenuWidth);
+      layout = CreateSingleColumnLayout(this, menu_width_);
       sub_view = CreateProfileChooserView(avatar_menu);
       break;
   }
@@ -511,6 +551,8 @@ void ProfileChooserView::FocusFirstProfileButton() {
 
 void ProfileChooserView::WindowClosing() {
   DCHECK_EQ(profile_bubble_, this);
+  if (anchor_button_ && ui::MaterialDesignController::IsNewerMaterialUi())
+    anchor_button_->AnimateInkDrop(views::InkDropState::DEACTIVATED, nullptr);
   profile_bubble_ = NULL;
 }
 
@@ -624,9 +666,17 @@ void ProfileChooserView::ButtonPressed(views::Button* sender,
         profiles::BUBBLE_VIEW_MODE_ACCOUNT_MANAGEMENT :
         profiles::BUBBLE_VIEW_MODE_PROFILE_CHOOSER);
   } else if (sender == current_profile_card_) {
-    avatar_menu_->EditProfile(avatar_menu_->GetActiveProfileIndex());
-    PostActionPerformed(ProfileMetrics::PROFILE_DESKTOP_MENU_EDIT_IMAGE);
-    PostActionPerformed(ProfileMetrics::PROFILE_DESKTOP_MENU_EDIT_NAME);
+    if (dice_enabled_ &&
+        SigninManagerFactory::GetForProfile(browser_->profile())
+            ->IsAuthenticated()) {
+      chrome::ShowSettingsSubPage(browser_, chrome::kSyncSetupSubPage);
+    } else {
+      // Open settings to edit profile name and image. The profile doesn't need
+      // to be authenticated to open this.
+      avatar_menu_->EditProfile(avatar_menu_->GetActiveProfileIndex());
+      PostActionPerformed(ProfileMetrics::PROFILE_DESKTOP_MENU_EDIT_IMAGE);
+      PostActionPerformed(ProfileMetrics::PROFILE_DESKTOP_MENU_EDIT_NAME);
+    }
   } else if (sender == manage_accounts_button_) {
     // This button can either mean show/hide the account management view,
     // depending on which view it is displayed.
@@ -635,6 +685,31 @@ void ProfileChooserView::ButtonPressed(views::Button* sender,
                          : profiles::BUBBLE_VIEW_MODE_ACCOUNT_MANAGEMENT);
   } else if (sender == signin_current_profile_button_) {
     ShowViewFromMode(profiles::BUBBLE_VIEW_MODE_GAIA_SIGNIN);
+  } else if (sender == signin_with_gaia_account_button_) {
+    DCHECK(dice_signin_button_view_->account());
+    Hide();
+    signin_ui_util::EnableSyncFromPromo(
+        browser_, dice_signin_button_view_->account().value(), access_point_,
+        true /* is_default_promo_account */);
+  } else if (sender == sync_to_another_account_button_) {
+    // Extract the promo accounts for the submenu, i.e. remove the first
+    // one from the list because it is already shown in a separate button.
+    std::vector<AccountInfo> accounts(dice_sync_promo_accounts_.begin() + 1,
+                                      dice_sync_promo_accounts_.end());
+    if (accounts.empty()) {
+      // If there is no account to list for the submenu, directly open the
+      // sign-in page.
+      ShowViewFromMode(profiles::BUBBLE_VIEW_MODE_GAIA_SIGNIN);
+      return;
+    }
+    // Display the submenu to list |accounts|.
+    // Using base::Unretained(this) is safe here because |dice_accounts_menu_|
+    // is owned by |ProfileChooserView|, i.e. |this|.
+    dice_accounts_menu_ = std::make_unique<DiceAccountsMenu>(
+        accounts, GetImagesForAccounts(accounts, browser_->profile()),
+        base::BindOnce(&ProfileChooserView::EnableSync,
+                       base::Unretained(this)));
+    dice_accounts_menu_->Show(sender, sync_to_another_account_button_);
   } else {
     // Either one of the "other profiles", or one of the profile accounts
     // buttons was pressed.
@@ -645,6 +720,7 @@ void ProfileChooserView::ButtonPressed(views::Button* sender,
           profile_match->second, ui::DispositionFromEventFlags(event.flags()) ==
                                      WindowOpenDisposition::NEW_WINDOW,
           ProfileMetrics::SWITCH_PROFILE_ICON);
+      Hide();
     } else {
       // This was a profile accounts button.
       AccountButtonIndexes::const_iterator account_match =
@@ -698,7 +774,7 @@ void ProfileChooserView::StyledLabelLinkClicked(views::StyledLabel* label,
 views::View* ProfileChooserView::CreateProfileChooserView(
     AvatarMenu* avatar_menu) {
   views::View* view = new views::View();
-  views::GridLayout* layout = CreateSingleColumnLayout(view, kFixedMenuWidth);
+  views::GridLayout* layout = CreateSingleColumnLayout(view, menu_width_);
   // Separate items into active and alternatives.
   Indexes other_profiles;
   views::View* sync_error_view = NULL;
@@ -714,7 +790,7 @@ views::View* ProfileChooserView::CreateProfileChooserView(
       current_profile_view = CreateCurrentProfileView(item, false);
       if (!IsProfileChooser(view_mode_))
         current_profile_accounts = CreateCurrentProfileAccountsView(item);
-      sync_error_view = CreateSyncErrorViewIfNeeded();
+      sync_error_view = CreateSyncErrorViewIfNeeded(item);
     } else {
       other_profiles.push_back(i);
     }
@@ -733,8 +809,10 @@ views::View* ProfileChooserView::CreateProfileChooserView(
     option_buttons_view = CreateOptionsView(false, avatar_menu);
   }
 
-  layout->StartRow(1, 0);
-  layout->AddView(current_profile_view);
+  if (!(dice_enabled_ && sync_error_view)) {
+    layout->StartRow(1, 0);
+    layout->AddView(current_profile_view);
+  }
 
   if (!IsProfileChooser(view_mode_)) {
     DCHECK(current_profile_accounts);
@@ -759,7 +837,8 @@ views::View* ProfileChooserView::CreateProfileChooserView(
   return view;
 }
 
-views::View* ProfileChooserView::CreateSyncErrorViewIfNeeded() {
+views::View* ProfileChooserView::CreateSyncErrorViewIfNeeded(
+    const AvatarMenu::Item& avatar_item) {
   int content_string_id, button_string_id;
   SigninManagerBase* signin_manager =
       SigninManagerFactory::GetForProfile(browser_->profile());
@@ -772,14 +851,17 @@ views::View* ProfileChooserView::CreateSyncErrorViewIfNeeded() {
 
   ChromeLayoutProvider* provider = ChromeLayoutProvider::Get();
 
+  if (error != sync_ui_util::SUPERVISED_USER_AUTH_ERROR && dice_enabled_)
+    return CreateDiceSyncErrorView(avatar_item, error, button_string_id);
+
   // Sets an overall horizontal layout.
   views::View* view = new views::View();
-  views::BoxLayout* layout = new views::BoxLayout(
+  auto layout = std::make_unique<views::BoxLayout>(
       views::BoxLayout::kHorizontal, gfx::Insets(kMenuEdgeMargin),
       provider->GetDistanceMetric(DISTANCE_UNRELATED_CONTROL_HORIZONTAL));
   layout->set_cross_axis_alignment(
       views::BoxLayout::CROSS_AXIS_ALIGNMENT_START);
-  view->SetLayoutManager(layout);
+  view->SetLayoutManager(std::move(layout));
 
   // Adds the sync problem icon.
   views::ImageView* sync_problem_icon = new views::ImageView();
@@ -789,13 +871,13 @@ views::View* ProfileChooserView::CreateSyncErrorViewIfNeeded() {
 
   // Adds a vertical view to organize the error title, message, and button.
   views::View* vertical_view = new views::View();
-  const int small_vertical_spacing = provider->GetDistanceMetric(
-      DISTANCE_RELATED_CONTROL_VERTICAL_SMALL);
-  views::BoxLayout* vertical_layout = new views::BoxLayout(
+  const int small_vertical_spacing =
+      provider->GetDistanceMetric(DISTANCE_RELATED_CONTROL_VERTICAL_SMALL);
+  auto vertical_layout = std::make_unique<views::BoxLayout>(
       views::BoxLayout::kVertical, gfx::Insets(), small_vertical_spacing);
   vertical_layout->set_cross_axis_alignment(
       views::BoxLayout::CROSS_AXIS_ALIGNMENT_START);
-  vertical_view->SetLayoutManager(vertical_layout);
+  vertical_view->SetLayoutManager(std::move(vertical_layout));
 
   // Adds the title.
   views::Label* title_label = new views::Label(
@@ -833,9 +915,53 @@ views::View* ProfileChooserView::CreateSyncErrorViewIfNeeded() {
   return view;
 }
 
+views::View* ProfileChooserView::CreateDiceSyncErrorView(
+    const AvatarMenu::Item& avatar_item,
+    sync_ui_util::AvatarSyncErrorType error,
+    int button_string_id) {
+  // Creates a view containing an error hover button displaying the current
+  // profile (non-selectable) and a blue button to resolve the error.
+  views::View* view = new views::View();
+  view->SetLayoutManager(std::make_unique<views::BoxLayout>(
+      views::BoxLayout::kVertical, gfx::Insets(kMenuEdgeMargin),
+      kMenuEdgeMargin));
+
+  const bool show_sync_paused_ui = error == sync_ui_util::AUTH_ERROR;
+  // Add profile hover button.
+  auto current_profile_photo = std::make_unique<BadgedProfilePhoto>(
+      show_sync_paused_ui ? BadgedProfilePhoto::BADGE_TYPE_SYNC_PAUSED
+                          : BadgedProfilePhoto::BADGE_TYPE_SYNC_ERROR,
+      avatar_item.icon);
+  HoverButton* current_profile = new HoverButton(
+      this, std::move(current_profile_photo),
+      l10n_util::GetStringUTF16(show_sync_paused_ui
+                                    ? IDS_PROFILES_DICE_SYNC_PAUSED_TITLE
+                                    : IDS_SYNC_ERROR_USER_MENU_TITLE),
+      avatar_item.username);
+
+  if (!show_sync_paused_ui)
+    current_profile->SetStyle(HoverButton::STYLE_ERROR);
+  current_profile->SetEnabled(false);
+  // Remove the default |HoverButton| border from |current_profile| so the
+  // insets of |BoxLayout| are used for aligment instead.
+  current_profile->SetBorder(nullptr);
+  view->AddChildView(current_profile);
+  // Add blue button.
+  sync_error_button_ = views::MdTextButton::CreateSecondaryUiBlueButton(
+      this, l10n_util::GetStringUTF16(button_string_id));
+  sync_error_button_->set_id(error);
+  view->AddChildView(sync_error_button_);
+  return view;
+}
+
 views::View* ProfileChooserView::CreateCurrentProfileView(
     const AvatarMenu::Item& avatar_item,
     bool is_guest) {
+  if (!avatar_item.signed_in && dice_enabled_ &&
+      SyncPromoUI::ShouldShowSyncPromo(browser_->profile())) {
+    return CreateDiceSigninView();
+  }
+
   ChromeLayoutProvider* provider = ChromeLayoutProvider::Get();
 
   views::View* view = new views::View();
@@ -845,9 +971,9 @@ views::View* ProfileChooserView::CreateCurrentProfileView(
       account_consistency_enabled
           ? provider->GetDistanceMetric(DISTANCE_CONTENT_LIST_VERTICAL_MULTI)
           : provider->GetDistanceMetric(DISTANCE_CONTENT_LIST_VERTICAL_SINGLE);
-  view->SetLayoutManager(
-      new views::BoxLayout(views::BoxLayout::kVertical,
-                           gfx::Insets(content_list_vert_spacing, 0), 0));
+  view->SetLayoutManager(std::make_unique<views::BoxLayout>(
+      views::BoxLayout::kVertical, gfx::Insets(content_list_vert_spacing, 0),
+      0));
 
   auto current_profile_photo = std::make_unique<BadgedProfilePhoto>(
       GetProfileBadgeType(browser_->profile()), avatar_item.icon);
@@ -856,15 +982,20 @@ views::View* ProfileChooserView::CreateCurrentProfileView(
 
   // Show the profile name by itself if not signed in or account consistency is
   // disabled. Otherwise, show the email attached to the profile.
-  bool show_email = avatar_item.signed_in && !account_consistency_enabled;
+  bool show_email =
+      !is_guest && avatar_item.signed_in && !account_consistency_enabled;
   const base::string16 hover_button_title =
-      signin::IsDiceEnabledForProfile(browser_->profile()->GetPrefs())
-          ? l10n_util::GetStringUTF16(IDS_PROFILES_SYNCED_TO_TITLE)
+      dice_enabled_ && browser_->profile()->IsSyncAllowed()
+          ? l10n_util::GetStringUTF16(IDS_PROFILES_SYNC_COMPLETE_TITLE)
           : profile_name;
   HoverButton* profile_card = new HoverButton(
       this, std::move(current_profile_photo), hover_button_title,
       show_email ? avatar_item.username : base::string16());
-  if (show_email)
+  // TODO(crbug.com/815047): Sometimes, |avatar_item.username| is empty when
+  // |show_email| is true, which should never happen. This causes a crash when
+  // setting the elision behavior, so until this bug is fixed, avoid the crash
+  // by checking that the username is not empty.
+  if (show_email && !avatar_item.username.empty())
     profile_card->SetSubtitleElideBehavior(gfx::ELIDE_EMAIL);
   current_profile_card_ = profile_card;
   view->AddChildView(current_profile_card_);
@@ -893,17 +1024,15 @@ views::View* ProfileChooserView::CreateCurrentProfileView(
     return view;
   }
 
-  SigninManagerBase* signin_manager = SigninManagerFactory::GetForProfile(
-      browser_->profile()->GetOriginalProfile());
-  if (signin_manager->IsSigninAllowed()) {
+  if (!dice_enabled_ && SigninManagerFactory::GetForProfile(browser_->profile())
+                            ->IsSigninAllowed()) {
     views::View* extra_links_view = new views::View();
-    views::BoxLayout* extra_links_layout = new views::BoxLayout(
+    extra_links_view->SetLayoutManager(std::make_unique<views::BoxLayout>(
         views::BoxLayout::kVertical,
         gfx::Insets(provider->GetDistanceMetric(
                         views::DISTANCE_RELATED_CONTROL_VERTICAL),
                     kMenuEdgeMargin),
-        kMenuEdgeMargin);
-    extra_links_view->SetLayoutManager(extra_links_layout);
+        kMenuEdgeMargin));
     views::Label* promo =
         new views::Label(l10n_util::GetStringUTF16(IDS_PROFILES_SIGNIN_PROMO));
     promo->SetMultiLine(true);
@@ -912,7 +1041,7 @@ views::View* ProfileChooserView::CreateCurrentProfileView(
     // Provide a hint to the layout manager by giving the promo text a maximum
     // width. This ensures it has the correct number of lines when determining
     // the initial Widget size.
-    promo->SetMaximumWidth(kFixedMenuWidth);
+    promo->SetMaximumWidth(menu_width_);
     extra_links_view->AddChildView(promo);
 
     signin_current_profile_button_ =
@@ -921,8 +1050,8 @@ views::View* ProfileChooserView::CreateCurrentProfileView(
                       IDS_SYNC_START_SYNC_BUTTON_LABEL,
                       l10n_util::GetStringUTF16(IDS_SHORT_PRODUCT_NAME)));
     extra_links_view->AddChildView(signin_current_profile_button_);
-    base::RecordAction(
-        base::UserMetricsAction("Signin_Impression_FromAvatarBubbleSignin"));
+    signin_metrics::RecordSigninImpressionUserActionForAccessPoint(
+        signin_metrics::AccessPoint::ACCESS_POINT_AVATAR_BUBBLE_SIGN_IN);
     extra_links_view->SetBorder(views::CreateEmptyBorder(
         0, 0,
         provider->GetDistanceMetric(DISTANCE_RELATED_CONTROL_VERTICAL_SMALL),
@@ -933,6 +1062,106 @@ views::View* ProfileChooserView::CreateCurrentProfileView(
   current_profile_card_->SetAccessibleName(
       l10n_util::GetStringFUTF16(
           IDS_PROFILES_EDIT_PROFILE_ACCESSIBLE_NAME, profile_name));
+  return view;
+}
+
+views::View* ProfileChooserView::CreateDiceSigninView() {
+  IncrementDiceSigninPromoShowCount();
+  // Fetch signed in GAIA web accounts.
+  dice_sync_promo_accounts_ =
+      signin_ui_util::GetAccountsForDicePromos(browser_->profile());
+
+  // Create a view that holds an illustration, a promo text and a button to turn
+  // on Sync. The promo illustration is only shown the first 10 times per
+  // profile.
+  int promotext_top_spacing = 16;
+  const int additional_bottom_spacing =
+      dice_sync_promo_accounts_.empty() ? 0 : 8;
+  views::View* view = new views::View();
+  view->SetLayoutManager(std::make_unique<views::BoxLayout>(
+      views::BoxLayout::kVertical,
+      gfx::Insets(0, 0, additional_bottom_spacing, 0)));
+
+  if (GetDiceSigninPromoShowCount() <=
+      kDiceSigninPromoIllustrationShowCountMax) {
+    // Add the illustration.
+    ui::ResourceBundle& rb = ui::ResourceBundle::GetSharedInstance();
+    views::ImageView* illustration = new NonAccessibleImageView();
+    illustration->SetImage(
+        *rb.GetNativeImageNamed(IDR_PROFILES_DICE_TURN_ON_SYNC).ToImageSkia());
+    view->AddChildView(illustration);
+    // Adjust the spacing between illustration and promo text.
+    promotext_top_spacing = 24;
+  }
+  // Add the promo text.
+  bool show_personalized_promo = !dice_sync_promo_accounts_.empty();
+  views::Label* promo = new views::Label(l10n_util::GetStringUTF16(
+      show_personalized_promo ? IDS_PROFILES_DICE_SYNC_PROMO
+                              : IDS_PROFILES_DICE_SIGNIN_PROMO));
+  promo->SetMultiLine(true);
+  promo->SetHorizontalAlignment(gfx::ALIGN_LEFT);
+  promo->SetMaximumWidth(menu_width_ - 2 * kMenuEdgeMargin);
+  promo->SetBorder(views::CreateEmptyBorder(
+      promotext_top_spacing, kMenuEdgeMargin, 0, kMenuEdgeMargin));
+  view->AddChildView(promo);
+
+  // Log sign-in impressions user metrics.
+  signin_metrics::RecordSigninImpressionUserActionForAccessPoint(
+      signin_metrics::AccessPoint::ACCESS_POINT_AVATAR_BUBBLE_SIGN_IN);
+  signin_metrics::RecordSigninImpressionWithAccountUserActionForAccessPoint(
+      signin_metrics::AccessPoint::ACCESS_POINT_AVATAR_BUBBLE_SIGN_IN,
+      show_personalized_promo);
+
+  if (!show_personalized_promo) {
+    // Create a sign-in button without account information.
+    dice_signin_button_view_ = new DiceSigninButtonView(this);
+    dice_signin_button_view_->SetBorder(
+        views::CreateEmptyBorder(gfx::Insets(kMenuEdgeMargin)));
+    view->AddChildView(dice_signin_button_view_);
+    signin_current_profile_button_ = dice_signin_button_view_->signin_button();
+    return view;
+  }
+  // Create a button to sign in the first account of
+  // |dice_sync_promo_accounts_|.
+  AccountInfo dice_promo_default_account = dice_sync_promo_accounts_[0];
+  gfx::Image account_icon =
+      AccountTrackerServiceFactory::GetForProfile(browser_->profile())
+          ->GetAccountImage(dice_promo_default_account.account_id);
+  if (account_icon.IsEmpty()) {
+    account_icon = ui::ResourceBundle::GetSharedInstance().GetImageNamed(
+        profiles::GetPlaceholderAvatarIconResourceID());
+  }
+  dice_signin_button_view_ =
+      new DiceSigninButtonView(dice_promo_default_account, account_icon, this);
+  dice_signin_button_view_->SetBorder(
+      views::CreateEmptyBorder(gfx::Insets(kMenuEdgeMargin)));
+  view->AddChildView(dice_signin_button_view_);
+  signin_with_gaia_account_button_ = dice_signin_button_view_->signin_button();
+
+  // Create a button to sync to another account.
+  constexpr int kSmallMenuIconSize = 16;
+  std::unique_ptr<views::ImageView> switch_account_icon_view(
+      new views::ImageView());
+  switch_account_icon_view->SetImage(gfx::CreateVectorIcon(
+      kSyncSwitchAccountIcon, kSmallMenuIconSize, gfx::kChromeIconGrey));
+  // The accounts submenu is only needed when there are additional accounts to
+  // list, i.e. when there is more than 1 account (the first account has it's
+  // own button).
+  std::unique_ptr<views::ImageView> submenu_arrow_icon_view;
+  if (dice_sync_promo_accounts_.size() > 1) {
+    constexpr int kSubmenuArrowSize = 12;
+    submenu_arrow_icon_view = std::make_unique<views::ImageView>();
+    submenu_arrow_icon_view->SetImage(gfx::CreateVectorIcon(
+        kUserMenuRightArrowIcon, kSubmenuArrowSize, gfx::kChromeIconGrey));
+    // Make sure that the arrow is flipped in RTL mode.
+    submenu_arrow_icon_view->EnableCanvasFlippingForRTLUI(true);
+  }
+  sync_to_another_account_button_ = new HoverButton(
+      this, std::move(switch_account_icon_view),
+      l10n_util::GetStringUTF16(
+          IDS_PROFILES_DICE_SIGNIN_WITH_ANOTHER_ACCOUNT_BUTTON),
+      base::string16() /* subtitle */, std::move(submenu_arrow_icon_view));
+  view->AddChildView(sync_to_another_account_button_);
   return view;
 }
 
@@ -956,15 +1185,24 @@ views::View* ProfileChooserView::CreateOptionsView(bool display_lock,
       provider->GetDistanceMetric(DISTANCE_CONTENT_LIST_VERTICAL_MULTI);
 
   views::View* view = new views::View();
-  views::GridLayout* layout = CreateSingleColumnLayout(view, kFixedMenuWidth);
+  views::GridLayout* layout = CreateSingleColumnLayout(view, menu_width_);
 
   const bool is_guest = browser_->profile()->IsGuestSession();
   const int kIconSize = 20;
   // Add the user switching buttons.
+  // Order them such that the active user profile comes first (for Dice).
   layout->StartRowWithPadding(1, 0, 0, content_list_vert_spacing);
+  std::vector<size_t> ordered_item_indices;
   for (size_t i = 0; i < avatar_menu->GetNumberOfItems(); ++i) {
+    if (avatar_menu->GetItemAt(i).active)
+      ordered_item_indices.insert(ordered_item_indices.begin(), i);
+    else
+      ordered_item_indices.push_back(i);
+  }
+  for (size_t i : ordered_item_indices) {
     const AvatarMenu::Item& item = avatar_menu->GetItemAt(i);
-    if (!item.active) {
+    if (!item.active ||
+        (dice_enabled_ && avatar_menu->GetNumberOfItems() >= 2)) {
       gfx::Image image = profiles::GetSizedAvatarIcon(
           item.icon, true, kIconSize, kIconSize, profiles::SHAPE_CIRCLE);
       views::LabelButton* button =
@@ -986,7 +1224,7 @@ views::View* ProfileChooserView::CreateOptionsView(bool display_lock,
     if (service->GetBoolean(prefs::kBrowserGuestModeEnabled)) {
       guest_profile_button_ =
           new HoverButton(this,
-                          gfx::CreateVectorIcon(kAccountCircleIcon, kIconSize,
+                          gfx::CreateVectorIcon(kUserMenuGuestIcon, kIconSize,
                                                 gfx::kChromeIconGrey),
                           l10n_util::GetStringUTF16(IDS_GUEST_PROFILE_NAME));
       layout->StartRow(1, 0);
@@ -1031,7 +1269,7 @@ views::View* ProfileChooserView::CreateSupervisedUserDisclaimerView() {
   views::View* view = new views::View();
   int horizontal_margin = kMenuEdgeMargin;
   views::GridLayout* layout =
-      CreateSingleColumnLayout(view, kFixedMenuWidth - 2 * horizontal_margin);
+      CreateSingleColumnLayout(view, menu_width_ - 2 * horizontal_margin);
   view->SetBorder(views::CreateEmptyBorder(0, horizontal_margin,
                                            kMenuEdgeMargin, horizontal_margin));
 
@@ -1052,7 +1290,7 @@ views::View* ProfileChooserView::CreateCurrentProfileAccountsView(
   views::View* view = new views::View();
   view->SetBackground(views::CreateSolidBackground(
       profiles::kAvatarBubbleAccountsBackgroundColor));
-  views::GridLayout* layout = CreateSingleColumnLayout(view, kFixedMenuWidth);
+  views::GridLayout* layout = CreateSingleColumnLayout(view, menu_width_);
 
   Profile* profile = browser_->profile();
   std::string primary_account =
@@ -1069,10 +1307,10 @@ views::View* ProfileChooserView::CreateCurrentProfileAccountsView(
   // from the others in the UI, so more work is likely required here:
   // crbug.com/311124.
   CreateAccountButton(layout, primary_account, true,
-                      error_account_id == primary_account, kFixedMenuWidth);
+                      error_account_id == primary_account, menu_width_);
   for (size_t i = 0; i < accounts.size(); ++i)
     CreateAccountButton(layout, accounts[i], false,
-                        error_account_id == accounts[i], kFixedMenuWidth);
+                        error_account_id == accounts[i], menu_width_);
 
   ChromeLayoutProvider* provider = ChromeLayoutProvider::Get();
   const int vertical_spacing =
@@ -1235,4 +1473,25 @@ void ProfileChooserView::PostActionPerformed(
     ProfileMetrics::ProfileDesktopMenu action_performed) {
   ProfileMetrics::LogProfileDesktopMenu(action_performed, gaia_service_type_);
   gaia_service_type_ = signin::GAIA_SERVICE_TYPE_NONE;
+}
+
+void ProfileChooserView::EnableSync(
+    const base::Optional<AccountInfo>& account) {
+  Hide();
+  if (account)
+    signin_ui_util::EnableSyncFromPromo(browser_, account.value(),
+                                        access_point_,
+                                        false /* is_default_promo_account */);
+  else
+    ShowViewFromMode(profiles::BUBBLE_VIEW_MODE_GAIA_SIGNIN);
+}
+
+int ProfileChooserView::GetDiceSigninPromoShowCount() const {
+  return browser_->profile()->GetPrefs()->GetInteger(
+      prefs::kDiceSigninUserMenuPromoCount);
+}
+
+void ProfileChooserView::IncrementDiceSigninPromoShowCount() {
+  browser_->profile()->GetPrefs()->SetInteger(
+      prefs::kDiceSigninUserMenuPromoCount, GetDiceSigninPromoShowCount() + 1);
 }

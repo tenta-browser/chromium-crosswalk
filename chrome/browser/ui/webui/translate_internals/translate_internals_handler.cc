@@ -10,7 +10,6 @@
 
 #include "base/bind.h"
 #include "base/bind_helpers.h"
-#include "base/memory/ptr_util.h"
 #include "base/values.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/chrome_notification_types.h"
@@ -61,15 +60,17 @@ TranslateInternalsHandler::~TranslateInternalsHandler() {
 
 void TranslateInternalsHandler::RegisterMessages() {
   web_ui()->RegisterMessageCallback(
-      "removePrefItem", base::Bind(&TranslateInternalsHandler::OnRemovePrefItem,
-                                   base::Unretained(this)));
+      "removePrefItem",
+      base::BindRepeating(&TranslateInternalsHandler::OnRemovePrefItem,
+                          base::Unretained(this)));
   web_ui()->RegisterMessageCallback(
-      "requestInfo", base::Bind(&TranslateInternalsHandler::OnRequestInfo,
-                                base::Unretained(this)));
+      "requestInfo",
+      base::BindRepeating(&TranslateInternalsHandler::OnRequestInfo,
+                          base::Unretained(this)));
   web_ui()->RegisterMessageCallback(
       "overrideCountry",
-      base::Bind(&TranslateInternalsHandler::OnOverrideCountry,
-                 base::Unretained(this)));
+      base::BindRepeating(&TranslateInternalsHandler::OnOverrideCountry,
+                          base::Unretained(this)));
 }
 
 void TranslateInternalsHandler::Observe(
@@ -232,7 +233,7 @@ void TranslateInternalsHandler::SendSupportedLanguagesToJs() {
   base::Time last_updated =
       translate::TranslateDownloadManager::GetSupportedLanguagesLastUpdated();
 
-  auto languages_list = base::MakeUnique<base::ListValue>();
+  auto languages_list = std::make_unique<base::ListValue>();
   for (std::vector<std::string>::iterator it = languages.begin();
        it != languages.end(); ++it) {
     const std::string& lang = *it;

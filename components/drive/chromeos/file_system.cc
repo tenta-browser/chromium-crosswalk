@@ -33,7 +33,6 @@
 #include "components/drive/drive.pb.h"
 #include "components/drive/drive_pref_names.h"
 #include "components/drive/file_change.h"
-#include "components/drive/file_system_core_util.h"
 #include "components/drive/job_scheduler.h"
 #include "components/drive/resource_entry_conversion.h"
 #include "components/prefs/pref_service.h"
@@ -146,12 +145,35 @@ FileError MarkCacheFileAsMountedInternal(
   return cache->MarkAsMounted(local_id, cache_file_path);
 }
 
+// Used to implement IsCacheFileMarkedAsMounted().
+FileError IsCacheFileMarkedAsMountedInternal(
+    internal::ResourceMetadata* resource_metadata,
+    internal::FileCache* cache,
+    const base::FilePath& drive_file_path,
+    bool* result) {
+  std::string local_id;
+  FileError error = resource_metadata->GetIdByPath(drive_file_path, &local_id);
+  if (error != FILE_ERROR_OK)
+    return error;
+
+  *result = cache->IsMarkedAsMounted(local_id);
+  return FILE_ERROR_OK;
+}
+
 // Runs the callback with arguments.
 void RunMarkMountedCallback(const MarkMountedCallback& callback,
                             base::FilePath* cache_file_path,
                             FileError error) {
   DCHECK(!callback.is_null());
   callback.Run(error, *cache_file_path);
+}
+
+// Runs the callback with arguments.
+void RunIsMountedCallback(const IsMountedCallback& callback,
+                          bool* result,
+                          FileError error) {
+  DCHECK(!callback.is_null());
+  callback.Run(error, *result);
 }
 
 // Callback for ResourceMetadata::GetLargestChangestamp.
@@ -654,14 +676,10 @@ void FileSystem::GetResourceEntryAfterRead(
   std::unique_ptr<ResourceEntry> entry(new ResourceEntry);
   ResourceEntry* entry_ptr = entry.get();
   base::PostTaskAndReplyWithResult(
-      blocking_task_runner_.get(),
-      FROM_HERE,
-      base::Bind(&GetLocallyStoredResourceEntry,
-                 resource_metadata_,
-                 cache_,
-                 file_path,
-                 entry_ptr),
-      base::Bind(&RunGetResourceEntryCallback, callback, base::Passed(&entry)));
+      blocking_task_runner_.get(), FROM_HERE,
+      base::BindOnce(&GetLocallyStoredResourceEntry, resource_metadata_, cache_,
+                     file_path, entry_ptr),
+      base::BindOnce(&RunGetResourceEntryCallback, callback, std::move(entry)));
 }
 
 void FileSystem::ReadDirectory(
@@ -681,8 +699,7 @@ void FileSystem::ReadDirectory(
       directory_path, entries_callback, completion_callback);
 
   // Also start loading all of the user's contents.
-  change_list_loader_->LoadIfNeeded(
-      base::Bind(&util::EmptyFileOperationCallback));
+  change_list_loader_->LoadIfNeeded(base::DoNothing());
 }
 
 void FileSystem::GetAvailableSpace(
@@ -937,6 +954,20 @@ void FileSystem::MarkCacheFileAsMounted(
                  cache_file_path),
       base::Bind(
           &RunMarkMountedCallback, callback, base::Owned(cache_file_path)));
+}
+
+void FileSystem::IsCacheFileMarkedAsMounted(
+    const base::FilePath& drive_file_path,
+    const IsMountedCallback& callback) {
+  DCHECK(thread_checker_.CalledOnValidThread());
+  DCHECK(!callback.is_null());
+
+  bool* is_mounted = new bool(false);
+  base::PostTaskAndReplyWithResult(
+      blocking_task_runner_.get(), FROM_HERE,
+      base::Bind(&IsCacheFileMarkedAsMountedInternal, resource_metadata_,
+                 cache_, drive_file_path, is_mounted),
+      base::Bind(&RunIsMountedCallback, callback, base::Owned(is_mounted)));
 }
 
 void FileSystem::MarkCacheFileAsUnmounted(

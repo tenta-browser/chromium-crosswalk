@@ -33,4 +33,9 @@ public interface RenderFrameHost {
      * @return The InterfaceProvider for the frame.
      */
     InterfaceProvider getRemoteInterfaces();
+
+    /**
+     * Notifies the native RenderFrameHost about a user activation from the browser side.
+     */
+    void notifyUserActivation();
 }

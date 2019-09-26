@@ -3,21 +3,24 @@ include_rules = [
   "+cc/debug",
   "+cc/output",
   "+chromeos/cryptohome",
+  "+components/exo",
   "+components/pref_registry",
   "+components/prefs",
   "+components/quirks",
   "+components/session_manager",
   "+components/signin/core/account_id",
   "+components/strings",
+  "+components/sync",
   "+components/ui_devtools",
   "+components/user_manager",
   "+components/vector_icons",
   "+components/viz/common",
   "+components/viz/host",
   "+components/wallpaper",
+  "+extensions/common/constants.h",
   "+gpu/config",
   "+media",
-  "+mash/public/interfaces",
+  "+mash/public/mojom",
   "+mash/shelf/public",
   "+mojo/common",
   "+mojo/public",
@@ -36,8 +39,18 @@ include_rules = [
   "+net",
   "+ui",
   "-ash/host",
+
+  # Ash components are mini-apps and in general ash should not depend on them.
+  # If ash needs to launch a mini-app it can add a deps exception just for the
+  # header required to launch the app.
+  "-ash/components",
+
+  # Ash can talk to public interfaces for mini-apps.
+  "+ash/components/autoclick/public",
+  "+ash/components/quick_launch/public",
+
+  # Ash sits above content. Exceptions live in //ash/content.
   "-content",
-  "+content/public/common/service_names.mojom.h",
 
   # Only allow Chrome OS services and D-Bus clients accessible to the mustash
   # ash process.
@@ -46,20 +59,29 @@ include_rules = [
   "+chromeos/audio",
   "+chromeos/chromeos_switches.h",
   "+chromeos/chromeos_paths.h",
+  "+chromeos/components/proximity_auth/logging/logging.h",
   "+chromeos/dbus/dbus_thread_manager.h",
   "+chromeos/dbus/fake_power_manager_client.h",
   "+chromeos/dbus/fake_session_manager_client.h",
   "+chromeos/dbus/power_manager",
   "+chromeos/dbus/power_manager_client.h",
+  "+chromeos/dbus/power_policy_controller.h",
   "+chromeos/dbus/session_manager_client.h",
   "+chromeos/dbus/shill_device_client.h",
   "+chromeos/dbus/system_clock_client.h",
   "+chromeos/login",
+  # LoginState is deprecated and is not instantiated in mash.
+  "-chromeos/login/login_state.h",
   # TODO(jamescook): Eliminate this. http://crbug.com/644355
   "+chromeos/network",
+  "+chromeos/services/assistant/public" ,
+  "+chromeos/services/multidevice_setup/public/mojom",
   # TODO(jamescook): Eliminate this. http://crbug.com/644361
   "+chromeos/settings/timezone_settings.h",
   "+chromeos/system",
+
+  # InputMethodManager lives in the browser process. Use ImeController.
+  "-ui/base/ime/chromeos/input_method_manager.h"
 
   # Ozone does not run in process in mus/mash.
   "-ui/events/ozone",
@@ -86,7 +108,7 @@ include_rules = [
 
 specific_include_rules = {
   "app_launch_unittest.cc": [
-    "+mash/quick_launch/public",
+    "+ash/components/quick_launch/public",
   ],
   "root_window_controller\.*": [
     "+ash/host"
@@ -102,9 +124,14 @@ specific_include_rules = {
   "shell_port_mus\.cc": [
     "+ash/host/ash_window_tree_host_init_params.h",
     "+ash/host/ash_window_tree_host_mus.h",
+    "+ash/host/ash_window_tree_host_mus_mirroring_unified.h",
+    "+ash/host/ash_window_tree_host_mus_unified.h",
   ],
   "touch_transformer_controller\.*": [
     "+ash/host"
+  ],
+  "window_manager.cc": [
+    "+ash/host/ash_window_tree_host.h"
   ],
   "window_manager_service.cc": [
     "+chromeos/cryptohome"

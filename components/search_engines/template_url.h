@@ -5,8 +5,7 @@
 #ifndef COMPONENTS_SEARCH_ENGINES_TEMPLATE_URL_H_
 #define COMPONENTS_SEARCH_ENGINES_TEMPLATE_URL_H_
 
-#include <stddef.h>
-
+#include <cstddef>
 #include <memory>
 #include <string>
 #include <utility>
@@ -89,6 +88,10 @@ class TemplateURLRef {
       ContextualSearchParams(const ContextualSearchParams& other);
       ~ContextualSearchParams();
 
+      // Estimates dynamic memory usage.
+      // See base/trace_event/memory_usage_estimator.h for more info.
+      size_t EstimateMemoryUsage() const;
+
       // The version of contextual search.
       int version;
 
@@ -101,6 +104,10 @@ class TemplateURLRef {
       // resides, not where they currently are.
       std::string home_country;
     };
+
+    // Estimates dynamic memory usage.
+    // See base/trace_event/memory_usage_estimator.h for more info.
+    size_t EstimateMemoryUsage() const;
 
     // The search terms (query).
     base::string16 search_terms;
@@ -274,6 +281,10 @@ class TemplateURLRef {
   // Whether the URL uses POST (as opposed to GET).
   bool UsesPOSTMethod(const SearchTermsData& search_terms_data) const;
 
+  // Estimates dynamic memory usage.
+  // See base/trace_event/memory_usage_estimator.h for more info.
+  size_t EstimateMemoryUsage() const;
+
  private:
   friend class TemplateURL;
   friend class TemplateURLTest;
@@ -339,6 +350,10 @@ class TemplateURLRef {
     std::string name;
     std::string value;
     std::string content_type;
+
+    // Estimates dynamic memory usage.
+    // See base/trace_event/memory_usage_estimator.h for more info.
+    size_t EstimateMemoryUsage() const;
   };
 
   // The list of elements to replace.
@@ -485,6 +500,10 @@ class TemplateURL {
                             bool wants_to_be_default_engine);
     ~AssociatedExtensionInfo();
 
+    // Estimates dynamic memory usage.
+    // See base/trace_event/memory_usage_estimator.h for more info.
+    size_t EstimateMemoryUsage() const;
+
     std::string extension_id;
 
     // Used to resolve conflicts when there are multiple extensions specifying
@@ -578,7 +597,11 @@ class TemplateURL {
   const std::string& sync_guid() const { return data_.sync_guid; }
 
   const std::vector<TemplateURLRef>& url_refs() const { return url_refs_; }
-  const TemplateURLRef& url_ref() const { return *url_ref_; }
+  const TemplateURLRef& url_ref() const {
+    // Sanity check for https://crbug.com/781703.
+    CHECK(!url_refs_.empty());
+    return url_refs_.back();
+  }
   const TemplateURLRef& suggestions_url_ref() const {
     return suggestions_url_ref_;
   }
@@ -624,13 +647,8 @@ class TemplateURL {
 
   // Use the alternate URLs and the search URL to match the provided |url|
   // and extract |search_terms| from it. Returns false and an empty
-  // |search_terms| if no search terms can be matched. The order in which the
-  // alternate URLs are listed dictates their priority, the URL at index 0 is
-  // treated as the highest priority and the primary search URL is treated as
-  // the lowest priority. For example, if a TemplateURL has alternate URL
-  // "http://foo/#q={searchTerms}" and search URL "http://foo/?q={searchTerms}",
-  // and the URL to be decoded is "http://foo/?q=a#q=b", the alternate URL will
-  // match first and the decoded search term will be "b".
+  // |search_terms| if no search terms can be matched. The URLs are matched in
+  // the order listed in |url_refs_| (see comment there).
   bool ExtractSearchTermsFromURL(const GURL& url,
                                  const SearchTermsData& search_terms_data,
                                  base::string16* search_terms) const;
@@ -673,6 +691,10 @@ class TemplateURL {
   // it should be called after SearchTermsData has been changed.
   void InvalidateCachedValues() const;
 
+  // Estimates dynamic memory usage.
+  // See base/trace_event/memory_usage_estimator.h for more info.
+  size_t EstimateMemoryUsage() const;
+
  private:
   friend class TemplateURLService;
 
@@ -688,7 +710,8 @@ class TemplateURL {
   void ResetKeywordIfNecessary(const SearchTermsData& search_terms_data,
                                bool force);
 
-  // Resizes the |url_refs_| vector and sets |url_ref_| according to |data_|.
+  // Resizes the |url_refs_| vector, which always holds the search URL as the
+  // last item.
   void ResizeURLRefVector();
 
   // Uses the alternate URLs and the search URL to match the provided |url|
@@ -704,13 +727,14 @@ class TemplateURL {
   TemplateURLData data_;
 
   // Contains TemplateURLRefs corresponding to the alternate URLs and the search
-  // URL. This vector must not be resized except by ResizeURLRefVector() to keep
-  // the |url_ref_| pointer correct.
+  // URL, in priority order: the URL at index 0 is treated as the highest
+  // priority and the primary search URL is treated as the lowest priority.  For
+  // example, if a TemplateURL has alternate URL "http://foo/#q={searchTerms}"
+  // and search URL "http://foo/?q={searchTerms}", and the URL to be decoded is
+  // "http://foo/?q=a#q=b", the alternate URL will match first and the decoded
+  // search term will be "b".  Note that since every TemplateURLRef has a
+  // primary search URL, this vector is never empty.
   std::vector<TemplateURLRef> url_refs_;
-
-  // Points to the TemplateURLRef in |url_refs_| which corresponds to the search
-  // URL.
-  TemplateURLRef* url_ref_;
 
   TemplateURLRef suggestions_url_ref_;
   TemplateURLRef image_url_ref_;

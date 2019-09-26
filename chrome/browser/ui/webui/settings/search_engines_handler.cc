@@ -9,7 +9,6 @@
 #include <utility>
 
 #include "base/bind.h"
-#include "base/memory/ptr_util.h"
 #include "base/metrics/field_trial.h"
 #include "base/metrics/user_metrics.h"
 #include "base/strings/string_number_conversions.h"
@@ -62,32 +61,35 @@ SearchEnginesHandler::~SearchEnginesHandler() {
 void SearchEnginesHandler::RegisterMessages() {
   web_ui()->RegisterMessageCallback(
       "getSearchEnginesList",
-      base::Bind(&SearchEnginesHandler::HandleGetSearchEnginesList,
-                 base::Unretained(this)));
+      base::BindRepeating(&SearchEnginesHandler::HandleGetSearchEnginesList,
+                          base::Unretained(this)));
   web_ui()->RegisterMessageCallback(
       "setDefaultSearchEngine",
-      base::Bind(&SearchEnginesHandler::HandleSetDefaultSearchEngine,
-                 base::Unretained(this)));
+      base::BindRepeating(&SearchEnginesHandler::HandleSetDefaultSearchEngine,
+                          base::Unretained(this)));
   web_ui()->RegisterMessageCallback(
       "removeSearchEngine",
-      base::Bind(&SearchEnginesHandler::HandleRemoveSearchEngine,
-                 base::Unretained(this)));
+      base::BindRepeating(&SearchEnginesHandler::HandleRemoveSearchEngine,
+                          base::Unretained(this)));
   web_ui()->RegisterMessageCallback(
       "validateSearchEngineInput",
-      base::Bind(&SearchEnginesHandler::HandleValidateSearchEngineInput,
-                 base::Unretained(this)));
+      base::BindRepeating(
+          &SearchEnginesHandler::HandleValidateSearchEngineInput,
+          base::Unretained(this)));
   web_ui()->RegisterMessageCallback(
       "searchEngineEditStarted",
-      base::Bind(&SearchEnginesHandler::HandleSearchEngineEditStarted,
-                 base::Unretained(this)));
+      base::BindRepeating(&SearchEnginesHandler::HandleSearchEngineEditStarted,
+                          base::Unretained(this)));
   web_ui()->RegisterMessageCallback(
       "searchEngineEditCancelled",
-      base::Bind(&SearchEnginesHandler::HandleSearchEngineEditCancelled,
-                 base::Unretained(this)));
+      base::BindRepeating(
+          &SearchEnginesHandler::HandleSearchEngineEditCancelled,
+          base::Unretained(this)));
   web_ui()->RegisterMessageCallback(
       "searchEngineEditCompleted",
-      base::Bind(&SearchEnginesHandler::HandleSearchEngineEditCompleted,
-                 base::Unretained(this)));
+      base::BindRepeating(
+          &SearchEnginesHandler::HandleSearchEngineEditCompleted,
+          base::Unretained(this)));
 }
 
 void SearchEnginesHandler::OnJavascriptAllowed() {
@@ -109,18 +111,26 @@ SearchEnginesHandler::GetSearchEnginesList() {
 
   // Build the first list (default search engines).
   std::unique_ptr<base::ListValue> defaults =
-      base::MakeUnique<base::ListValue>();
+      std::make_unique<base::ListValue>();
   int last_default_engine_index =
       list_controller_.table_model()->last_search_engine_index();
+
+  // Sanity check for https://crbug.com/781703.
+  CHECK_GE(last_default_engine_index, 0);
+
   for (int i = 0; i < last_default_engine_index; ++i) {
     // Third argument is false, as the engine is not from an extension.
     defaults->Append(CreateDictionaryForEngine(i, i == default_index));
   }
 
   // Build the second list (other search engines).
-  std::unique_ptr<base::ListValue> others = base::MakeUnique<base::ListValue>();
+  std::unique_ptr<base::ListValue> others = std::make_unique<base::ListValue>();
   int last_other_engine_index =
       list_controller_.table_model()->last_other_engine_index();
+
+  // Sanity check for https://crbug.com/781703.
+  CHECK_LE(last_default_engine_index, last_other_engine_index);
+
   for (int i = std::max(last_default_engine_index, 0);
        i < last_other_engine_index; ++i) {
     others->Append(CreateDictionaryForEngine(i, i == default_index));
@@ -128,8 +138,12 @@ SearchEnginesHandler::GetSearchEnginesList() {
 
   // Build the third list (omnibox extensions).
   std::unique_ptr<base::ListValue> extensions =
-      base::MakeUnique<base::ListValue>();
+      std::make_unique<base::ListValue>();
   int engine_count = list_controller_.table_model()->RowCount();
+
+  // Sanity check for https://crbug.com/781703.
+  CHECK_LE(last_other_engine_index, engine_count);
+
   for (int i = std::max(last_other_engine_index, 0); i < engine_count; ++i) {
     extensions->Append(CreateDictionaryForEngine(i, i == default_index));
   }
@@ -163,6 +177,11 @@ std::unique_ptr<base::DictionaryValue>
 SearchEnginesHandler::CreateDictionaryForEngine(int index, bool is_default) {
   TemplateURLTableModel* table_model = list_controller_.table_model();
   const TemplateURL* template_url = list_controller_.GetTemplateURL(index);
+
+  // Sanity check for https://crbug.com/781703.
+  CHECK_GE(index, 0);
+  CHECK_LT(index, table_model->RowCount());
+  CHECK(template_url);
 
   // The items which are to be written into |dict| are also described in
   // chrome/browser/resources/settings/search_engines_page/

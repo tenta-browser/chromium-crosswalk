@@ -10,11 +10,9 @@
 #include "base/macros.h"
 #include "services/device/hid/test_report_descriptors.h"
 #include "services/device/public/cpp/hid/hid_report_descriptor.h"
-#include "services/device/public/interfaces/hid.mojom.h"
+#include "services/device/public/mojom/hid.mojom.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
-
-using namespace testing;
 
 namespace device {
 
@@ -70,7 +68,7 @@ class HidReportDescriptorTest : public testing::Test {
       ASSERT_EQ(expected_collection->usage->usage,
                 actual_collection->usage->usage);
       ASSERT_THAT(actual_collection->report_ids,
-                  ContainerEq(expected_collection->report_ids));
+                  testing::ContainerEq(expected_collection->report_ids));
 
       expected_collections_iter++;
       actual_collections_iter++;

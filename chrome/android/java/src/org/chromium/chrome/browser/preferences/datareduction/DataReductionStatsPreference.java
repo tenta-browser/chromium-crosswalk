@@ -4,6 +4,7 @@
 
 package org.chromium.chrome.browser.preferences.datareduction;
 
+import static android.text.format.DateUtils.FORMAT_ABBREV_MONTH;
 import static android.text.format.DateUtils.FORMAT_NO_YEAR;
 import static android.text.format.DateUtils.FORMAT_SHOW_DATE;
 
@@ -15,7 +16,6 @@ import android.content.DialogInterface;
 import android.preference.Preference;
 import android.support.v7.app.AlertDialog;
 import android.text.format.DateUtils;
-import android.text.format.Formatter;
 import android.util.AttributeSet;
 import android.view.Gravity;
 import android.view.View;
@@ -27,8 +27,8 @@ import android.widget.TextView;
 import org.chromium.base.Callback;
 import org.chromium.base.ContextUtils;
 import org.chromium.chrome.R;
-import org.chromium.chrome.browser.ChromeFeatureList;
 import org.chromium.chrome.browser.net.spdyproxy.DataReductionProxySettings;
+import org.chromium.chrome.browser.util.FileSizeUtil;
 import org.chromium.third_party.android.datausagechart.ChartDataUsageView;
 import org.chromium.third_party.android.datausagechart.NetworkStats;
 import org.chromium.third_party.android.datausagechart.NetworkStatsHistory;
@@ -51,11 +51,8 @@ public class DataReductionStatsPreference extends Preference {
     private NetworkStatsHistory mReceivedNetworkStatsHistory;
     private List<DataReductionDataUseItem> mSiteBreakdownItems;
 
-    private TextView mOriginalSizeTextView;
-    private TextView mReceivedSizeTextView;
     private TextView mDataSavingsTextView;
     private TextView mDataUsageTextView;
-    private TextView mPercentReductionTextView;
     private TextView mStartDateTextView;
     private TextView mEndDateTextView;
     private Button mResetStatisticsButton;
@@ -64,10 +61,9 @@ public class DataReductionStatsPreference extends Preference {
     private long mLeftPosition;
     private long mRightPosition;
     private Long mCurrentTime;
-    private String mOriginalTotalPhrase;
-    private String mSavingsTotalPhrase;
-    private String mReceivedTotalPhrase;
-    private String mPercentReductionPhrase;
+    private CharSequence mOriginalTotalPhrase;
+    private CharSequence mSavingsTotalPhrase;
+    private CharSequence mReceivedTotalPhrase;
     private String mStartDatePhrase;
     private String mEndDatePhrase;
 
@@ -76,11 +72,9 @@ public class DataReductionStatsPreference extends Preference {
      * the breakdown can be shown.
      */
     public static void initializeDataReductionSiteBreakdownPref() {
-        // If the site breakdown feature isn't enabled or the pref has already been set, don't set
-        // it.
-        if (!ChromeFeatureList.isEnabled(ChromeFeatureList.DATA_REDUCTION_SITE_BREAKDOWN)
-                || ContextUtils.getAppSharedPreferences().contains(
-                           PREF_DATA_REDUCTION_SITE_BREAKDOWN_ALLOWED_DATE)) {
+        // If the site breakdown pref has already been set, don't set it.
+        if (ContextUtils.getAppSharedPreferences().contains(
+                    PREF_DATA_REDUCTION_SITE_BREAKDOWN_ALLOWED_DATE)) {
             return;
         }
 
@@ -101,12 +95,7 @@ public class DataReductionStatsPreference extends Preference {
 
     public DataReductionStatsPreference(Context context, AttributeSet attrs) {
         super(context, attrs);
-
-        if (ChromeFeatureList.isEnabled(ChromeFeatureList.DATA_REDUCTION_SITE_BREAKDOWN)) {
-            setWidgetLayoutResource(R.layout.data_reduction_stats_layout);
-        } else {
-            setWidgetLayoutResource(R.layout.data_reduction_old_stats_layout);
-        }
+        setWidgetLayoutResource(R.layout.data_reduction_stats_layout);
     }
 
     @Override
@@ -164,13 +153,10 @@ public class DataReductionStatsPreference extends Preference {
 
     private void setDetailText() {
         updateDetailData();
-        mPercentReductionTextView.setText(mPercentReductionPhrase);
         mStartDateTextView.setText(mStartDatePhrase);
         mEndDateTextView.setText(mEndDatePhrase);
         if (mDataUsageTextView != null) mDataUsageTextView.setText(mReceivedTotalPhrase);
         if (mDataSavingsTextView != null) mDataSavingsTextView.setText(mSavingsTotalPhrase);
-        if (mOriginalSizeTextView != null) mOriginalSizeTextView.setText(mOriginalTotalPhrase);
-        if (mReceivedSizeTextView != null) mReceivedSizeTextView.setText(mReceivedTotalPhrase);
     }
 
     /**
@@ -191,9 +177,6 @@ public class DataReductionStatsPreference extends Preference {
         super.onBindView(view);
         mDataUsageTextView = (TextView) view.findViewById(R.id.data_reduction_usage);
         mDataSavingsTextView = (TextView) view.findViewById(R.id.data_reduction_savings);
-        mOriginalSizeTextView = (TextView) view.findViewById(R.id.data_reduction_original_size);
-        mReceivedSizeTextView = (TextView) view.findViewById(R.id.data_reduction_compressed_size);
-        mPercentReductionTextView = (TextView) view.findViewById(R.id.data_reduction_percent);
         mStartDateTextView = (TextView) view.findViewById(R.id.data_reduction_start_date);
         mEndDateTextView = (TextView) view.findViewById(R.id.data_reduction_end_date);
         mDataReductionBreakdownView =
@@ -280,7 +263,7 @@ public class DataReductionStatsPreference extends Preference {
      * Update data reduction statistics whenever the chart's inspection
      * range changes. In particular, this creates strings describing the total
      * original size of all data received over the date range, the total size
-     * of all data received (after compression), the percent data reduction
+     * of all data received (after compression), and the percent data reduction
      * and the range of dates over which these statistics apply.
      */
     // TODO(crbug.com/635567): Fix this properly.
@@ -292,28 +275,20 @@ public class DataReductionStatsPreference extends Preference {
         final Context context = getContext();
 
         final long compressedTotalBytes = mReceivedNetworkStatsHistory.getTotalBytes();
-        mReceivedTotalPhrase = Formatter.formatFileSize(context, compressedTotalBytes);
-
+        mReceivedTotalPhrase = FileSizeUtil.formatFileSize(context, compressedTotalBytes);
         final long originalTotalBytes = mOriginalNetworkStatsHistory.getTotalBytes();
-        mOriginalTotalPhrase = Formatter.formatFileSize(context, originalTotalBytes);
-        mSavingsTotalPhrase =
-                Formatter.formatFileSize(context, originalTotalBytes - compressedTotalBytes);
-
-        float percentage = 0.0f;
-        if (originalTotalBytes > 0L && originalTotalBytes > compressedTotalBytes) {
-            percentage = (originalTotalBytes - compressedTotalBytes) / (float) originalTotalBytes;
-        }
-        mPercentReductionPhrase = String.format("%.0f%%", 100.0 * percentage);
-
+        mOriginalTotalPhrase = FileSizeUtil.formatFileSize(context, originalTotalBytes);
+        final long savingsTotalBytes = originalTotalBytes - compressedTotalBytes;
+        mSavingsTotalPhrase = FileSizeUtil.formatFileSize(context, savingsTotalBytes);
         mStartDatePhrase = formatDate(context, start);
         mEndDatePhrase = formatDate(context, end);
 
         DataReductionProxyUma.dataReductionProxyUserViewedSavings(
-                compressedTotalBytes, originalTotalBytes, 100.0 * percentage);
+                compressedTotalBytes, originalTotalBytes);
     }
 
     private static String formatDate(Context context, long millisSinceEpoch) {
-        final int flags = FORMAT_SHOW_DATE | FORMAT_NO_YEAR;
+        final int flags = FORMAT_SHOW_DATE | FORMAT_ABBREV_MONTH | FORMAT_NO_YEAR;
         return DateUtils.formatDateTime(context, millisSinceEpoch, flags).toString();
     }
 }

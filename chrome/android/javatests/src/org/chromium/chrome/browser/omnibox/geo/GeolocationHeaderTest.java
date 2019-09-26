@@ -11,8 +11,6 @@ import android.os.SystemClock;
 import android.support.test.filters.SmallTest;
 import android.util.Base64;
 
-import com.google.protobuf.nano.MessageNano;
-
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Rule;
@@ -26,7 +24,6 @@ import org.chromium.chrome.browser.ChromeActivity;
 import org.chromium.chrome.browser.ChromeSwitches;
 import org.chromium.chrome.browser.preferences.website.ContentSetting;
 import org.chromium.chrome.browser.preferences.website.GeolocationInfo;
-import org.chromium.chrome.browser.preferences.website.WebsitePreferenceBridge;
 import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.chrome.test.ChromeActivityTestRule;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
@@ -35,12 +32,8 @@ import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
  * Tests for GeolocationHeader and GeolocationTracker.
  */
 @RunWith(ChromeJUnit4ClassRunner.class)
-@CommandLineFlags.Add({
-        ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE,
-        ChromeActivityTestRule.DISABLE_NETWORK_PREDICTION_FLAG,
-})
+@CommandLineFlags.Add({ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE})
 public class GeolocationHeaderTest {
-
     @Rule
     public ChromeActivityTestRule<ChromeActivity> mActivityTestRule =
             new ChromeActivityTestRule<>(ChromeActivity.class);
@@ -90,15 +83,16 @@ public class GeolocationHeaderTest {
     @SmallTest
     @Feature({"Location"})
     @CommandLineFlags.Add({GOOGLE_BASE_URL_SWITCH})
-    public void testPermissionAndSetting() {
+    public void testPermission() {
         long now = setMockLocationNow();
 
-        // X-Geo shouldn't be sent when location is disallowed for the origin, or when the DSE
-        // geolocation setting is off.
-        checkHeaderWithPermissionAndSetting(ContentSetting.ALLOW, true, now, false);
-        checkHeaderWithPermissionAndSetting(ContentSetting.DEFAULT, true, now, false);
-        checkHeaderWithPermissionAndSetting(ContentSetting.DEFAULT, false, now, true);
-        checkHeaderWithPermissionAndSetting(ContentSetting.BLOCK, false, now, true);
+        // X-Geo shouldn't be sent when location is disallowed for the origin.
+        checkHeaderWithPermission(ContentSetting.ALLOW, now, false);
+        checkHeaderWithPermission(ContentSetting.BLOCK, now, true);
+
+        // The default permission for the DSE is to allow access, so the header
+        // should be sent in this case.
+        checkHeaderWithPermission(ContentSetting.DEFAULT, now, false);
     }
 
     @Test
@@ -153,31 +147,14 @@ public class GeolocationHeaderTest {
         assertNonNullHeader(SEARCH_URL_1, false, now);
     }
 
-    private void checkHeaderWithPermissions(final ContentSetting httpsPermission,
+    private void checkHeaderWithPermission(final ContentSetting httpsPermission,
             final long locationTime, final boolean shouldBeNull) {
-        ThreadUtils.runOnUiThreadBlocking(new Runnable() {
-            @Override
-            public void run() {
-                GeolocationInfo infoHttps =
-                        new GeolocationInfo("https://www.google.de", null, false);
-                infoHttps.setContentSetting(httpsPermission);
-                String header = GeolocationHeader.getGeoHeader(
-                        "https://www.google.de/search?q=kartoffelsalat",
-                        mActivityTestRule.getActivity().getActivityTab());
-                assertHeaderState(header, locationTime, shouldBeNull);
-            }
-        });
-    }
-
-    private void checkHeaderWithPermissionAndSetting(final ContentSetting httpsPermission,
-            final boolean settingValue, final long locationTime, final boolean shouldBeNull) {
         ThreadUtils.runOnUiThreadBlocking(new Runnable() {
             @Override
             public void run() {
                 GeolocationInfo infoHttps =
                         new GeolocationInfo(SEARCH_URL_1, null, false);
                 infoHttps.setContentSetting(httpsPermission);
-                WebsitePreferenceBridge.setDSEGeolocationSetting(settingValue);
                 String header = GeolocationHeader.getGeoHeader(
                         SEARCH_URL_1, mActivityTestRule.getActivity().getActivityTab());
                 assertHeaderState(header, locationTime, shouldBeNull);
@@ -268,22 +245,24 @@ public class GeolocationHeaderTest {
         int radius = (int) (LOCATION_ACCURACY * 1000);
 
         // Create a LatLng for the coordinates.
-        PartnerLocationDescriptor.LatLng latlng = new PartnerLocationDescriptor.LatLng();
-        latlng.latitudeE7 = latitudeE7;
-        latlng.longitudeE7 = longitudeE7;
+        PartnerLocationDescriptor.LatLng latlng = PartnerLocationDescriptor.LatLng.newBuilder()
+                                                          .setLatitudeE7(latitudeE7)
+                                                          .setLongitudeE7(longitudeE7)
+                                                          .build();
 
         // Populate a LocationDescriptor with the LatLng.
         PartnerLocationDescriptor.LocationDescriptor locationDescriptor =
-                new PartnerLocationDescriptor.LocationDescriptor();
-        locationDescriptor.latlng = latlng;
-        // Include role, producer, timestamp and radius.
-        locationDescriptor.role = PartnerLocationDescriptor.CURRENT_LOCATION;
-        locationDescriptor.producer = PartnerLocationDescriptor.DEVICE_LOCATION;
-        locationDescriptor.timestamp = timestamp;
-        locationDescriptor.radius = (float) radius;
+                PartnerLocationDescriptor.LocationDescriptor.newBuilder()
+                        .setLatlng(latlng)
+                        // Include role, producer, timestamp and radius.
+                        .setRole(PartnerLocationDescriptor.LocationRole.CURRENT_LOCATION)
+                        .setProducer(PartnerLocationDescriptor.LocationProducer.DEVICE_LOCATION)
+                        .setTimestamp(timestamp)
+                        .setRadius((float) radius)
+                        .build();
 
         String locationProto = Base64.encodeToString(
-                MessageNano.toByteArray(locationDescriptor), Base64.NO_WRAP | Base64.URL_SAFE);
+                locationDescriptor.toByteArray(), Base64.NO_WRAP | Base64.URL_SAFE);
         String expectedHeader = "X-Geo: w " + locationProto;
         Assert.assertEquals(expectedHeader, header);
     }

@@ -325,27 +325,19 @@ bool TranslateUIDelegate::ShouldAlwaysTranslate() {
 }
 
 bool TranslateUIDelegate::ShouldAlwaysTranslateBeCheckedByDefault() {
-  if (ShouldAlwaysTranslate())
-    return true;
+  return ShouldAlwaysTranslate();
+}
 
-  std::map<std::string, std::string> params;
-  if (!variations::GetVariationParams(translate::kTranslateUI2016Q2TrialName,
-                                      &params))
-    return false;
-  int threshold = 0;
-  base::StringToInt(params[translate::kAlwaysTranslateOfferThreshold],
-                    &threshold);
-  if (threshold <= 0)
-    return false;
+bool TranslateUIDelegate::ShouldShowAlwaysTranslateShortcut() {
+  return !translate_driver_->IsIncognito() &&
+         prefs_->GetTranslationAcceptedCount(GetOriginalLanguageCode()) >=
+             kAlwaysTranslateShortcutMinimumAccepts;
+}
 
-  // After N clicks on Translate for the same language.
-  // We check for == N instead of >= N because if the user translates with the
-  // "Always do this?" on, then the next time the bubble won't show up.
-  // The only chance the bubble will show up is after the user manually unchecks
-  // "Always do this?". In that case, since it is after user explictly unchecks,
-  // we should show as it as unchecked so we only check == N instead of >= N.
-  return prefs_->GetTranslationAcceptedCount(GetOriginalLanguageCode()) ==
-         threshold;
+bool TranslateUIDelegate::ShouldShowNeverTranslateShortcut() {
+  return !translate_driver_->IsIncognito() &&
+         prefs_->GetTranslationDeniedCount(GetOriginalLanguageCode()) >=
+             kNeverTranslateShortcutMinimumDenials;
 }
 
 void TranslateUIDelegate::SetAlwaysTranslate(bool value) {

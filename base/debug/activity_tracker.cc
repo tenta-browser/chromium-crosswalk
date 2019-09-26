@@ -25,6 +25,7 @@
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/threading/platform_thread.h"
+#include "build/build_config.h"
 
 namespace base {
 namespace debug {
@@ -260,8 +261,9 @@ void Activity::FillFrom(Activity* activity,
   activity->activity_type = type;
   activity->data = data;
 
-#if defined(SYZYASAN)
-  // Create a stacktrace from the current location and get the addresses.
+#if (!defined(OS_NACL) && DCHECK_IS_ON()) || defined(ADDRESS_SANITIZER)
+  // Create a stacktrace from the current location and get the addresses for
+  // improved debuggability.
   StackTrace stack_trace;
   size_t stack_depth;
   const void* const* stack_addrs = stack_trace.Addresses(&stack_depth);
@@ -1457,12 +1459,12 @@ void GlobalActivityTracker::RecordProcessLaunch(
     ProcessId process_id,
     const FilePath::StringType& exe,
     const FilePath::StringType& args) {
-  const int64_t pid = process_id;
   if (exe.find(FILE_PATH_LITERAL(" "))) {
-    RecordProcessLaunch(pid, FilePath::StringType(FILE_PATH_LITERAL("\"")) +
-                                 exe + FILE_PATH_LITERAL("\" ") + args);
+    RecordProcessLaunch(process_id,
+                        FilePath::StringType(FILE_PATH_LITERAL("\"")) + exe +
+                            FILE_PATH_LITERAL("\" ") + args);
   } else {
-    RecordProcessLaunch(pid, exe + FILE_PATH_LITERAL(' ') + args);
+    RecordProcessLaunch(process_id, exe + FILE_PATH_LITERAL(' ') + args);
   }
 }
 
@@ -1496,7 +1498,7 @@ void GlobalActivityTracker::RecordProcessExit(ProcessId process_id,
     task_runner->PostTask(
         FROM_HERE,
         BindOnce(&GlobalActivityTracker::CleanupAfterProcess, Unretained(this),
-                 pid, now_stamp, exit_code, Passed(&command_line)));
+                 pid, now_stamp, exit_code, std::move(command_line)));
     return;
   }
 

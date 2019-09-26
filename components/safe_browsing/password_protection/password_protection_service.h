@@ -18,9 +18,11 @@
 #include "base/task/cancelable_task_tracker.h"
 #include "base/values.h"
 #include "components/history/core/browser/history_service_observer.h"
+#include "components/safe_browsing/common/safe_browsing_prefs.h"
 #include "components/safe_browsing/db/v4_protocol_manager_util.h"
 #include "components/safe_browsing/proto/csd.pb.h"
-#include "net/url_request/url_request_context_getter.h"
+#include "components/sessions/core/session_id.h"
+#include "services/network/public/cpp/shared_url_loader_factory.h"
 #include "third_party/protobuf/src/google/protobuf/repeated_field.h"
 
 namespace content {
@@ -74,6 +76,9 @@ class PasswordProtectionService : public history::HistoryServiceObserver {
     DISABLED_DUE_TO_FEATURE_DISABLED = 12,
     DISABLED_DUE_TO_USER_POPULATION = 13,
     URL_NOT_VALID_FOR_REPUTATION_COMPUTING = 14,
+    MATCHED_ENTERPRISE_WHITELIST = 15,
+    MATCHED_ENTERPRISE_CHANGE_PASSWORD_URL = 16,
+    MATCHED_ENTERPRISE_LOGIN_URL = 17,
     MAX_OUTCOME
   };
 
@@ -110,7 +115,7 @@ class PasswordProtectionService : public history::HistoryServiceObserver {
 
   PasswordProtectionService(
       const scoped_refptr<SafeBrowsingDatabaseManager>& database_manager,
-      scoped_refptr<net::URLRequestContextGetter> request_context_getter,
+      scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory,
       history::HistoryService* history_service,
       HostContentSettingsMap* host_content_settings_map);
 
@@ -183,11 +188,9 @@ class PasswordProtectionService : public history::HistoryServiceObserver {
   void RecordWarningAction(WarningUIType ui_type, WarningAction action);
 
   // If we want to show password reuse modal warning.
-  static bool ShouldShowModalWarning(
+  bool ShouldShowModalWarning(
       LoginReputationClientRequest::TriggerType trigger_type,
       bool matches_sync_password,
-      LoginReputationClientRequest::PasswordReuseEvent::SyncAccountType
-          account_type,
       LoginReputationClientResponse::VerdictType verdict_type);
 
   // Shows modal warning dialog on the current |web_contents| and pass the
@@ -222,6 +225,23 @@ class PasswordProtectionService : public history::HistoryServiceObserver {
   std::unique_ptr<PasswordProtectionNavigationThrottle>
   MaybeCreateNavigationThrottle(content::NavigationHandle* navigation_handle);
 
+  // Returns if the warning UI is enabled.
+  bool IsWarningEnabled();
+
+  // Returns if the event logging is enabled.
+  bool IsEventLoggingEnabled();
+
+  // Returns the pref value of password protection trigger.
+  virtual PasswordProtectionTrigger GetPasswordProtectionTriggerPref(
+      const std::string& pref_name) const = 0;
+
+  // If |url| matches Safe Browsing whitelist domains, password protection
+  // change password URL, or password protection login URLs in the enterprise
+  // policy.
+  virtual bool IsURLWhitelistedForPasswordEntry(
+      const GURL& url,
+      RequestOutcome* reason) const = 0;
+
  protected:
   friend class PasswordProtectionRequest;
 
@@ -249,8 +269,8 @@ class PasswordProtectionService : public history::HistoryServiceObserver {
   virtual int GetStoredVerdictCount(
       LoginReputationClientRequest::TriggerType trigger_type);
 
-  scoped_refptr<net::URLRequestContextGetter> request_context_getter() {
-    return request_context_getter_;
+  scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory() {
+    return url_loader_factory_;
   }
 
   // Returns the URL where PasswordProtectionRequest instances send requests.
@@ -263,7 +283,8 @@ class PasswordProtectionService : public history::HistoryServiceObserver {
   // info into |frame|.
   virtual void FillReferrerChain(
       const GURL& event_url,
-      int event_tab_id,  // -1 if tab id is not available.
+      SessionID
+          event_tab_id,  // SessionID::InvalidValue() if tab not available.
       LoginReputationClientRequest::Frame* frame) = 0;
 
   void FillUserPopulation(
@@ -283,7 +304,7 @@ class PasswordProtectionService : public history::HistoryServiceObserver {
   // Gets the type of sync account associated with current profile or
   // |NOT_SIGNED_IN|.
   virtual LoginReputationClientRequest::PasswordReuseEvent::SyncAccountType
-  GetSyncAccountType() = 0;
+  GetSyncAccountType() const = 0;
 
   // Records a Chrome Sync event for the result of the URL reputation lookup
   // if the user enters their sync password on a website.
@@ -370,6 +391,7 @@ class PasswordProtectionService : public history::HistoryServiceObserver {
       LoginReputationClientRequest::TriggerType trigger_type,
       RequestOutcome reason,
       bool matches_sync_password);
+
   // Number of verdict stored for this profile for password on focus pings.
   int stored_verdict_count_password_on_focus_;
 
@@ -382,7 +404,7 @@ class PasswordProtectionService : public history::HistoryServiceObserver {
   // The context we use to issue network requests. This request_context_getter
   // is obtained from SafeBrowsingService so that we can use the Safe Browsing
   // cookie store.
-  scoped_refptr<net::URLRequestContextGetter> request_context_getter_;
+  scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory_;
 
   // Set of pending PasswordProtectionRequests that are still waiting for
   // verdict.

@@ -20,7 +20,6 @@
 #include <cstddef>
 #include <cstdint>
 #include <list>
-#include <string>
 
 #include "base/macros.h"
 #include "net/base/iovec.h"
@@ -29,11 +28,13 @@
 #include "net/quic/core/quic_stream_send_buffer.h"
 #include "net/quic/core/quic_stream_sequencer.h"
 #include "net/quic/core/quic_types.h"
-#include "net/quic/core/stream_notifier_interface.h"
+#include "net/quic/core/session_notifier_interface.h"
 #include "net/quic/platform/api/quic_export.h"
 #include "net/quic/platform/api/quic_mem_slice_span.h"
 #include "net/quic/platform/api/quic_reference_counted.h"
+#include "net/quic/platform/api/quic_string.h"
 #include "net/quic/platform/api/quic_string_piece.h"
+#include "net/spdy/core/spdy_protocol.h"
 
 namespace net {
 
@@ -45,7 +46,19 @@ class QuicSession;
 
 class QUIC_EXPORT_PRIVATE QuicStream {
  public:
-  QuicStream(QuicStreamId id, QuicSession* session);
+  // This is somewhat arbitrary.  It's possible, but unlikely, we will either
+  // fail to set a priority client-side, or cancel a stream before stripping the
+  // priority from the wire server-side.  In either case, start out with a
+  // priority in the middle.
+  static const SpdyPriority kDefaultPriority = 3;
+  static_assert(kDefaultPriority ==
+                    (kV3LowestPriority + kV3HighestPriority) / 2,
+                "Unexpected value of kDefaultPriority");
+
+  // Creates a new stream with stream_id |id| associated with |session|. If
+  // |is_static| is true, then the stream will be given precedence
+  // over other streams when determing what streams should write next.
+  QuicStream(QuicStreamId id, QuicSession* session, bool is_static);
 
   virtual ~QuicStream();
 
@@ -91,13 +104,22 @@ class QUIC_EXPORT_PRIVATE QuicStream {
   // Called by the subclass or the sequencer to close the entire connection from
   // this end.
   virtual void CloseConnectionWithDetails(QuicErrorCode error,
-                                          const std::string& details);
+                                          const QuicString& details);
+
+  SpdyPriority priority() const;
+
+  // Sets priority_ to priority.  This should only be called before bytes are
+  // written to the server.
+  void SetPriority(SpdyPriority priority);
 
   // Returns true if this stream is still waiting for acks of sent data.
   // This will return false if all data has been acked, or if the stream
   // is no longer interested in data being acked (which happens when
   // a stream is reset because of an error).
   bool IsWaitingForAcks() const;
+
+  // Number of bytes available to read.
+  size_t ReadableBytes() const;
 
   QuicStreamId id() const { return id_; }
 
@@ -168,6 +190,10 @@ class QUIC_EXPORT_PRIVATE QuicStream {
   // Returns the version of QUIC being used for this stream.
   QuicTransportVersion transport_version() const;
 
+  // Returns the crypto handshake protocol that was used on this stream's
+  // connection.
+  HandshakeProtocol handshake_protocol() const;
+
   bool fin_received() const { return fin_received_; }
 
   // Sets the sequencer to consume all incoming data itself and not call
@@ -199,26 +225,45 @@ class QUIC_EXPORT_PRIVATE QuicStream {
                        QuicDataWriter* writer);
 
   // Called when data [offset, offset + data_length) is acked. |fin_acked|
-  // indicates whether the fin is acked.
-  virtual void OnStreamFrameAcked(QuicStreamOffset offset,
+  // indicates whether the fin is acked. Returns true if any new stream data
+  // (including fin) gets acked.
+  virtual bool OnStreamFrameAcked(QuicStreamOffset offset,
                                   QuicByteCount data_length,
                                   bool fin_acked,
                                   QuicTime::Delta ack_delay_time);
 
-  // Called when data [offset, offset + data_length) gets retransmitted.
+  // Called when data [offset, offset + data_length) was retransmitted.
+  // |fin_retransmitted| indicates whether fin was retransmitted.
   virtual void OnStreamFrameRetransmitted(QuicStreamOffset offset,
-                                          QuicByteCount data_length);
+                                          QuicByteCount data_length,
+                                          bool fin_retransmitted);
 
-  // Called when data [offset, offset + data_length) gets discarded because
-  // stream is cancelled. |fin_discarded| indicates whether the fin is
-  // discarded.
-  void OnStreamFrameDiscarded(QuicStreamOffset offset,
-                              QuicByteCount data_length,
-                              bool fin_discarded);
+  // Called when data [offset, offset + data_length) is considered as lost.
+  // |fin_lost| inidacates whether the fin is considered as lost.
+  void OnStreamFrameLost(QuicStreamOffset offset,
+                         QuicByteCount data_length,
+                         bool fin_lost);
+
+  // Called to retransmit outstanding portion in data [offset, offset +
+  // data_length) and |fin|. Returns true if all data gets retransmitted.
+  virtual bool RetransmitStreamData(QuicStreamOffset offset,
+                                    QuicByteCount data_length,
+                                    bool fin);
 
   // Same as WritevData except data is provided in reference counted memory so
   // that data copy is avoided.
   QuicConsumedData WriteMemSlices(QuicMemSliceSpan span, bool fin);
+
+  // Returns true if any stream data is lost (including fin) and needs to be
+  // retransmitted.
+  virtual bool HasPendingRetransmission() const;
+
+  // Returns true if any portion of data [offset, offset + data_length) is
+  // outstanding or fin is outstanding (if |fin| is true). Returns false
+  // otherwise.
+  bool IsStreamFrameOutstanding(QuicStreamOffset offset,
+                                QuicByteCount data_length,
+                                bool fin) const;
 
  protected:
   // Sends as many bytes in the first |count| buffers of |iov| to the connection
@@ -262,6 +307,12 @@ class QUIC_EXPORT_PRIVATE QuicStream {
   // Called when upper layer can write new data.
   virtual void OnCanWriteNewData() {}
 
+  // Called when |bytes_consumed| bytes has been consumed.
+  virtual void OnStreamDataConsumed(size_t bytes_consumed);
+
+  // Writes pending retransmissions if any.
+  virtual void WritePendingRetransmission();
+
   bool fin_buffered() const { return fin_buffered_; }
 
   const QuicSession* session() const { return session_; }
@@ -280,6 +331,10 @@ class QUIC_EXPORT_PRIVATE QuicStream {
   }
 
   const QuicIntervalSet<QuicStreamOffset>& bytes_acked() const;
+
+  const QuicStreamSendBuffer& send_buffer() const { return send_buffer_; }
+
+  QuicStreamSendBuffer& send_buffer() { return send_buffer_; }
 
  private:
   friend class test::QuicStreamPeer;
@@ -302,6 +357,8 @@ class QUIC_EXPORT_PRIVATE QuicStream {
   QuicStreamId id_;
   // Pointer to the owning QuicSession object.
   QuicSession* session_;
+  // The priority of the stream, once parsed.
+  SpdyPriority priority_;
   // Bytes read refers to payload bytes only: they do not include framing,
   // encryption overhead etc.
   uint64_t stream_bytes_read_;
@@ -326,6 +383,8 @@ class QUIC_EXPORT_PRIVATE QuicStream {
   bool fin_sent_;
   // True if a FIN is waiting to be acked.
   bool fin_outstanding_;
+  // True if a FIN is lost.
+  bool fin_lost_;
 
   // True if this stream has received (and the sequencer has accepted) a
   // StreamFrame with the FIN set.
@@ -372,9 +431,9 @@ class QUIC_EXPORT_PRIVATE QuicStream {
   // Latched value of FLAGS_quic_buffered_data_threshold.
   const QuicByteCount buffered_data_threshold_;
 
-  // Latched value of
-  // FLAGS_quic_reloadable_flag_quic_remove_on_stream_frame_discarded.
-  const bool remove_on_stream_frame_discarded_;
+  // If true, then this stream has precedence over other streams for write
+  // scheduling.
+  const bool is_static_;
 
   DISALLOW_COPY_AND_ASSIGN(QuicStream);
 };

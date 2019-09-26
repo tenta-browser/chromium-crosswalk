@@ -7,7 +7,7 @@
 
 #include "base/callback.h"
 #include "media/capture/capture_export.h"
-#include "media/capture/mojo/video_capture_types.mojom.h"
+#include "media/capture/mojom/video_capture_types.mojom.h"
 #include "media/capture/video/video_capture_device.h"
 #include "media/capture/video/video_frame_receiver.h"
 
@@ -43,10 +43,10 @@ class CAPTURE_EXPORT VideoCaptureJpegDecoder {
   virtual void DecodeCapturedData(
       const uint8_t* data,
       size_t in_buffer_size,
-      const media::VideoCaptureFormat& frame_format,
+      const VideoCaptureFormat& frame_format,
       base::TimeTicks reference_time,
       base::TimeDelta timestamp,
-      media::VideoCaptureDevice::Client::Buffer out_buffer) = 0;
+      VideoCaptureDevice::Client::Buffer out_buffer) = 0;
 };
 
 }  // namespace media

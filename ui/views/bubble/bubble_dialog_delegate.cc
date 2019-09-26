@@ -4,7 +4,6 @@
 
 #include "ui/views/bubble/bubble_dialog_delegate.h"
 
-#include "base/memory/ptr_util.h"
 #include "base/metrics/histogram_macros.h"
 #include "build/build_config.h"
 #include "ui/accessibility/ax_node_data.h"
@@ -15,9 +14,10 @@
 #include "ui/gfx/geometry/rect.h"
 #include "ui/native_theme/native_theme.h"
 #include "ui/views/bubble/bubble_frame_view.h"
+#include "ui/views/layout/layout_manager.h"
 #include "ui/views/layout/layout_provider.h"
-#include "ui/views/style/platform_style.h"
 #include "ui/views/view_tracker.h"
+#include "ui/views/views_delegate.h"
 #include "ui/views/widget/widget.h"
 #include "ui/views/widget/widget_observer.h"
 #include "ui/views/window/dialog_client_view.h"
@@ -37,6 +37,10 @@ Widget* CreateBubbleWidget(BubbleDialogDelegateView* bubble) {
   bubble_params.delegate = bubble;
   bubble_params.opacity = Widget::InitParams::TRANSLUCENT_WINDOW;
   bubble_params.accept_events = bubble->accept_events();
+  // Use a window default shadow if the bubble doesn't provides its own.
+  bubble_params.shadow_type = bubble->shadow() == BubbleBorder::NO_ASSETS
+                                  ? Widget::InitParams::SHADOW_TYPE_DEFAULT
+                                  : Widget::InitParams::SHADOW_TYPE_NONE;
   if (bubble->parent_window())
     bubble_params.parent = bubble->parent_window();
   else if (bubble->anchor_widget())
@@ -46,8 +50,13 @@ Widget* CreateBubbleWidget(BubbleDialogDelegateView* bubble) {
                                   : Widget::InitParams::ACTIVATABLE_NO;
   bubble->OnBeforeBubbleWidgetInit(&bubble_params, bubble_widget);
   bubble_widget->Init(bubble_params);
+#if !defined(OS_MACOSX)
+  // On Mac, having a parent window creates a permanent stacking order, so
+  // there's no need to do this. Also, calling StackAbove() on Mac shows the
+  // bubble implicitly, for which the bubble is currently not ready.
   if (bubble_params.parent)
     bubble_widget->StackAbove(bubble_params.parent);
+#endif
   return bubble_widget;
 }
 
@@ -60,8 +69,8 @@ const char BubbleDialogDelegateView::kViewClassName[] =
 BubbleDialogDelegateView::~BubbleDialogDelegateView() {
   if (GetWidget())
     GetWidget()->RemoveObserver(this);
-  SetLayoutManager(NULL);
-  SetAnchorView(NULL);
+  SetLayoutManager(nullptr);
+  SetAnchorView(nullptr);
 }
 
 // static
@@ -106,9 +115,8 @@ NonClientFrameView* BubbleDialogDelegateView::CreateNonClientFrameView(
     Widget* widget) {
   BubbleFrameView* frame = new BubbleFrameView(title_margins_, gfx::Insets());
 
-  // By default, assume the footnote only contains text.
   frame->set_footnote_margins(
-      LayoutProvider::Get()->GetDialogInsetsForContentType(TEXT, TEXT));
+      LayoutProvider::Get()->GetInsetsMetric(INSETS_DIALOG_SUBSECTION));
   frame->SetFootnoteView(CreateFootnoteView());
 
   BubbleBorder::Arrow adjusted_arrow = arrow();
@@ -214,13 +222,15 @@ BubbleDialogDelegateView::BubbleDialogDelegateView()
     : BubbleDialogDelegateView(nullptr, BubbleBorder::TOP_LEFT) {}
 
 BubbleDialogDelegateView::BubbleDialogDelegateView(View* anchor_view,
-                                                   BubbleBorder::Arrow arrow)
+                                                   BubbleBorder::Arrow arrow,
+                                                   BubbleBorder::Shadow shadow)
     : close_on_deactivate_(true),
       anchor_view_tracker_(std::make_unique<ViewTracker>()),
       anchor_widget_(nullptr),
       arrow_(arrow),
-      mirror_arrow_in_rtl_(PlatformStyle::kMirrorBubbleArrowInRTLByDefault),
-      shadow_(BubbleBorder::DIALOG_SHADOW),
+      mirror_arrow_in_rtl_(
+          ViewsDelegate::GetInstance()->ShouldMirrorArrowsInRTL()),
+      shadow_(shadow),
       color_explicitly_set_(false),
       accept_events_(true),
       adjust_if_offscreen_(true),
@@ -240,9 +250,20 @@ gfx::Rect BubbleDialogDelegateView::GetBubbleBounds() {
   // The argument rect has its origin at the bubble's arrow anchor point;
   // its size is the preferred size of the bubble's client view (this view).
   bool anchor_minimized = anchor_widget() && anchor_widget()->IsMinimized();
+  // If GetAnchorView() returns nullptr or GetAnchorRect() returns an empty rect
+  // at (0, 0), don't try and adjust arrow if off-screen.
+  gfx::Rect anchor_rect = GetAnchorRect();
+  bool has_anchor = GetAnchorView() || anchor_rect != gfx::Rect();
   return GetBubbleFrameView()->GetUpdatedWindowBounds(
-      GetAnchorRect(), GetWidget()->client_view()->GetPreferredSize(),
-      adjust_if_offscreen_ && !anchor_minimized);
+      anchor_rect, GetWidget()->client_view()->GetPreferredSize(),
+      adjust_if_offscreen_ && !anchor_minimized && has_anchor);
+}
+
+ax::mojom::Role BubbleDialogDelegateView::GetAccessibleWindowRole() const {
+  // We return |ax::mojom::Role::kAlertDialog| which will make screen
+  // readers announce the contents of the bubble dialog as soon as it appears,
+  // as long as we also fire |ax::mojom::Event::kAlert|.
+  return ax::mojom::Role::kAlertDialog;
 }
 
 void BubbleDialogDelegateView::OnNativeThemeChanged(
@@ -315,13 +336,16 @@ void BubbleDialogDelegateView::HandleVisibilityChanged(Widget* widget,
     anchor_widget()->GetTopLevelWidget()->SetAlwaysRenderAsActive(visible);
   }
 
-  // Fire AX_EVENT_ALERT for bubbles marked as AX_ROLE_ALERT_DIALOG; this
-  // instructs accessibility tools to read the bubble in its entirety rather
-  // than just its title and initially focused view.  See
-  // http://crbug.com/474622 for details.
+  // Fire ax::mojom::Event::kAlert for bubbles marked as
+  // ax::mojom::Role::kAlertDialog; this instructs accessibility tools to read
+  // the bubble in its entirety rather than just its title and initially focused
+  // view.  See http://crbug.com/474622 for details.
   if (widget == GetWidget() && visible) {
-    if (GetAccessibleWindowRole() == ui::AX_ROLE_ALERT_DIALOG)
-      widget->GetRootView()->NotifyAccessibilityEvent(ui::AX_EVENT_ALERT, true);
+    if (GetAccessibleWindowRole() == ax::mojom::Role::kAlert ||
+        GetAccessibleWindowRole() == ax::mojom::Role::kAlertDialog) {
+      widget->GetRootView()->NotifyAccessibilityEvent(ax::mojom::Event::kAlert,
+                                                      true);
+    }
   }
 }
 

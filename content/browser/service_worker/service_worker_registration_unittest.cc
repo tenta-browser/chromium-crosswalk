@@ -28,24 +28,22 @@
 #include "content/test/test_content_browser_client.h"
 #include "mojo/edk/embedder/embedder.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/WebKit/public/platform/modules/serviceworker/service_worker_object.mojom.h"
-#include "third_party/WebKit/public/platform/modules/serviceworker/service_worker_registration.mojom.h"
+#include "third_party/blink/public/mojom/service_worker/service_worker_object.mojom.h"
+#include "third_party/blink/public/mojom/service_worker/service_worker_registration.mojom.h"
 #include "url/gurl.h"
 
 namespace content {
-
-namespace {
+namespace service_worker_registration_unittest {
 
 // From service_worker_registration.cc.
 constexpr base::TimeDelta kMaxLameDuckTime = base::TimeDelta::FromMinutes(5);
 
 int CreateInflightRequest(ServiceWorkerVersion* version) {
   version->StartWorker(ServiceWorkerMetrics::EventType::PUSH,
-                       base::Bind(&ServiceWorkerUtils::NoOpStatusCallback));
+                       base::DoNothing());
   base::RunLoop().RunUntilIdle();
-  return version->StartRequest(
-      ServiceWorkerMetrics::EventType::PUSH,
-      base::Bind(&ServiceWorkerUtils::NoOpStatusCallback));
+  return version->StartRequest(ServiceWorkerMetrics::EventType::PUSH,
+                               base::DoNothing());
 }
 
 static void SaveStatusCallback(bool* called,
@@ -117,8 +115,6 @@ class MockServiceWorkerRegistrationObject
       binding_;
 };
 
-}  // namespace
-
 class ServiceWorkerRegistrationTest : public testing::Test {
  public:
   ServiceWorkerRegistrationTest()
@@ -127,8 +123,7 @@ class ServiceWorkerRegistrationTest : public testing::Test {
   void SetUp() override {
     helper_.reset(new EmbeddedWorkerTestHelper(base::FilePath()));
 
-    context()->storage()->LazyInitializeForTest(
-        base::BindOnce(&base::DoNothing));
+    context()->storage()->LazyInitializeForTest(base::DoNothing());
     base::RunLoop().RunUntilIdle();
   }
 
@@ -186,10 +181,12 @@ TEST_F(ServiceWorkerRegistrationTest, SetAndUnsetVersions) {
   const GURL kScope("http://www.example.not/");
   const GURL kScript("http://www.example.not/service_worker.js");
   int64_t kRegistrationId = 1L;
+
+  blink::mojom::ServiceWorkerRegistrationOptions options;
+  options.scope = kScope;
   scoped_refptr<ServiceWorkerRegistration> registration =
-      base::MakeRefCounted<ServiceWorkerRegistration>(
-          blink::mojom::ServiceWorkerRegistrationOptions(kScope),
-          kRegistrationId, context()->AsWeakPtr());
+      base::MakeRefCounted<ServiceWorkerRegistration>(options, kRegistrationId,
+                                                      context()->AsWeakPtr());
 
   const int64_t version_1_id = 1L;
   const int64_t version_2_id = 2L;
@@ -256,9 +253,10 @@ TEST_F(ServiceWorkerRegistrationTest, SetAndUnsetVersions) {
 TEST_F(ServiceWorkerRegistrationTest, FailedRegistrationNoCrash) {
   const GURL kScope("http://www.example.not/");
   int64_t kRegistrationId = 1L;
+  blink::mojom::ServiceWorkerRegistrationOptions options;
+  options.scope = kScope;
   auto registration = base::MakeRefCounted<ServiceWorkerRegistration>(
-      blink::mojom::ServiceWorkerRegistrationOptions(kScope), kRegistrationId,
-      context()->AsWeakPtr());
+      options, kRegistrationId, context()->AsWeakPtr());
   auto dispatcher_host = base::MakeRefCounted<ServiceWorkerDispatcherHost>(
       helper_->mock_render_process_id(),
       helper_->browser_context()->GetResourceContext());
@@ -287,10 +285,12 @@ TEST_F(ServiceWorkerRegistrationTest, NavigationPreload) {
   const GURL kScope("http://www.example.not/");
   const GURL kScript("https://www.example.not/service_worker.js");
   // Setup.
+
+  blink::mojom::ServiceWorkerRegistrationOptions options;
+  options.scope = kScope;
   scoped_refptr<ServiceWorkerRegistration> registration =
       base::MakeRefCounted<ServiceWorkerRegistration>(
-          blink::mojom::ServiceWorkerRegistrationOptions(kScope),
-          storage()->NewRegistrationId(), context()->AsWeakPtr());
+          options, storage()->NewRegistrationId(), context()->AsWeakPtr());
   scoped_refptr<ServiceWorkerVersion> version_1 =
       base::MakeRefCounted<ServiceWorkerVersion>(registration.get(), kScript,
                                                  storage()->NewVersionId(),
@@ -334,9 +334,10 @@ class ServiceWorkerActivationTest : public ServiceWorkerRegistrationTest {
     const GURL kScope("https://www.example.not/");
     const GURL kScript("https://www.example.not/service_worker.js");
 
+    blink::mojom::ServiceWorkerRegistrationOptions options;
+    options.scope = kScope;
     registration_ = base::MakeRefCounted<ServiceWorkerRegistration>(
-        blink::mojom::ServiceWorkerRegistrationOptions(kScope),
-        storage()->NewRegistrationId(), context()->AsWeakPtr());
+        options, storage()->NewRegistrationId(), context()->AsWeakPtr());
 
     // Create an active version.
     scoped_refptr<ServiceWorkerVersion> version_1 =
@@ -393,7 +394,7 @@ class ServiceWorkerActivationTest : public ServiceWorkerRegistrationTest {
         ServiceWorkerVersion::FetchHandlerExistence::EXISTS);
     registration_->SetWaitingVersion(version_2);
     version_2->StartWorker(ServiceWorkerMetrics::EventType::INSTALL,
-                           base::Bind(&ServiceWorkerUtils::NoOpStatusCallback));
+                           base::DoNothing());
     version_2->SetStatus(ServiceWorkerVersion::INSTALLED);
 
     // Set it to activate when ready. The original version should still be
@@ -418,8 +419,18 @@ class ServiceWorkerActivationTest : public ServiceWorkerRegistrationTest {
 
   void RunLameDuckTimer() { registration_->RemoveLameDuckIfNeeded(); }
 
-  void SimulateSkipWaiting(ServiceWorkerVersion* version, int request_id) {
-    version->OnSkipWaiting(request_id);
+  // Simulates skipWaiting(). Note that skipWaiting() might not try to activate
+  // the worker "immediately", if it can't yet be activated yet. If activation
+  // is delayed, |out_result| will not be set. If activation is attempted,
+  // |out_result| is generally true but false in case of a fatal/unexpected
+  // error like ServiceWorkerContext shutdown.
+  void SimulateSkipWaiting(ServiceWorkerVersion* version,
+                           base::Optional<bool>* out_result) {
+    version->SkipWaiting(
+        base::BindOnce([](base::Optional<bool>* out_result,
+                          bool success) { *out_result = success; },
+                       out_result));
+    base::RunLoop().RunUntilIdle();
   }
 
  private:
@@ -481,8 +492,10 @@ TEST_F(ServiceWorkerActivationTest, SkipWaiting) {
   EXPECT_EQ(version_1.get(), reg->active_version());
 
   // Call skipWaiting. Activation should happen.
-  SimulateSkipWaiting(version_2.get(), 77 /* dummy request_id */);
-  base::RunLoop().RunUntilIdle();
+  base::Optional<bool> result;
+  SimulateSkipWaiting(version_2.get(), &result);
+  EXPECT_TRUE(result.has_value());
+  EXPECT_TRUE(*result);
   EXPECT_EQ(version_2.get(), reg->active_version());
 }
 
@@ -492,16 +505,19 @@ TEST_F(ServiceWorkerActivationTest, SkipWaitingWithInflightRequest) {
   scoped_refptr<ServiceWorkerVersion> version_1 = reg->active_version();
   scoped_refptr<ServiceWorkerVersion> version_2 = reg->waiting_version();
 
+  base::Optional<bool> result;
   // Set skip waiting flag. Since there is still an in-flight request,
   // activation should not happen.
-  SimulateSkipWaiting(version_2.get(), 77 /* dummy request_id */);
-  base::RunLoop().RunUntilIdle();
+  SimulateSkipWaiting(version_2.get(), &result);
+  EXPECT_FALSE(result.has_value());
   EXPECT_EQ(version_1.get(), reg->active_version());
 
   // Finish the request. Activation should happen.
   version_1->FinishRequest(inflight_request_id(), true /* was_handled */,
                            base::Time::Now());
   base::RunLoop().RunUntilIdle();
+  EXPECT_TRUE(result.has_value());
+  EXPECT_TRUE(*result);
   EXPECT_EQ(version_2.get(), reg->active_version());
 }
 
@@ -516,10 +532,12 @@ TEST_F(ServiceWorkerActivationTest, TimeSinceSkipWaiting_Installing) {
   reg->UnsetVersion(version.get());
   version->SetStatus(ServiceWorkerVersion::INSTALLING);
 
+  base::Optional<bool> result;
   // Call skipWaiting(). The time ticks since skip waiting shouldn't start
   // since the version is not yet installed.
-  SimulateSkipWaiting(version.get(), 77 /* dummy request_id */);
-  base::RunLoop().RunUntilIdle();
+  SimulateSkipWaiting(version.get(), &result);
+  EXPECT_TRUE(result.has_value());
+  EXPECT_TRUE(*result);
   clock.Advance(base::TimeDelta::FromSeconds(11));
   EXPECT_EQ(base::TimeDelta(), version->TimeSinceSkipWaiting());
 
@@ -530,9 +548,10 @@ TEST_F(ServiceWorkerActivationTest, TimeSinceSkipWaiting_Installing) {
   clock.Advance(base::TimeDelta::FromSeconds(33));
   EXPECT_EQ(base::TimeDelta::FromSeconds(33), version->TimeSinceSkipWaiting());
 
+  result.reset();
   // Call skipWaiting() again. It doesn't reset the time.
-  SimulateSkipWaiting(version.get(), 88 /* dummy request_id */);
-  base::RunLoop().RunUntilIdle();
+  SimulateSkipWaiting(version.get(), &result);
+  EXPECT_FALSE(result.has_value());
   EXPECT_EQ(base::TimeDelta::FromSeconds(33), version->TimeSinceSkipWaiting());
 }
 
@@ -548,11 +567,12 @@ TEST_F(ServiceWorkerActivationTest, LameDuckTime_SkipWaiting) {
   version_1->SetTickClockForTesting(&clock_1);
   version_2->SetTickClockForTesting(&clock_2);
 
+  base::Optional<bool> result;
   // Set skip waiting flag. Since there is still an in-flight request,
   // activation should not happen. But the lame duck timer should start.
   EXPECT_FALSE(IsLameDuckTimerRunning());
-  SimulateSkipWaiting(version_2.get(), 77 /* dummy request_id */);
-  base::RunLoop().RunUntilIdle();
+  SimulateSkipWaiting(version_2.get(), &result);
+  EXPECT_FALSE(result.has_value());
   EXPECT_EQ(version_1.get(), reg->active_version());
   EXPECT_TRUE(IsLameDuckTimerRunning());
 
@@ -562,6 +582,8 @@ TEST_F(ServiceWorkerActivationTest, LameDuckTime_SkipWaiting) {
   // Activation should happen by the lame duck timer.
   RunLameDuckTimer();
   base::RunLoop().RunUntilIdle();
+  EXPECT_TRUE(result.has_value());
+  EXPECT_TRUE(*result);
   EXPECT_EQ(version_2.get(), reg->active_version());
   EXPECT_FALSE(IsLameDuckTimerRunning());
 }
@@ -684,14 +706,15 @@ class ServiceWorkerRegistrationObjectHostTest
   }
 
   int64_t SetUpRegistration(const GURL& scope, const GURL& script_url) {
-    storage()->LazyInitializeForTest(base::BindOnce(&base::DoNothing));
+    storage()->LazyInitializeForTest(base::DoNothing());
     base::RunLoop().RunUntilIdle();
 
     // Prepare ServiceWorkerRegistration.
+    blink::mojom::ServiceWorkerRegistrationOptions options;
+    options.scope = scope;
     scoped_refptr<ServiceWorkerRegistration> registration =
         base::MakeRefCounted<ServiceWorkerRegistration>(
-            blink::mojom::ServiceWorkerRegistrationOptions(scope),
-            storage()->NewRegistrationId(), context()->AsWeakPtr());
+            options, storage()->NewRegistrationId(), context()->AsWeakPtr());
     // Prepare ServiceWorkerVersion.
     scoped_refptr<ServiceWorkerVersion> version =
         base::MakeRefCounted<ServiceWorkerVersion>(
@@ -994,17 +1017,13 @@ TEST_F(ServiceWorkerRegistrationObjectHostTest, SetVersionAttributes) {
               mock_registration_object->set_version_attributes_called_count());
     ChangedVersionAttributesMask mask(mock_registration_object->changed_mask());
     EXPECT_TRUE(mask.installing_changed());
-    EXPECT_TRUE(mock_registration_object->installing());
+    EXPECT_FALSE(mock_registration_object->installing());
     EXPECT_TRUE(mask.waiting_changed());
     EXPECT_TRUE(mock_registration_object->waiting());
     EXPECT_FALSE(mask.active_changed());
     EXPECT_FALSE(mock_registration_object->active());
     EXPECT_EQ(version_2_id, mock_registration_object->waiting()->version_id);
     EXPECT_EQ(kScriptUrl, mock_registration_object->waiting()->url);
-    EXPECT_EQ(blink::mojom::kInvalidServiceWorkerVersionId,
-              mock_registration_object->installing()->version_id);
-    EXPECT_EQ(blink::mojom::kInvalidServiceWorkerHandleId,
-              mock_registration_object->installing()->handle_id);
   }
 
   // Remove the waiting worker.
@@ -1018,13 +1037,9 @@ TEST_F(ServiceWorkerRegistrationObjectHostTest, SetVersionAttributes) {
     EXPECT_FALSE(mask.installing_changed());
     EXPECT_FALSE(mock_registration_object->installing());
     EXPECT_TRUE(mask.waiting_changed());
-    EXPECT_TRUE(mock_registration_object->waiting());
+    EXPECT_FALSE(mock_registration_object->waiting());
     EXPECT_FALSE(mask.active_changed());
     EXPECT_FALSE(mock_registration_object->active());
-    EXPECT_EQ(blink::mojom::kInvalidServiceWorkerVersionId,
-              mock_registration_object->waiting()->version_id);
-    EXPECT_EQ(blink::mojom::kInvalidServiceWorkerHandleId,
-              mock_registration_object->waiting()->handle_id);
   }
 }
 
@@ -1052,4 +1067,5 @@ TEST_F(ServiceWorkerRegistrationObjectHostTest, UpdateFound) {
   EXPECT_EQ(1, mock_registration_object->update_found_called_count());
 }
 
+}  // namespace service_worker_registration_unittest
 }  // namespace content

@@ -22,6 +22,7 @@
 #include "chrome/common/url_constants.h"
 #include "chrome/test/base/in_process_browser_test.h"
 #include "chrome/test/base/ui_test_utils.h"
+#include "content/public/browser/child_process_launcher_utils.h"
 #include "content/public/browser/notification_service.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/render_process_host.h"
@@ -32,6 +33,7 @@
 #include "content/public/browser/web_contents_observer.h"
 #include "content/public/common/content_switches.h"
 #include "content/public/test/browser_test_utils.h"
+#include "media/base/media_switches.h"
 #include "net/base/filename_util.h"
 #include "net/test/embedded_test_server/embedded_test_server.h"
 
@@ -46,15 +48,7 @@ using content::WebContents;
 namespace {
 
 int RenderProcessHostCount() {
-  content::RenderProcessHost::iterator hosts =
-      content::RenderProcessHost::AllHostsIterator();
-  int count = 0;
-  while (!hosts.IsAtEnd()) {
-    if (hosts.GetCurrentValue()->HasConnection())
-      count++;
-    hosts.Advance();
-  }
-  return count;
+  return content::RenderProcessHost::GetCurrentRenderProcessCountForTesting();
 }
 
 WebContents* FindFirstDevToolsContents() {
@@ -100,7 +94,7 @@ class ChromeRenderProcessHostTest : public ExtensionBrowserTest {
   // the renderer process to be created or foregrounded, returning the process
   // handle.
   base::Process ShowSingletonTab(const GURL& page) {
-    chrome::ShowSingletonTab(browser(), page);
+    ::ShowSingletonTab(browser(), page);
     WebContents* wc = browser()->tab_strip_model()->GetActiveWebContents();
     CHECK(wc->GetURL() == page);
 
@@ -128,10 +122,10 @@ class ChromeRenderProcessHostTest : public ExtensionBrowserTest {
 
   // Ensures that the backgrounding / foregrounding gets a chance to run.
   void WaitForLauncherThread() {
-    content::BrowserThread::PostTaskAndReply(
-        content::BrowserThread::PROCESS_LAUNCHER, FROM_HERE,
-        base::Bind(&base::DoNothing), base::MessageLoop::QuitWhenIdleClosure());
-    base::RunLoop().Run();
+    base::RunLoop run_loop;
+    content::GetProcessLauncherTaskRunner()->PostTaskAndReply(
+        FROM_HERE, base::DoNothing(), run_loop.QuitWhenIdleClosure());
+    run_loop.Run();
   }
 
   // Implicitly waits for the renderer process associated with the specified
@@ -174,7 +168,7 @@ class ChromeRenderProcessHostTest : public ExtensionBrowserTest {
 
     ui_test_utils::WindowedTabAddedNotificationObserver observer1(
         content::NotificationService::AllSources());
-    chrome::ShowSingletonTab(browser(), page1);
+    ::ShowSingletonTab(browser(), page1);
     observer1.Wait();
 
     tab_count++;
@@ -190,7 +184,7 @@ class ChromeRenderProcessHostTest : public ExtensionBrowserTest {
     GURL page2("data:text/html,hello world2");
     ui_test_utils::WindowedTabAddedNotificationObserver observer2(
         content::NotificationService::AllSources());
-    chrome::ShowSingletonTab(browser(), page2);
+    ::ShowSingletonTab(browser(), page2);
     observer2.Wait();
     tab_count++;
     EXPECT_EQ(tab_count, browser()->tab_strip_model()->count());
@@ -206,7 +200,7 @@ class ChromeRenderProcessHostTest : public ExtensionBrowserTest {
     GURL history(chrome::kChromeUIHistoryURL);
     ui_test_utils::WindowedTabAddedNotificationObserver observer3(
         content::NotificationService::AllSources());
-    chrome::ShowSingletonTab(browser(), history);
+    ::ShowSingletonTab(browser(), history);
     observer3.Wait();
     tab_count++;
     EXPECT_EQ(tab_count, browser()->tab_strip_model()->count());
@@ -219,7 +213,7 @@ class ChromeRenderProcessHostTest : public ExtensionBrowserTest {
     GURL extension_url("chrome-extension://" + extension->id());
     ui_test_utils::WindowedTabAddedNotificationObserver observer4(
         content::NotificationService::AllSources());
-    chrome::ShowSingletonTab(browser(), extension_url);
+    ::ShowSingletonTab(browser(), extension_url);
 
     observer4.Wait();
     tab_count++;
@@ -271,7 +265,7 @@ IN_PROC_BROWSER_TEST_F(ChromeRenderProcessHostTest, MAYBE_ProcessPerTab) {
   GURL page1("data:text/html,hello world1");
   ui_test_utils::WindowedTabAddedNotificationObserver observer1(
       content::NotificationService::AllSources());
-  chrome::ShowSingletonTab(browser(), page1);
+  ::ShowSingletonTab(browser(), page1);
   observer1.Wait();
   tab_count++;
   host_count++;
@@ -282,7 +276,7 @@ IN_PROC_BROWSER_TEST_F(ChromeRenderProcessHostTest, MAYBE_ProcessPerTab) {
   GURL page2("data:text/html,hello world2");
   ui_test_utils::WindowedTabAddedNotificationObserver observer2(
       content::NotificationService::AllSources());
-  chrome::ShowSingletonTab(browser(), page2);
+  ::ShowSingletonTab(browser(), page2);
   observer2.Wait();
   tab_count++;
   EXPECT_EQ(tab_count, browser()->tab_strip_model()->count());
@@ -455,7 +449,7 @@ IN_PROC_BROWSER_TEST_F(ChromeRenderProcessHostTest,
   GURL page1("data:text/html,hello world1");
   ui_test_utils::WindowedTabAddedNotificationObserver observer1(
       content::NotificationService::AllSources());
-  chrome::ShowSingletonTab(browser(), page1);
+  ::ShowSingletonTab(browser(), page1);
   observer1.Wait();
   tab_count++;
   host_count++;
@@ -496,7 +490,7 @@ IN_PROC_BROWSER_TEST_F(ChromeRenderProcessHostTest,
   GURL page1("data:text/html,hello world1");
   ui_test_utils::WindowedTabAddedNotificationObserver observer1(
       content::NotificationService::AllSources());
-  chrome::ShowSingletonTab(browser(), page1);
+  ::ShowSingletonTab(browser(), page1);
   observer1.Wait();
   tab_count++;
   host_count++;
@@ -587,7 +581,7 @@ IN_PROC_BROWSER_TEST_F(ChromeRenderProcessHostTest,
   // Kill the renderer process, simulating a crash. This should the ProcessDied
   // method to be called. Alternatively, RenderProcessHost::OnChannelError can
   // be called to directly force a call to ProcessDied.
-  wc1->GetMainFrame()->GetProcess()->Shutdown(-1, true);
+  wc1->GetMainFrame()->GetProcess()->Shutdown(-1);
 
   observer.Wait();
 }
@@ -605,6 +599,10 @@ class ChromeRenderProcessHostBackgroundingTest
   void SetUpCommandLine(base::CommandLine* command_line) override {
     ChromeRenderProcessHostTest::SetUpCommandLine(command_line);
     command_line->AppendSwitch(switches::kProcessPerTab);
+
+    command_line->AppendSwitchASCII(
+        switches::kAutoplayPolicy,
+        switches::autoplay::kNoUserGestureRequiredPolicy);
   }
 
   void SetUpOnMainThread() override {

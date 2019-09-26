@@ -14,8 +14,11 @@ import org.chromium.chrome.browser.NativePageHost;
 import org.chromium.chrome.browser.UrlConstants;
 import org.chromium.chrome.browser.bookmarks.BookmarkUtils;
 import org.chromium.chrome.browser.device.DeviceClassManager;
+import org.chromium.chrome.browser.download.DownloadMetrics;
 import org.chromium.chrome.browser.download.DownloadUtils;
+import org.chromium.chrome.browser.help.HelpAndFeedback;
 import org.chromium.chrome.browser.multiwindow.MultiWindowUtils;
+import org.chromium.chrome.browser.net.spdyproxy.DataReductionProxySettings;
 import org.chromium.chrome.browser.ntp.NewTabPageUma;
 import org.chromium.chrome.browser.ntp.snippets.KnownCategories;
 import org.chromium.chrome.browser.ntp.snippets.SnippetArticle;
@@ -42,6 +45,8 @@ import org.chromium.ui.widget.Toast;
 public class SuggestionsNavigationDelegateImpl implements SuggestionsNavigationDelegate {
     private static final String CHROME_CONTENT_SUGGESTIONS_REFERRER =
             "https://www.googleapis.com/auth/chrome-content-suggestions";
+    private static final String CHROME_CONTEXTUAL_SUGGESTIONS_REFERRER =
+            "https://goto.google.com/explore-on-content-viewer";
     private static final String NEW_TAB_URL_HELP =
             "https://support.google.com/chrome/?p=new_tab";
 
@@ -102,7 +107,7 @@ public class SuggestionsNavigationDelegateImpl implements SuggestionsNavigationD
     }
 
     @Override
-    public void openSnippet(int windowOpenDisposition, SnippetArticle article) {
+    public void openSnippet(final int windowOpenDisposition, final SnippetArticle article) {
         NewTabPageUma.recordAction(NewTabPageUma.ACTION_OPENED_SNIPPET);
 
         if (article.isAssetDownload()) {
@@ -111,7 +116,7 @@ public class SuggestionsNavigationDelegateImpl implements SuggestionsNavigationD
                     || windowOpenDisposition == WindowOpenDisposition.NEW_BACKGROUND_TAB;
             DownloadUtils.openFile(article.getAssetDownloadFile(),
                     article.getAssetDownloadMimeType(), article.getAssetDownloadGuid(), false, null,
-                    null);
+                    null, DownloadMetrics.NEW_TAP_PAGE);
             return;
         }
 
@@ -122,22 +127,29 @@ public class SuggestionsNavigationDelegateImpl implements SuggestionsNavigationD
             return;
         }
 
-        LoadUrlParams loadUrlParams;
-        // We explicitly open an offline page only for offline page downloads. For all other
+        // We explicitly open an offline page only for offline page downloads or for prefetched
+        // offline pages when Data Reduction Proxy is enabled. For all other
         // sections the URL is opened and it is up to Offline Pages whether to open its offline
         // page (e.g. when offline).
-        if (article.isDownload() && !article.isAssetDownload()) {
+        if ((article.isDownload() && !article.isAssetDownload())
+                || (DataReductionProxySettings.getInstance().isDataReductionProxyEnabled()
+                           && article.isPrefetched())) {
             assert article.getOfflinePageOfflineId() != null;
             assert windowOpenDisposition == WindowOpenDisposition.CURRENT_TAB
                     || windowOpenDisposition == WindowOpenDisposition.NEW_WINDOW
                     || windowOpenDisposition == WindowOpenDisposition.NEW_BACKGROUND_TAB;
-            loadUrlParams = OfflinePageUtils.getLoadUrlParamsForOpeningOfflineVersion(
-                    article.mUrl, article.getOfflinePageOfflineId());
-            // Extra headers are not read in loadUrl, but verbatim headers are.
-            loadUrlParams.setVerbatimHeaders(loadUrlParams.getExtraHeadersString());
-        } else {
-            loadUrlParams = new LoadUrlParams(article.mUrl, PageTransition.AUTO_BOOKMARK);
+            OfflinePageUtils.getLoadUrlParamsForOpeningOfflineVersion(
+                    article.mUrl, article.getOfflinePageOfflineId(), (loadUrlParams) -> {
+                        // Extra headers are not read in loadUrl, but verbatim headers are.
+                        loadUrlParams.setVerbatimHeaders(loadUrlParams.getExtraHeadersString());
+                        openDownloadSuggestion(windowOpenDisposition, article, loadUrlParams);
+                    });
+
+            return;
         }
+
+        LoadUrlParams loadUrlParams =
+                new LoadUrlParams(article.mUrl, PageTransition.AUTO_BOOKMARK);
 
         // For article suggestions, we set the referrer. This is exploited
         // to filter out these history entries for NTP tiles.
@@ -147,6 +159,19 @@ public class SuggestionsNavigationDelegateImpl implements SuggestionsNavigationD
                     WebReferrerPolicy.ALWAYS));
         }
 
+        // Set appropriate referrer for contextual suggestions to distinguish them from navigation
+        // from a page.
+        if (article.mCategory == KnownCategories.CONTEXTUAL) {
+            loadUrlParams.setReferrer(
+                    new Referrer(CHROME_CONTEXTUAL_SUGGESTIONS_REFERRER, WebReferrerPolicy.ALWAYS));
+        }
+
+        Tab loadingTab = openUrl(windowOpenDisposition, loadUrlParams);
+        if (loadingTab != null) SuggestionsMetrics.recordVisit(loadingTab, article);
+    }
+
+    private void openDownloadSuggestion(
+            int windowOpenDisposition, SnippetArticle article, LoadUrlParams loadUrlParams) {
         Tab loadingTab = openUrl(windowOpenDisposition, loadUrlParams);
         if (loadingTab != null) SuggestionsMetrics.recordVisit(loadingTab, article);
     }
@@ -180,6 +205,14 @@ public class SuggestionsNavigationDelegateImpl implements SuggestionsNavigationD
         return loadingTab;
     }
 
+    @Override
+    public void showFeedback() {
+        Tab currentTab = mTabModelSelector.getCurrentTab();
+        HelpAndFeedback.getInstance(mActivity).showFeedback(mActivity, Profile.getLastUsedProfile(),
+                currentTab != null ? currentTab.getUrl() : null,
+                /* categoryTag = */ null);
+    }
+
     private boolean openRecentTabSnippet(SnippetArticle article) {
         TabModel tabModel = mTabModelSelector.getModel(false);
         int tabId = article.getRecentTabId();
@@ -199,13 +232,10 @@ public class SuggestionsNavigationDelegateImpl implements SuggestionsNavigationD
                 TabLaunchType.FROM_LONGPRESS_BACKGROUND, mHost.getActiveTab(),
                 /* incognito = */ false);
 
-        // If the bottom sheet NTP UI is showing, a toast is not necessary because the bottom sheet
-        // will be closed when the overview is hidden due to the new tab creation above.
         // If animations are disabled in the DeviceClassManager, a toast is already displayed for
         // all tabs opened in the background.
         // TODO(twellington): Replace this with an animation.
-        if (mActivity.getBottomSheet() != null && !mActivity.getBottomSheet().isShowingNewTab()
-                && DeviceClassManager.enableAnimations()) {
+        if (mActivity.getBottomSheet() != null && DeviceClassManager.enableAnimations()) {
             Toast.makeText(mActivity, R.string.open_in_new_tab_toast, Toast.LENGTH_SHORT).show();
         }
 

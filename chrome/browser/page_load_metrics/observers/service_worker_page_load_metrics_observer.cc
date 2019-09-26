@@ -9,9 +9,12 @@
 #include "chrome/browser/page_load_metrics/page_load_metrics_util.h"
 #include "net/http/http_response_headers.h"
 #include "services/metrics/public/cpp/ukm_recorder.h"
-#include "third_party/WebKit/public/platform/WebLoadingBehaviorFlag.h"
+#include "third_party/blink/public/platform/web_loading_behavior_flag.h"
 
 namespace internal {
+
+const char kHistogramServiceWorkerPageTransition[] =
+    "PageLoad.Clients.ServiceWorker.PageTransition";
 
 const char kHistogramServiceWorkerParseStart[] =
     "PageLoad.Clients.ServiceWorker.ParseTiming.NavigationToParseStart";
@@ -322,6 +325,17 @@ void ServiceWorkerPageLoadMetricsObserver::OnParseStart(
     const page_load_metrics::PageLoadExtraInfo& info) {
   if (!IsServiceWorkerControlled(info))
     return;
+
+  // TODO(falken): It may be cleaner to record page transition in OnCommit() but
+  // at that point we don't yet know if the page is controlled by a service
+  // worker. It should be possible to plumb the information there since the
+  // browser process already sends the controller service worker in the
+  // navigation commit IPC.
+  UMA_HISTOGRAM_ENUMERATION(
+      internal::kHistogramServiceWorkerPageTransition,
+      static_cast<int>(ui::PageTransitionStripQualifier(transition_)),
+      static_cast<int>(ui::PAGE_TRANSITION_LAST_CORE) + 1);
+
   if (WasStartedInForegroundOptionalEventInForeground(
           timing.parse_timing->parse_start, info)) {
     PAGE_LOAD_HISTOGRAM(internal::kHistogramServiceWorkerParseStart,

@@ -119,13 +119,18 @@ class BrowserViewRenderer : public content::SynchronousCompositorClient,
                             int routing_id) override;
   void PostInvalidate(content::SynchronousCompositor* compositor) override;
   void DidUpdateContent(content::SynchronousCompositor* compositor) override;
+
+  // |total_scroll_offset|, |total_max_scroll_offset|, and |scrollable_size| are
+  // in DIP scale when --use-zoom-for-dsf is disabled. Otherwise, they are in
+  // physical pixel scale.
   void UpdateRootLayerState(content::SynchronousCompositor* compositor,
-                            const gfx::Vector2dF& total_scroll_offset_dip,
-                            const gfx::Vector2dF& max_scroll_offset_dip,
-                            const gfx::SizeF& scrollable_size_dip,
+                            const gfx::Vector2dF& total_scroll_offset,
+                            const gfx::Vector2dF& total_max_scroll_offset,
+                            const gfx::SizeF& scrollable_size,
                             float page_scale_factor,
                             float min_page_scale_factor,
                             float max_page_scale_factor) override;
+
   void DidOverscroll(content::SynchronousCompositor* compositor,
                      const gfx::Vector2dF& accumulated_overscroll,
                      const gfx::Vector2dF& latest_overscroll_delta,
@@ -174,7 +179,6 @@ class BrowserViewRenderer : public content::SynchronousCompositorClient,
 
   BrowserViewRendererClient* const client_;
   const scoped_refptr<base::SingleThreadTaskRunner> ui_task_runner_;
-  const bool sync_on_draw_hardware_;
   CompositorFrameConsumer* current_compositor_frame_consumer_;
   std::set<CompositorFrameConsumer*> compositor_frame_consumers_;
 
@@ -206,14 +210,6 @@ class BrowserViewRenderer : public content::SynchronousCompositorClient,
 
   bool offscreen_pre_raster_;
 
-  // Must do a synchronous draw first to ensure GL bindings are initialized.
-  // TODO(boliu): Wait on render thread and remove this. When the
-  // first synchronous draw requirement is removed,
-  // RenderThreadManager::DeleteHardwareRendererOnUI will need to
-  // change, because it will no longer be true that having received a
-  // frame means that GL bindings have been initialized.
-  bool allow_async_draw_;
-
   gfx::Vector2d last_on_draw_scroll_offset_;
   gfx::Rect last_on_draw_global_visible_rect_;
 
@@ -221,11 +217,9 @@ class BrowserViewRenderer : public content::SynchronousCompositorClient,
 
   gfx::SizeF scrollable_size_dip_;
 
-  // Current scroll offset in CSS pixels.
   // TODO(miletus): Make scroll_offset_dip_ a gfx::ScrollOffset.
   gfx::Vector2dF scroll_offset_dip_;
 
-  // Max scroll offset in CSS pixels.
   // TODO(miletus): Make max_scroll_offset_dip_ a gfx::ScrollOffset.
   gfx::Vector2dF max_scroll_offset_dip_;
 

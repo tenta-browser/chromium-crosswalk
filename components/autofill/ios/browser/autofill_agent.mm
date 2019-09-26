@@ -14,7 +14,6 @@
 #include "base/json/json_writer.h"
 #include "base/mac/foundation_util.h"
 #include "base/mac/scoped_block.h"
-#include "base/memory/ptr_util.h"
 #include "base/metrics/field_trial.h"
 #include "base/strings/string16.h"
 #include "base/strings/sys_string_conversions.h"
@@ -27,17 +26,20 @@
 #include "components/autofill/core/browser/keyboard_accessory_metrics_logger.h"
 #include "components/autofill/core/browser/popup_item_ids.h"
 #include "components/autofill/core/common/autofill_constants.h"
+#include "components/autofill/core/common/autofill_features.h"
 #include "components/autofill/core/common/autofill_pref_names.h"
 #include "components/autofill/core/common/autofill_util.h"
 #include "components/autofill/core/common/form_data.h"
 #include "components/autofill/core/common/form_field_data.h"
 #include "components/autofill/ios/browser/autofill_driver_ios.h"
+#include "components/autofill/ios/browser/autofill_util.h"
 #import "components/autofill/ios/browser/form_suggestion.h"
 #import "components/autofill/ios/browser/js_autofill_manager.h"
 #include "components/prefs/pref_service.h"
 #include "ios/web/public/url_scheme_util.h"
 #include "ios/web/public/web_state/form_activity_params.h"
 #import "ios/web/public/web_state/js/crw_js_injection_receiver.h"
+#import "ios/web/public/web_state/navigation_context.h"
 #include "ios/web/public/web_state/url_verification_constants.h"
 #import "ios/web/public/web_state/web_state.h"
 #include "ui/gfx/geometry/rect.h"
@@ -55,19 +57,19 @@ using FormDataVector = std::vector<autofill::FormData>;
 // |fetchFormsWithName:minimumRequiredFieldsCount:pageURL:completionHandler|
 typedef void (^FetchFormsCompletionHandler)(BOOL, const FormDataVector&);
 
-// Gets the first focusable form and field specified by |fieldName| from
+// Gets the first focusable form and field specified by |fieldIdentifier| from
 // |forms|, modifying the returned field so that input elements are also
 // handled.
 void GetFormAndField(autofill::FormData* form,
                      autofill::FormFieldData* field,
                      const FormDataVector& forms,
-                     const std::string& fieldName,
+                     const std::string& fieldIdentifier,
                      const std::string& type) {
   DCHECK_GE(forms.size(), 1U);
   *form = forms[0];
-  const base::string16 fieldName16 = base::UTF8ToUTF16(fieldName);
+  const base::string16 fieldIdentifier16 = base::UTF8ToUTF16(fieldIdentifier);
   for (const auto& currentField : form->fields) {
-    if (currentField.name == fieldName16 && currentField.is_focusable) {
+    if (currentField.id == fieldIdentifier16 && currentField.is_focusable) {
       *field = currentField;
       break;
     }
@@ -114,31 +116,23 @@ void GetFormAndField(autofill::FormData* form,
                        pageURL:(const GURL&)pageURL
              completionHandler:(FetchFormsCompletionHandler)completionHandler;
 
-// Processes the JSON form data extracted from the page into the format expected
-// by AutofillManager and fills it in |formsData|.
-// |formsData| cannot be nil.
-// |filtered| and |formName| limit the field that will be returned in
-// |formData|. See
-// |fetchFormsFiltered:withName:minimumRequiredFieldsCount:pageURL:
-// completionHandler:| for details.
-// Returns a BOOL indicating the success value and the vector of form data.
-- (BOOL)getExtractedFormsData:(FormDataVector*)formsData
-                     fromJSON:(NSString*)formJSON
-                     filtered:(BOOL)filtered
-                     formName:(const base::string16&)formName
-                      pageURL:(const GURL&)pageURL;
-
 // Processes the JSON form data extracted from the page when form activity is
 // detected and informs the AutofillManager.
 - (void)processFormActivityExtractedData:(const FormDataVector&)forms
                                fieldName:(const std::string&)fieldName
+                         fieldIdentifier:(const std::string&)fieldIdentifier
                                     type:(const std::string&)type
                                 webState:(web::WebState*)webState;
+
+// Returns whether Autofill is enabled by checking if Autofill is turned on and
+// if the current URL has a web scheme and the page content is HTML.
+- (BOOL)isAutofillEnabled;
 
 // Sends a request to AutofillManager to retrieve suggestions for the specified
 // form and field.
 - (void)queryAutofillWithForms:(const FormDataVector&)forms
-                         field:(NSString*)fieldName
+                     fieldName:(NSString*)fieldName
+               fieldIdentifier:(NSString*)fieldIdentifier
                           type:(NSString*)type
                     typedValue:(NSString*)typedValue
                       webState:(web::WebState*)webState
@@ -149,11 +143,15 @@ void GetFormAndField(autofill::FormData* form,
 // key/value suggestions if the user hasn't started typing.
 - (NSArray*)processSuggestions:(NSArray*)suggestions;
 
+// Sends the the |formData| to the JavaScript manager of |webState_| to actually
+// fill the data.
+- (void)sendDataToWebState:(NSString*)formData;
+
 @end
 
 @implementation AutofillAgent {
-  // Timestamp of the first time forms are seen.
-  base::TimeTicks formsSeenTimestamp_;
+  // Whether page is scanned for forms.
+  BOOL pageProcessed_;
 
   // The WebState this instance is observing. Will be null after
   // -webStateDestroyed: has been called.
@@ -192,6 +190,9 @@ void GetFormAndField(autofill::FormData* form,
   // The reference is weak because a weak pointer is sent to our
   // AutofillManagerDelegate.
   base::WeakPtr<autofill::AutofillPopupDelegate> popupDelegate_;
+  // The autofill data that needs to be send when the |webState_| is shown.
+  // The string is in JSON format.
+  NSString* pendingFormJSON_;
 }
 
 - (instancetype)initWithPrefService:(PrefService*)prefService
@@ -205,9 +206,8 @@ void GetFormAndField(autofill::FormData* form,
     webStateObserverBridge_ =
         std::make_unique<web::WebStateObserverBridge>(self);
     webState_->AddObserver(webStateObserverBridge_.get());
-    jsAutofillManager_ = base::mac::ObjCCastStrict<JsAutofillManager>(
-        [webState_->GetJSInjectionReceiver()
-            instanceOfClass:[JsAutofillManager class]]);
+    jsAutofillManager_ = [[JsAutofillManager alloc]
+        initWithReceiver:webState_->GetJSInjectionReceiver()];
   }
   return self;
 }
@@ -250,77 +250,11 @@ void GetFormAndField(autofill::FormData* form,
       ->autofill_manager();
 }
 
-// Extracts a single form field from the JSON dictionary into a FormFieldData
-// object.
-// Returns NO if the field could not be extracted.
-- (BOOL)extractFormField:(const base::DictionaryValue&)field
-             asFieldData:(autofill::FormFieldData*)fieldData {
-  if (!field.GetString("name", &fieldData->name) ||
-      !field.GetString("form_control_type", &fieldData->form_control_type)) {
-    return NO;
-  }
-
-  // Optional fields.
-  field.GetString("label", &fieldData->label);
-  field.GetString("value", &fieldData->value);
-  field.GetString("autocomplete_attribute", &fieldData->autocomplete_attribute);
-
-  int maxLength;
-  if (field.GetInteger("max_length", &maxLength))
-    fieldData->max_length = maxLength;
-
-  field.GetBoolean("is_autofilled", &fieldData->is_autofilled);
-
-  // TODO(crbug.com/427614): Extract |is_checked|.
-  bool isCheckable = false;
-  field.GetBoolean("is_checkable", &isCheckable);
-  autofill::SetCheckStatus(fieldData, isCheckable, false);
-
-  field.GetBoolean("is_focusable", &fieldData->is_focusable);
-  field.GetBoolean("should_autocomplete", &fieldData->should_autocomplete);
-
-  // ROLE_ATTRIBUTE_OTHER is the default value. The only other value as of this
-  // writing is ROLE_ATTRIBUTE_PRESENTATION.
-  int role;
-  if (field.GetInteger("role", &role) &&
-      role == autofill::AutofillField::ROLE_ATTRIBUTE_PRESENTATION) {
-    fieldData->role = autofill::AutofillField::ROLE_ATTRIBUTE_PRESENTATION;
-  }
-
-  // TODO(crbug.com/427614): Extract |text_direction|.
-
-  // Load option values where present.
-  const base::ListValue* optionValues;
-  if (field.GetList("option_values", &optionValues)) {
-    for (const auto& optionValue : *optionValues) {
-      base::string16 value;
-      if (optionValue.GetAsString(&value))
-        fieldData->option_values.push_back(value);
-    }
-  }
-
-  // Load option contents where present.
-  const base::ListValue* optionContents;
-  if (field.GetList("option_contents", &optionContents)) {
-    for (const auto& optionContent : *optionContents) {
-      base::string16 content;
-      if (optionContent.GetAsString(&content))
-        fieldData->option_contents.push_back(content);
-    }
-  }
-
-  if (fieldData->option_values.size() != fieldData->option_contents.size())
-    return NO;  // Option values and contents lists should match 1-1.
-
-  return YES;
-}
-
 - (void)notifyAutofillManager:(autofill::AutofillManager*)autofillManager
                   ofFormsSeen:(const FormDataVector&)forms {
   DCHECK(autofillManager);
   DCHECK(!forms.empty());
-  autofillManager->Reset();
-  autofillManager->OnFormsSeen(forms, formsSeenTimestamp_);
+  autofillManager->OnFormsSeen(forms, base::TimeTicks::Now());
 }
 
 - (void)notifyAutofillManager:(autofill::AutofillManager*)autofillManager
@@ -330,11 +264,9 @@ void GetFormAndField(autofill::FormData* form,
   // Exactly one form should be extracted.
   DCHECK_EQ(1U, forms.size());
   autofill::FormData form = forms[0];
-
-  // iOS doesn't get a separate "will submit form" notification so call
-  // OnWillSubmitForm() here.
-  autofillManager->OnWillSubmitForm(form, base::TimeTicks::Now());
-  autofillManager->OnFormSubmitted(form);
+  autofillManager->OnFormSubmitted(form, false,
+                                   autofill::SubmissionSource::FORM_SUBMISSION,
+                                   base::TimeTicks::Now());
   autofill::KeyboardAccessoryMetricsLogger::OnFormSubmitted();
 }
 
@@ -345,122 +277,18 @@ void GetFormAndField(autofill::FormData* form,
              completionHandler:(FetchFormsCompletionHandler)completionHandler {
   DCHECK(completionHandler);
 
-  // TODO(crbug.com/418827): Early-inject the script and replace the following
-  // if statement with a DCHECK if a race condition between the script injection
-  // and the call to the this function continues to happen.
-  // Return if the script has not been injected.
-  if (![jsAutofillManager_ hasBeenInjected]) {
-    dispatch_async(dispatch_get_main_queue(), ^{
-      completionHandler(NO, FormDataVector());
-    });
-    return;
-  }
-
   // Necessary so the values can be used inside a block.
   base::string16 formNameCopy = formName;
   GURL pageURLCopy = pageURL;
-  __weak AutofillAgent* weakSelf = self;
   [jsAutofillManager_
       fetchFormsWithMinimumRequiredFieldsCount:requiredFieldsCount
                              completionHandler:^(NSString* formJSON) {
                                std::vector<autofill::FormData> formData;
-                               BOOL success =
-                                   [weakSelf getExtractedFormsData:&formData
-                                                          fromJSON:formJSON
-                                                          filtered:filtered
-                                                          formName:formNameCopy
-                                                           pageURL:pageURLCopy];
+                               bool success = autofill::ExtractFormsData(
+                                   formJSON, filtered, formNameCopy,
+                                   pageURLCopy, &formData);
                                completionHandler(success, formData);
                              }];
-}
-
-- (BOOL)getExtractedFormsData:(FormDataVector*)formsData
-                     fromJSON:(NSString*)formJSON
-                     filtered:(BOOL)filtered
-                     formName:(const base::string16&)formName
-                      pageURL:(const GURL&)pageURL {
-  DCHECK(formsData);
-  // Convert JSON string to JSON object |dataJson|.
-  int errorCode = 0;
-  std::string errorMessage;
-  std::unique_ptr<base::Value> dataJson(base::JSONReader::ReadAndReturnError(
-      base::SysNSStringToUTF8(formJSON), base::JSON_PARSE_RFC, &errorCode,
-      &errorMessage));
-  if (errorCode) {
-    LOG(WARNING) << "JSON parse error in form extraction: "
-                 << errorMessage.c_str();
-    return NO;
-  }
-
-  // Returned data should be a dictionary.
-  const base::DictionaryValue* data;
-  if (!dataJson->GetAsDictionary(&data))
-    return NO;
-
-  // Get the list of forms.
-  const base::ListValue* formsList;
-  if (!data->GetList("forms", &formsList))
-    return NO;
-
-  // Iterate through all the extracted forms and copy the data from JSON into
-  // AutofillManager structures.
-  for (const auto& formDict : *formsList) {
-    // Each form list entry should be a JSON dictionary.
-    const base::DictionaryValue* formData;
-    if (!formDict.GetAsDictionary(&formData))
-      return NO;
-
-    // Form data is copied into a FormData object field-by-field.
-    autofill::FormData form;
-    if (!formData->GetString("name", &form.name))
-      return NO;
-    if (filtered && formName != form.name)
-      continue;
-
-    // Origin is mandatory.
-    base::string16 origin;
-    if (!formData->GetString("origin", &origin))
-      return NO;
-
-    // Use GURL object to verify origin of host page URL.
-    form.origin = GURL(origin);
-    if (form.origin.GetOrigin() != pageURL.GetOrigin()) {
-      LOG(WARNING) << "Form extraction aborted due to same origin policy";
-      return NO;
-    }
-
-    // Action is optional.
-    base::string16 action;
-    formData->GetString("action", &action);
-    form.action = GURL(action);
-
-    // Is form tag is optional.
-    bool is_form_tag;
-    if (formData->GetBoolean("is_form_tag", &is_form_tag))
-      form.is_form_tag = is_form_tag;
-
-    // Is formless checkout tag is optional.
-    bool is_formless_checkout;
-    if (formData->GetBoolean("is_formless_checkout", &is_formless_checkout))
-      form.is_formless_checkout = is_formless_checkout;
-
-    // Field list (mandatory) is extracted.
-    const base::ListValue* fieldsList;
-    if (!formData->GetList("fields", &fieldsList))
-      return NO;
-    for (const auto& fieldDict : *fieldsList) {
-      const base::DictionaryValue* field;
-      autofill::FormFieldData fieldData;
-      if (fieldDict.GetAsDictionary(&field) &&
-          [self extractFormField:*field asFieldData:&fieldData]) {
-        form.fields.push_back(fieldData);
-      } else {
-        return NO;
-      }
-    }
-    formsData->push_back(form);
-  }
-  return YES;
 }
 
 - (NSArray*)processSuggestions:(NSArray*)suggestions {
@@ -524,7 +352,8 @@ void GetFormAndField(autofill::FormData* form,
 #pragma mark FormSuggestionProvider
 
 - (void)queryAutofillWithForms:(const FormDataVector&)forms
-                         field:(NSString*)fieldName
+                     fieldName:(NSString*)fieldName
+               fieldIdentifier:(NSString*)fieldIdentifier
                           type:(NSString*)type
                     typedValue:(NSString*)typedValue
                       webState:(web::WebState*)webState
@@ -540,7 +369,8 @@ void GetFormAndField(autofill::FormData* form,
   // Find the right form and field.
   autofill::FormFieldData field;
   autofill::FormData form;
-  GetFormAndField(&form, &field, forms, base::SysNSStringToUTF8(fieldName),
+  GetFormAndField(&form, &field, forms,
+                  base::SysNSStringToUTF8(fieldIdentifier),
                   base::SysNSStringToUTF8(type));
 
   // Save the completion and go look for suggestions.
@@ -553,17 +383,24 @@ void GetFormAndField(autofill::FormData* form,
 }
 
 - (void)checkIfSuggestionsAvailableForForm:(NSString*)formName
-                                     field:(NSString*)fieldName
+                                 fieldName:(NSString*)fieldName
+                           fieldIdentifier:(NSString*)fieldIdentifier
                                  fieldType:(NSString*)fieldType
                                       type:(NSString*)type
                                 typedValue:(NSString*)typedValue
+                               isMainFrame:(BOOL)isMainFrame
                                   webState:(web::WebState*)webState
                          completionHandler:
                              (SuggestionsAvailableCompletion)completion {
-  web::URLVerificationTrustLevel trustLevel;
-  const GURL pageURL(webState->GetCurrentURL(&trustLevel));
-  if (trustLevel != web::URLVerificationTrustLevel::kAbsolute) {
-    DLOG(WARNING) << "Suggestions not offered on untrusted page";
+  DCHECK_EQ(webState_, webState);
+
+  if (!isMainFrame) {
+    // Filling in iframes is not implemented.
+    completion(NO);
+    return;
+  }
+
+  if (![self isAutofillEnabled]) {
     completion(NO);
     return;
   }
@@ -574,13 +411,17 @@ void GetFormAndField(autofill::FormData* form,
   id completionHandler = ^(BOOL success, const FormDataVector& forms) {
     if (success && forms.size() == 1) {
       [weakSelf queryAutofillWithForms:forms
-                                 field:fieldName
+                             fieldName:fieldName
+                       fieldIdentifier:fieldIdentifier
                                   type:type
                             typedValue:typedValue
                               webState:webState
                      completionHandler:completion];
     }
   };
+
+  web::URLVerificationTrustLevel trustLevel;
+  const GURL pageURL(webState->GetCurrentURL(&trustLevel));
 
   // Re-extract the active form and field only. All forms with at least one
   // input element are considered because key/value suggestions are offered
@@ -593,7 +434,8 @@ void GetFormAndField(autofill::FormData* form,
 }
 
 - (void)retrieveSuggestionsForForm:(NSString*)formName
-                             field:(NSString*)fieldName
+                         fieldName:(NSString*)fieldName
+                   fieldIdentifier:(NSString*)fieldIdentifier
                          fieldType:(NSString*)fieldType
                               type:(NSString*)type
                         typedValue:(NSString*)typedValue
@@ -601,14 +443,16 @@ void GetFormAndField(autofill::FormData* form,
                  completionHandler:(SuggestionsReadyCompletion)completion {
   DCHECK(mostRecentSuggestions_)
       << "Requestor should have called "
-      << "|checkIfSuggestionsAvailableForForm:field:type:completionHandler:| "
+      << "|checkIfSuggestionsAvailableForForm:fieldName:fieldIdentifier:type:"
+      << "completionHandler:| "
       << "and waited for the result before calling "
       << "|retrieveSuggestionsForForm:field:type:completionHandler:|.";
   completion(mostRecentSuggestions_, self);
 }
 
 - (void)didSelectSuggestion:(FormSuggestion*)suggestion
-                   forField:(NSString*)fieldName
+                  fieldName:(NSString*)fieldName
+            fieldIdentifier:(NSString*)fieldIdentifier
                        form:(NSString*)formName
           completionHandler:(SuggestionHandledCompletion)completion {
   [[UIDevice currentDevice] playInputClick];
@@ -616,7 +460,7 @@ void GetFormAndField(autofill::FormData* form,
   mostRecentSelectedIdentifier_ = suggestion.identifier;
 
   if (suggestion.identifier > 0) {
-    pendingAutocompleteField_ = base::SysNSStringToUTF16(fieldName);
+    pendingAutocompleteField_ = base::SysNSStringToUTF16(fieldIdentifier);
     if (popupDelegate_) {
       popupDelegate_->DidAcceptSuggestion(
           base::SysNSStringToUTF16(suggestion.value), suggestion.identifier, 0);
@@ -624,7 +468,7 @@ void GetFormAndField(autofill::FormData* form,
   } else if (suggestion.identifier ==
              autofill::POPUP_ITEM_ID_AUTOCOMPLETE_ENTRY) {
     // FormSuggestion is a simple, single value that can be filled out now.
-    [self fillField:base::SysNSStringToUTF8(fieldName)
+    [self fillField:base::SysNSStringToUTF8(fieldIdentifier)
            formName:base::SysNSStringToUTF8(formName)
               value:base::SysNSStringToUTF16(suggestion.value)];
   } else if (suggestion.identifier == autofill::POPUP_ITEM_ID_CLEAR_FORM) {
@@ -645,19 +489,25 @@ void GetFormAndField(autofill::FormData* form,
   [self detachFromWebState];
 }
 
+- (void)webStateWasShown:(web::WebState*)webState {
+  DCHECK_EQ(webState_, webState);
+  if (pendingFormJSON_) {
+    [self sendDataToWebState:pendingFormJSON_];
+  }
+  pendingFormJSON_ = nil;
+}
+
 - (void)webState:(web::WebState*)webState
     didSubmitDocumentWithFormNamed:(const std::string&)formName
-                     userInitiated:(BOOL)userInitiated {
-  DCHECK_EQ(webState_, webState);
-  if (!prefService_->GetBoolean(autofill::prefs::kAutofillEnabled))
-    return;
-
-  web::URLVerificationTrustLevel trustLevel;
-  const GURL pageURL(webState->GetCurrentURL(&trustLevel));
-  if (trustLevel != web::URLVerificationTrustLevel::kAbsolute) {
-    DLOG(WARNING) << "Form submit not handled on untrusted page";
+                     userInitiated:(BOOL)userInitiated
+                       isMainFrame:(BOOL)isMainFrame {
+  if (!isMainFrame) {
+    // Saving from iframes is not implemented.
     return;
   }
+
+  if (![self isAutofillEnabled])
+    return;
 
   __weak AutofillAgent* weakSelf = self;
   id completionHandler = ^(BOOL success, const FormDataVector& forms) {
@@ -677,6 +527,10 @@ void GetFormAndField(autofill::FormData* form,
                         userInitiated:userInitiated];
 
   };
+
+  web::URLVerificationTrustLevel trustLevel;
+  const GURL pageURL(webState->GetCurrentURL(&trustLevel));
+
   // This code is racing against the new page loading and will not get the
   // password form data if the page has changed. In most cases this code wins
   // the race.
@@ -688,30 +542,35 @@ void GetFormAndField(autofill::FormData* form,
                completionHandler:completionHandler];
 }
 
-- (void)webState:(web::WebState*)webState didLoadPageWithSuccess:(BOOL)success {
-  DCHECK_EQ(webState_, webState);
-  if (!prefService_->GetBoolean(autofill::prefs::kAutofillEnabled) ||
-      !webState->ContentIsHTML()) {
+- (void)webState:(web::WebState*)webState
+    didStartNavigation:(web::NavigationContext*)navigation {
+  // Ignore navigations within the same document, e.g., history.pushState().
+  if (navigation->IsSameDocument())
     return;
-  }
+
+  // Reset AutofillManager before processing the new page.
+  autofill::AutofillManager* autofillManager =
+      [self autofillManagerFromWebState:webState];
+  DCHECK(autofillManager);
+  autofillManager->Reset();
+
+  // Mark the page as not processed.
+  pageProcessed_ = NO;
+}
+
+- (void)webState:(web::WebState*)webState didLoadPageWithSuccess:(BOOL)success {
+  if (![self isAutofillEnabled])
+    return;
+
   [self processPage:webState];
 }
 
 - (void)processPage:(web::WebState*)webState {
-  DCHECK_EQ(webState_, webState);
-  web::URLVerificationTrustLevel trustLevel;
-  const GURL pageURL(webState->GetCurrentURL(&trustLevel));
-  if (trustLevel != web::URLVerificationTrustLevel::kAbsolute) {
-    DLOG(WARNING) << "Page load not handled on untrusted page";
-    return;
-  }
-
-  if (!web::UrlHasWebScheme(pageURL))
-    return;
-
   // This process is only done once.
-  if ([jsAutofillManager_ hasBeenInjected])
+  if (pageProcessed_)
     return;
+  pageProcessed_ = YES;
+  [jsAutofillManager_ addJSDelay];
 
   popupDelegate_.reset();
   suggestionsAvailableCompletion_ = nil;
@@ -719,8 +578,13 @@ void GetFormAndField(autofill::FormData* form,
   mostRecentSuggestions_ = nil;
   typedValue_ = nil;
 
-  [jsAutofillManager_ inject];
+  web::URLVerificationTrustLevel trustLevel;
+  const GURL pageURL(webState->GetCurrentURL(&trustLevel));
+  [jsAutofillManager_ toggleTrackingFormMutations:YES];
+  [self scanFormsInPage:webState pageURL:pageURL];
+}
 
+- (void)scanFormsInPage:(web::WebState*)webState pageURL:(const GURL&)pageURL {
   __weak AutofillAgent* weakSelf = self;
   id completionHandler = ^(BOOL success, const FormDataVector& forms) {
     AutofillAgent* strongSelf = weakSelf;
@@ -746,18 +610,7 @@ void GetFormAndField(autofill::FormData* form,
 
 - (void)webState:(web::WebState*)webState
     didRegisterFormActivity:(const web::FormActivityParams&)params {
-  DCHECK_EQ(webState_, webState);
-  if (!prefService_->GetBoolean(autofill::prefs::kAutofillEnabled))
-    return;
-  web::URLVerificationTrustLevel trustLevel;
-  const GURL pageURL(webState->GetCurrentURL(&trustLevel));
-  if (trustLevel != web::URLVerificationTrustLevel::kAbsolute) {
-    DLOG(WARNING) << "Form activity not handled on untrusted page";
-    return;
-  }
-
-  // Autofill and suggestion scripts are only injected for web URLs.
-  if (!web::UrlHasWebScheme(pageURL) || !webState->ContentIsHTML())
+  if (![self isAutofillEnabled])
     return;
 
   // Returns early and reset the suggestion state if an error occurs.
@@ -769,6 +622,17 @@ void GetFormAndField(autofill::FormData* form,
   // page is fully loaded.
   [self processPage:webState];
 
+  web::URLVerificationTrustLevel trustLevel;
+  const GURL pageURL(webState->GetCurrentURL(&trustLevel));
+
+  // If the event is a form_changed, then the event concerns the whole page and
+  // not a particular form. The whole page need to be reparsed to find the new
+  // forms.
+  if (params.type.compare("form_changed") == 0) {
+    [self scanFormsInPage:webState pageURL:pageURL];
+    return;
+  }
+
   // Blur not handled; we don't reset the suggestion state because if the
   // keyboard is about to be dismissed there's no point. If not it means the
   // next focus event will update the suggestion state within milliseconds, so
@@ -778,6 +642,7 @@ void GetFormAndField(autofill::FormData* form,
 
   // Necessary so the strings can be used inside a block.
   std::string fieldNameCopy = params.field_name;
+  std::string fieldIdentifierCopy = params.field_identifier;
   std::string typeCopy = params.type;
 
   __weak AutofillAgent* weakSelf = self;
@@ -785,6 +650,7 @@ void GetFormAndField(autofill::FormData* form,
     if (success && forms.size() == 1) {
       [weakSelf processFormActivityExtractedData:forms
                                        fieldName:fieldNameCopy
+                                 fieldIdentifier:fieldIdentifierCopy
                                             type:typeCopy
                                         webState:webState];
     }
@@ -803,6 +669,7 @@ void GetFormAndField(autofill::FormData* form,
 
 - (void)processFormActivityExtractedData:(const FormDataVector&)forms
                                fieldName:(const std::string&)fieldName
+                         fieldIdentifier:(const std::string&)fieldIdentifier
                                     type:(const std::string&)type
                                 webState:(web::WebState*)webState {
   DCHECK_EQ(webState_, webState);
@@ -813,7 +680,7 @@ void GetFormAndField(autofill::FormData* form,
 
   autofill::FormFieldData field;
   autofill::FormData form;
-  GetFormAndField(&form, &field, forms, fieldName, type);
+  GetFormAndField(&form, &field, forms, fieldIdentifier, type);
 
   // Tell the manager about the form activity (for metrics).
   if (type.compare("input") == 0 && (field.form_control_type == "text" ||
@@ -821,6 +688,17 @@ void GetFormAndField(autofill::FormData* form,
     autofillManager->OnTextFieldDidChange(form, field, gfx::RectF(),
                                           base::TimeTicks::Now());
   }
+}
+
+- (BOOL)isAutofillEnabled {
+  if (!prefService_->GetBoolean(autofill::prefs::kAutofillEnabled))
+    return NO;
+
+  web::URLVerificationTrustLevel trustLevel;
+  const GURL pageURL(webState_->GetCurrentURL(&trustLevel));
+
+  // Only web URLs are supported by Autofill.
+  return web::UrlHasWebScheme(pageURL) && webState_->ContentIsHTML();
 }
 
 #pragma mark -
@@ -833,11 +711,11 @@ void GetFormAndField(autofill::FormData* form,
 // object, which |dataString| is not because 'form' is not a specified member of
 // AutofillFormFieldData. fillFormField() also expects members 'max_length' and
 // 'is_checked' to exist.
-- (void)fillField:(const std::string&)fieldName
+- (void)fillField:(const std::string&)fieldIdentifier
          formName:(const std::string&)formName
             value:(const base::string16)value {
   base::DictionaryValue data;
-  data.SetString("name", fieldName);
+  data.SetString("identifier", fieldIdentifier);
   data.SetString("form", formName);
   data.SetString("value", value);
   std::string dataString;
@@ -850,32 +728,45 @@ void GetFormAndField(autofill::FormData* form,
 }
 
 - (void)onFormDataFilled:(const autofill::FormData&)form {
-  std::unique_ptr<base::DictionaryValue> formData(new base::DictionaryValue);
-  formData->SetString("formName", base::UTF16ToUTF8(form.name));
+  std::unique_ptr<base::DictionaryValue> JSONForm(new base::DictionaryValue);
+  JSONForm->SetString("formName", base::UTF16ToUTF8(form.name));
   // Note: Destruction of all child base::Value types is handled by the root
   // formData object on its own destruction.
-  auto fieldsData = base::MakeUnique<base::DictionaryValue>();
+  auto JSONFields = std::make_unique<base::DictionaryValue>();
 
-  const std::vector<autofill::FormFieldData>& fields = form.fields;
-  for (const auto& fieldData : fields) {
-    fieldsData->SetKey(base::UTF16ToUTF8(fieldData.name),
-                       base::Value(fieldData.value));
+  const std::vector<autofill::FormFieldData>& autofillFields = form.fields;
+  for (const auto& autofillField : autofillFields) {
+    if (JSONFields->HasKey(base::UTF16ToUTF8(autofillField.id)) &&
+        autofillField.value.empty())
+      continue;
+    JSONFields->SetKey(base::UTF16ToUTF8(autofillField.id),
+                       base::Value(autofillField.value));
   }
-  formData->Set("fields", std::move(fieldsData));
+  JSONForm->Set("fields", std::move(JSONFields));
 
   // Stringify the JSON data and send it to the UIWebView-side fillForm method.
-  std::string dataString;
-  base::JSONWriter::Write(*formData.get(), &dataString);
+  std::string JSONString;
+  base::JSONWriter::Write(*JSONForm.get(), &JSONString);
+  NSString* nsJSONString = base::SysUTF8ToNSString(JSONString);
 
+  if (!webState_->IsVisible()) {
+    pendingFormJSON_ = nsJSONString;
+    return;
+  }
+  [self sendDataToWebState:nsJSONString];
+}
+
+- (void)sendDataToWebState:(NSString*)JSONData {
+  DCHECK(webState_->IsVisible());
   // It is possible that the fill was not initiated by selecting a suggestion.
   // In this case we provide an empty callback.
   if (!suggestionHandledCompletion_)
     suggestionHandledCompletion_ = [^{
     } copy];
-  [jsAutofillManager_
-                fillForm:base::SysUTF8ToNSString(dataString)
-      forceFillFieldName:base::SysUTF16ToNSString(pendingAutocompleteField_)
-       completionHandler:suggestionHandledCompletion_];
+  [jsAutofillManager_ fillForm:JSONData
+      forceFillFieldIdentifier:base::SysUTF16ToNSString(
+                                   pendingAutocompleteField_)
+             completionHandler:suggestionHandledCompletion_];
   suggestionHandledCompletion_ = nil;
 }
 
@@ -903,19 +794,21 @@ void GetFormAndField(autofill::FormData* form,
 }
 
 - (void)renderAutofillTypePredictions:
-    (const std::vector<autofill::FormStructure*>&)structure {
+    (const std::vector<autofill::FormDataPredictions>&)forms {
+  if (!base::FeatureList::IsEnabled(
+          autofill::features::kAutofillShowTypePredictions)) {
+    return;
+  }
+
   base::DictionaryValue predictionData;
-  for (autofill::FormStructure* form : structure) {
-    auto formJSONData = base::MakeUnique<base::DictionaryValue>();
-    autofill::FormData formData = form->ToFormData();
-    for (const auto& field : *form) {
-      autofill::AutofillType type(field->Type());
-      if (type.IsUnknown())
-        continue;
-      formJSONData->SetKey(base::UTF16ToUTF8(field->name),
-                           base::Value(type.ToString()));
+  for (const auto& form : forms) {
+    auto formJSONData = std::make_unique<base::DictionaryValue>();
+    DCHECK(form.fields.size() == form.data.fields.size());
+    for (size_t i = 0; i < form.fields.size(); i++) {
+      formJSONData->SetKey(base::UTF16ToUTF8(form.data.fields[i].id),
+                           base::Value(form.fields[i].overall_type));
     }
-    predictionData.SetWithoutPathExpansion(base::UTF16ToUTF8(formData.name),
+    predictionData.SetWithoutPathExpansion(base::UTF16ToUTF8(form.data.name),
                                            std::move(formJSONData));
   }
   std::string dataString;

@@ -4,6 +4,8 @@
 
 #include "net/quic/quartc/quartc_session.h"
 
+#include "net/quic/core/tls_client_handshaker.h"
+#include "net/quic/core/tls_server_handshaker.h"
 #include "net/quic/platform/api/quic_ptr_util.h"
 
 using std::string;
@@ -11,10 +13,6 @@ using std::string;
 namespace net {
 
 namespace {
-
-// Default priority for incoming QUIC streams.
-// TODO(zhihuang): Determine if this value is correct.
-static const SpdyPriority kDefaultPriority = 3;
 
 // Arbitrary server port number for net::QuicCryptoClientConfig.
 const int kQuicServerPort = 0;
@@ -128,8 +126,8 @@ QuartcSession::QuartcSession(std::unique_ptr<QuicConnection> connection,
   // Initialization with default crypto configuration.
   if (perspective_ == Perspective::IS_CLIENT) {
     std::unique_ptr<ProofVerifier> proof_verifier(new InsecureProofVerifier);
-    quic_crypto_client_config_.reset(
-        new QuicCryptoClientConfig(std::move(proof_verifier)));
+    quic_crypto_client_config_ = QuicMakeUnique<QuicCryptoClientConfig>(
+        std::move(proof_verifier), TlsClientHandshaker::CreateSslCtx());
   } else {
     std::unique_ptr<ProofSource> proof_source(new DummyProofSource);
     // Generate a random source address token secret. For long-running servers
@@ -138,9 +136,10 @@ QuartcSession::QuartcSession(std::unique_ptr<QuicConnection> connection,
     char source_address_token_secret[kInputKeyingMaterialLength];
     helper_->GetRandomGenerator()->RandBytes(source_address_token_secret,
                                              kInputKeyingMaterialLength);
-    quic_crypto_server_config_.reset(new QuicCryptoServerConfig(
+    quic_crypto_server_config_ = QuicMakeUnique<QuicCryptoServerConfig>(
         string(source_address_token_secret, kInputKeyingMaterialLength),
-        helper_->GetRandomGenerator(), std::move(proof_source)));
+        helper_->GetRandomGenerator(), std::move(proof_source),
+        TlsServerHandshaker::CreateSslCtx());
     // Provide server with serialized config string to prove ownership.
     QuicCryptoServerConfig::ConfigOptions options;
     // The |message| is used to handle the return value of AddDefaultConfig
@@ -162,8 +161,10 @@ QuicCryptoStream* QuartcSession::GetMutableCryptoStream() {
 }
 
 QuartcStream* QuartcSession::CreateOutgoingDynamicStream() {
-  return ActivateDataStream(
-      CreateDataStream(GetNextOutgoingStreamId(), kDefaultPriority));
+  // Use default priority for incoming QUIC streams.
+  // TODO(zhihuang): Determine if this value is correct.
+  return ActivateDataStream(CreateDataStream(GetNextOutgoingStreamId(),
+                                             QuicStream::kDefaultPriority));
 }
 
 void QuartcSession::OnCryptoHandshakeEvent(CryptoHandshakeEvent event) {
@@ -183,7 +184,9 @@ void QuartcSession::CloseStream(QuicStreamId stream_id) {
     // QuicStream::OnClose), the stream is already closed so return.
     return;
   }
-  write_blocked_streams()->UnregisterStream(stream_id);
+  if (!register_streams_early()) {
+    write_blocked_streams()->UnregisterStream(stream_id, /*is_static=*/false);
+  }
   QuicSession::CloseStream(stream_id);
 }
 
@@ -281,7 +284,13 @@ void QuartcSession::SetDelegate(
   DCHECK(session_delegate_);
 }
 
+void QuartcSession::SetSessionVisitor(QuartcSessionVisitor* debug_visitor) {
+  debug_visitor->SetQuicConnection(connection_.get());
+  connection_->set_debug_visitor(debug_visitor->GetConnectionVisitor());
+}
+
 void QuartcSession::OnTransportCanWrite() {
+  connection()->writer()->SetWritable();
   if (HasDataToWrite()) {
     connection()->OnCanWrite();
   }
@@ -315,7 +324,7 @@ void QuartcSession::SetServerCryptoConfig(
 }
 
 QuicStream* QuartcSession::CreateIncomingDynamicStream(QuicStreamId id) {
-  return ActivateDataStream(CreateDataStream(id, kDefaultPriority));
+  return ActivateDataStream(CreateDataStream(id, QuicStream::kDefaultPriority));
 }
 
 std::unique_ptr<QuartcStream> QuartcSession::CreateDataStream(
@@ -330,7 +339,12 @@ std::unique_ptr<QuartcStream> QuartcSession::CreateDataStream(
     // Register the stream to the QuicWriteBlockedList. |priority| is clamped
     // between 0 and 7, with 0 being the highest priority and 7 the lowest
     // priority.
-    write_blocked_streams()->RegisterStream(stream->id(), priority);
+    if (!register_streams_early()) {
+      write_blocked_streams()->RegisterStream(
+          stream->id(), /* is_static_stream= */ false, priority);
+    } else {
+      write_blocked_streams()->UpdateStreamPriority(stream->id(), priority);
+    }
 
     if (IsIncomingStream(id)) {
       DCHECK(session_delegate_);

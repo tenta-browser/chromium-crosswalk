@@ -15,12 +15,16 @@
 #include "base/memory/weak_ptr.h"
 #include "base/strings/string16.h"
 #include "base/time/time.h"
+#include "base/unguessable_token.h"
+#include "content/common/service_worker/service_worker_provider.mojom.h"
 #include "content/common/shared_worker/shared_worker.mojom.h"
 #include "content/common/shared_worker/shared_worker_client.mojom.h"
 #include "content/common/shared_worker/shared_worker_factory.mojom.h"
 #include "content/common/shared_worker/shared_worker_host.mojom.h"
 #include "mojo/public/cpp/bindings/binding.h"
-#include "services/service_manager/public/interfaces/interface_provider.mojom.h"
+#include "services/network/public/mojom/url_loader_factory.mojom.h"
+#include "services/service_manager/public/mojom/interface_provider.mojom.h"
+#include "third_party/blink/public/web/devtools_agent.mojom.h"
 
 class GURL;
 
@@ -29,9 +33,9 @@ class MessagePortChannel;
 }
 
 namespace content {
-
 class SharedWorkerContentSettingsProxyImpl;
 class SharedWorkerInstance;
+class SharedWorkerServiceImpl;
 
 // The SharedWorkerHost is the interface that represents the browser side of
 // the browser <-> worker communication channel. This is owned by
@@ -40,13 +44,28 @@ class SharedWorkerInstance;
 class SharedWorkerHost : public mojom::SharedWorkerHost,
                          public service_manager::mojom::InterfaceProvider {
  public:
-  SharedWorkerHost(std::unique_ptr<SharedWorkerInstance> instance,
-                   int process_id,
-                   int route_id);
+  SharedWorkerHost(SharedWorkerServiceImpl* service,
+                   std::unique_ptr<SharedWorkerInstance> instance,
+                   int process_id);
   ~SharedWorkerHost() override;
 
   // Starts the SharedWorker in the renderer process.
-  void Start(mojom::SharedWorkerFactoryPtr factory, bool pause_on_start);
+  //
+  // S13nServiceWorker:
+  // |service_worker_provider_info| is sent to the renderer process and contains
+  // information about its ServiceWorkerProviderHost, the browser-side host for
+  // supporting the shared worker as a service worker client.
+  //
+  // S13nServiceWorker:
+  // |script_loader_factory| is sent to the renderer process and is to be used
+  // to request the shared worker's script. Currently it's only non-null when
+  // S13nServiceWorker is enabled, to allow service worker machinery to observe
+  // the request, but other web platform features may also use it someday.
+  void Start(
+      mojom::SharedWorkerFactoryPtr factory,
+      mojom::ServiceWorkerProviderInfoForSharedWorkerPtr
+          service_worker_provider_info,
+      network::mojom::URLLoaderFactoryAssociatedPtrInfo script_loader_factory);
 
   void AllowFileSystem(const GURL& url,
                        base::OnceCallback<void(bool)> callback);
@@ -62,12 +81,10 @@ class SharedWorkerHost : public mojom::SharedWorkerHost,
                  int frame_id,
                  const blink::MessagePortChannel& port);
 
-  // Returns true if any clients live in a different process from this worker.
-  bool ServesExternalClient();
+  void BindDevToolsAgent(blink::mojom::DevToolsAgentAssociatedRequest request);
 
   SharedWorkerInstance* instance() { return instance_.get(); }
   int process_id() const { return process_id_; }
-  int route_id() const { return route_id_; }
   bool IsAvailable() const;
 
  private:
@@ -106,13 +123,14 @@ class SharedWorkerHost : public mojom::SharedWorkerHost,
                     mojo::ScopedMessagePipeHandle interface_pipe) override;
 
   mojo::Binding<mojom::SharedWorkerHost> binding_;
+  // |service_| owns |this|.
+  SharedWorkerServiceImpl* service_;
   std::unique_ptr<SharedWorkerInstance> instance_;
   ClientList clients_;
 
   mojom::SharedWorkerPtr worker_;
 
   const int process_id_;
-  const int route_id_;
   int next_connection_request_id_;
   bool termination_message_sent_ = false;
   bool closed_ = false;
@@ -122,6 +140,12 @@ class SharedWorkerHost : public mojom::SharedWorkerHost,
   std::set<blink::mojom::WebFeature> used_features_;
 
   std::unique_ptr<SharedWorkerContentSettingsProxyImpl> content_settings_;
+
+  // This is kept alive during the lifetime of the shared worker, since it's
+  // associated with Mojo interfaces (ServiceWorkerContainer and
+  // URLLoaderFactory) that are needed to stay alive while the worker is
+  // starting or running.
+  mojom::SharedWorkerFactoryPtr factory_;
 
   mojo::Binding<service_manager::mojom::InterfaceProvider>
       interface_provider_binding_;

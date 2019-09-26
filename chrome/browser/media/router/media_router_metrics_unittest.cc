@@ -4,12 +4,12 @@
 
 #include "chrome/browser/media/router/media_router_metrics.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/test/histogram_tester.h"
 #include "base/test/simple_test_clock.h"
 #include "base/time/time.h"
-#include "chrome/browser/ui/webui/media_router/media_cast_mode.h"
+#include "chrome/browser/ui/media_router/media_cast_mode.h"
+#include "chrome/common/media_router/media_sink.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "url/gurl.h"
@@ -165,6 +165,27 @@ TEST(MediaRouterMetricsTest, RecordPresentationUrlType) {
           Bucket(static_cast<int>(PresentationUrlType::kHttp), 1),
           Bucket(static_cast<int>(PresentationUrlType::kHttps), 1),
           Bucket(static_cast<int>(PresentationUrlType::kRemotePlayback), 1)));
+}
+
+TEST(MediaRouterMetricsTest, RecordMediaSinkType) {
+  base::HistogramTester tester;
+  tester.ExpectTotalCount(MediaRouterMetrics::kHistogramMediaSinkType, 0);
+
+  MediaRouterMetrics::RecordMediaSinkType(SinkIconType::WIRED_DISPLAY);
+  MediaRouterMetrics::RecordMediaSinkType(SinkIconType::CAST);
+  MediaRouterMetrics::RecordMediaSinkType(SinkIconType::CAST_AUDIO);
+  MediaRouterMetrics::RecordMediaSinkType(SinkIconType::HANGOUT);
+  MediaRouterMetrics::RecordMediaSinkType(SinkIconType::CAST);
+  MediaRouterMetrics::RecordMediaSinkType(SinkIconType::GENERIC);
+
+  tester.ExpectTotalCount(MediaRouterMetrics::kHistogramMediaSinkType, 6);
+  EXPECT_THAT(
+      tester.GetAllSamples(MediaRouterMetrics::kHistogramMediaSinkType),
+      ElementsAre(Bucket(static_cast<int>(SinkIconType::CAST), 2),
+                  Bucket(static_cast<int>(SinkIconType::CAST_AUDIO), 1),
+                  Bucket(static_cast<int>(SinkIconType::HANGOUT), 1),
+                  Bucket(static_cast<int>(SinkIconType::WIRED_DISPLAY), 1),
+                  Bucket(static_cast<int>(SinkIconType::GENERIC), 1)));
 }
 
 }  // namespace media_router

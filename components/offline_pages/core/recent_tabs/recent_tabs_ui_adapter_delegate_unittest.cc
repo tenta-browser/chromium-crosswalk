@@ -26,6 +26,7 @@
 #include "components/offline_pages/core/client_policy_controller.h"
 #include "components/offline_pages/core/downloads/download_ui_adapter.h"
 #include "components/offline_pages/core/stub_offline_page_model.h"
+#include "components/offline_pages/core/thumbnail_decoder.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace offline_pages {
@@ -38,7 +39,6 @@ static const ClientId kTestClientIdOtherNamespace(kAsyncNamespace, kTestGuid1);
 static const ClientId kTestClientIdOtherGuid(kLastNNamespace, kTestBadGuid);
 static const ClientId kTestClientId1(kLastNNamespace, kTestGuid1);
 static const ClientId kTestClientId2(kLastNNamespace, kTestGuid2);
-}  // namespace
 
 // Creates mock versions for OfflinePageModel, RequestCoordinator and their
 // dependencies, then passes them to DownloadUIAdapter for testing.
@@ -71,15 +71,15 @@ class RecentTabsUIAdapterDelegateTest : public testing::Test {
 RecentTabsUIAdapterDelegateTest::RecentTabsUIAdapterDelegateTest()
     : task_runner_(new base::TestMockTimeTaskRunner()),
       task_runner_handle_(task_runner_) {
-  request_coordinator_taco_ = base::MakeUnique<RequestCoordinatorStubTaco>();
+  request_coordinator_taco_ = std::make_unique<RequestCoordinatorStubTaco>();
   request_coordinator_taco_->CreateRequestCoordinator();
 
-  auto delegate = base::MakeUnique<RecentTabsUIAdapterDelegate>(&model);
+  auto delegate = std::make_unique<RecentTabsUIAdapterDelegate>(&model);
   adapter_delegate = delegate.get();
 
-  adapter = base::MakeUnique<DownloadUIAdapter>(
+  adapter = std::make_unique<DownloadUIAdapter>(
       nullptr, &model, request_coordinator_taco_->request_coordinator(),
-      std::move(delegate));
+      nullptr, std::move(delegate));
 }
 
 RecentTabsUIAdapterDelegateTest::~RecentTabsUIAdapterDelegateTest() = default;
@@ -119,4 +119,5 @@ TEST_F(RecentTabsUIAdapterDelegateTest, IsTemporarilyHiddenInUI) {
   EXPECT_TRUE(adapter_delegate->IsTemporarilyHiddenInUI(kTestClientId2));
 }
 
+}  // namespace
 }  // namespace offline_pages

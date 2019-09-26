@@ -6,9 +6,11 @@
 #define CONTENT_SHELL_BROWSER_LAYOUT_TEST_LAYOUT_TEST_CONTENT_BROWSER_CLIENT_H_
 
 #include "content/shell/browser/shell_content_browser_client.h"
+#include "content/shell/common/layout_test/fake_bluetooth_chooser.mojom.h"
 
 namespace content {
 
+class FakeBluetoothChooser;
 class LayoutTestBrowserContext;
 class LayoutTestNotificationManager;
 
@@ -23,18 +25,22 @@ class LayoutTestContentBrowserClient : public ShellContentBrowserClient {
   LayoutTestBrowserContext* GetLayoutTestBrowserContext();
   void SetPopupBlockingEnabled(bool block_popups_);
 
+  // Retrieves the last created FakeBluetoothChooser instance.
+  std::unique_ptr<FakeBluetoothChooser> GetNextFakeBluetoothChooser();
+
   // Implements the PlatformNotificationService interface.
   LayoutTestNotificationManager* GetLayoutTestNotificationManager();
 
   // ContentBrowserClient overrides.
-  void RenderProcessWillLaunch(RenderProcessHost* host) override;
+  void RenderProcessWillLaunch(
+      RenderProcessHost* host,
+      service_manager::mojom::ServiceRequest* service_request) override;
   void ExposeInterfacesToRenderer(
       service_manager::BinderRegistry* registry,
       blink::AssociatedInterfaceRegistry* associated_registry,
       RenderProcessHost* render_process_host) override;
   void OverrideWebkitPrefs(RenderViewHost* render_view_host,
                            WebPreferences* prefs) override;
-  void ResourceDispatcherHostCreated() override;
   void AppendExtraCommandLineSwitches(base::CommandLine* command_line,
                                       int child_process_id) override;
   BrowserMainParts* CreateBrowserMainParts(
@@ -66,11 +72,26 @@ class LayoutTestContentBrowserClient : public ShellContentBrowserClient {
   void ExposeInterfacesToFrame(
       service_manager::BinderRegistryWithArgs<content::RenderFrameHost*>*
           registry) override;
+  scoped_refptr<LoginDelegate> CreateLoginDelegate(
+      net::AuthChallengeInfo* auth_info,
+      content::ResourceRequestInfo::WebContentsGetter web_contents_getter,
+      bool is_main_frame,
+      const GURL& url,
+      bool first_auth_attempt,
+      const base::Callback<void(const base::Optional<net::AuthCredentials>&)>&
+          auth_required_callback) override;
 
  private:
+  // Creates and stores a FakeBluetoothChooser instance.
+  void CreateFakeBluetoothChooser(mojom::FakeBluetoothChooserRequest request);
+
   std::unique_ptr<LayoutTestNotificationManager>
       layout_test_notification_manager_;
   bool block_popups_ = false;
+
+  // Stores the next instance of FakeBluetoothChooser that is to be returned
+  // when GetNextFakeBluetoothChooser is called.
+  std::unique_ptr<FakeBluetoothChooser> next_fake_bluetooth_chooser_;
 };
 
 }  // content

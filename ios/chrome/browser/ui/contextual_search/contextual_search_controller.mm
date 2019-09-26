@@ -7,7 +7,6 @@
 #include <memory>
 #include <utility>
 
-#include "base/ios/ios_util.h"
 #include "base/json/json_reader.h"
 #include "base/logging.h"
 #import "base/mac/bind_objc_block.h"
@@ -718,8 +717,7 @@ dismissPaneWithJavascriptCompletionHandler:(ProceduralBlock)completionHandler
     const std::string json = base::SysNSStringToUTF8(result);
     std::unique_ptr<base::Value> parsedResult(
         base::JSONReader::Read(json, false));
-    if (!parsedResult.get() ||
-        !parsedResult->IsType(base::Value::Type::DICTIONARY)) {
+    if (!parsedResult.get() || !parsedResult->is_dict()) {
       return;
     }
 
@@ -838,8 +836,7 @@ dismissPaneWithJavascriptCompletionHandler:(ProceduralBlock)completionHandler
 
   std::unique_ptr<base::Value> parsedResult(
       base::JSONReader::Read(JSON, false));
-  if (!parsedResult.get() ||
-      !parsedResult->IsType(base::Value::Type::DICTIONARY)) {
+  if (!parsedResult.get() || !parsedResult->is_dict()) {
     return;
   }
   base::DictionaryValue* resultDict =

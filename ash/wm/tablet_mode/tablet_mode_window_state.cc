@@ -7,6 +7,8 @@
 #include <utility>
 
 #include "ash/public/cpp/shell_window_ids.h"
+#include "ash/public/cpp/window_properties.h"
+#include "ash/public/cpp/window_state_type.h"
 #include "ash/screen_util.h"
 #include "ash/shell.h"
 #include "ash/wm/screen_pinning_controller.h"
@@ -31,11 +33,12 @@ void SetWindowRestoreOverrides(aura::Window* window,
                                const gfx::Rect& bounds_override,
                                ui::WindowShowState window_state_override) {
   if (bounds_override.IsEmpty()) {
-    window->ClearProperty(kRestoreShowStateOverrideKey);
+    window->ClearProperty(kRestoreWindowStateTypeOverrideKey);
     window->ClearProperty(kRestoreBoundsOverrideKey);
     return;
   }
-  window->SetProperty(kRestoreShowStateOverrideKey, window_state_override);
+  window->SetProperty(kRestoreWindowStateTypeOverrideKey,
+                      ToWindowStateType(window_state_override));
   window->SetProperty(kRestoreBoundsOverrideKey,
                       new gfx::Rect(bounds_override));
 }
@@ -46,7 +49,7 @@ gfx::Size GetMaximumSizeOfWindow(wm::WindowState* window_state) {
   DCHECK(window_state->CanMaximize() || window_state->CanResize());
 
   gfx::Size workspace_size =
-      ScreenUtil::GetMaximizedWindowBoundsInParent(window_state->window())
+      screen_util::GetMaximizedWindowBoundsInParent(window_state->window())
           .size();
 
   gfx::Size size = window_state->window()->delegate()
@@ -63,7 +66,7 @@ gfx::Size GetMaximumSizeOfWindow(wm::WindowState* window_state) {
 gfx::Rect GetCenteredBounds(const gfx::Rect& bounds_in_parent,
                             wm::WindowState* state_object) {
   gfx::Rect work_area_in_parent =
-      ScreenUtil::GetDisplayWorkAreaBoundsInParent(state_object->window());
+      screen_util::GetDisplayWorkAreaBoundsInParent(state_object->window());
   work_area_in_parent.ClampToCenteredSize(bounds_in_parent.size());
   return work_area_in_parent;
 }
@@ -80,10 +83,9 @@ bool CanSnap(wm::WindowState* window_state) {
 // Returns the maximized/full screen and/or centered bounds of a window.
 gfx::Rect GetBoundsInMaximizedMode(wm::WindowState* state_object) {
   if (state_object->IsFullscreen() || state_object->IsPinned())
-    return ScreenUtil::GetDisplayBoundsInParent(state_object->window());
+    return screen_util::GetDisplayBoundsInParent(state_object->window());
 
   if (state_object->GetStateType() == mojom::WindowStateType::LEFT_SNAPPED) {
-    DCHECK(CanSnap(state_object));
     return Shell::Get()
         ->split_view_controller()
         ->GetSnappedWindowBoundsInParent(state_object->window(),
@@ -91,7 +93,6 @@ gfx::Rect GetBoundsInMaximizedMode(wm::WindowState* state_object) {
   }
 
   if (state_object->GetStateType() == mojom::WindowStateType::RIGHT_SNAPPED) {
-    DCHECK(CanSnap(state_object));
     return Shell::Get()
         ->split_view_controller()
         ->GetSnappedWindowBoundsInParent(state_object->window(),
@@ -296,15 +297,12 @@ void TabletModeWindowState::AttachState(
     UpdateWindow(window_state, GetMaximizedOrCenteredWindowType(window_state),
                  true /* animated */);
   }
-
-  window_state->set_can_be_dragged(false);
 }
 
 void TabletModeWindowState::DetachState(wm::WindowState* window_state) {
   // From now on, we can use the default session restore mechanism again.
   SetWindowRestoreOverrides(window_state->window(), gfx::Rect(),
                             ui::SHOW_STATE_NORMAL);
-  window_state->set_can_be_dragged(true);
 }
 
 void TabletModeWindowState::UpdateWindow(wm::WindowState* window_state,
@@ -343,6 +341,14 @@ void TabletModeWindowState::UpdateWindow(wm::WindowState* window_state,
     UpdateBounds(window_state, animated);
   }
 
+  if ((window_state->window()->layer()->GetTargetVisibility() ||
+       old_state_type == mojom::WindowStateType::MINIMIZED) &&
+      !window_state->window()->layer()->visible()) {
+    // The layer may be hidden if the window was previously minimized. Make
+    // sure it's visible.
+    window_state->window()->Show();
+  }
+
   window_state->NotifyPostStateTypeChange(old_state_type);
 
   if (old_state_type == mojom::WindowStateType::PINNED ||
@@ -351,14 +357,6 @@ void TabletModeWindowState::UpdateWindow(wm::WindowState* window_state,
       target_state == mojom::WindowStateType::TRUSTED_PINNED) {
     Shell::Get()->screen_pinning_controller()->SetPinnedWindow(
         window_state->window());
-  }
-
-  if ((window_state->window()->layer()->GetTargetVisibility() ||
-       old_state_type == mojom::WindowStateType::MINIMIZED) &&
-      !window_state->window()->layer()->visible()) {
-    // The layer may be hidden if the window was previously minimized. Make
-    // sure it's visible.
-    window_state->window()->Show();
   }
 }
 
@@ -381,19 +379,25 @@ void TabletModeWindowState::UpdateBounds(wm::WindowState* window_state,
                                          bool animated) {
   if (defer_bounds_updates_)
     return;
+
+  // Do not update minimized windows bounds until it was unminimized.
+  if (current_state_type_ == mojom::WindowStateType::MINIMIZED)
+    return;
+
   gfx::Rect bounds_in_parent = GetBoundsInMaximizedMode(window_state);
   // If we have a target bounds rectangle, we center it and set it
   // accordingly.
   if (!bounds_in_parent.IsEmpty() &&
       bounds_in_parent != window_state->window()->bounds()) {
-    if (current_state_type_ == mojom::WindowStateType::MINIMIZED ||
-        !window_state->window()->IsVisible() || !animated) {
+    if (!window_state->window()->IsVisible() || !animated) {
       window_state->SetBoundsDirect(bounds_in_parent);
     } else {
       // If we animate (to) tablet mode, we want to use the cross fade to
       // avoid flashing.
       if (window_state->IsMaximized())
         window_state->SetBoundsDirectCrossFade(bounds_in_parent);
+      else if (window_state->IsSnapped())
+        window_state->SetBoundsDirect(bounds_in_parent);
       else
         window_state->SetBoundsDirectAnimated(bounds_in_parent);
     }

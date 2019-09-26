@@ -6,6 +6,7 @@
 
 #include <stddef.h>
 
+#include <memory>
 #include <utility>
 
 #include "base/bind.h"
@@ -13,12 +14,12 @@
 #include "base/command_line.h"
 #include "base/location.h"
 #include "base/logging.h"
-#include "base/memory/ptr_util.h"
 #include "base/optional.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/values.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/browser_process_platform_part.h"
+#include "chrome/browser/chromeos/login/easy_unlock/easy_unlock_service.h"
 #include "chrome/browser/chromeos/login/lock/screen_locker.h"
 #include "chrome/browser/chromeos/login/quick_unlock/quick_unlock_factory.h"
 #include "chrome/browser/chromeos/login/quick_unlock/quick_unlock_storage.h"
@@ -30,17 +31,16 @@
 #include "chrome/browser/chromeos/login/users/multi_profile_user_controller.h"
 #include "chrome/browser/chromeos/policy/browser_policy_connector_chromeos.h"
 #include "chrome/browser/chromeos/profiles/profile_helper.h"
-#include "chrome/browser/signin/easy_unlock_service.h"
 #include "chrome/browser/ui/webui/chromeos/login/l10n_util.h"
 #include "chrome/browser/ui/webui/chromeos/login/signin_screen_handler.h"
 #include "chrome/grit/generated_resources.h"
 #include "chromeos/chromeos_switches.h"
+#include "chromeos/components/proximity_auth/screenlock_bridge.h"
 #include "chromeos/cryptohome/cryptohome_parameters.h"
 #include "chromeos/dbus/cryptohome_client.h"
 #include "chromeos/dbus/dbus_thread_manager.h"
 #include "components/arc/arc_util.h"
 #include "components/prefs/pref_service.h"
-#include "components/proximity_auth/screenlock_bridge.h"
 #include "components/signin/core/account_id/account_id.h"
 #include "components/user_manager/known_user.h"
 #include "components/user_manager/user_manager.h"
@@ -56,7 +56,6 @@ namespace {
 
 // User dictionary keys.
 const char kKeyUsername[] = "username";
-const char kKeyGaiaID[] = "gaiaId";
 const char kKeyDisplayName[] = "displayName";
 const char kKeyEmailAddress[] = "emailAddress";
 const char kKeyEnterpriseDisplayDomain[] = "enterpriseDisplayDomain";
@@ -75,7 +74,6 @@ const char kKeyInitialLocales[] = "initialLocales";
 const char kKeyInitialLocale[] = "initialLocale";
 const char kKeyInitialMultipleRecommendedLocales[] =
     "initialMultipleRecommendedLocales";
-const char kKeyInitialKeyboardLayout[] = "initialKeyboardLayout";
 const char kKeyAllowFingerprint[] = "allowFingerprint";
 
 // Max number of users to show.
@@ -84,17 +82,29 @@ const size_t kMaxUsers = 18;
 
 const int kPasswordClearTimeoutSec = 60;
 
-void AddPublicSessionDetailsToUserDictionaryEntry(
-    base::DictionaryValue* user_dict,
-    const std::vector<std::string>* public_session_recommended_locales) {
+// Returns true if we have enterprise domain information.
+// |out_domain|:  Output value of the enterprise domain.
+bool GetEnterpriseDomain(std::string* out_domain) {
   policy::BrowserPolicyConnectorChromeOS* policy_connector =
       g_browser_process->platform_part()->browser_policy_connector_chromeos();
-
   if (policy_connector->IsCloudManaged()) {
-    user_dict->SetString(kKeyEnterpriseDisplayDomain,
-                         policy_connector->GetEnterpriseDisplayDomain());
+    *out_domain = policy_connector->GetEnterpriseDisplayDomain();
+    return true;
   }
+  return false;
+}
 
+// Get locales information of public account user.
+// Returns a list of available locales.
+// |public_session_recommended_locales|: This can be nullptr if we don't have
+// recommanded locales.
+// |out_selected_locale|: Output value of the initially selected locale.
+// |out_multiple_locales|: Output value indicates whether we have multiple
+// recommended locales.
+std::unique_ptr<base::ListValue> GetPublicSessionLocales(
+    const std::vector<std::string>* public_session_recommended_locales,
+    std::string* out_selected_locale,
+    bool* out_multiple_locales) {
   std::vector<std::string> kEmptyRecommendedLocales;
   const std::vector<std::string>& recommended_locales =
       public_session_recommended_locales ? *public_session_recommended_locales
@@ -107,9 +117,26 @@ void AddPublicSessionDetailsToUserDictionaryEntry(
 
   // Select the the first recommended locale that is actually available or the
   // current UI locale if none of them are available.
-  const std::string selected_locale =
+  *out_selected_locale =
       FindMostRelevantLocale(recommended_locales, *available_locales.get(),
                              g_browser_process->GetApplicationLocale());
+
+  *out_multiple_locales = recommended_locales.size() >= 2;
+  return available_locales;
+}
+
+void AddPublicSessionDetailsToUserDictionaryEntry(
+    base::DictionaryValue* user_dict,
+    const std::vector<std::string>* public_session_recommended_locales) {
+  std::string domain;
+  if (GetEnterpriseDomain(&domain))
+    user_dict->SetString(kKeyEnterpriseDisplayDomain, domain);
+
+  std::string selected_locale;
+  bool has_multiple_locales;
+  std::unique_ptr<base::ListValue> available_locales =
+      GetPublicSessionLocales(public_session_recommended_locales,
+                              &selected_locale, &has_multiple_locales);
 
   // Set |kKeyInitialLocales| to the list of available locales.
   user_dict->Set(kKeyInitialLocales, std::move(available_locales));
@@ -123,12 +150,7 @@ void AddPublicSessionDetailsToUserDictionaryEntry(
   // or one recommended locales) or the advanced form (two or more recommended
   // locales).
   user_dict->SetBoolean(kKeyInitialMultipleRecommendedLocales,
-                        recommended_locales.size() >= 2);
-
-  // Set |kKeyInitialKeyboardLayout| to the current keyboard layout. This
-  // value will be used temporarily only because the UI immediately requests a
-  // list of keyboard layouts suitable for the currently selected locale.
-  user_dict->Set(kKeyInitialKeyboardLayout, GetCurrentKeyboardLayout());
+                        has_multiple_locales);
 }
 
 // Returns true if the fingerprint icon should be displayed for the given
@@ -179,7 +201,10 @@ bool IsSigninToAdd() {
          user_manager::UserManager::Get()->IsUserLoggedIn();
 }
 
-bool CanRemoveUser(bool is_single_user, const user_manager::User* user) {
+bool CanRemoveUser(const user_manager::User* user) {
+  const bool is_single_user =
+      user_manager::UserManager::Get()->GetUsers().size() == 1;
+
   // Single user check here is necessary because owner info might not be
   // available when running into login screen on first boot.
   // See http://crosbug.com/12723
@@ -300,7 +325,8 @@ class UserSelectionScreen::DircryptoMigrationChecker {
     owner_->ShowBannerMessage(
         needs_migration ? l10n_util::GetStringUTF16(
                               IDS_LOGIN_NEEDS_DIRCRYPTO_MIGRATION_BANNER)
-                        : base::string16());
+                        : base::string16(),
+        needs_migration);
   }
 
   UserSelectionScreen* const owner_;
@@ -365,20 +391,10 @@ void UserSelectionScreen::FillUserDictionary(
   user_dict->SetBoolean(kKeyAllowFingerprint, AllowFingerprintForUser(user));
 
   FillMultiProfileUserPrefs(user, user_dict, is_signin_to_add);
-  FillKnownUserPrefs(user, user_dict);
 
   if (is_public_session) {
     AddPublicSessionDetailsToUserDictionaryEntry(
         user_dict, public_session_recommended_locales);
-  }
-}
-
-// static
-void UserSelectionScreen::FillKnownUserPrefs(user_manager::User* user,
-                                             base::DictionaryValue* user_dict) {
-  std::string gaia_id;
-  if (user_manager::known_user::FindGaiaID(user->GetAccountId(), &gaia_id)) {
-    user_dict->SetString(kKeyGaiaID, gaia_id);
   }
 }
 
@@ -446,6 +462,7 @@ void UserSelectionScreen::FillUserMojoStruct(
     bool is_owner,
     bool is_signin_to_add,
     proximity_auth::mojom::AuthType auth_type,
+    const std::vector<std::string>* public_session_recommended_locales,
     ash::mojom::LoginUserInfo* user_info) {
   user_info->basic_user_info = ash::mojom::UserInfo::New();
   user_info->basic_user_info->type = user->GetType();
@@ -486,6 +503,7 @@ void UserSelectionScreen::FillUserMojoStruct(
   user_info->auth_type = auth_type;
   user_info->is_signed_in = user->is_logged_in();
   user_info->is_device_owner = is_owner;
+  user_info->can_remove = CanRemoveUser(user);
   user_info->allow_fingerprint_unlock = AllowFingerprintForUser(user);
 
   // Fill multi-profile data.
@@ -494,6 +512,24 @@ void UserSelectionScreen::FillUserMojoStruct(
   } else {
     GetMultiProfilePolicy(user, &user_info->is_multiprofile_allowed,
                           &user_info->multiprofile_policy);
+  }
+
+  // Fill public session data.
+  if (user->GetType() == user_manager::USER_TYPE_PUBLIC_ACCOUNT) {
+    user_info->public_account_info = ash::mojom::PublicAccountInfo::New();
+    std::string domain;
+    if (GetEnterpriseDomain(&domain))
+      user_info->public_account_info->enterprise_domain = domain;
+
+    std::string selected_locale;
+    bool has_multiple_locales;
+    std::unique_ptr<base::ListValue> available_locales =
+        GetPublicSessionLocales(public_session_recommended_locales,
+                                &selected_locale, &has_multiple_locales);
+    user_info->public_account_info->available_locales =
+        std::move(available_locales);
+    user_info->public_account_info->default_locale = selected_locale;
+    user_info->public_account_info->show_advanced_view = has_multiple_locales;
   }
 }
 
@@ -620,7 +656,7 @@ void UserSelectionScreen::CheckUserStatus(const AccountId& account_id) {
       ShouldCheckNeedDircryptoMigration()) {
     if (!dircrypto_migration_checker_) {
       dircrypto_migration_checker_ =
-          base::MakeUnique<DircryptoMigrationChecker>(this);
+          std::make_unique<DircryptoMigrationChecker>(this);
     }
     dircrypto_migration_checker_->Check(account_id);
   }
@@ -672,8 +708,9 @@ UserSelectionScreen::GetScreenType() const {
   return OTHER_SCREEN;
 }
 
-void UserSelectionScreen::ShowBannerMessage(const base::string16& message) {
-  view_->ShowBannerMessage(message);
+void UserSelectionScreen::ShowBannerMessage(const base::string16& message,
+                                            bool is_warning) {
+  view_->ShowBannerMessage(message, is_warning);
 }
 
 void UserSelectionScreen::ShowUserPodCustomIcon(
@@ -746,11 +783,10 @@ void UserSelectionScreen::RecordClickOnLockIcon(const AccountId& account_id) {
 std::unique_ptr<base::ListValue>
 UserSelectionScreen::UpdateAndReturnUserListForWebUI() {
   std::unique_ptr<base::ListValue> users_list =
-      base::MakeUnique<base::ListValue>();
+      std::make_unique<base::ListValue>();
 
   // TODO(nkostylev): Move to a separate method in UserManager.
   // http://crbug.com/230852
-  const bool single_user = users_.size() == 1;
   const AccountId owner = GetOwnerAccountId();
   const bool is_signin_to_add = IsSigninToAdd();
 
@@ -758,7 +794,6 @@ UserSelectionScreen::UpdateAndReturnUserListForWebUI() {
 
   user_auth_type_map_.clear();
 
-  const std::vector<std::string> kEmptyRecommendedLocales;
   for (user_manager::UserList::const_iterator it = users_to_send_.begin();
        it != users_to_send_.end(); ++it) {
     const AccountId& account_id = (*it)->GetAccountId();
@@ -773,15 +808,15 @@ UserSelectionScreen::UpdateAndReturnUserListForWebUI() {
                    : proximity_auth::mojom::AuthType::OFFLINE_PASSWORD);
     user_auth_type_map_[account_id] = initial_auth_type;
 
-    auto user_dict = base::MakeUnique<base::DictionaryValue>();
+    auto user_dict = std::make_unique<base::DictionaryValue>();
     const std::vector<std::string>* public_session_recommended_locales =
         public_session_recommended_locales_.find(account_id) ==
                 public_session_recommended_locales_.end()
-            ? &kEmptyRecommendedLocales
+            ? nullptr
             : &public_session_recommended_locales_[account_id];
     FillUserDictionary(*it, is_owner, is_signin_to_add, initial_auth_type,
                        public_session_recommended_locales, user_dict.get());
-    user_dict->SetBoolean(kKeyCanRemove, CanRemoveUser(single_user, *it));
+    user_dict->SetBoolean(kKeyCanRemove, CanRemoveUser(*it));
     users_list->Append(std::move(user_dict));
   }
 
@@ -792,7 +827,6 @@ std::vector<ash::mojom::LoginUserInfoPtr>
 UserSelectionScreen::UpdateAndReturnUserListForMojo() {
   std::vector<ash::mojom::LoginUserInfoPtr> user_info_list;
 
-  const bool single_user = users_.size() == 1;
   const AccountId owner = GetOwnerAccountId();
   const bool is_signin_to_add = IsSigninToAdd();
   users_to_send_ = PrepareUserListForSending(users_, owner, is_signin_to_add);
@@ -815,13 +849,23 @@ UserSelectionScreen::UpdateAndReturnUserListForMojo() {
 
     ash::mojom::LoginUserInfoPtr login_user_info =
         ash::mojom::LoginUserInfo::New();
+    const std::vector<std::string>* public_session_recommended_locales =
+        public_session_recommended_locales_.find(account_id) ==
+                public_session_recommended_locales_.end()
+            ? nullptr
+            : &public_session_recommended_locales_[account_id];
     FillUserMojoStruct(*it, is_owner, is_signin_to_add, initial_auth_type,
+                       public_session_recommended_locales,
                        login_user_info.get());
-    login_user_info->can_remove = CanRemoveUser(single_user, *it);
+    login_user_info->can_remove = CanRemoveUser(*it);
     user_info_list.push_back(std::move(login_user_info));
   }
 
   return user_info_list;
+}
+
+void UserSelectionScreen::SetUsersLoaded(bool loaded) {
+  users_loaded_ = loaded;
 }
 
 EasyUnlockService* UserSelectionScreen::GetEasyUnlockServiceForUser(

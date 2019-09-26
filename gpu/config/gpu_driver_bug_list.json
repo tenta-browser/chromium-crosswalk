@@ -4,6 +4,7 @@
     {
       "id": 1,
       "description": "Imagination driver doesn't like uploading lots of buffer data constantly",
+      "cr_bugs": [178093],
       "os": {
         "type": "android"
       },
@@ -15,6 +16,7 @@
     {
       "id": 2,
       "description": "ARM driver doesn't like uploading lots of buffer data constantly",
+      "cr_bugs": [178093],
       "os": {
         "type": "android"
       },
@@ -154,20 +156,6 @@
       },
       "features": [
         "disable_d3d11"
-      ]
-    },
-    {
-      "id": 27,
-      "cr_bugs": [265115],
-      "description": "Async Readpixels with GL_BGRA format is broken on Haswell chipset on Macs",
-      "os": {
-        "type": "macosx"
-      },
-      "vendor_id": "0x8086",
-      "device_id": ["0x0402", "0x0406", "0x040a", "0x0412", "0x0416", "0x041a",
-                    "0x0a04", "0x0a16", "0x0a22", "0x0a26", "0x0a2a"],
-      "features": [
-        "swizzle_rgba_for_async_readpixels"
       ]
     },
     {
@@ -1016,6 +1004,10 @@
       "gl_renderer": "Adreno \\(TM\\) 3.*",
       "features": [
         "disable_timestamp_queries"
+      ],
+      "disabled_extensions": [
+        "GL_EXT_disjoint_timer_query",
+        "GL_EXT_disjoint_timer_query_webgl2"
       ]
     },
     {
@@ -1027,7 +1019,8 @@
       },
       "gl_renderer": "Adreno \\(TM\\) 4.*",
       "disabled_extensions": [
-        "GL_EXT_disjoint_timer_query"
+        "GL_EXT_disjoint_timer_query",
+        "GL_EXT_disjoint_timer_query_webgl2"
       ]
     },
     {
@@ -1425,21 +1418,6 @@
       ]
     },
     {
-      "id": 148,
-      "description": "Mali-4xx GPU on JB doesn't support DetachGLContext",
-      "os": {
-        "type": "android",
-        "version": {
-          "op": "<=",
-          "value": "4.4.4"
-        }
-      },
-      "gl_renderer": ".*Mali-4.*",
-      "features": [
-        "surface_texture_cant_detach"
-      ]
-    },
-    {
       "id": 149,
       "description": "Direct composition flashes black initially on Win <10",
       "cr_bugs": [588588],
@@ -1500,24 +1478,6 @@
       "gl_renderer": "Vivante GC1000",
       "disabled_extensions": [
         "GL_EXT_multisampled_render_to_texture"
-      ]
-    },
-    {
-      "id": 156,
-      "cr_bugs": [598474],
-      "description": "glEGLImageTargetTexture2DOES crashes",
-      "os": {
-        "type": "android",
-        "version": {
-          "op": "between",
-          "value": "4.4",
-          "value2": "4.4.4"
-        }
-      },
-      "gl_vendor": "Imagination.*",
-      "gl_renderer": "PowerVR SGX 544MP",
-      "features": [
-        "avda_dont_copy_pictures"
       ]
     },
     {
@@ -1655,19 +1615,6 @@
       "gl_vendor": "NVIDIA.*",
       "features": [
         "unpack_overlapping_rows_separately_unpack_buffer"
-      ]
-    },
-    {
-      "id": 167,
-      "cr_bugs": [610516],
-      "description": "glEGLImageTargetTexture2DOES crashes on Mali-400",
-      "os": {
-        "type": "android"
-      },
-      "gl_vendor": "ARM.*",
-      "gl_renderer": ".*Mali-4.*",
-      "features": [
-        "avda_dont_copy_pictures"
       ]
     },
     {
@@ -1897,6 +1844,10 @@
       "os": {
         "type": "win"
       },
+      "driver_version": {
+        "op": "<",
+        "value": "21.21.13.7576"
+      },
       "vendor_id": "0x10de",
       "features": [
         "disable_dxgi_zero_copy_video"
@@ -1978,7 +1929,11 @@
       "description": "Emulate GLSL function isnan() on Intel Mac",
       "cr_bugs": [650547],
       "os": {
-        "type": "macosx"
+        "type": "macosx",
+        "version": {
+          "op": "<",
+          "value": "10.13.2"
+        }
       },
       "vendor_id": "0x8086",
       "device_id" : [
@@ -2281,8 +2236,7 @@
       "id": 215,
       "description": "Fake no-op GPU driver bug workaround for testing",
       "cr_bugs": [682912],
-      "vendor_id": "0xbad9",
-      "device_id": ["0xbad9"],
+      "test_group": 1,
       "features": [
         "use_gpu_driver_workaround_for_testing"
       ]
@@ -2530,18 +2484,6 @@
       ]
     },
     {
-      "id": 234,
-      "description": "Avoid using EGL_IMAGE_EXTERNAL_FLUSH_EXT with eglCreateImageKHR on NVIDIA",
-      "cr_bugs": [727462],
-      "os": {
-        "type": "chromeos"
-      },
-      "gl_vendor": "NVIDIA.*",
-      "features": [
-        "avoid_using_image_flush_external_with_egl_create_image"
-      ]
-    },
-    {
       "id": 235,
       "description": "Avoid waiting on a egl fence before pageflipping and rely on implicit sync.",
       "cr_bugs": [721463],
@@ -2609,10 +2551,10 @@
         "type": "android",
         "version": {
           "op": "<",
-          "value": "9.0"
+          "value": "8.1"
         }
       },
-      "gl_renderer": "Adreno \\(TM\\) 5[34]0",
+      "gl_renderer": "Adreno \\(TM\\) [345].*",
       "disabled_extensions": [
         "GL_EXT_disjoint_timer_query",
         "GL_EXT_disjoint_timer_query_webgl2"
@@ -2729,13 +2671,15 @@
     },
     {
       "id": 250,
-      "description": "Depth/stencil renderbuffers can't be resized on NVIDIA on macOS 10.13",
+      "description": "Depth/stencil renderbuffers can't be resized on NVIDIA on early macOS 10.13",
       "cr_bugs": [775202],
       "os": {
         "type": "macosx",
         "version": {
-          "op": ">=",
-          "value": "10.13.0"
+          "op": "between",
+          "value": "10.13.0",
+          "value2": "10.13.3",
+          "comment": "Fixed in 10.13.4."
         }
       },
       "vendor_id": "0x10de",
@@ -2754,6 +2698,231 @@
       "gl_extensions": ".*GL_VIV_shader_binary.*",
       "features": [
         "disable_program_cache"
+      ]
+    },
+    {
+      "id": 252,
+      "description": "Core profile doesn't work on NVidia GeForce GT 120",
+      "cr_bugs": [657817],
+      "os": {
+        "type": "macosx"
+      },
+      "vendor_id": "0x10de",
+      "device_id": ["0x0640"],
+      "features": [
+        "disable_es3_gl_context"
+      ]
+    },
+    {
+      "id": 254,
+      "description": "Limit MSAA samples to 4x on AMD Stoney",
+      "cr_bugs": [798936],
+      "os": {
+        "type" : "chromeos"
+      },
+      "vendor_id": "0x1002",
+      "device_id": ["0x98e4"],
+      "features": [
+        "max_msaa_sample_count_4"
+      ]
+    },
+    {
+      "id": 255,
+      "description": "Fullscreen video crashes macOS 10.11 WindowServer.",
+      "cr_bugs": [806506],
+      "os": {
+        "type": "macosx",
+        "version": {
+          "op": "<",
+          "value": "10.12"
+        }
+      },
+      "features": [
+        "disable_av_sample_buffer_display_layer"
+      ]
+    },
+    {
+      "id": 256,
+      "description": "Don't expose disjoint_timer_query extensions to WebGL",
+      "cr_bugs": [808744],
+      "disabled_webgl_extensions": [
+        "EXT_disjoint_timer_query",
+        "EXT_disjoint_timer_query_webgl2"
+      ]
+    },
+    {
+      "id": 257,
+      "description": "Fake entry for testing disabling of WebGL extensions",
+      "cr_bugs": [808744],
+      "test_group": 2,
+      "disabled_webgl_extensions": [
+        "WEBGL_lose_context"
+      ]
+    },
+    {
+      "id": 258,
+      "description": "Shader variable initialization in a loop caused perf regression on Mac Intel.",
+      "cr_bugs": [809422],
+      "os": {
+        "type": "macosx"
+      },
+      "vendor_id": "0x8086",
+      "multi_gpu_category": "any",
+      "features": [
+        "dont_use_loops_to_initialize_variables"
+      ]
+    },
+    {
+      "id": 259,
+      "description": "8x MSAA is slow for alpha:false WebGL contexts on Mac Intel",
+      "cr_bugs": [812071],
+      "os": {
+        "type": "macosx"
+      },
+      "vendor_id": "0x8086",
+      "multi_gpu_category": "primary",
+      "features": [
+        "max_msaa_sample_count_4"
+      ]
+    },
+    {
+      "id": 260,
+      "cr_bugs": [760389],
+      "description": "eglClientWaitSyncKHR with nonzero timeout waits too long",
+      "comment": [
+        "This bug is specific to Samsung S8/S8+ on Android N, but there ",
+        "isn't currently a way to restrict the filter to those devices. The ",
+        "functionality is currently only used for WebVR on Daydream ready ",
+        "devices, and the non-Samsung Daydream devices generally use ",
+        "Android O, so an overbroad match seems acceptable."
+      ],
+      "os": {
+        "type": "android",
+        "version": {
+          "op": "<",
+          "value": "8.0"
+        }
+      },
+      "gl_renderer": "Adreno \\(TM\\) 540",
+      "features": [
+        "dont_use_eglclientwaitsync_with_timeout"
+      ]
+    },
+    {
+      "id": 261,
+      "cr_bugs": [817286],
+      "description": "Fallback to D3D9 if basic info collection fails on Win7",
+      "os": {
+        "type": "win",
+        "version": {
+          "op": "=",
+          "value": "6.1"
+        }
+      },
+      "vendor_id": "0xffff",
+      "device_id": ["0xfffe"],
+      "features": [
+        "disable_d3d11"
+      ]
+    },
+    {
+      "id": 262,
+      "description": "Program fails in PowerVR*GX6250 drivers if gl_Position is not set",
+      "cr_bugs": [286468, 416670],
+      "os": {
+        "type": "android"
+      },
+      "gl_vendor": "Imagination.*",
+      "gl_renderer": "PowerVR.*GX6250",
+      "features": [
+        "init_gl_position_in_vertex_shader"
+      ]
+    },
+    {
+      "id": 263,
+      "description": "Program fails in PowerVR SGX54x drivers if gl_Position is not set",
+      "cr_bugs": [286468, 416670],
+      "os": {
+        "type": "android"
+      },
+      "gl_vendor": "Imagination.*",
+      "gl_renderer": "PowerVR SGX 54.*",
+      "features": [
+        "init_gl_position_in_vertex_shader"
+      ]
+    },
+    {
+      "id": 264,
+      "description": "Program fails in PowerVR G6200 drivers if gl_Position is not set",
+      "cr_bugs": [286468, 416670],
+      "os": {
+        "type": "android"
+      },
+      "gl_vendor": "Imagination.*",
+      "gl_renderer": "PowerVR.*G6200.*",
+      "features": [
+        "init_gl_position_in_vertex_shader"
+      ]
+    },
+    {
+      "id": 265,
+      "cr_bugs": [811661],
+      "description": "Crash in glQueryCounter() in VMware driver",
+      "os": {
+        "type": "linux"
+      },
+      "vendor_id": "0x15ad",
+      "device_id": ["0x0405"],
+      "features": [
+        "disable_timestamp_queries"
+      ],
+      "disabled_extensions": [
+        "GL_EXT_disjoint_timer_query",
+        "GL_EXT_disjoint_timer_query_webgl2"
+      ]
+    },
+    {
+      "id": 266,
+      "cr_bugs": [828721],
+      "description": "Crash in gl::GLApiBase::glGetQueryObjectui64vFn with NetEase devices ",
+      "os": {
+        "type": "android"
+      },
+      "gl_vendor": "NetEase",
+      "gl_renderer": "MuMu GL.*",
+      "features": [
+        "disable_timestamp_queries"
+      ],
+      "disabled_extensions": [
+        "GL_EXT_disjoint_timer_query",
+        "GL_EXT_disjoint_timer_query_webgl2"
+      ]
+    },
+    {
+      "id": 267,
+      "cr_bugs": [831781],
+      "description": "WebGL with multisampling produces errors on Mali",
+      "os": {
+        "type": "linux"
+      },
+      "gl_vendor": "ARM",
+      "gl_renderer": "Mali-TDVX",
+      "disabled_extensions": [
+        "GL_EXT_multisampled_render_to_texture"
+      ],
+      "features": [
+        "disable_chromium_framebuffer_multisample"
+      ]
+    },
+    {
+      "id": 268,
+      "cr_bugs": [797243],
+      "description": "Limit MSAA to 4x on Android devices",
+      "os": {
+        "type": "android"
+      },
+      "features": [
+        "max_msaa_sample_count_4"
       ]
     }
   ]

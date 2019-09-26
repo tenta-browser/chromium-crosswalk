@@ -10,7 +10,6 @@
 #include "base/command_line.h"
 #include "base/location.h"
 #include "base/logging.h"
-#include "base/memory/ptr_util.h"
 #include "base/sequenced_task_runner.h"
 #include "base/single_thread_task_runner.h"
 #include "base/threading/thread_task_runner_handle.h"
@@ -75,6 +74,9 @@ em::DeviceRegisterRequest::Flavor EnrollmentModeToRegistrationFlavor(
     case EnrollmentConfig::MODE_ATTESTATION_SERVER_FORCED:
       return em::DeviceRegisterRequest::
           FLAVOR_ENROLLMENT_ATTESTATION_SERVER_FORCED;
+    case EnrollmentConfig::MODE_ATTESTATION_MANUAL_FALLBACK:
+      return em::DeviceRegisterRequest::
+          FLAVOR_ENROLLMENT_ATTESTATION_MANUAL_FALLBACK;
   }
 
   NOTREACHED() << "Bad enrollment mode: " << mode;
@@ -175,9 +177,9 @@ void EnrollmentHandlerChromeOS::HandleAvailableLicensesResult(
   if (!success) {
     base::ThreadTaskRunnerHandle::Get()->PostTask(
         FROM_HERE, base::Bind(&EnrollmentHandlerChromeOS::ReportResult,
-            weak_ptr_factory_.GetWeakPtr(),
-            EnrollmentStatus::ForStatus(
-                EnrollmentStatus::LICENSE_REQUEST_FAILED)));
+                              weak_ptr_factory_.GetWeakPtr(),
+                              EnrollmentStatus::ForStatus(
+                                  EnrollmentStatus::LICENSE_REQUEST_FAILED)));
     return;
   }
   if (available_licenses_callback_)
@@ -240,15 +242,14 @@ void EnrollmentHandlerChromeOS::OnPolicyFetched(CloudPolicyClient* client) {
   const em::PolicyFetchResponse* policy = client_->GetPolicyFor(
       dm_protocol::kChromeDevicePolicyType, std::string());
   if (!policy) {
-    ReportResult(EnrollmentStatus::ForFetchError(
-        DM_STATUS_RESPONSE_DECODING_ERROR));
+    ReportResult(
+        EnrollmentStatus::ForFetchError(DM_STATUS_RESPONSE_DECODING_ERROR));
     return;
   }
 
-  std::unique_ptr<DeviceCloudPolicyValidator> validator(
-      DeviceCloudPolicyValidator::Create(
-          base::MakeUnique<em::PolicyFetchResponse>(*policy),
-          background_task_runner_));
+  auto validator = std::make_unique<DeviceCloudPolicyValidator>(
+      std::make_unique<em::PolicyFetchResponse>(*policy),
+      background_task_runner_);
 
   validator->ValidateTimestamp(base::Time(),
                                CloudPolicyValidatorBase::TIMESTAMP_VALIDATED);
@@ -310,8 +311,7 @@ void EnrollmentHandlerChromeOS::OnClientError(CloudPolicyClient* client) {
   DCHECK_EQ(client_.get(), client);
 
   if (enrollment_step_ == STEP_ROBOT_AUTH_FETCH) {
-    LOG(ERROR) << "API authentication code fetch failed: "
-               << client_->status();
+    LOG(ERROR) << "API authentication code fetch failed: " << client_->status();
     ReportResult(EnrollmentStatus::ForRobotAuthFetchError(client_->status()));
   } else if (enrollment_step_ < STEP_POLICY_FETCH) {
     ReportResult(EnrollmentStatus::ForRegistrationError(client_->status()));
@@ -374,8 +374,8 @@ void EnrollmentHandlerChromeOS::StartRegistration() {
     client_->Register(
         em::DeviceRegisterRequest::DEVICE,
         EnrollmentModeToRegistrationFlavor(enrollment_config_.mode),
-        license_type_, auth_token_, client_id_, requisition_,
-        current_state_key_);
+        em::DeviceRegisterRequest::LIFETIME_INDEFINITE, license_type_,
+        auth_token_, client_id_, requisition_, current_state_key_);
   }
 }
 
@@ -391,17 +391,18 @@ void EnrollmentHandlerChromeOS::StartAttestationBasedEnrollmentFlow() {
 }
 
 void EnrollmentHandlerChromeOS::HandleRegistrationCertificateResult(
-    bool success,
+    chromeos::attestation::AttestationStatus status,
     const std::string& pem_certificate_chain) {
-  if (success)
+  if (status == chromeos::attestation::ATTESTATION_SUCCESS) {
     client_->RegisterWithCertificate(
         em::DeviceRegisterRequest::DEVICE,
         EnrollmentModeToRegistrationFlavor(enrollment_config_.mode),
-        license_type_, pem_certificate_chain, client_id_, requisition_,
-        current_state_key_);
-  else
+        em::DeviceRegisterRequest::LIFETIME_INDEFINITE, license_type_,
+        pem_certificate_chain, client_id_, requisition_, current_state_key_);
+  } else {
     ReportResult(EnrollmentStatus::ForStatus(
         EnrollmentStatus::REGISTRATION_CERT_FETCH_FAILED));
+  }
 }
 
 void EnrollmentHandlerChromeOS::HandlePolicyValidationResult(
@@ -449,12 +450,10 @@ void EnrollmentHandlerChromeOS::OnRobotAuthCodesFetched(
   client_info.redirect_uri = "oob";
 
   // Use the system request context to avoid sending user cookies.
-  gaia_oauth_client_.reset(new gaia::GaiaOAuthClient(
-      g_browser_process->system_request_context()));
-  gaia_oauth_client_->GetTokensFromAuthCode(client_info,
-                                            client->robot_api_auth_code(),
-                                            0 /* max_retries */,
-                                            this);
+  gaia_oauth_client_.reset(
+      new gaia::GaiaOAuthClient(g_browser_process->system_request_context()));
+  gaia_oauth_client_->GetTokensFromAuthCode(
+      client_info, client->robot_api_auth_code(), 0 /* max_retries */, this);
 }
 
 // GaiaOAuthClient::Delegate callback for OAuth2 refresh token fetched.
@@ -525,8 +524,7 @@ void EnrollmentHandlerChromeOS::OnNetworkError(int response_code) {
   CHECK_EQ(STEP_ROBOT_AUTH_REFRESH, enrollment_step_);
   LOG(ERROR) << "Network error while fetching API refresh token: "
              << response_code;
-  ReportResult(
-      EnrollmentStatus::ForRobotRefreshFetchError(response_code));
+  ReportResult(EnrollmentStatus::ForRobotRefreshFetchError(response_code));
 }
 
 void EnrollmentHandlerChromeOS::StartJoinAdDomain() {
@@ -616,7 +614,7 @@ void EnrollmentHandlerChromeOS::HandleLockDeviceResult(
 void EnrollmentHandlerChromeOS::StartStoreDMToken() {
   DCHECK(device_mode_ == DEVICE_MODE_ENTERPRISE_AD);
   SetStep(STEP_STORE_TOKEN);
-  dm_token_storage_ = base::MakeUnique<policy::DMTokenStorage>(
+  dm_token_storage_ = std::make_unique<policy::DMTokenStorage>(
       g_browser_process->local_state());
   dm_token_storage_->StoreDMToken(
       client_->dm_token(),

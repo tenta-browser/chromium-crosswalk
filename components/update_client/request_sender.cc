@@ -9,7 +9,6 @@
 
 #include "base/base64.h"
 #include "base/bind.h"
-#include "base/bind_helpers.h"
 #include "base/location.h"
 #include "base/logging.h"
 #include "base/strings/stringprintf.h"
@@ -26,10 +25,10 @@ namespace update_client {
 namespace {
 
 // This is an ECDSA prime256v1 named-curve key.
-constexpr int kKeyVersion = 7;
+constexpr int kKeyVersion = 8;
 const char kKeyPubBytesBase64[] =
-    "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEj0QKufXIOBN30DtKeOYA5NV64FfY"
-    "HDou4sGqtcNUIlxpTzIbO45rB45QILhW6aDTwwjWLR1YCqpEAGICvFs8dQ==";
+    "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE+J2iCpfk8lThcuKUPzTaVcUjhNR3"
+    "AYHK+tTelGdHvyGGx7RP7BphYSPmpH6P4Vr72ak0W1a0bW55O9HW2oz3rQ==";
 
 // The ETag header carries the ECSDA signature of the protocol response, if
 // signing has been used.
@@ -52,22 +51,25 @@ constexpr int64_t kMaxRetryAfterSec = 24 * 60 * 60;
 
 }  // namespace
 
-RequestSender::RequestSender(const scoped_refptr<Configurator>& config)
+RequestSender::RequestSender(scoped_refptr<Configurator> config)
     : config_(config), use_signing_(false) {}
 
 RequestSender::~RequestSender() {
   DCHECK(thread_checker_.CalledOnValidThread());
 }
 
-void RequestSender::Send(bool use_signing,
-                         const std::string& request_body,
-                         const std::vector<GURL>& urls,
-                         RequestSenderCallback request_sender_callback) {
+void RequestSender::Send(
+    const std::vector<GURL>& urls,
+    const std::map<std::string, std::string>& request_extra_headers,
+    const std::string& request_body,
+    bool use_signing,
+    RequestSenderCallback request_sender_callback) {
   DCHECK(thread_checker_.CalledOnValidThread());
 
-  use_signing_ = use_signing;
-  request_body_ = request_body;
   urls_ = urls;
+  request_extra_headers_ = request_extra_headers;
+  request_body_ = request_body;
+  use_signing_ = use_signing;
   request_sender_callback_ = std::move(request_sender_callback);
 
   if (urls_.empty()) {
@@ -101,8 +103,8 @@ void RequestSender::SendInternal() {
     url = BuildUpdateUrl(url, request_query_string);
   }
 
-  url_fetcher_ =
-      SendProtocolRequest(url, request_body_, this, config_->RequestContext());
+  url_fetcher_ = SendProtocolRequest(url, request_extra_headers_, request_body_,
+                                     this, config_->RequestContext());
   if (!url_fetcher_.get())
     base::ThreadTaskRunnerHandle::Get()->PostTask(
         FROM_HERE, base::BindOnce(&RequestSender::SendInternalComplete,

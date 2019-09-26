@@ -19,6 +19,7 @@ namespace web {
 // A tap on the password field will produce
 // form_name:  "np"
 // field_name:  "password"
+// field_identifier:  "password_field"
 // field_type:  "password"
 // type: "focus"
 // value: "LouisLane" (assuming that was the password typed)
@@ -29,6 +30,7 @@ struct FormActivityParams {
   ~FormActivityParams();
 
   std::string form_name;
+  std::string field_identifier;
   std::string field_name;
   std::string field_type;
   std::string type;
@@ -37,6 +39,9 @@ struct FormActivityParams {
   // |input_missing| is set to true if at least one of the members above isn't
   // set.
   bool input_missing = false;
+
+  // |is_main_frame| is true when the activity was registered in the main frame.
+  bool is_main_frame = false;
 };
 
 }  // namespace web

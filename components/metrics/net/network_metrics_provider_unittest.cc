@@ -4,8 +4,11 @@
 
 #include "components/metrics/net/network_metrics_provider.h"
 
+#include <memory>
+
 #include "base/callback.h"
 #include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/run_loop.h"
 #include "base/test/scoped_task_environment.h"
 #include "base/threading/thread_task_runner_handle.h"
@@ -87,8 +90,7 @@ TEST_F(NetworkMetricsProviderTest, EffectiveConnectionType) {
 
   // Set RTT so that the effective connection type is computed as 2G.
   estimator.set_recent_http_rtt(base::TimeDelta::FromMilliseconds(1500));
-  estimator.set_start_time_null_http_rtt(
-      base::TimeDelta::FromMilliseconds(1500));
+  estimator.SetStartTimeNullHttpRtt(base::TimeDelta::FromMilliseconds(1500));
   EXPECT_EQ(net::EFFECTIVE_CONNECTION_TYPE_UNKNOWN,
             network_metrics_provider.effective_connection_type_);
   EXPECT_EQ(net::EFFECTIVE_CONNECTION_TYPE_UNKNOWN,
@@ -112,8 +114,7 @@ TEST_F(NetworkMetricsProviderTest, EffectiveConnectionType) {
 
   // Set RTT so that the effective connection type is computed as SLOW_2G.
   estimator.set_recent_http_rtt(base::TimeDelta::FromMilliseconds(3000));
-  estimator.set_start_time_null_http_rtt(
-      base::TimeDelta::FromMilliseconds(3000));
+  estimator.SetStartTimeNullHttpRtt(base::TimeDelta::FromMilliseconds(3000));
   // Running a request would cause the effective connection type to be computed
   // as SLOW_2G, and observers to be notified.
   estimator.RunOneRequest();
@@ -160,8 +161,7 @@ TEST_F(NetworkMetricsProviderTest, ECTAmbiguousOnConnectionTypeChange) {
 
   // Set RTT so that the effective connection type is computed as 2G.
   estimator.set_recent_http_rtt(base::TimeDelta::FromMilliseconds(1500));
-  estimator.set_start_time_null_http_rtt(
-      base::TimeDelta::FromMilliseconds(1500));
+  estimator.SetStartTimeNullHttpRtt(base::TimeDelta::FromMilliseconds(1500));
   // Running a request would cause the effective connection type to be computed
   // as 2G, and observers to be notified.
   estimator.RunOneRequest();
@@ -198,7 +198,7 @@ TEST_F(NetworkMetricsProviderTest, ECTNotAmbiguousOnOffline) {
        {net::EFFECTIVE_CONNECTION_TYPE_UNKNOWN,
         net::EFFECTIVE_CONNECTION_TYPE_OFFLINE}) {
     std::unique_ptr<net::NetworkQualityEstimatorParams> params =
-        base::MakeUnique<net::NetworkQualityEstimatorParams>(
+        std::make_unique<net::NetworkQualityEstimatorParams>(
             std::map<std::string, std::string>());
     net::NetworkQualityEstimatorParams* params_ptr = params.get();
     net::TestNetworkQualityEstimator estimator(std::move(params));

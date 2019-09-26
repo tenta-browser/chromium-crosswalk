@@ -13,10 +13,7 @@
 #include "base/strings/string16.h"
 #include "ui/base/accelerators/accelerator.h"
 #include "ui/base/models/menu_model.h"
-
-namespace gfx {
-class Image;
-}
+#include "ui/gfx/image/image.h"
 
 namespace ui {
 
@@ -78,6 +75,12 @@ class UI_BASE_EXPORT SimpleMenuModel : public MenuModel {
   // Methods for adding items to the model.
   void AddItem(int command_id, const base::string16& label);
   void AddItemWithStringId(int command_id, int string_id);
+  void AddItemWithIcon(int command_id,
+                       const base::string16& label,
+                       const gfx::ImageSkia& icon);
+  void AddItemWithStringIdAndIcon(int command_id,
+                                  int string_id,
+                                  const gfx::ImageSkia& icon);
   void AddCheckItem(int command_id, const base::string16& label);
   void AddCheckItemWithStringId(int command_id, int string_id);
   void AddRadioItem(int command_id, const base::string16& label, int group_id);
@@ -131,6 +134,9 @@ class UI_BASE_EXPORT SimpleMenuModel : public MenuModel {
   // Sets the minor text for the item at |index|.
   void SetMinorText(int index, const base::string16& minor_text);
 
+  // Sets the minor icon for the item at |index|.
+  void SetMinorIcon(int index, const gfx::VectorIcon& minor_icon);
+
   // Clears all items. Note that it does not free MenuModel of submenu.
   void Clear();
 
@@ -147,6 +153,7 @@ class UI_BASE_EXPORT SimpleMenuModel : public MenuModel {
   base::string16 GetLabelAt(int index) const override;
   base::string16 GetSublabelAt(int index) const override;
   base::string16 GetMinorTextAt(int index) const override;
+  const gfx::VectorIcon* GetMinorIconAt(int index) const override;
   bool IsItemDynamicAt(int index) const override;
   bool GetAcceleratorAt(int index, ui::Accelerator* accelerator) const override;
   bool IsItemCheckedAt(int index) const override;
@@ -165,6 +172,11 @@ class UI_BASE_EXPORT SimpleMenuModel : public MenuModel {
       ui::MenuModelDelegate* menu_model_delegate) override;
   MenuModelDelegate* GetMenuModelDelegate() const override;
 
+  // Sets |histogram_name_|.
+  void set_histogram_name(const std::string& histogram_name) {
+    histogram_name_ = histogram_name;
+  }
+
  protected:
   void set_delegate(Delegate* delegate) { delegate_ = delegate; }
   Delegate* delegate() { return delegate_; }
@@ -174,16 +186,36 @@ class UI_BASE_EXPORT SimpleMenuModel : public MenuModel {
   virtual void MenuItemsChanged();
 
  private:
-  struct Item;
+  struct Item {
+    Item(Item&&);
+    Item(int command_id, ItemType type, base::string16 label);
+    Item& operator=(Item&&);
+    ~Item();
+
+    int command_id = 0;
+    ItemType type = TYPE_COMMAND;
+    base::string16 label;
+    base::string16 sublabel;
+    base::string16 minor_text;
+    const gfx::VectorIcon* minor_icon = nullptr;
+    gfx::Image icon;
+    int group_id = -1;
+    MenuModel* submenu = nullptr;
+    ButtonMenuItemModel* button_model = nullptr;
+    MenuSeparatorType separator_type = NORMAL_SEPARATOR;
+  };
 
   typedef std::vector<Item> ItemVector;
+
+  // Records the command for UMA.
+  void RecordHistogram(int command_id) const;
 
   // Returns |index|.
   int ValidateItemIndex(int index) const;
 
   // Functions for inserting items into |items_|.
-  void AppendItem(const Item& item);
-  void InsertItemAtIndex(const Item& item, int index);
+  void AppendItem(Item item);
+  void InsertItemAtIndex(Item item, int index);
   void ValidateItem(const Item& item);
 
   // Notify the delegate that the menu is closed.
@@ -194,6 +226,9 @@ class UI_BASE_EXPORT SimpleMenuModel : public MenuModel {
   Delegate* delegate_;
 
   MenuModelDelegate* menu_model_delegate_;
+
+  // The UMA histogram name that is be used to log command ids.
+  std::string histogram_name_;
 
   base::WeakPtrFactory<SimpleMenuModel> method_factory_;
 

@@ -12,9 +12,16 @@ class MockVRDisplay {
     }
   }
 
-  requestPresent(submitFrameClient, request) {
-    this.presentation_provider_.bind(submitFrameClient, request);
-    return Promise.resolve({success: true});
+  requestPresent(submitFrameClient, request, presentOptions) {
+    this.presentation_provider_.bind(submitFrameClient, request,
+                                     presentOptions);
+    // The JavaScript bindings convert c_style_names to camelCase names.
+    var options = new device.mojom.VRDisplayFrameTransportOptions();
+    options.transportMethod =
+        device.mojom.VRDisplayFrameTransportMethod.SUBMIT_AS_MAILBOX_HOLDER;
+    options.waitForTransferNotification = true;
+    options.waitForRenderNotification = true;
+    return Promise.resolve({success: true, transportOptions: options});
   }
 
   setPose(pose) {
@@ -30,6 +37,14 @@ class MockVRDisplay {
     return Promise.resolve({
       pose: this.presentation_provider_.pose_,
     });
+  }
+
+  getSubmitFrameCount() {
+    return this.presentation_provider_.submit_frame_count_;
+  }
+
+  getMissingFrameCount() {
+    return this.presentation_provider_.missing_frame_count_;
   }
 
   forceActivate(reason) {
@@ -57,6 +72,8 @@ class MockVRPresentationProvider {
   constructor() {
     this.binding_ = new mojo.Binding(device.mojom.VRPresentationProvider, this);
     this.pose_ = null;
+    this.submit_frame_count_ = 0;
+    this.missing_frame_count_ = 0;
   }
 
   bind(client, request) {
@@ -65,18 +82,19 @@ class MockVRPresentationProvider {
     this.binding_.bind(request);
   }
 
-  submitFrame(frameId, mailboxHolder) {
+  submitFrameMissing(frameId, syncToken) {
+    this.missing_frame_count_++;
+  }
+
+  submitFrame(frameId, mailboxHolder, timeWaited) {
+    this.submit_frame_count_++;
+
     // Trigger the submit completion callbacks here. WARNING: The
-    // Javascript-based mojo mocks are *not* re-entrant.  In the current
-    // default implementation, Javascript calls display.submitFrame, and the
-    // corresponding C++ code uses a reentrant mojo call that waits for
-    // onSubmitFrameTransferred to indicate completion. This never finishes
-    // when using the mocks since the incoming calls are queued until the
-    // current execution context finishes. As a workaround, use the alternate
-    // "WebVRExperimentalRendering" mode which works without reentrant calls,
-    // the code only checks for completion on the *next* frame, see the
-    // corresponding option setting in runtime_enabled_features.json5.
-    this.submitFrameClient_.onSubmitFrameTransferred();
+    // Javascript-based mojo mocks are *not* re-entrant. It's OK to
+    // wait for these notifications on the next frame, but waiting
+    // within the current frame would never finish since the incoming
+    // calls would be queued until the current execution context finishes.
+    this.submitFrameClient_.onSubmitFrameTransferred(true);
     this.submitFrameClient_.onSubmitFrameRendered();
   }
 
@@ -174,32 +192,39 @@ function vr_test(func, vrDisplays, name, properties) {
   func(t, mockVRService);
 }
 
-function vr_session_test(func, vrDevice, sessionOptions, name, properties) {
+// TODO(offenwanger) Remove this when we switch over to promise tests.
+function xr_session_test(func, vrDevice, sessionOptions, name, properties) {
   mockVRService.setVRDisplays([vrDevice]);
   let t = async_test(name, properties);
 
-  navigator.vr.requestDevice().then( (device) => {
-    // Perform the session request in a user gesture.
-    function thunk() {
-      document.removeEventListener("keypress", thunk, false);
+  navigator.xr.requestDevice().then(
+      (device) => {
+        // Perform the session request in a user gesture.
+        function thunk() {
+          document.removeEventListener('keypress', thunk, false);
 
-      device.requestSession(sessionOptions).then( (session) => {
-        func(t, session, mockVRService);
-      }, (err) => {
-        t.step( () => {
-          assert_unreached("requestSession rejected");
+          device.requestSession(sessionOptions)
+              .then(
+                  (session) => {
+                    func(t, session, mockVRService);
+                  },
+                  (err) => {
+                    t.step(() => {
+                      assert_unreached('requestSession rejected');
+                    });
+                    t.done();
+                  });
+        }
+        document.addEventListener('keypress', thunk, false);
+        eventSender.keyDown(' ', []);
+      },
+      (err) => {
+        t.step(() => {
+          assert_unreached(
+              'navigator.xr.getDevices rejected in xr_session_test');
         });
         t.done();
       });
-    }
-    document.addEventListener("keypress", thunk, false);
-    eventSender.keyDown(" ", []);
-  }, (err) => {
-    t.step( () => {
-      assert_unreached("navigator.vr.getDevices rejected in vr_session_test");
-    });
-    t.done();
-  });
 }
 
 // Gets the corresponding transform matrix for a WebVR 1.1 pose

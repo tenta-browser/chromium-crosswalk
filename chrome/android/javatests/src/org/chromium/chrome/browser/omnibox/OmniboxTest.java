@@ -62,7 +62,6 @@ import org.chromium.content.browser.test.util.TouchCommon;
 import org.chromium.content.browser.test.util.UiUtils;
 import org.chromium.net.test.EmbeddedTestServer;
 import org.chromium.net.test.ServerCertificate;
-import org.chromium.ui.base.DeviceFormFactor;
 
 import java.util.HashMap;
 import java.util.List;
@@ -79,8 +78,7 @@ import java.util.concurrent.atomic.AtomicInteger;
  * framework once it supports Test Rule Parameterization
  */
 @RunWith(ChromeJUnit4ClassRunner.class)
-@CommandLineFlags.Add({ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE,
-        ChromeActivityTestRule.DISABLE_NETWORK_PREDICTION_FLAG})
+@CommandLineFlags.Add({ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE})
 @CommandLineParameter({"", "disable-features=" + ChromeFeatureList.SPANNABLE_INLINE_AUTOCOMPLETE})
 @SuppressLint("SetTextI18n")
 public class OmniboxTest {
@@ -366,7 +364,7 @@ public class OmniboxTest {
         Assert.assertEquals("Location bar has text.", "", urlBar.getText().toString());
         Assert.assertEquals("Location bar has incorrect hint.",
                 mActivityTestRule.getActivity().getResources().getString(
-                        R.string.search_or_type_url),
+                        R.string.search_or_type_web_address),
                 urlBar.getHint().toString());
 
         // Type something in the omnibox.
@@ -390,7 +388,7 @@ public class OmniboxTest {
             throws ExecutionException, InterruptedException {
         // Default orientation for tablets is landscape. Default for phones is portrait.
         int requestedOrientation = 1;
-        if (DeviceFormFactor.isTablet()) {
+        if (mActivityTestRule.getActivity().isTablet()) {
             requestedOrientation = 0;
         }
         doTestAutoCompleteAndCorrectionForOrientation(requestedOrientation);
@@ -404,7 +402,7 @@ public class OmniboxTest {
             throws ExecutionException, InterruptedException {
         // Default orientation for tablets is landscape. Default for phones is portrait.
         int requestedOrientation = 0;
-        if (DeviceFormFactor.isTablet()) {
+        if (mActivityTestRule.getActivity().isTablet()) {
             requestedOrientation = 1;
         }
         doTestAutoCompleteAndCorrectionForOrientation(requestedOrientation);
@@ -673,7 +671,7 @@ public class OmniboxTest {
                     (LocationBarLayout) mActivityTestRule.getActivity().findViewById(
                             R.id.location_bar);
             boolean securityIcon = locationBar.isSecurityButtonShown();
-            if (DeviceFormFactor.isTablet()) {
+            if (mActivityTestRule.getActivity().isTablet()) {
                 Assert.assertTrue("Omnibox should have a Security icon", securityIcon);
                 Assert.assertTrue(securityButton.isShown());
                 Assert.assertEquals(
@@ -773,7 +771,7 @@ public class OmniboxTest {
             Assert.assertEquals("security_button with wrong resource-id", R.id.security_button,
                     securityButton.getId());
 
-            if (DeviceFormFactor.isTablet()) {
+            if (mActivityTestRule.getActivity().isTablet()) {
                 Assert.assertTrue(locationBarLayout.shouldEmphasizeHttpsScheme());
             } else {
                 Assert.assertFalse(locationBarLayout.shouldEmphasizeHttpsScheme());

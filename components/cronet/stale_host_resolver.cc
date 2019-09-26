@@ -5,7 +5,6 @@
 #include "components/cronet/stale_host_resolver.h"
 
 #include "base/callback_helpers.h"
-#include "base/memory/ptr_util.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/stl_util.h"
 #include "base/timer/timer.h"
@@ -128,9 +127,7 @@ class StaleHostResolver::RequestImpl {
     RequestImpl* request_;
   };
 
-  bool have_network_request() const {
-    return network_request_.get() != nullptr;
-  }
+  bool have_network_request() const { return network_request_ != nullptr; }
   bool have_stale_data() const {
     return stale_error_ != net::ERR_DNS_CACHE_MISS;
   }
@@ -402,6 +399,22 @@ int StaleHostResolver::ResolveFromCache(const RequestInfo& info,
                                         net::AddressList* addresses,
                                         const net::NetLogWithSource& net_log) {
   return inner_resolver_->ResolveFromCache(info, addresses, net_log);
+}
+
+int StaleHostResolver::ResolveStaleFromCache(
+    const RequestInfo& info,
+    net::AddressList* addresses,
+    net::HostCache::EntryStaleness* stale_info,
+    const net::NetLogWithSource& net_log) {
+  return inner_resolver_->ResolveStaleFromCache(info, addresses, stale_info,
+                                                net_log);
+}
+
+bool StaleHostResolver::HasCached(
+    base::StringPiece hostname,
+    net::HostCache::Entry::Source* source_out,
+    net::HostCache::EntryStaleness* stale_out) const {
+  return inner_resolver_->HasCached(hostname, source_out, stale_out);
 }
 
 void StaleHostResolver::SetDnsClientEnabled(bool enabled) {

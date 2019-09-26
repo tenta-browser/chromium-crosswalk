@@ -11,7 +11,6 @@
 #include "base/bind_helpers.h"
 #include "base/command_line.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "chrome/browser/net/predictor.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/common/chrome_switches.h"
@@ -52,7 +51,7 @@ void NetBenchmarking::Create(Profile* profile,
                              net::URLRequestContextGetter* request_context,
                              chrome::mojom::NetBenchmarkingRequest request) {
   mojo::MakeStrongBinding(
-      base::MakeUnique<NetBenchmarking>(profile, request_context),
+      std::make_unique<NetBenchmarking>(profile, request_context),
       std::move(request));
 }
 

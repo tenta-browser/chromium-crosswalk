@@ -5,7 +5,6 @@
 #include "chrome/browser/printing/background_printing_manager.h"
 
 #include "base/location.h"
-#include "base/memory/ptr_util.h"
 #include "base/single_thread_task_runner.h"
 #include "base/stl_util.h"
 #include "base/threading/thread_task_runner_handle.h"
@@ -72,7 +71,7 @@ void BackgroundPrintingManager::OwnPrintPreviewDialog(
   CHECK(!HasPrintPreviewDialog(preview_dialog));
 
   printing_contents_map_[preview_dialog] =
-      base::MakeUnique<Observer>(this, preview_dialog);
+      std::make_unique<Observer>(this, preview_dialog);
 
   // Watch for print jobs finishing. Everything else is watched for by the
   // Observer. TODO(avi, cait): finish the job of removing this last

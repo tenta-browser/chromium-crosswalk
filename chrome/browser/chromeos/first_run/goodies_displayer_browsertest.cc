@@ -85,9 +85,6 @@ class GoodiesDisplayerBrowserTest : public InProcessBrowserTest,
   // InProcessBrowserTest overrides.
   void SetUpDefaultCommandLine(base::CommandLine* command_line) override {
     base::CommandLine default_command_line(base::CommandLine::NO_PROGRAM);
-    const char* kSwitchesToCopy[] = {switches::kMash, switches::kMus};
-    default_command_line.CopySwitchesFrom(*command_line, kSwitchesToCopy,
-                                          arraysize(kSwitchesToCopy));
     InProcessBrowserTest::SetUpDefaultCommandLine(&default_command_line);
     if (NoFirstRunSpecified()) {  // --no-first-run is present by default.
       *command_line = default_command_line;

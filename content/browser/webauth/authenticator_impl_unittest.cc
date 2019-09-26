@@ -4,26 +4,30 @@
 
 #include "content/browser/webauth/authenticator_impl.h"
 
+#include <memory>
 #include <string>
+#include <utility>
+#include <vector>
 
-#include "base/base64url.h"
+#include "base/json/json_parser.h"
+#include "base/json/json_writer.h"
 #include "base/run_loop.h"
 #include "base/test/gtest_util.h"
-#include "content/browser/webauth/attestation_object.h"
-#include "content/browser/webauth/attested_credential_data.h"
-#include "content/browser/webauth/authenticator_data.h"
-#include "content/browser/webauth/authenticator_utils.h"
-#include "content/browser/webauth/cbor/cbor_writer.h"
-#include "content/browser/webauth/collected_client_data.h"
-#include "content/browser/webauth/ec_public_key.h"
-#include "content/browser/webauth/fido_attestation_statement.h"
-#include "content/browser/webauth/register_response_data.h"
+#include "base/test/scoped_feature_list.h"
+#include "base/test/test_mock_time_task_runner.h"
+#include "base/time/tick_clock.h"
+#include "base/time/time.h"
+#include "components/cbor/cbor_reader.h"
+#include "components/cbor/cbor_values.h"
 #include "content/public/browser/render_frame_host.h"
-#include "content/public/browser/web_contents.h"
-#include "content/public/test/navigation_simulator.h"
-#include "content/public/test/test_renderer_host.h"
+#include "content/public/common/content_features.h"
+#include "content/public/test/test_service_manager_context.h"
 #include "content/test/test_render_frame_host.h"
+#include "device/fido/fake_hid_impl_for_testing.h"
+#include "device/fido/scoped_virtual_fido_device.h"
+#include "device/fido/test_callback_receiver.h"
 #include "mojo/public/cpp/bindings/binding.h"
+#include "services/device/public/mojom/constants.mojom.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -31,342 +35,188 @@ namespace content {
 
 using ::testing::_;
 
+using cbor::CBORValue;
+using cbor::CBORReader;
+using webauth::mojom::AttestationConveyancePreference;
 using webauth::mojom::AuthenticatorPtr;
+using webauth::mojom::AuthenticatorSelectionCriteria;
+using webauth::mojom::AuthenticatorSelectionCriteriaPtr;
 using webauth::mojom::AuthenticatorStatus;
-using webauth::mojom::MakePublicKeyCredentialOptions;
-using webauth::mojom::MakePublicKeyCredentialOptionsPtr;
-using webauth::mojom::PublicKeyCredentialRpEntity;
-using webauth::mojom::PublicKeyCredentialRpEntityPtr;
-using webauth::mojom::PublicKeyCredentialUserEntity;
-using webauth::mojom::PublicKeyCredentialUserEntityPtr;
-using webauth::mojom::PublicKeyCredentialInfoPtr;
+using webauth::mojom::GetAssertionAuthenticatorResponsePtr;
+using webauth::mojom::MakeCredentialAuthenticatorResponsePtr;
+using webauth::mojom::PublicKeyCredentialCreationOptions;
+using webauth::mojom::PublicKeyCredentialCreationOptionsPtr;
+using webauth::mojom::PublicKeyCredentialDescriptor;
+using webauth::mojom::PublicKeyCredentialDescriptorPtr;
 using webauth::mojom::PublicKeyCredentialParameters;
 using webauth::mojom::PublicKeyCredentialParametersPtr;
+using webauth::mojom::PublicKeyCredentialRequestOptions;
+using webauth::mojom::PublicKeyCredentialRequestOptionsPtr;
+using webauth::mojom::PublicKeyCredentialRpEntity;
+using webauth::mojom::PublicKeyCredentialRpEntityPtr;
+using webauth::mojom::PublicKeyCredentialType;
+using webauth::mojom::PublicKeyCredentialUserEntity;
+using webauth::mojom::PublicKeyCredentialUserEntityPtr;
 
 namespace {
 
-constexpr char kTestOrigin1[] = "https://google.com";
+typedef struct {
+  const char* origin;
+  // Either a relying party ID or a U2F AppID.
+  const char* claimed_authority;
+} OriginClaimedAuthorityPair;
+
+constexpr char kTestOrigin1[] = "https://a.google.com";
+constexpr char kTestRelyingPartyId[] = "google.com";
 
 // Test data. CBOR test data can be built using the given diagnostic strings
 // and the utility at "http://cbor.me/".
 constexpr int32_t kCoseEs256 = -7;
-
-constexpr char kTestRelyingPartyId[] = "google.com";
 
 constexpr uint8_t kTestChallengeBytes[] = {
     0x68, 0x71, 0x34, 0x96, 0x82, 0x22, 0xEC, 0x17, 0x20, 0x2E, 0x42,
     0x50, 0x5F, 0x8E, 0xD2, 0xB1, 0x6A, 0xE2, 0x2F, 0x16, 0xBB, 0x05,
     0xB8, 0x8C, 0x25, 0xDB, 0x9E, 0x60, 0x26, 0x45, 0xF1, 0x41};
 
-constexpr char kTestClientDataJsonString[] =
-    "{\"challenge\":\"aHE0loIi7BcgLkJQX47SsWriLxa7BbiMJdueYCZF8UE\","
-    "\"hashAlgorithm\""
-    ":\"SHA-256\",\"origin\":\"google.com\",\"tokenBinding\":\"unused\","
-    "\"type\":\"webauthn.create\"}";
+constexpr char kTestRegisterClientDataJsonString[] =
+    R"({"challenge":"aHE0loIi7BcgLkJQX47SsWriLxa7BbiMJdueYCZF8UE","origin":)"
+    R"("https://a.google.com","tokenBinding":{"status":"not-supported"},)"
+    R"("type":"webauthn.create"})";
 
-constexpr uint8_t kTestCredentialRawIdBytes[] = {
-    0x89, 0xAF, 0xB5, 0x24, 0x91, 0x1C, 0x40, 0x2B, 0x7F, 0x74, 0x59,
-    0xC9, 0xF2, 0x21, 0xAF, 0xE6, 0xE5, 0x56, 0x65, 0x85, 0x04, 0xE8,
-    0x5B, 0x49, 0x4D, 0x07, 0x55, 0x55, 0xF4, 0x6A, 0xBC, 0x44, 0x7B,
-    0x15, 0xFC, 0x62, 0x61, 0x90, 0xA5, 0xFE, 0xEB, 0xE5, 0x9F, 0x5E,
-    0xDC, 0x75, 0x32, 0x98, 0x6F, 0x44, 0x69, 0xD7, 0xF6, 0x13, 0xEB,
-    0xAA, 0xEA, 0x33, 0xFB, 0xD5, 0x8E, 0xBF, 0xC6, 0x09};
+constexpr char kTestSignClientDataJsonString[] =
+    R"({"challenge":"aHE0loIi7BcgLkJQX47SsWriLxa7BbiMJdueYCZF8UE","origin":)"
+    R"("https://a.google.com","tokenBinding":{"status":"not-supported"},)"
+    R"("type":"webauthn.get"})";
 
-// CBOR-encoded EC public key.
-// Diagnostic notation:
-// {"x": h'F868CE3869605224CE1059C0047EF01B830F2AD93BE27A3211F44E894560E695',
-//  "y": h'4E11538CABA2DF1CC1A6F250ED9F0C8B28B39DA44539DFABD46B589CD0E202E5',
-//  "alg": "ES256"}
-constexpr uint8_t kTestECPublicKeyCBOR[] = {
-    // clang-format off
-    0xA3,  // map(3)
-      0x61,  // text(1)
-        0x78,  // "x"
-      0x58, 0x20,  // bytes(32)
-        0xF8, 0x68, 0xCE, 0x38, 0x69, 0x60, 0x52, 0x24, 0xCE, 0x10, 0x59, 0xC0,
-        0x04, 0x7E, 0xF0, 0x1B, 0x83, 0x0F, 0x2A, 0xD9, 0x3B, 0xE2, 0x7A, 0x32,
-        0x11, 0xF4, 0x4E, 0x89, 0x45, 0x60, 0xE6, 0x95,
-      0x61,  // text(1)
-        0x79,  // "y"
-      0x58, 0x20,  // bytes(32)
-      0x4E, 0x11, 0x53, 0x8C, 0xAB, 0xA2, 0xDF, 0x1C, 0xC1, 0xA6, 0xF2, 0x50,
-      0xED, 0x9F, 0x0C, 0x8B, 0x28, 0xB3, 0x9D, 0xA4, 0x45, 0x39, 0xDF, 0xAB,
-      0xD4, 0x6B, 0x58, 0x9C, 0xD0, 0xE2, 0x02, 0xE5,
-      0x63,  // text(3)
-        0x61, 0x6C, 0x67,  // "alg"
-      0x65,  // text(5)
-        0x45, 0x53, 0x32, 0x35, 0x36,  // "ES256"
-    // clang-format on
+constexpr OriginClaimedAuthorityPair kValidRelyingPartyTestCases[] = {
+    {"http://localhost", "localhost"},
+    {"https://myawesomedomain", "myawesomedomain"},
+    {"https://foo.bar.google.com", "foo.bar.google.com"},
+    {"https://foo.bar.google.com", "bar.google.com"},
+    {"https://foo.bar.google.com", "google.com"},
+    {"https://earth.login.awesomecompany", "login.awesomecompany"},
+    {"https://google.com:1337", "google.com"},
+
+    // Hosts with trailing dot valid for rpIds with or without trailing dot.
+    // Hosts without trailing dots only matches rpIDs without trailing dot.
+    // Two trailing dots only matches rpIDs with two trailing dots.
+    {"https://google.com.", "google.com"},
+    {"https://google.com.", "google.com."},
+    {"https://google.com..", "google.com.."},
+
+    // Leading dots are ignored in canonicalized hosts.
+    {"https://.google.com", "google.com"},
+    {"https://..google.com", "google.com"},
+    {"https://.google.com", ".google.com"},
+    {"https://..google.com", ".google.com"},
+    {"https://accounts.google.com", ".google.com"},
 };
 
-// U2F response blob produced by a U2F registration request. This example
-// data uses testClientDataJson and 'created' a key with testCredentialRawId
-// as its key handle and with the above x- and y- coordinates.
-constexpr uint8_t kTestU2fRegisterResponse[] = {
-    0x05, 0x04, 0xF8, 0x68, 0xCE, 0x38, 0x69, 0x60, 0x52, 0x24, 0xCE, 0x10,
-    0x59, 0xC0, 0x04, 0x7E, 0xF0, 0x1B, 0x83, 0x0F, 0x2A, 0xD9, 0x3B, 0xE2,
-    0x7A, 0x32, 0x11, 0xF4, 0x4E, 0x89, 0x45, 0x60, 0xE6, 0x95, 0x4E, 0x11,
-    0x53, 0x8C, 0xAB, 0xA2, 0xDF, 0x1C, 0xC1, 0xA6, 0xF2, 0x50, 0xED, 0x9F,
-    0x0C, 0x8B, 0x28, 0xB3, 0x9D, 0xA4, 0x45, 0x39, 0xDF, 0xAB, 0xD4, 0x6B,
-    0x58, 0x9C, 0xD0, 0xE2, 0x02, 0xE5, 0x40, 0x89, 0xAF, 0xB5, 0x24, 0x91,
-    0x1C, 0x40, 0x2B, 0x7F, 0x74, 0x59, 0xC9, 0xF2, 0x21, 0xAF, 0xE6, 0xE5,
-    0x56, 0x65, 0x85, 0x04, 0xE8, 0x5B, 0x49, 0x4D, 0x07, 0x55, 0x55, 0xF4,
-    0x6A, 0xBC, 0x44, 0x7B, 0x15, 0xFC, 0x62, 0x61, 0x90, 0xA5, 0xFE, 0xEB,
-    0xE5, 0x9F, 0x5E, 0xDC, 0x75, 0x32, 0x98, 0x6F, 0x44, 0x69, 0xD7, 0xF6,
-    0x13, 0xEB, 0xAA, 0xEA, 0x33, 0xFB, 0xD5, 0x8E, 0xBF, 0xC6, 0x09, 0x30,
-    0x82, 0x02, 0x4A, 0x30, 0x82, 0x01, 0x32, 0xA0, 0x03, 0x02, 0x01, 0x02,
-    0x02, 0x04, 0x04, 0x6C, 0x88, 0x22, 0x30, 0x0D, 0x06, 0x09, 0x2A, 0x86,
-    0x48, 0x86, 0xF7, 0x0D, 0x01, 0x01, 0x0B, 0x05, 0x00, 0x30, 0x2E, 0x31,
-    0x2C, 0x30, 0x2A, 0x06, 0x03, 0x55, 0x04, 0x03, 0x13, 0x23, 0x59, 0x75,
-    0x62, 0x69, 0x63, 0x6F, 0x20, 0x55, 0x32, 0x46, 0x20, 0x52, 0x6F, 0x6F,
-    0x74, 0x20, 0x43, 0x41, 0x20, 0x53, 0x65, 0x72, 0x69, 0x61, 0x6C, 0x20,
-    0x34, 0x35, 0x37, 0x32, 0x30, 0x30, 0x36, 0x33, 0x31, 0x30, 0x20, 0x17,
-    0x0D, 0x31, 0x34, 0x30, 0x38, 0x30, 0x31, 0x30, 0x30, 0x30, 0x30, 0x30,
-    0x30, 0x5A, 0x18, 0x0F, 0x32, 0x30, 0x35, 0x30, 0x30, 0x39, 0x30, 0x34,
-    0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x5A, 0x30, 0x2C, 0x31, 0x2A, 0x30,
-    0x28, 0x06, 0x03, 0x55, 0x04, 0x03, 0x0C, 0x21, 0x59, 0x75, 0x62, 0x69,
-    0x63, 0x6F, 0x20, 0x55, 0x32, 0x46, 0x20, 0x45, 0x45, 0x20, 0x53, 0x65,
-    0x72, 0x69, 0x61, 0x6C, 0x20, 0x32, 0x34, 0x39, 0x31, 0x38, 0x32, 0x33,
-    0x32, 0x34, 0x37, 0x37, 0x30, 0x30, 0x59, 0x30, 0x13, 0x06, 0x07, 0x2A,
-    0x86, 0x48, 0xCE, 0x3D, 0x02, 0x01, 0x06, 0x08, 0x2A, 0x86, 0x48, 0xCE,
-    0x3D, 0x03, 0x01, 0x07, 0x03, 0x42, 0x00, 0x04, 0x3C, 0xCA, 0xB9, 0x2C,
-    0xCB, 0x97, 0x28, 0x7E, 0xE8, 0xE6, 0x39, 0x43, 0x7E, 0x21, 0xFC, 0xD6,
-    0xB6, 0xF1, 0x65, 0xB2, 0xD5, 0xA3, 0xF3, 0xDB, 0x13, 0x1D, 0x31, 0xC1,
-    0x6B, 0x74, 0x2B, 0xB4, 0x76, 0xD8, 0xD1, 0xE9, 0x90, 0x80, 0xEB, 0x54,
-    0x6C, 0x9B, 0xBD, 0xF5, 0x56, 0xE6, 0x21, 0x0F, 0xD4, 0x27, 0x85, 0x89,
-    0x9E, 0x78, 0xCC, 0x58, 0x9E, 0xBE, 0x31, 0x0F, 0x6C, 0xDB, 0x9F, 0xF4,
-    0xA3, 0x3B, 0x30, 0x39, 0x30, 0x22, 0x06, 0x09, 0x2B, 0x06, 0x01, 0x04,
-    0x01, 0x82, 0xC4, 0x0A, 0x02, 0x04, 0x15, 0x31, 0x2E, 0x33, 0x2E, 0x36,
-    0x2E, 0x31, 0x2E, 0x34, 0x2E, 0x31, 0x2E, 0x34, 0x31, 0x34, 0x38, 0x32,
-    0x2E, 0x31, 0x2E, 0x32, 0x30, 0x13, 0x06, 0x0B, 0x2B, 0x06, 0x01, 0x04,
-    0x01, 0x82, 0xE5, 0x1C, 0x02, 0x01, 0x01, 0x04, 0x04, 0x03, 0x02, 0x04,
-    0x30, 0x30, 0x0D, 0x06, 0x09, 0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01,
-    0x01, 0x0B, 0x05, 0x00, 0x03, 0x82, 0x01, 0x01, 0x00, 0x9F, 0x9B, 0x05,
-    0x22, 0x48, 0xBC, 0x4C, 0xF4, 0x2C, 0xC5, 0x99, 0x1F, 0xCA, 0xAB, 0xAC,
-    0x9B, 0x65, 0x1B, 0xBE, 0x5B, 0xDC, 0xDC, 0x8E, 0xF0, 0xAD, 0x2C, 0x1C,
-    0x1F, 0xFB, 0x36, 0xD1, 0x87, 0x15, 0xD4, 0x2E, 0x78, 0xB2, 0x49, 0x22,
-    0x4F, 0x92, 0xC7, 0xE6, 0xE7, 0xA0, 0x5C, 0x49, 0xF0, 0xE7, 0xE4, 0xC8,
-    0x81, 0xBF, 0x2E, 0x94, 0xF4, 0x5E, 0x4A, 0x21, 0x83, 0x3D, 0x74, 0x56,
-    0x85, 0x1D, 0x0F, 0x6C, 0x14, 0x5A, 0x29, 0x54, 0x0C, 0x87, 0x4F, 0x30,
-    0x92, 0xC9, 0x34, 0xB4, 0x3D, 0x22, 0x2B, 0x89, 0x62, 0xC0, 0xF4, 0x10,
-    0xCE, 0xF1, 0xDB, 0x75, 0x89, 0x2A, 0xF1, 0x16, 0xB4, 0x4A, 0x96, 0xF5,
-    0xD3, 0x5A, 0xDE, 0xA3, 0x82, 0x2F, 0xC7, 0x14, 0x6F, 0x60, 0x04, 0x38,
-    0x5B, 0xCB, 0x69, 0xB6, 0x5C, 0x99, 0xE7, 0xEB, 0x69, 0x19, 0x78, 0x67,
-    0x03, 0xC0, 0xD8, 0xCD, 0x41, 0xE8, 0xF7, 0x5C, 0xCA, 0x44, 0xAA, 0x8A,
-    0xB7, 0x25, 0xAD, 0x8E, 0x79, 0x9F, 0xF3, 0xA8, 0x69, 0x6A, 0x6F, 0x1B,
-    0x26, 0x56, 0xE6, 0x31, 0xB1, 0xE4, 0x01, 0x83, 0xC0, 0x8F, 0xDA, 0x53,
-    0xFA, 0x4A, 0x8F, 0x85, 0xA0, 0x56, 0x93, 0x94, 0x4A, 0xE1, 0x79, 0xA1,
-    0x33, 0x9D, 0x00, 0x2D, 0x15, 0xCA, 0xBD, 0x81, 0x00, 0x90, 0xEC, 0x72,
-    0x2E, 0xF5, 0xDE, 0xF9, 0x96, 0x5A, 0x37, 0x1D, 0x41, 0x5D, 0x62, 0x4B,
-    0x68, 0xA2, 0x70, 0x7C, 0xAD, 0x97, 0xBC, 0xDD, 0x17, 0x85, 0xAF, 0x97,
-    0xE2, 0x58, 0xF3, 0x3D, 0xF5, 0x6A, 0x03, 0x1A, 0xA0, 0x35, 0x6D, 0x8E,
-    0x8D, 0x5E, 0xBC, 0xAD, 0xC7, 0x4E, 0x07, 0x16, 0x36, 0xC6, 0xB1, 0x10,
-    0xAC, 0xE5, 0xCC, 0x9B, 0x90, 0xDF, 0xEA, 0xCA, 0xE6, 0x40, 0xFF, 0x1B,
-    0xB0, 0xF1, 0xFE, 0x5D, 0xB4, 0xEF, 0xF7, 0xA9, 0x5F, 0x06, 0x07, 0x33,
-    0xF5, 0x30, 0x44, 0x02, 0x20, 0x08, 0xC3, 0xF8, 0xDB, 0x6E, 0x29, 0xFD,
-    0x8B, 0x14, 0xD9, 0xDE, 0x1B, 0xD9, 0x8E, 0x84, 0x07, 0x2C, 0xB8, 0x13,
-    0x38, 0x59, 0x89, 0xAA, 0x2C, 0xA2, 0x89, 0x39, 0x5E, 0x00, 0x09, 0xB8,
-    0xB7, 0x02, 0x20, 0x26, 0x07, 0xB4, 0xF9, 0xAD, 0x05, 0xDE, 0x26, 0xF5,
-    0x6F, 0x48, 0xB8, 0x25, 0x69, 0xEA, 0xD8, 0x23, 0x1A, 0x5A, 0x6C, 0x3A,
-    0x14, 0x48, 0xDE, 0xAA, 0xAF, 0x15, 0xC0, 0xEF, 0x29, 0x63, 0x1A};
+constexpr OriginClaimedAuthorityPair kInvalidRelyingPartyTestCases[] = {
+    {"https://google.com", "com"},
+    {"http://google.com", "google.com"},
+    {"http://myawesomedomain", "myawesomedomain"},
+    {"https://google.com", "foo.bar.google.com"},
+    {"http://myawesomedomain", "randomdomain"},
+    {"https://myawesomedomain", "randomdomain"},
+    {"https://notgoogle.com", "google.com)"},
+    {"https://not-google.com", "google.com)"},
+    {"https://evil.appspot.com", "appspot.com"},
+    {"https://evil.co.uk", "co.uk"},
 
-// The attested credential data, excluding the CBOR public key bytes. Append
-// with kTestECPublicKeyCBOR to get the complete attestation data.
-constexpr uint8_t kTestAttestedCredentialDataPrefix[] = {
-    // clang-format off
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x00, 0x00, 0x00, 0x00,  // 16-byte aaguid
-    0x00, 0x40,  // 2-byte length
-    0x89, 0xAF, 0xB5, 0x24, 0x91, 0x1C, 0x40, 0x2B, 0x7F, 0x74, 0x59, 0xC9,
-    0xF2, 0x21, 0xAF, 0xE6, 0xE5, 0x56, 0x65, 0x85, 0x04, 0xE8, 0x5B, 0x49,
-    0x4D, 0x07, 0x55, 0x55, 0xF4, 0x6A, 0xBC, 0x44, 0x7B, 0x15, 0xFC, 0x62,
-    0x61, 0x90, 0xA5, 0xFE, 0xEB, 0xE5, 0x9F, 0x5E, 0xDC, 0x75, 0x32, 0x98,
-    0x6F, 0x44, 0x69, 0xD7, 0xF6, 0x13, 0xEB, 0xAA, 0xEA, 0x33, 0xFB, 0xD5,
-    0x8E, 0xBF, 0xC6, 0x09 //64-byte key handle
-    // clang-format on
+    {"https://google.com", "google.com."},
+    {"https://google.com", "google.com.."},
+    {"https://google.com", ".google.com"},
+    {"https://google.com..", "google.com"},
+    {"https://.com", "com."},
+    {"https://.co.uk", "co.uk."},
+
+    {"https://1.2.3", "1.2.3"},
+    {"https://1.2.3", "2.3"},
+
+    {"https://127.0.0.1", "127.0.0.1"},
+    {"https://127.0.0.1", "27.0.0.1"},
+    {"https://127.0.0.1", ".0.0.1"},
+    {"https://127.0.0.1", "0.0.1"},
+
+    {"https://[::127.0.0.1]", "127.0.0.1"},
+    {"https://[::127.0.0.1]", "[127.0.0.1]"},
+
+    {"https://[::1]", "1"},
+    {"https://[::1]", "1]"},
+    {"https://[::1]", "::1"},
+    {"https://[::1]", "[::1]"},
+    {"https://[1::1]", "::1"},
+    {"https://[1::1]", "::1]"},
+    {"https://[1::1]", "[::1]"},
+
+    {"http://google.com:443", "google.com"},
+    {"data:google.com", "google.com"},
+    {"data:text/html,google.com", "google.com"},
+    {"ws://google.com", "google.com"},
+    {"gopher://google.com", "google.com"},
+    {"ftp://google.com", "google.com"},
+    {"file:///google.com", "google.com"},
+    // Use of webauthn from a WSS origin may be technically valid, but we
+    // prohibit use on non-HTTPS origins. (At least for now.)
+    {"wss://google.com", "google.com"},
+
+    {"data:,", ""},
+    {"https://google.com", ""},
+    {"ws:///google.com", ""},
+    {"wss:///google.com", ""},
+    {"gopher://google.com", ""},
+    {"ftp://google.com", ""},
+    {"file:///google.com", ""},
+
+    // This case is acceptable according to spec, but both renderer
+    // and browser handling currently do not permit it.
+    {"https://login.awesomecompany", "awesomecompany"},
+
+    // These are AppID test cases, but should also be invalid relying party
+    // examples too.
+    {"https://example.com", "https://com/"},
+    {"https://example.com", "https://com/foo"},
+    {"https://example.com", "https://foo.com/"},
+    {"https://example.com", "http://example.com"},
+    {"http://example.com", "https://example.com"},
+    {"https://127.0.0.1", "https://127.0.0.1"},
+    {"https://www.notgoogle.com",
+     "https://www.gstatic.com/securitykey/origins.json"},
+    {"https://www.google.com",
+     "https://www.gstatic.com/securitykey/origins.json#x"},
+    {"https://www.google.com",
+     "https://www.gstatic.com/securitykey/origins.json2"},
+    {"https://www.google.com", "https://gstatic.com/securitykey/origins.json"},
+    {"https://ggoogle.com", "https://www.gstatic.com/securitykey/origi"},
+    {"https://com", "https://www.gstatic.com/securitykey/origins.json"},
 };
 
-// The authenticator data, excluding the attested credential data bytes. Append
-// with attested credential data to get the complete authenticator data.
-constexpr uint8_t kTestAuthenticatorDataPrefix[] = {
-    // clang-format off
-    // sha256 hash of kTestRelyingPartyId
-    0xD4, 0xC9, 0xD9, 0x02, 0x73, 0x26, 0x27, 0x1A, 0x89, 0xCE, 0x51,
-    0xFC, 0xAF, 0x32, 0x8E, 0xD6, 0x73, 0xF1, 0x7B, 0xE3, 0x34, 0x69,
-    0xFF, 0x97, 0x9E, 0x8A, 0xB8, 0xDD, 0x50, 0x1E, 0x66, 0x4F,
-    0x41, // flags (TUP and AT bits set)
-    0x00, 0x00, 0x00, 0x00 //counter
-    // clang-format on
-};
+using TestMakeCredentialCallback = device::test::StatusAndValueCallbackReceiver<
+    AuthenticatorStatus,
+    MakeCredentialAuthenticatorResponsePtr>;
+using TestGetAssertionCallback = device::test::StatusAndValueCallbackReceiver<
+    AuthenticatorStatus,
+    GetAssertionAuthenticatorResponsePtr>;
 
-// The attestation statement, a CBOR-encoded byte array.
-// Diagnostic notation:
-// {"sig":
-// h'3044022008C3F8DB6E29FD8B14D9DE1BD98E84072CB813385989AA2CA289395E0009B8B70 \
-// 2202607B4F9AD05DE26F56F48B82569EAD8231A5A6C3A1448DEAAAF15C0EF29631A',
-// "x5c": [h'3082024A30820132A0030201020204046C8822300D06092A864886F70D01010B0 \
-// 500302E312C302A0603550403132359756269636F2055324620526F6F742043412053657269 \
-// 616C203435373230303633313020170D3134303830313030303030305A180F3230353030393 \
-// 0343030303030305A302C312A302806035504030C2159756269636F20553246204545205365 \
-// 7269616C203234393138323332343737303059301306072A8648CE3D020106082A8648CE3D0 \
-// 30107034200043CCAB92CCB97287EE8E639437E21FCD6B6F165B2D5A3F3DB131D31C16B742B \
-// B476D8D1E99080EB546C9BBDF556E6210FD42785899E78CC589EBE310F6CDB9FF4A33B30393 \
-// 02206092B0601040182C40A020415312E332E362E312E342E312E34313438322E312E323013 \
-// 060B2B0601040182E51C020101040403020430300D06092A864886F70D01010B05000382010 \
-// 1009F9B052248BC4CF42CC5991FCAABAC9B651BBE5BDCDC8EF0AD2C1C1FFB36D18715D42E78 \
-// B249224F92C7E6E7A05C49F0E7E4C881BF2E94F45E4A21833D7456851D0F6C145A29540C874 \
-// F3092C934B43D222B8962C0F410CEF1DB75892AF116B44A96F5D35ADEA3822FC7146F600438 \
-// 5BCB69B65C99E7EB6919786703C0D8CD41E8F75CCA44AA8AB725AD8E799FF3A8696A6F1B265 \
-// 6E631B1E40183C08FDA53FA4A8F85A05693944AE179A1339D002D15CABD810090EC722EF5DE \
-// F9965A371D415D624B68A2707CAD97BCDD1785AF97E258F33DF56A031AA0356D8E8D5EBCADC \
-// 74E071636C6B110ACE5CC9B90DFEACAE640FF1BB0F1FE5DB4EFF7A95F060733F5']}
-constexpr uint8_t kU2fAttestationStatementCBOR[] = {
-    // clang-format off
-    0xA2,  // map(2)
-      0x63,  // text(3)
-        0x73, 0x69, 0x67,  // "sig"
-      0x58, 0x46,  // bytes(70)
-        0x30, 0x44, 0x02, 0x20, 0x08, 0xC3, 0xF8, 0xDB, 0x6E, 0x29, 0xFD, 0x8B,
-        0x14, 0xD9, 0xDE, 0x1B, 0xD9, 0x8E, 0x84, 0x07, 0x2C, 0xB8, 0x13, 0x38,
-        0x59, 0x89, 0xAA, 0x2C, 0xA2, 0x89, 0x39, 0x5E, 0x00, 0x09, 0xB8, 0xB7,
-        0x02, 0x20, 0x26, 0x07, 0xB4, 0xF9, 0xAD, 0x05, 0xDE, 0x26, 0xF5, 0x6F,
-        0x48, 0xB8, 0x25, 0x69, 0xEA, 0xD8, 0x23, 0x1A, 0x5A, 0x6C, 0x3A, 0x14,
-        0x48, 0xDE, 0xAA, 0xAF, 0x15, 0xC0, 0xEF, 0x29, 0x63, 0x1A,
-      0x63,  // text(3)
-        0x78, 0x35, 0x63,  // "x5c"
-      0x81,  // array(1)
-        0x59, 0x02, 0x4E,  // bytes(590)
-          0x30, 0x82, 0x02, 0x4A, 0x30, 0x82, 0x01, 0x32, 0xA0, 0x03, 0x02,
-          0x01, 0x02, 0x02, 0x04, 0x04, 0x6C, 0x88, 0x22, 0x30, 0x0D, 0x06,
-          0x09, 0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x01, 0x0B, 0x05,
-          0x00, 0x30, 0x2E, 0x31, 0x2C, 0x30, 0x2A, 0x06, 0x03, 0x55, 0x04,
-          0x03, 0x13, 0x23, 0x59, 0x75, 0x62, 0x69, 0x63, 0x6F, 0x20, 0x55,
-          0x32, 0x46, 0x20, 0x52, 0x6F, 0x6F, 0x74, 0x20, 0x43, 0x41, 0x20,
-          0x53, 0x65, 0x72, 0x69, 0x61, 0x6C, 0x20, 0x34, 0x35, 0x37, 0x32,
-          0x30, 0x30, 0x36, 0x33, 0x31, 0x30, 0x20, 0x17, 0x0D, 0x31, 0x34,
-          0x30, 0x38, 0x30, 0x31, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x5A,
-          0x18, 0x0F, 0x32, 0x30, 0x35, 0x30, 0x30, 0x39, 0x30, 0x34, 0x30,
-          0x30, 0x30, 0x30, 0x30, 0x30, 0x5A, 0x30, 0x2C, 0x31, 0x2A, 0x30,
-          0x28, 0x06, 0x03, 0x55, 0x04, 0x03, 0x0C, 0x21, 0x59, 0x75, 0x62,
-          0x69, 0x63, 0x6F, 0x20, 0x55, 0x32, 0x46, 0x20, 0x45, 0x45, 0x20,
-          0x53, 0x65, 0x72, 0x69, 0x61, 0x6C, 0x20, 0x32, 0x34, 0x39, 0x31,
-          0x38, 0x32, 0x33, 0x32, 0x34, 0x37, 0x37, 0x30, 0x30, 0x59, 0x30,
-          0x13, 0x06, 0x07, 0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x02, 0x01, 0x06,
-          0x08, 0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x03, 0x01, 0x07, 0x03, 0x42,
-          0x00, 0x04, 0x3C, 0xCA, 0xB9, 0x2C, 0xCB, 0x97, 0x28, 0x7E, 0xE8,
-          0xE6, 0x39, 0x43, 0x7E, 0x21, 0xFC, 0xD6, 0xB6, 0xF1, 0x65, 0xB2,
-          0xD5, 0xA3, 0xF3, 0xDB, 0x13, 0x1D, 0x31, 0xC1, 0x6B, 0x74, 0x2B,
-          0xB4, 0x76, 0xD8, 0xD1, 0xE9, 0x90, 0x80, 0xEB, 0x54, 0x6C, 0x9B,
-          0xBD, 0xF5, 0x56, 0xE6, 0x21, 0x0F, 0xD4, 0x27, 0x85, 0x89, 0x9E,
-          0x78, 0xCC, 0x58, 0x9E, 0xBE, 0x31, 0x0F, 0x6C, 0xDB, 0x9F, 0xF4,
-          0xA3, 0x3B, 0x30, 0x39, 0x30, 0x22, 0x06, 0x09, 0x2B, 0x06, 0x01,
-          0x04, 0x01, 0x82, 0xC4, 0x0A, 0x02, 0x04, 0x15, 0x31, 0x2E, 0x33,
-          0x2E, 0x36, 0x2E, 0x31, 0x2E, 0x34, 0x2E, 0x31, 0x2E, 0x34, 0x31,
-          0x34, 0x38, 0x32, 0x2E, 0x31, 0x2E, 0x32, 0x30, 0x13, 0x06, 0x0B,
-          0x2B, 0x06, 0x01, 0x04, 0x01, 0x82, 0xE5, 0x1C, 0x02, 0x01, 0x01,
-          0x04, 0x04, 0x03, 0x02, 0x04, 0x30, 0x30, 0x0D, 0x06, 0x09, 0x2A,
-          0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x01, 0x0B, 0x05, 0x00, 0x03,
-          0x82, 0x01, 0x01, 0x00, 0x9F, 0x9B, 0x05, 0x22, 0x48, 0xBC, 0x4C,
-          0xF4, 0x2C, 0xC5, 0x99, 0x1F, 0xCA, 0xAB, 0xAC, 0x9B, 0x65, 0x1B,
-          0xBE, 0x5B, 0xDC, 0xDC, 0x8E, 0xF0, 0xAD, 0x2C, 0x1C, 0x1F, 0xFB,
-          0x36, 0xD1, 0x87, 0x15, 0xD4, 0x2E, 0x78, 0xB2, 0x49, 0x22, 0x4F,
-          0x92, 0xC7, 0xE6, 0xE7, 0xA0, 0x5C, 0x49, 0xF0, 0xE7, 0xE4, 0xC8,
-          0x81, 0xBF, 0x2E, 0x94, 0xF4, 0x5E, 0x4A, 0x21, 0x83, 0x3D, 0x74,
-          0x56, 0x85, 0x1D, 0x0F, 0x6C, 0x14, 0x5A, 0x29, 0x54, 0x0C, 0x87,
-          0x4F, 0x30, 0x92, 0xC9, 0x34, 0xB4, 0x3D, 0x22, 0x2B, 0x89, 0x62,
-          0xC0, 0xF4, 0x10, 0xCE, 0xF1, 0xDB, 0x75, 0x89, 0x2A, 0xF1, 0x16,
-          0xB4, 0x4A, 0x96, 0xF5, 0xD3, 0x5A, 0xDE, 0xA3, 0x82, 0x2F, 0xC7,
-          0x14, 0x6F, 0x60, 0x04, 0x38, 0x5B, 0xCB, 0x69, 0xB6, 0x5C, 0x99,
-          0xE7, 0xEB, 0x69, 0x19, 0x78, 0x67, 0x03, 0xC0, 0xD8, 0xCD, 0x41,
-          0xE8, 0xF7, 0x5C, 0xCA, 0x44, 0xAA, 0x8A, 0xB7, 0x25, 0xAD, 0x8E,
-          0x79, 0x9F, 0xF3, 0xA8, 0x69, 0x6A, 0x6F, 0x1B, 0x26, 0x56, 0xE6,
-          0x31, 0xB1, 0xE4, 0x01, 0x83, 0xC0, 0x8F, 0xDA, 0x53, 0xFA, 0x4A,
-          0x8F, 0x85, 0xA0, 0x56, 0x93, 0x94, 0x4A, 0xE1, 0x79, 0xA1, 0x33,
-          0x9D, 0x00, 0x2D, 0x15, 0xCA, 0xBD, 0x81, 0x00, 0x90, 0xEC, 0x72,
-          0x2E, 0xF5, 0xDE, 0xF9, 0x96, 0x5A, 0x37, 0x1D, 0x41, 0x5D, 0x62,
-          0x4B, 0x68, 0xA2, 0x70, 0x7C, 0xAD, 0x97, 0xBC, 0xDD, 0x17, 0x85,
-          0xAF, 0x97, 0xE2, 0x58, 0xF3, 0x3D, 0xF5, 0x6A, 0x03, 0x1A, 0xA0,
-          0x35, 0x6D, 0x8E, 0x8D, 0x5E, 0xBC, 0xAD, 0xC7, 0x4E, 0x07, 0x16,
-          0x36, 0xC6, 0xB1, 0x10, 0xAC, 0xE5, 0xCC, 0x9B, 0x90, 0xDF, 0xEA,
-          0xCA, 0xE6, 0x40, 0xFF, 0x1B, 0xB0, 0xF1, 0xFE, 0x5D, 0xB4, 0xEF,
-          0xF7, 0xA9, 0x5F, 0x06, 0x07, 0x33, 0xF5
-    // clang-format on
-};
-
-// Components of the CBOR needed to form an authenticator object.
-// Combined diagnostic notation:
-// {"fmt": "fido-u2f", "attStmt": {"sig": h'30...}, "authData": h'D4C9D9...'}
-constexpr uint8_t kFormatFidoU2fCBOR[] = {
-    // clang-format off
-    0xA3,  // map(3)
-      0x63,  // text(3)
-        0x66, 0x6D, 0x74,  // "fmt"
-      0x68,  // text(8)
-        0x66, 0x69, 0x64, 0x6F, 0x2D, 0x75, 0x32, 0x66  // "fido-u2f"
-    // clang-format on
-};
-
-constexpr uint8_t kAttStmtCBOR[] = {
-    // clang-format off
-      0x67,  // text(7)
-        0x61, 0x74, 0x74, 0x53, 0x74, 0x6D, 0x74  // "attStmt"
-    // clang-format on
-};
-
-constexpr uint8_t kAuthDataCBOR[] = {
-    // clang-format off
-    0x68,  // text(8)
-      0x61, 0x75, 0x74, 0x68, 0x44, 0x61, 0x74, 0x61, // "authData"
-    0x58, 0xCA  //bytes(202). i.e.,the authenticator_data bytearray
-    // clang-format on
-};
-
-// Helpers.
-
-const std::vector<uint8_t>& GetTestECPublicKeyCBOR() {
-  static const std::vector<uint8_t> data(std::begin(kTestECPublicKeyCBOR),
-                                         std::end(kTestECPublicKeyCBOR));
-  return data;
-}
-
-const std::vector<uint8_t>& GetTestRegisterResponse() {
-  static const std::vector<uint8_t> data(std::begin(kTestU2fRegisterResponse),
-                                         std::end(kTestU2fRegisterResponse));
-  return data;
-}
-
-const std::vector<uint8_t>& GetTestCredentialRawIdBytes() {
-  static const std::vector<uint8_t> data(std::begin(kTestCredentialRawIdBytes),
-                                         std::end(kTestCredentialRawIdBytes));
-  return data;
-}
-
-const std::vector<uint8_t>& GetTestChallengeBytes() {
-  static const std::vector<uint8_t> data(std::begin(kTestChallengeBytes),
-                                         std::end(kTestChallengeBytes));
-  return data;
-}
-
-const std::vector<uint8_t>& GetU2fAttestationStatementCBOR() {
-  static const std::vector<uint8_t> data(
-      std::begin(kU2fAttestationStatementCBOR),
-      std::end(kU2fAttestationStatementCBOR));
-  return data;
+std::vector<uint8_t> GetTestChallengeBytes() {
+  return std::vector<uint8_t>(std::begin(kTestChallengeBytes),
+                              std::end(kTestChallengeBytes));
 }
 
 PublicKeyCredentialRpEntityPtr GetTestPublicKeyCredentialRPEntity() {
   auto entity = PublicKeyCredentialRpEntity::New();
-  entity->id = std::string("localhost");
-  entity->name = std::string("TestRP@example.com");
+  entity->id = std::string(kTestRelyingPartyId);
+  entity->name = "TestRP@example.com";
   return entity;
 }
 
 PublicKeyCredentialUserEntityPtr GetTestPublicKeyCredentialUserEntity() {
   auto entity = PublicKeyCredentialUserEntity::New();
-  entity->display_name = std::string("User A. Name");
+  entity->display_name = "User A. Name";
   std::vector<uint8_t> id(32, 0x0A);
   entity->id = id;
-  entity->name = std::string("username@example.com");
+  entity->name = "username@example.com";
   entity->icon = GURL("fakeurl2.png");
   return entity;
 }
@@ -381,68 +231,52 @@ GetTestPublicKeyCredentialParameters(int32_t algorithm_identifier) {
   return parameters;
 }
 
-MakePublicKeyCredentialOptionsPtr GetTestMakePublicKeyCredentialOptions() {
-  auto options = MakePublicKeyCredentialOptions::New();
-  std::vector<uint8_t> buffer(32, 0x0A);
+AuthenticatorSelectionCriteriaPtr GetTestAuthenticatorSelectionCriteria() {
+  auto criteria = AuthenticatorSelectionCriteria::New();
+  criteria->authenticator_attachment =
+      webauth::mojom::AuthenticatorAttachment::NO_PREFERENCE;
+  criteria->require_resident_key = false;
+  criteria->user_verification =
+      webauth::mojom::UserVerificationRequirement::PREFERRED;
+  return criteria;
+}
+
+std::vector<PublicKeyCredentialDescriptorPtr> GetTestAllowCredentials() {
+  std::vector<PublicKeyCredentialDescriptorPtr> descriptors;
+  auto credential = PublicKeyCredentialDescriptor::New();
+  credential->type = PublicKeyCredentialType::PUBLIC_KEY;
+  std::vector<uint8_t> id(32, 0x0A);
+  credential->id = id;
+  descriptors.push_back(std::move(credential));
+  return descriptors;
+}
+
+PublicKeyCredentialCreationOptionsPtr
+GetTestPublicKeyCredentialCreationOptions() {
+  auto options = PublicKeyCredentialCreationOptions::New();
   options->relying_party = GetTestPublicKeyCredentialRPEntity();
   options->user = GetTestPublicKeyCredentialUserEntity();
   options->public_key_parameters =
       GetTestPublicKeyCredentialParameters(kCoseEs256);
-  options->challenge = std::move(buffer);
+  options->challenge.assign(32, 0x0A);
   options->adjusted_timeout = base::TimeDelta::FromMinutes(1);
+  options->authenticator_selection = GetTestAuthenticatorSelectionCriteria();
   return options;
 }
 
-std::unique_ptr<CollectedClientData> GetTestClientData(std::string type) {
-  std::unique_ptr<CollectedClientData> client_data =
-      CollectedClientData::Create(type, kTestRelyingPartyId,
-                                  GetTestChallengeBytes());
-  return client_data;
+PublicKeyCredentialRequestOptionsPtr
+GetTestPublicKeyCredentialRequestOptions() {
+  auto options = PublicKeyCredentialRequestOptions::New();
+  options->relying_party_id = std::string(kTestRelyingPartyId);
+  options->challenge.assign(32, 0x0A);
+  options->adjusted_timeout = base::TimeDelta::FromMinutes(1);
+  options->user_verification =
+      webauth::mojom::UserVerificationRequirement::PREFERRED;
+  options->allow_credentials = GetTestAllowCredentials();
+  return options;
 }
 
-std::vector<uint8_t> GetTestAttestedCredentialDataBytes() {
-  // Combine kTestAttestedCredentialDataPrefix and kTestECPublicKeyCBOR.
-  std::vector<uint8_t> test_attested_data(
-      std::begin(kTestAttestedCredentialDataPrefix),
-      std::end(kTestAttestedCredentialDataPrefix));
-  test_attested_data.insert(test_attested_data.end(),
-                            std::begin(kTestECPublicKeyCBOR),
-                            std::end(kTestECPublicKeyCBOR));
-  return test_attested_data;
-}
-
-std::vector<uint8_t> GetTestAuthenticatorDataBytes() {
-  // Build the test authenticator data.
-  std::vector<uint8_t> test_authenticator_data(
-      std::begin(kTestAuthenticatorDataPrefix),
-      std::end(kTestAuthenticatorDataPrefix));
-  std::vector<uint8_t> test_attested_data =
-      GetTestAttestedCredentialDataBytes();
-  test_authenticator_data.insert(test_authenticator_data.end(),
-                                 test_attested_data.begin(),
-                                 test_attested_data.end());
-  return test_authenticator_data;
-}
-
-std::vector<uint8_t> GetTestAttestationObjectBytes() {
-  std::vector<uint8_t> test_authenticator_object(std::begin(kFormatFidoU2fCBOR),
-                                                 std::end(kFormatFidoU2fCBOR));
-  test_authenticator_object.insert(test_authenticator_object.end(),
-                                   std::begin(kAttStmtCBOR),
-                                   std::end(kAttStmtCBOR));
-  test_authenticator_object.insert(test_authenticator_object.end(),
-                                   std::begin(kU2fAttestationStatementCBOR),
-                                   std::end(kU2fAttestationStatementCBOR));
-  test_authenticator_object.insert(test_authenticator_object.end(),
-                                   std::begin(kAuthDataCBOR),
-                                   std::end(kAuthDataCBOR));
-  std::vector<uint8_t> test_authenticator_data =
-      GetTestAuthenticatorDataBytes();
-  test_authenticator_object.insert(test_authenticator_object.end(),
-                                   test_authenticator_data.begin(),
-                                   test_authenticator_data.end());
-  return test_authenticator_object;
-}
+}  // namespace
 
 class AuthenticatorImplTest : public content::RenderViewHostTestHarness {
  public:
@@ -458,206 +292,835 @@ class AuthenticatorImplTest : public content::RenderViewHostTestHarness {
   }
 
   AuthenticatorPtr ConnectToAuthenticator() {
-    authenticator_impl_.reset(new AuthenticatorImpl(main_rfh()));
+    authenticator_impl_ = std::make_unique<AuthenticatorImpl>(main_rfh());
     AuthenticatorPtr authenticator;
     authenticator_impl_->Bind(mojo::MakeRequest(&authenticator));
     return authenticator;
+  }
+
+  AuthenticatorPtr ConnectToAuthenticator(
+      service_manager::Connector* connector,
+      std::unique_ptr<base::OneShotTimer> timer) {
+    authenticator_impl_.reset(
+        new AuthenticatorImpl(main_rfh(), connector, std::move(timer)));
+    AuthenticatorPtr authenticator;
+    authenticator_impl_->Bind(mojo::MakeRequest(&authenticator));
+    return authenticator;
+  }
+
+  url::Origin GetTestOrigin() {
+    const GURL test_relying_party_url(kTestOrigin1);
+    CHECK(test_relying_party_url.is_valid());
+    return url::Origin::Create(test_relying_party_url);
+  }
+
+  std::string GetTestClientDataJSON(std::string type) {
+    return AuthenticatorImpl::SerializeCollectedClientDataToJson(
+        std::move(type), GetTestOrigin(), GetTestChallengeBytes(),
+        base::nullopt);
+  }
+
+  std::string GetTokenBindingTestClientDataJSON(
+      base::Optional<base::span<const uint8_t>> token_binding) {
+    return AuthenticatorImpl::SerializeCollectedClientDataToJson(
+        client_data::kGetType, GetTestOrigin(), GetTestChallengeBytes(),
+        token_binding);
+  }
+
+  AuthenticatorStatus TryAuthenticationWithAppId(const std::string& origin,
+                                                 const std::string& appid) {
+    const GURL origin_url(origin);
+    NavigateAndCommit(origin_url);
+    AuthenticatorPtr authenticator = ConnectToAuthenticator();
+    PublicKeyCredentialRequestOptionsPtr options =
+        GetTestPublicKeyCredentialRequestOptions();
+    options->relying_party_id = origin_url.host();
+    options->appid = appid;
+
+    TestGetAssertionCallback cb;
+    authenticator->GetAssertion(std::move(options), cb.callback());
+    cb.WaitForCallback();
+
+    return cb.status();
   }
 
  private:
   std::unique_ptr<AuthenticatorImpl> authenticator_impl_;
 };
 
-class TestMakeCredentialCallback {
- public:
-  TestMakeCredentialCallback()
-      : callback_(base::Bind(&TestMakeCredentialCallback::ReceivedCallback,
-                             base::Unretained(this))) {}
-  ~TestMakeCredentialCallback() {}
+// Verify behavior for various combinations of origins and RP IDs.
+TEST_F(AuthenticatorImplTest, MakeCredentialOriginAndRpIds) {
+  // These instances should return security errors (for circumstances
+  // that would normally crash the renderer).
+  for (auto test_case : kInvalidRelyingPartyTestCases) {
+    SCOPED_TRACE(std::string(test_case.claimed_authority) + " " +
+                 std::string(test_case.origin));
 
-  void ReceivedCallback(AuthenticatorStatus status,
-                        PublicKeyCredentialInfoPtr credential) {
-    response_ = std::make_pair(status, std::move(credential));
-    closure_.Run();
+    NavigateAndCommit(GURL(test_case.origin));
+    AuthenticatorPtr authenticator = ConnectToAuthenticator();
+    PublicKeyCredentialCreationOptionsPtr options =
+        GetTestPublicKeyCredentialCreationOptions();
+    options->relying_party->id = test_case.claimed_authority;
+    TestMakeCredentialCallback cb;
+    authenticator->MakeCredential(std::move(options), cb.callback());
+    cb.WaitForCallback();
+    EXPECT_EQ(AuthenticatorStatus::INVALID_DOMAIN, cb.status());
   }
 
-  std::pair<AuthenticatorStatus, PublicKeyCredentialInfoPtr>&
-  WaitForCallback() {
-    closure_ = run_loop_.QuitClosure();
-    run_loop_.Run();
-    return response_;
+  // These instances pass the origin and relying party checks and return at
+  // the algorithm check.
+  for (auto test_case : kValidRelyingPartyTestCases) {
+    SCOPED_TRACE(std::string(test_case.claimed_authority) + " " +
+                 std::string(test_case.origin));
+
+    NavigateAndCommit(GURL(test_case.origin));
+    AuthenticatorPtr authenticator = ConnectToAuthenticator();
+    PublicKeyCredentialCreationOptionsPtr options =
+        GetTestPublicKeyCredentialCreationOptions();
+    options->relying_party->id = test_case.claimed_authority;
+    options->public_key_parameters = GetTestPublicKeyCredentialParameters(123);
+
+    TestMakeCredentialCallback cb;
+    authenticator->MakeCredential(std::move(options), cb.callback());
+    cb.WaitForCallback();
+    EXPECT_EQ(AuthenticatorStatus::ALGORITHM_UNSUPPORTED, cb.status());
   }
-
-  const base::Callback<void(AuthenticatorStatus status,
-                            PublicKeyCredentialInfoPtr credential)>&
-  callback() {
-    return callback_;
-  }
-
- private:
-  std::pair<AuthenticatorStatus, PublicKeyCredentialInfoPtr> response_;
-  base::Closure closure_;
-  base::Callback<void(AuthenticatorStatus status,
-                      PublicKeyCredentialInfoPtr credential)>
-      callback_;
-  base::RunLoop run_loop_;
-};
-
-}  // namespace
-
-// Test that service returns NOT_ALLOWED_ERROR on a call to MakeCredential with
-// an opaque origin.
-TEST_F(AuthenticatorImplTest, MakeCredentialOpaqueOrigin) {
-  NavigateAndCommit(GURL("data:text/html,opaque"));
-  AuthenticatorPtr authenticator = ConnectToAuthenticator();
-  MakePublicKeyCredentialOptionsPtr options =
-      GetTestMakePublicKeyCredentialOptions();
-
-  TestMakeCredentialCallback cb;
-  authenticator->MakeCredential(std::move(options), cb.callback());
-  std::pair<webauth::mojom::AuthenticatorStatus,
-            webauth::mojom::PublicKeyCredentialInfoPtr>& response =
-      cb.WaitForCallback();
-  EXPECT_EQ(webauth::mojom::AuthenticatorStatus::NOT_ALLOWED_ERROR,
-            response.first);
 }
 
-// Test that service returns NOT_SUPPORTED_ERROR if no parameters contain
+// Test that service returns ALGORITHM_UNSUPPORTED if no parameters contain
 // a supported algorithm.
 TEST_F(AuthenticatorImplTest, MakeCredentialNoSupportedAlgorithm) {
   SimulateNavigation(GURL(kTestOrigin1));
   AuthenticatorPtr authenticator = ConnectToAuthenticator();
 
-  MakePublicKeyCredentialOptionsPtr options =
-      GetTestMakePublicKeyCredentialOptions();
+  PublicKeyCredentialCreationOptionsPtr options =
+      GetTestPublicKeyCredentialCreationOptions();
   options->public_key_parameters = GetTestPublicKeyCredentialParameters(123);
 
   TestMakeCredentialCallback cb;
   authenticator->MakeCredential(std::move(options), cb.callback());
-  std::pair<webauth::mojom::AuthenticatorStatus,
-            webauth::mojom::PublicKeyCredentialInfoPtr>& response =
-      cb.WaitForCallback();
-  EXPECT_EQ(webauth::mojom::AuthenticatorStatus::NOT_SUPPORTED_ERROR,
-            response.first);
+  cb.WaitForCallback();
+  EXPECT_EQ(AuthenticatorStatus::ALGORITHM_UNSUPPORTED, cb.status());
+}
+
+// Test that service returns USER_VERIFICATION_UNSUPPORTED if user verification
+// is REQUIRED for get().
+TEST_F(AuthenticatorImplTest, GetAssertionUserVerification) {
+  SimulateNavigation(GURL(kTestOrigin1));
+  AuthenticatorPtr authenticator = ConnectToAuthenticator();
+
+  PublicKeyCredentialRequestOptionsPtr options =
+      GetTestPublicKeyCredentialRequestOptions();
+  options->user_verification =
+      webauth::mojom::UserVerificationRequirement::REQUIRED;
+  TestGetAssertionCallback cb;
+  authenticator->GetAssertion(std::move(options), cb.callback());
+  cb.WaitForCallback();
+  EXPECT_EQ(AuthenticatorStatus::USER_VERIFICATION_UNSUPPORTED, cb.status());
+}
+
+// Test that service returns AUTHENTICATOR_CRITERIA_UNSUPPORTED if user
+// verification is REQUIRED for create().
+TEST_F(AuthenticatorImplTest, MakeCredentialUserVerification) {
+  SimulateNavigation(GURL(kTestOrigin1));
+  AuthenticatorPtr authenticator = ConnectToAuthenticator();
+
+  PublicKeyCredentialCreationOptionsPtr options =
+      GetTestPublicKeyCredentialCreationOptions();
+  options->authenticator_selection->user_verification =
+      webauth::mojom::UserVerificationRequirement::REQUIRED;
+
+  TestMakeCredentialCallback cb;
+  authenticator->MakeCredential(std::move(options), cb.callback());
+  cb.WaitForCallback();
+  EXPECT_EQ(AuthenticatorStatus::AUTHENTICATOR_CRITERIA_UNSUPPORTED,
+            cb.status());
+}
+
+// Test that service returns AUTHENTICATOR_CRITERIA_UNSUPPORTED if resident key
+// is requested for create().
+TEST_F(AuthenticatorImplTest, MakeCredentialResidentKey) {
+  SimulateNavigation(GURL(kTestOrigin1));
+  AuthenticatorPtr authenticator = ConnectToAuthenticator();
+
+  PublicKeyCredentialCreationOptionsPtr options =
+      GetTestPublicKeyCredentialCreationOptions();
+  options->authenticator_selection->require_resident_key = true;
+
+  TestMakeCredentialCallback cb;
+  authenticator->MakeCredential(std::move(options), cb.callback());
+  cb.WaitForCallback();
+  EXPECT_EQ(AuthenticatorStatus::AUTHENTICATOR_CRITERIA_UNSUPPORTED,
+            cb.status());
+}
+
+// Test that service returns AUTHENTICATOR_CRITERIA_UNSUPPORTED if a platform
+// authenticator is requested for U2F.
+TEST_F(AuthenticatorImplTest, MakeCredentialPlatformAuthenticator) {
+  SimulateNavigation(GURL(kTestOrigin1));
+  AuthenticatorPtr authenticator = ConnectToAuthenticator();
+
+  PublicKeyCredentialCreationOptionsPtr options =
+      GetTestPublicKeyCredentialCreationOptions();
+  options->authenticator_selection->authenticator_attachment =
+      webauth::mojom::AuthenticatorAttachment::PLATFORM;
+
+  TestMakeCredentialCallback cb;
+  authenticator->MakeCredential(std::move(options), cb.callback());
+  cb.WaitForCallback();
+  EXPECT_EQ(AuthenticatorStatus::AUTHENTICATOR_CRITERIA_UNSUPPORTED,
+            cb.status());
+}
+
+// Parses its arguments as JSON and expects that all the keys in the first are
+// also in the second, and with the same value.
+void CheckJSONIsSubsetOfJSON(base::StringPiece subset_str,
+                             base::StringPiece test_str) {
+  std::unique_ptr<base::Value> subset(base::JSONReader::Read(subset_str));
+  ASSERT_TRUE(subset);
+  ASSERT_TRUE(subset->is_dict());
+  std::unique_ptr<base::Value> test(base::JSONReader::Read(test_str));
+  ASSERT_TRUE(test);
+  ASSERT_TRUE(test->is_dict());
+
+  for (const auto& item : subset->DictItems()) {
+    base::Value* test_value = test->FindKey(item.first);
+    if (test_value == nullptr) {
+      ADD_FAILURE() << item.first << " does not exist in the test dictionary";
+      continue;
+    }
+
+    if (!item.second.Equals(test_value)) {
+      std::string want, got;
+      ASSERT_TRUE(base::JSONWriter::Write(item.second, &want));
+      ASSERT_TRUE(base::JSONWriter::Write(*test_value, &got));
+      ADD_FAILURE() << "Value of " << item.first << " is unequal: want " << want
+                    << " got " << got;
+    }
+  }
 }
 
 // Test that client data serializes to JSON properly.
-TEST_F(AuthenticatorImplTest, TestSerializedClientData) {
-  EXPECT_EQ(
-      kTestClientDataJsonString,
-      GetTestClientData(authenticator_utils::kCreateType)->SerializeToJson());
+TEST_F(AuthenticatorImplTest, TestSerializedRegisterClientData) {
+  CheckJSONIsSubsetOfJSON(kTestRegisterClientDataJsonString,
+                          GetTestClientDataJSON(client_data::kCreateType));
 }
 
-// Test that an EC public key serializes to CBOR properly.
-TEST_F(AuthenticatorImplTest, TestSerializedPublicKey) {
-  std::unique_ptr<ECPublicKey> public_key =
-      ECPublicKey::ExtractFromU2fRegistrationResponse(
-          authenticator_utils::kEs256, GetTestRegisterResponse());
-  EXPECT_EQ(GetTestECPublicKeyCBOR(), public_key->EncodeAsCBOR());
+TEST_F(AuthenticatorImplTest, TestSerializedSignClientData) {
+  CheckJSONIsSubsetOfJSON(kTestSignClientDataJsonString,
+                          GetTestClientDataJSON(client_data::kGetType));
 }
 
-// Test that the attestation statement cbor map is constructed properly.
-TEST_F(AuthenticatorImplTest, TestU2fAttestationStatementCBOR) {
-  std::unique_ptr<FidoAttestationStatement> fido_attestation_statement =
-      FidoAttestationStatement::CreateFromU2fRegisterResponse(
-          GetTestRegisterResponse());
-  auto cbor =
-      CBORWriter::Write(CBORValue(fido_attestation_statement->GetAsCBORMap()));
-  ASSERT_TRUE(cbor.has_value());
-  EXPECT_EQ(GetU2fAttestationStatementCBOR(), cbor.value());
+TEST_F(AuthenticatorImplTest, TestTokenBindingClientData) {
+  const std::vector<
+      std::pair<base::Optional<std::vector<uint8_t>>, const char*>>
+      kTestCases = {
+          std::make_pair(base::nullopt,
+                         R"({"tokenBinding":{"status":"not-supported"}})"),
+          std::make_pair(std::vector<uint8_t>{},
+                         R"({"tokenBinding":{"status":"supported"}})"),
+          std::make_pair(
+              std::vector<uint8_t>{1, 2, 3, 4},
+              R"({"tokenBinding":{"status":"present","id":"AQIDBA"}})"),
+      };
+
+  for (const auto& test : kTestCases) {
+    const auto& token_binding = test.first;
+    const std::string expected_json_subset = test.second;
+    SCOPED_TRACE(expected_json_subset);
+
+    CheckJSONIsSubsetOfJSON(expected_json_subset,
+                            GetTokenBindingTestClientDataJSON(token_binding));
+  }
 }
 
-// Tests that well-formed attested credential data serializes properly.
-TEST_F(AuthenticatorImplTest, TestAttestedCredentialData) {
-  std::unique_ptr<ECPublicKey> public_key =
-      ECPublicKey::ExtractFromU2fRegistrationResponse(
-          authenticator_utils::kEs256, GetTestRegisterResponse());
-  std::unique_ptr<AttestedCredentialData> attested_data =
-      AttestedCredentialData::CreateFromU2fRegisterResponse(
-          GetTestRegisterResponse(), std::vector<uint8_t>(16, 0) /* aaguid */,
-          std::move(public_key));
+TEST_F(AuthenticatorImplTest, TestMakeCredentialTimeout) {
+  SimulateNavigation(GURL(kTestOrigin1));
+  PublicKeyCredentialCreationOptionsPtr options =
+      GetTestPublicKeyCredentialCreationOptions();
+  TestMakeCredentialCallback cb;
 
-  EXPECT_EQ(GetTestAttestedCredentialDataBytes(),
-            attested_data->SerializeAsBytes());
+  // Set up service_manager::Connector for tests.
+  auto fake_hid_manager = std::make_unique<device::FakeHidManager>();
+  service_manager::mojom::ConnectorRequest request;
+  auto connector = service_manager::Connector::Create(&request);
+  service_manager::Connector::TestApi test_api(connector.get());
+  test_api.OverrideBinderForTesting(
+      service_manager::Identity(device::mojom::kServiceName),
+      device::mojom::HidManager::Name_,
+      base::Bind(&device::FakeHidManager::AddBinding,
+                 base::Unretained(fake_hid_manager.get())));
+
+  // Set up a timer for testing.
+  auto task_runner = base::MakeRefCounted<base::TestMockTimeTaskRunner>(
+      base::Time::Now(), base::TimeTicks::Now());
+  auto timer =
+      std::make_unique<base::OneShotTimer>(task_runner->GetMockTickClock());
+  timer->SetTaskRunner(task_runner);
+  AuthenticatorPtr authenticator =
+      ConnectToAuthenticator(connector.get(), std::move(timer));
+
+  authenticator->MakeCredential(std::move(options), cb.callback());
+
+  // Trigger timer.
+  base::RunLoop().RunUntilIdle();
+  task_runner->FastForwardBy(base::TimeDelta::FromMinutes(1));
+  cb.WaitForCallback();
+  EXPECT_EQ(AuthenticatorStatus::NOT_ALLOWED_ERROR, cb.status());
 }
 
-// Tests that well-formed authenticator data serializes properly.
-TEST_F(AuthenticatorImplTest, TestAuthenticatorData) {
-  std::unique_ptr<ECPublicKey> public_key =
-      ECPublicKey::ExtractFromU2fRegistrationResponse(
-          authenticator_utils::kEs256, GetTestRegisterResponse());
-  std::unique_ptr<AttestedCredentialData> attested_data =
-      AttestedCredentialData::CreateFromU2fRegisterResponse(
-          GetTestRegisterResponse(), std::vector<uint8_t>(16, 0) /* aaguid */,
-          std::move(public_key));
+// Verify behavior for various combinations of origins and RP IDs.
+TEST_F(AuthenticatorImplTest, GetAssertionOriginAndRpIds) {
+  // These instances should return security errors (for circumstances
+  // that would normally crash the renderer).
+  for (const OriginClaimedAuthorityPair& test_case :
+       kInvalidRelyingPartyTestCases) {
+    SCOPED_TRACE(std::string(test_case.claimed_authority) + " " +
+                 std::string(test_case.origin));
 
-  AuthenticatorData::Flags flags =
-      static_cast<AuthenticatorData::Flags>(
-          AuthenticatorData::Flag::TEST_OF_USER_PRESENCE) |
-      static_cast<AuthenticatorData::Flags>(
-          AuthenticatorData::Flag::ATTESTATION);
+    NavigateAndCommit(GURL(test_case.origin));
+    AuthenticatorPtr authenticator = ConnectToAuthenticator();
+    PublicKeyCredentialRequestOptionsPtr options =
+        GetTestPublicKeyCredentialRequestOptions();
+    options->relying_party_id = test_case.claimed_authority;
 
-  std::unique_ptr<AuthenticatorData> authenticator_data =
-      AuthenticatorData::Create(
-          GetTestClientData(authenticator_utils::kCreateType)
-              ->SerializeToJson(),
-          flags, std::vector<uint8_t>(4, 0) /* counter */,
-          std::move(attested_data));
-
-  EXPECT_EQ(GetTestAuthenticatorDataBytes(),
-            authenticator_data->SerializeToByteArray());
+    TestGetAssertionCallback cb;
+    authenticator->GetAssertion(std::move(options), cb.callback());
+    cb.WaitForCallback();
+    EXPECT_EQ(AuthenticatorStatus::INVALID_DOMAIN, cb.status());
+  }
 }
 
-// Tests that a U2F attestation object serializes properly.
-TEST_F(AuthenticatorImplTest, TestU2fAttestationObject) {
-  std::unique_ptr<ECPublicKey> public_key =
-      ECPublicKey::ExtractFromU2fRegistrationResponse(
-          authenticator_utils::kEs256, GetTestRegisterResponse());
-  std::unique_ptr<AttestedCredentialData> attested_data =
-      AttestedCredentialData::CreateFromU2fRegisterResponse(
-          GetTestRegisterResponse(), std::vector<uint8_t>(16, 0) /* aaguid */,
-          std::move(public_key));
+constexpr OriginClaimedAuthorityPair kValidAppIdCases[] = {
+    {"https://example.com", "https://example.com"},
+    {"https://www.example.com", "https://example.com"},
+    {"https://example.com", "https://www.example.com"},
+    {"https://example.com", "https://foo.bar.example.com"},
+    {"https://example.com", "https://foo.bar.example.com/foo/bar"},
+    {"https://google.com", "https://www.gstatic.com/securitykey/origins.json"},
+    {"https://www.google.com",
+     "https://www.gstatic.com/securitykey/origins.json"},
+    {"https://www.google.com",
+     "https://www.gstatic.com/securitykey/a/google.com/origins.json"},
+    {"https://accounts.google.com",
+     "https://www.gstatic.com/securitykey/origins.json"},
+};
 
-  AuthenticatorData::Flags flags =
-      static_cast<AuthenticatorData::Flags>(
-          AuthenticatorData::Flag::TEST_OF_USER_PRESENCE) |
-      static_cast<AuthenticatorData::Flags>(
-          AuthenticatorData::Flag::ATTESTATION);
-  std::unique_ptr<AuthenticatorData> authenticator_data =
-      AuthenticatorData::Create(
-          GetTestClientData(authenticator_utils::kCreateType)
-              ->SerializeToJson(),
-          flags, std::vector<uint8_t>(4, 0) /* counter */,
-          std::move(attested_data));
+// Verify behavior for various combinations of origins and RP IDs.
+TEST_F(AuthenticatorImplTest, AppIdExtension) {
+  TestServiceManagerContext smc;
+  device::test::ScopedVirtualFidoDevice virtual_device;
 
-  // Construct the attestation statement.
-  std::unique_ptr<FidoAttestationStatement> fido_attestation_statement =
-      FidoAttestationStatement::CreateFromU2fRegisterResponse(
-          GetTestRegisterResponse());
+  for (const auto& test_case : kValidAppIdCases) {
+    SCOPED_TRACE(std::string(test_case.origin) + " " +
+                 std::string(test_case.claimed_authority));
 
-  // Construct the attestation object.
-  auto attestation_object = std::make_unique<AttestationObject>(
-      std::move(authenticator_data), std::move(fido_attestation_statement));
+    EXPECT_EQ(AuthenticatorStatus::CREDENTIAL_NOT_RECOGNIZED,
+              TryAuthenticationWithAppId(test_case.origin,
+                                         test_case.claimed_authority));
+  }
 
-  EXPECT_EQ(GetTestAttestationObjectBytes(),
-            attestation_object->SerializeToCBOREncodedBytes());
+  // All the invalid relying party test cases should also be invalid as AppIDs.
+  for (const auto& test_case : kInvalidRelyingPartyTestCases) {
+    SCOPED_TRACE(std::string(test_case.origin) + " " +
+                 std::string(test_case.claimed_authority));
+
+    if (strlen(test_case.claimed_authority) == 0) {
+      // In this case, no AppID is actually being tested.
+      continue;
+    }
+
+    EXPECT_EQ(AuthenticatorStatus::INVALID_DOMAIN,
+              TryAuthenticationWithAppId(test_case.origin,
+                                         test_case.claimed_authority));
+  }
 }
 
-// Test that a U2F register response is properly parsed.
-TEST_F(AuthenticatorImplTest, TestRegisterResponseData) {
-  std::unique_ptr<CollectedClientData> client_data =
-      GetTestClientData(authenticator_utils::kCreateType);
-  std::unique_ptr<RegisterResponseData> response =
-      RegisterResponseData::CreateFromU2fRegisterResponse(
-          std::move(client_data), GetTestRegisterResponse());
+TEST_F(AuthenticatorImplTest, TestGetAssertionTimeout) {
+  SimulateNavigation(GURL(kTestOrigin1));
+  PublicKeyCredentialRequestOptionsPtr options =
+      GetTestPublicKeyCredentialRequestOptions();
+  TestGetAssertionCallback cb;
 
-  EXPECT_EQ(std::vector<uint8_t>(
-                kTestClientDataJsonString,
-                kTestClientDataJsonString + strlen(kTestClientDataJsonString)),
-            response->GetClientDataJSONBytes());
-  EXPECT_EQ(GetTestCredentialRawIdBytes(), response->raw_id());
-  EXPECT_EQ(GetTestAttestationObjectBytes(),
-            response->GetCBOREncodedAttestationObject());
+  // Set up service_manager::Connector for tests.
+  auto fake_hid_manager = std::make_unique<device::FakeHidManager>();
+  service_manager::mojom::ConnectorRequest request;
+  auto connector = service_manager::Connector::Create(&request);
+  service_manager::Connector::TestApi test_api(connector.get());
+  test_api.OverrideBinderForTesting(
+      service_manager::Identity(device::mojom::kServiceName),
+      device::mojom::HidManager::Name_,
+      base::Bind(&device::FakeHidManager::AddBinding,
+                 base::Unretained(fake_hid_manager.get())));
+
+  // Set up a timer for testing.
+  auto task_runner = base::MakeRefCounted<base::TestMockTimeTaskRunner>(
+      base::Time::Now(), base::TimeTicks::Now());
+  auto timer =
+      std::make_unique<base::OneShotTimer>(task_runner->GetMockTickClock());
+  timer->SetTaskRunner(task_runner);
+  AuthenticatorPtr authenticator =
+      ConnectToAuthenticator(connector.get(), std::move(timer));
+
+  authenticator->GetAssertion(std::move(options), cb.callback());
+
+  // Trigger timer.
+  base::RunLoop().RunUntilIdle();
+  task_runner->FastForwardBy(base::TimeDelta::FromMinutes(1));
+  cb.WaitForCallback();
+  EXPECT_EQ(AuthenticatorStatus::NOT_ALLOWED_ERROR, cb.status());
+}
+
+TEST_F(AuthenticatorImplTest, OversizedCredentialId) {
+  device::test::ScopedVirtualFidoDevice scoped_virtual_device;
+  TestServiceManagerContext service_manager_context;
+
+  // 255 is the maximum size of a U2F credential ID. We also test one greater
+  // (256) to ensure that nothing untoward happens.
+  const std::vector<size_t> kSizes = {255, 256};
+
+  for (const size_t size : kSizes) {
+    SCOPED_TRACE(size);
+
+    SimulateNavigation(GURL(kTestOrigin1));
+    AuthenticatorPtr authenticator = ConnectToAuthenticator();
+    PublicKeyCredentialRequestOptionsPtr options =
+        GetTestPublicKeyCredentialRequestOptions();
+    auto credential = PublicKeyCredentialDescriptor::New();
+    credential->type = PublicKeyCredentialType::PUBLIC_KEY;
+    credential->id.resize(size);
+
+    const bool should_be_valid = size < 256;
+    if (should_be_valid) {
+      ASSERT_TRUE(scoped_virtual_device.mutable_state()->InjectRegistration(
+          credential->id, kTestRelyingPartyId));
+    }
+
+    options->allow_credentials.emplace_back(std::move(credential));
+
+    TestGetAssertionCallback cb;
+    authenticator->GetAssertion(std::move(options), cb.callback());
+    cb.WaitForCallback();
+
+    if (should_be_valid) {
+      EXPECT_EQ(AuthenticatorStatus::SUCCESS, cb.status());
+    } else {
+      EXPECT_EQ(AuthenticatorStatus::CREDENTIAL_NOT_RECOGNIZED, cb.status());
+    }
+  }
+}
+
+TEST_F(AuthenticatorImplTest, TestU2fDeviceDoesNotSupportMakeCredential) {
+  base::test::ScopedFeatureList scoped_feature_list;
+  scoped_feature_list.InitAndEnableFeature(features::kWebAuthCtap2);
+
+  SimulateNavigation(GURL(kTestOrigin1));
+  PublicKeyCredentialCreationOptionsPtr options =
+      GetTestPublicKeyCredentialCreationOptions();
+  TestMakeCredentialCallback cb;
+
+  // Set up service_manager::Connector for tests.
+  auto fake_hid_manager = std::make_unique<device::FakeHidManager>();
+  service_manager::mojom::ConnectorRequest request;
+  auto connector = service_manager::Connector::Create(&request);
+
+  // Set up a timer for testing.
+  auto task_runner = base::MakeRefCounted<base::TestMockTimeTaskRunner>(
+      base::Time::Now(), base::TimeTicks::Now());
+  auto timer =
+      std::make_unique<base::OneShotTimer>(task_runner->GetMockTickClock());
+  timer->SetTaskRunner(task_runner);
+  AuthenticatorPtr authenticator =
+      ConnectToAuthenticator(connector.get(), std::move(timer));
+
+  device::test::ScopedVirtualFidoDevice virtual_device;
+  authenticator->MakeCredential(std::move(options), cb.callback());
+
+  // Trigger timer.
+  base::RunLoop().RunUntilIdle();
+  task_runner->FastForwardBy(base::TimeDelta::FromMinutes(1));
+  cb.WaitForCallback();
+  EXPECT_EQ(AuthenticatorStatus::NOT_ALLOWED_ERROR, cb.status());
+}
+
+TEST_F(AuthenticatorImplTest, TestU2fDeviceDoesNotSupportGetAssertion) {
+  base::test::ScopedFeatureList scoped_feature_list;
+  scoped_feature_list.InitAndEnableFeature(features::kWebAuthCtap2);
+
+  SimulateNavigation(GURL(kTestOrigin1));
+  PublicKeyCredentialRequestOptionsPtr options =
+      GetTestPublicKeyCredentialRequestOptions();
+  TestGetAssertionCallback cb;
+
+  // Set up service_manager::Connector for tests.
+  auto fake_hid_manager = std::make_unique<device::FakeHidManager>();
+  service_manager::mojom::ConnectorRequest request;
+  auto connector = service_manager::Connector::Create(&request);
+
+  // Set up a timer for testing.
+  auto task_runner = base::MakeRefCounted<base::TestMockTimeTaskRunner>(
+      base::Time::Now(), base::TimeTicks::Now());
+  auto timer =
+      std::make_unique<base::OneShotTimer>(task_runner->GetMockTickClock());
+  timer->SetTaskRunner(task_runner);
+  AuthenticatorPtr authenticator =
+      ConnectToAuthenticator(connector.get(), std::move(timer));
+
+  device::test::ScopedVirtualFidoDevice virtual_device;
+  authenticator->GetAssertion(std::move(options), cb.callback());
+
+  // Trigger timer.
+  base::RunLoop().RunUntilIdle();
+  task_runner->FastForwardBy(base::TimeDelta::FromMinutes(1));
+  cb.WaitForCallback();
+  EXPECT_EQ(AuthenticatorStatus::NOT_ALLOWED_ERROR, cb.status());
+}
+
+TEST_F(AuthenticatorImplTest, GetAssertionWithEmptyAllowCredentials) {
+  device::test::ScopedVirtualFidoDevice scoped_virtual_device;
+  TestServiceManagerContext service_manager_context;
+
+  SimulateNavigation(GURL(kTestOrigin1));
+  AuthenticatorPtr authenticator = ConnectToAuthenticator();
+  PublicKeyCredentialRequestOptionsPtr options =
+      GetTestPublicKeyCredentialRequestOptions();
+  options->allow_credentials.clear();
+
+  TestGetAssertionCallback cb;
+  authenticator->GetAssertion(std::move(options), cb.callback());
+  cb.WaitForCallback();
+
+  EXPECT_EQ(AuthenticatorStatus::EMPTY_ALLOW_CREDENTIALS, cb.status());
+}
+
+enum class IndividualAttestation {
+  REQUESTED,
+  NOT_REQUESTED,
+};
+
+enum class AttestationConsent {
+  GRANTED,
+  DENIED,
+};
+
+// Implements ContentBrowserClient and allows webauthn-related calls to be
+// mocked.
+class AuthenticatorTestContentBrowserClient : public ContentBrowserClient {
+ public:
+  bool ShouldPermitIndividualAttestationForWebauthnRPID(
+      content::BrowserContext* browser_context,
+      const std::string& rp_id) override {
+    return individual_attestation_ == IndividualAttestation::REQUESTED;
+  }
+
+  void ShouldReturnAttestationForWebauthnRPID(
+      content::RenderFrameHost* rfh,
+      const std::string& rp_id,
+      const url::Origin& origin,
+      base::OnceCallback<void(bool)> callback) override {
+    std::move(callback).Run(attestation_consent_ ==
+                            AttestationConsent::GRANTED);
+  }
+
+  bool IsFocused(content::WebContents* web_contents) override {
+    return focused_;
+  }
+
+  void set_individual_attestation(IndividualAttestation value) {
+    individual_attestation_ = value;
+  }
+
+  void set_attestation_consent(AttestationConsent value) {
+    attestation_consent_ = value;
+  }
+
+  void set_focused(bool is_focused) { focused_ = is_focused; }
+
+ private:
+  IndividualAttestation individual_attestation_ =
+      IndividualAttestation::NOT_REQUESTED;
+  AttestationConsent attestation_consent_ = AttestationConsent::DENIED;
+  bool focused_ = true;
+};
+
+// A test class that installs and removes an
+// |AuthenticatorTestContentBrowserClient| automatically and can run tests
+// against simulated attestation results.
+class AuthenticatorContentBrowserClientTest : public AuthenticatorImplTest {
+ public:
+  AuthenticatorContentBrowserClientTest() = default;
+
+  struct TestCase {
+    AttestationConveyancePreference attestation_requested;
+    IndividualAttestation individual_attestation;
+    AttestationConsent attestation_consent;
+    AuthenticatorStatus expected_status;
+    const char* expected_attestation_format;
+    const char* expected_certificate_substring;
+  };
+
+  void SetUp() override {
+    AuthenticatorImplTest::SetUp();
+    old_client_ = SetBrowserClientForTesting(&test_client_);
+  }
+
+  void TearDown() override {
+    SetBrowserClientForTesting(old_client_);
+    AuthenticatorImplTest::TearDown();
+  }
+
+  void RunTestCases(const std::vector<TestCase>& tests) {
+    TestServiceManagerContext smc_;
+    AuthenticatorPtr authenticator = ConnectToAuthenticator();
+
+    for (size_t i = 0; i < tests.size(); i++) {
+      const auto& test = tests[i];
+      SCOPED_TRACE(test.attestation_consent == AttestationConsent::GRANTED
+                       ? "consent granted"
+                       : "consent denied");
+      SCOPED_TRACE(test.individual_attestation ==
+                           IndividualAttestation::REQUESTED
+                       ? "individual attestation"
+                       : "no individual attestation");
+      SCOPED_TRACE(
+          AttestationConveyancePreferenceToString(test.attestation_requested));
+      SCOPED_TRACE(i);
+
+      test_client_.set_individual_attestation(test.individual_attestation);
+      test_client_.set_attestation_consent(test.attestation_consent);
+
+      PublicKeyCredentialCreationOptionsPtr options =
+          GetTestPublicKeyCredentialCreationOptions();
+      options->relying_party->id = "example.com";
+      options->adjusted_timeout = base::TimeDelta::FromSeconds(1);
+      options->attestation = test.attestation_requested;
+      TestMakeCredentialCallback cb;
+      authenticator->MakeCredential(std::move(options), cb.callback());
+      cb.WaitForCallback();
+      ASSERT_EQ(test.expected_status, cb.status());
+
+      if (test.expected_status != AuthenticatorStatus::SUCCESS) {
+        ASSERT_STREQ("", test.expected_attestation_format);
+        continue;
+      }
+
+      base::Optional<CBORValue> attestation_value =
+          CBORReader::Read(cb.value()->attestation_object);
+      ASSERT_TRUE(attestation_value);
+      ASSERT_TRUE(attestation_value->is_map());
+      const auto& attestation = attestation_value->GetMap();
+      ExpectMapHasKeyWithStringValue(attestation, "fmt",
+                                     test.expected_attestation_format);
+      if (strlen(test.expected_certificate_substring) > 0) {
+        ExpectCertificateContainingSubstring(
+            attestation, test.expected_certificate_substring);
+      }
+    }
+  }
+
+ protected:
+  AuthenticatorTestContentBrowserClient test_client_;
+  device::test::ScopedVirtualFidoDevice virtual_device_;
+
+ private:
+  static const char* AttestationConveyancePreferenceToString(
+      AttestationConveyancePreference v) {
+    switch (v) {
+      case AttestationConveyancePreference::NONE:
+        return "none";
+      case AttestationConveyancePreference::INDIRECT:
+        return "indirect";
+      case AttestationConveyancePreference::DIRECT:
+        return "direct";
+      default:
+        NOTREACHED();
+        return "";
+    }
+  }
+
+  // Expects that |map| contains the given key with a string-value equal to
+  // |expected|.
+  static void ExpectMapHasKeyWithStringValue(const CBORValue::MapValue& map,
+                                             const char* key,
+                                             const char* expected) {
+    const auto it = map.find(CBORValue(key));
+    ASSERT_TRUE(it != map.end()) << "No such key '" << key << "'";
+    const auto& value = it->second;
+    EXPECT_TRUE(value.is_string())
+        << "Value of '" << key << "' has type "
+        << static_cast<int>(value.type()) << ", but expected to find a string";
+    EXPECT_EQ(std::string(expected), value.GetString())
+        << "Value of '" << key << "' is '" << value.GetString()
+        << "', but expected to find '" << expected << "'";
+  }
+
+  // Asserts that the webauthn attestation CBOR map in |attestation| contains
+  // a single X.509 certificate containing |substring|.
+  static void ExpectCertificateContainingSubstring(
+      const CBORValue::MapValue& attestation,
+      const std::string& substring) {
+    const auto& attestation_statement_it =
+        attestation.find(CBORValue("attStmt"));
+    ASSERT_TRUE(attestation_statement_it != attestation.end());
+    ASSERT_TRUE(attestation_statement_it->second.is_map());
+    const auto& attestation_statement =
+        attestation_statement_it->second.GetMap();
+    const auto& x5c_it = attestation_statement.find(CBORValue("x5c"));
+    ASSERT_TRUE(x5c_it != attestation_statement.end());
+    ASSERT_TRUE(x5c_it->second.is_array());
+    const auto& x5c = x5c_it->second.GetArray();
+    ASSERT_EQ(1u, x5c.size());
+    ASSERT_TRUE(x5c[0].is_bytestring());
+    base::StringPiece cert = x5c[0].GetBytestringAsString();
+    EXPECT_TRUE(cert.find(substring) != cert.npos);
+  }
+
+  ContentBrowserClient* old_client_ = nullptr;
+
+  DISALLOW_COPY_AND_ASSIGN(AuthenticatorContentBrowserClientTest);
+};
+
+TEST_F(AuthenticatorContentBrowserClientTest, AttestationBehaviour) {
+  const char kStandardCommonName[] = "U2F Attestation";
+  const char kIndividualCommonName[] = "Individual Cert";
+
+  const std::vector<TestCase> kTests = {
+      {
+          AttestationConveyancePreference::NONE,
+          IndividualAttestation::NOT_REQUESTED, AttestationConsent::DENIED,
+          AuthenticatorStatus::SUCCESS, "none", "",
+      },
+      {
+          AttestationConveyancePreference::NONE,
+          IndividualAttestation::REQUESTED, AttestationConsent::DENIED,
+          AuthenticatorStatus::SUCCESS, "none", "",
+      },
+      {
+          AttestationConveyancePreference::INDIRECT,
+          IndividualAttestation::NOT_REQUESTED, AttestationConsent::DENIED,
+          AuthenticatorStatus::NOT_ALLOWED_ERROR, "", "",
+      },
+      {
+          AttestationConveyancePreference::INDIRECT,
+          IndividualAttestation::REQUESTED, AttestationConsent::DENIED,
+          AuthenticatorStatus::NOT_ALLOWED_ERROR, "", "",
+      },
+      {
+          AttestationConveyancePreference::INDIRECT,
+          IndividualAttestation::NOT_REQUESTED, AttestationConsent::GRANTED,
+          AuthenticatorStatus::SUCCESS, "fido-u2f", kStandardCommonName,
+      },
+      {
+          AttestationConveyancePreference::INDIRECT,
+          IndividualAttestation::REQUESTED, AttestationConsent::GRANTED,
+          AuthenticatorStatus::SUCCESS, "fido-u2f", kIndividualCommonName,
+      },
+      {
+          AttestationConveyancePreference::DIRECT,
+          IndividualAttestation::NOT_REQUESTED, AttestationConsent::DENIED,
+          AuthenticatorStatus::NOT_ALLOWED_ERROR, "", "",
+      },
+      {
+          AttestationConveyancePreference::DIRECT,
+          IndividualAttestation::REQUESTED, AttestationConsent::DENIED,
+          AuthenticatorStatus::NOT_ALLOWED_ERROR, "", "",
+      },
+      {
+          AttestationConveyancePreference::DIRECT,
+          IndividualAttestation::NOT_REQUESTED, AttestationConsent::GRANTED,
+          AuthenticatorStatus::SUCCESS, "fido-u2f", kStandardCommonName,
+      },
+      {
+          AttestationConveyancePreference::DIRECT,
+          IndividualAttestation::REQUESTED, AttestationConsent::GRANTED,
+          AuthenticatorStatus::SUCCESS, "fido-u2f", kIndividualCommonName,
+      },
+  };
+
+  virtual_device_.mutable_state()->attestation_cert_common_name =
+      kStandardCommonName;
+  virtual_device_.mutable_state()->individual_attestation_cert_common_name =
+      kIndividualCommonName;
+  NavigateAndCommit(GURL("https://example.com"));
+
+  RunTestCases(kTests);
+}
+
+TEST_F(AuthenticatorContentBrowserClientTest,
+       InappropriatelyIdentifyingAttestation) {
+  // This common name is used by several devices that have inappropriately
+  // identifying attestation certificates.
+  const char kCommonName[] = "FT FIDO 0100";
+
+  const std::vector<TestCase> kTests = {
+      {
+          AttestationConveyancePreference::DIRECT,
+          IndividualAttestation::NOT_REQUESTED, AttestationConsent::DENIED,
+          AuthenticatorStatus::NOT_ALLOWED_ERROR, "", "",
+      },
+      {
+          AttestationConveyancePreference::DIRECT,
+          IndividualAttestation::NOT_REQUESTED, AttestationConsent::GRANTED,
+          AuthenticatorStatus::SUCCESS,
+          // If individual attestation was not requested then the attestation
+          // certificate will be removed, even if consent is given, because
+          // the consent isn't to be tracked.
+          "none", "",
+      },
+      {
+          AttestationConveyancePreference::DIRECT,
+          IndividualAttestation::REQUESTED, AttestationConsent::GRANTED,
+          AuthenticatorStatus::SUCCESS, "fido-u2f", kCommonName,
+      },
+  };
+
+  virtual_device_.mutable_state()->attestation_cert_common_name = kCommonName;
+  virtual_device_.mutable_state()->individual_attestation_cert_common_name =
+      kCommonName;
+  NavigateAndCommit(GURL("https://example.com"));
+
+  RunTestCases(kTests);
+}
+
+TEST_F(AuthenticatorContentBrowserClientTest, Unfocused) {
+  // When the |ContentBrowserClient| considers the tab to be unfocused,
+  // registration requests should fail with a |NOT_FOCUSED| error, but getting
+  // assertions should still work.
+  test_client_.set_focused(false);
+
+  NavigateAndCommit(GURL(kTestOrigin1));
+  AuthenticatorPtr authenticator = ConnectToAuthenticator();
+
+  {
+    PublicKeyCredentialCreationOptionsPtr options =
+        GetTestPublicKeyCredentialCreationOptions();
+    options->public_key_parameters = GetTestPublicKeyCredentialParameters(123);
+
+    TestMakeCredentialCallback cb;
+    authenticator->MakeCredential(std::move(options), cb.callback());
+    cb.WaitForCallback();
+    EXPECT_EQ(AuthenticatorStatus::NOT_FOCUSED, cb.status());
+  }
+
+  {
+    TestServiceManagerContext service_manager_context;
+
+    PublicKeyCredentialRequestOptionsPtr options =
+        GetTestPublicKeyCredentialRequestOptions();
+
+    auto credential = PublicKeyCredentialDescriptor::New();
+    credential->type = PublicKeyCredentialType::PUBLIC_KEY;
+    credential->id.resize(16);
+    ASSERT_TRUE(virtual_device_.mutable_state()->InjectRegistration(
+        credential->id, kTestRelyingPartyId));
+    options->allow_credentials.emplace_back(std::move(credential));
+
+    TestGetAssertionCallback cb;
+    authenticator->GetAssertion(std::move(options), cb.callback());
+    cb.WaitForCallback();
+
+    EXPECT_EQ(AuthenticatorStatus::SUCCESS, cb.status());
+  }
 }
 
 }  // namespace content

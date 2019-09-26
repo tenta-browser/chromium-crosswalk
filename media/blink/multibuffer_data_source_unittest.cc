@@ -20,8 +20,8 @@
 #include "media/blink/multibuffer_reader.h"
 #include "media/blink/resource_multibuffer_data_provider.h"
 #include "media/blink/test_response_generator.h"
-#include "third_party/WebKit/public/platform/WebURL.h"
-#include "third_party/WebKit/public/platform/WebURLResponse.h"
+#include "third_party/blink/public/platform/web_url.h"
+#include "third_party/blink/public/platform/web_url_response.h"
 
 using ::testing::_;
 using ::testing::Assign;
@@ -46,7 +46,9 @@ std::set<TestMultiBufferDataProvider*> test_data_providers;
 class TestMultiBufferDataProvider : public ResourceMultiBufferDataProvider {
  public:
   TestMultiBufferDataProvider(UrlData* url_data, MultiBuffer::BlockId pos)
-      : ResourceMultiBufferDataProvider(url_data, pos) {
+      : ResourceMultiBufferDataProvider(url_data,
+                                        pos,
+                                        false /* is_client_audio_element */) {
     CHECK(test_data_providers.insert(this).second);
   }
   ~TestMultiBufferDataProvider() override {
@@ -80,9 +82,9 @@ class TestResourceMultiBuffer : public ResourceMultiBuffer {
   explicit TestResourceMultiBuffer(UrlData* url_data, int shift)
       : ResourceMultiBuffer(url_data, shift) {}
 
-  std::unique_ptr<MultiBuffer::DataProvider> CreateWriter(
-      const BlockId& pos) override {
-    auto writer = base::MakeUnique<TestMultiBufferDataProvider>(url_data_, pos);
+  std::unique_ptr<MultiBuffer::DataProvider> CreateWriter(const BlockId& pos,
+                                                          bool) override {
+    auto writer = std::make_unique<TestMultiBufferDataProvider>(url_data_, pos);
     writer->Start();
     return writer;
   }
@@ -210,10 +212,10 @@ class MultibufferDataSourceTest : public testing::Test {
   MultibufferDataSourceTest() : preload_(MultibufferDataSource::AUTO) {
     ON_CALL(fetch_context_, CreateUrlLoader(_))
         .WillByDefault(Invoke([](const blink::WebAssociatedURLLoaderOptions&) {
-          return base::MakeUnique<NiceMock<MockWebAssociatedURLLoader>>();
+          return std::make_unique<NiceMock<MockWebAssociatedURLLoader>>();
         }));
 
-    url_index_ = base::MakeUnique<TestUrlIndex>(&fetch_context_);
+    url_index_ = std::make_unique<TestUrlIndex>(&fetch_context_);
   }
 
   MOCK_METHOD1(OnInitialize, void(bool));
@@ -387,8 +389,8 @@ class MultibufferDataSourceTest : public testing::Test {
   }
 
   void CheckReadThenDefer() {
-    EXPECT_EQ(0, preload_low());
-    EXPECT_EQ(0, preload_high());
+    EXPECT_EQ(2 << 14, preload_low());
+    EXPECT_EQ(3 << 14, preload_high());
   }
 
   void CheckNeverDefer() {
@@ -1178,6 +1180,9 @@ TEST_F(MultibufferDataSourceTest, ExternalResource_Response206_VerifyDefer) {
   EXPECT_CALL(*this, ReadCallback(kDataSize));
   ReadAt(0);
 
+  EXPECT_CALL(host_, AddBufferedByteRange(0, kDataSize * 2));
+  ReceiveData(kDataSize);
+
   ASSERT_TRUE(active_loader());
   EXPECT_TRUE(data_provider()->deferred());
 }
@@ -1200,6 +1205,12 @@ TEST_F(MultibufferDataSourceTest,
 
   EXPECT_CALL(*this, ReadCallback(kDataSize));
   EXPECT_CALL(host_, AddBufferedByteRange(0, kDataSize * 2));
+  ReceiveData(kDataSize);
+
+  EXPECT_CALL(host_, AddBufferedByteRange(0, kDataSize * 3));
+  ReceiveData(kDataSize);
+
+  EXPECT_CALL(host_, AddBufferedByteRange(0, kDataSize * 4));
   ReceiveData(kDataSize);
 
   EXPECT_FALSE(active_loader_allownull());
@@ -1228,9 +1239,16 @@ TEST_F(MultibufferDataSourceTest,
 
   ReceiveDataLow(2000);
   EXPECT_CALL(host_, AddBufferedByteRange(0, kDataSize * 2 + 2000));
+  EXPECT_CALL(host_, AddBufferedByteRange(kDataSize * 2, kDataSize * 2 + 2000));
   ReceiveDataLow(kDataSize);
 
   base::RunLoop().RunUntilIdle();
+
+  EXPECT_CALL(host_, AddBufferedByteRange(0, kDataSize * 3 + 2000));
+  ReceiveData(kDataSize);
+
+  EXPECT_CALL(host_, AddBufferedByteRange(0, kDataSize * 4 + 2000));
+  ReceiveData(kDataSize);
 
   EXPECT_FALSE(active_loader_allownull());
 }

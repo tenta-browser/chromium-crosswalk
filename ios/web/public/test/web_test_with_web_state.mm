@@ -22,6 +22,7 @@
 
 using testing::WaitUntilConditionOrTimeout;
 using testing::kWaitForJSCompletionTimeout;
+using testing::kWaitForPageLoadTimeout;
 
 namespace {
 // Returns CRWWebController for the given |web_state|.
@@ -35,6 +36,10 @@ CRWWebController* GetWebController(web::WebState* web_state) {
 namespace web {
 
 WebTestWithWebState::WebTestWithWebState() {}
+
+WebTestWithWebState::WebTestWithWebState(
+    std::unique_ptr<web::WebClient> web_client)
+    : WebTest(std::move(web_client)) {}
 
 WebTestWithWebState::~WebTestWithWebState() {}
 
@@ -121,10 +126,11 @@ void WebTestWithWebState::LoadHtml(NSString* html, const GURL& url) {
     return web_controller.loadPhase == PAGE_LOADED;
   });
 
-  // Reload the page if script execution is not possible.
-  if (![ExecuteJavaScript(@"0;") isEqual:@0]) {
-    LoadHtml(html, url);
-  }
+  // Wait until the script execution is possible. Script execution will fail if
+  // WKUserScript was not jet injected by WKWebView.
+  ASSERT_TRUE(WaitUntilConditionOrTimeout(kWaitForPageLoadTimeout, ^bool {
+    return [ExecuteJavaScript(@"0;") isEqual:@0];
+  }));
 }
 
 void WebTestWithWebState::LoadHtml(NSString* html) {
@@ -132,8 +138,10 @@ void WebTestWithWebState::LoadHtml(NSString* html) {
   LoadHtml(html, url);
 }
 
-void WebTestWithWebState::LoadHtml(const std::string& html) {
+bool WebTestWithWebState::LoadHtml(const std::string& html) {
   LoadHtml(base::SysUTF8ToNSString(html));
+  // TODO(crbug.com/780062): LoadHtml(NSString*) should return bool.
+  return true;
 }
 
 void WebTestWithWebState::WaitForBackgroundTasks() {
@@ -163,7 +171,7 @@ void WebTestWithWebState::WaitForBackgroundTasks() {
 
 void WebTestWithWebState::WaitForCondition(ConditionBlock condition) {
   base::test::ios::WaitUntilCondition(condition, true,
-                                      base::TimeDelta::FromSeconds(10));
+                                      base::TimeDelta::FromSeconds(1000));
 }
 
 id WebTestWithWebState::ExecuteJavaScript(NSString* script) {
@@ -173,6 +181,11 @@ id WebTestWithWebState::ExecuteJavaScript(NSString* script) {
   [GetWebController(web_state())
       executeJavaScript:script
       completionHandler:^(id result, NSError* error) {
+        // Most of executed JS does not return the result, and there is no need
+        // to log WKErrorJavaScriptResultTypeIsUnsupported error code.
+        if (error && error.code != WKErrorJavaScriptResultTypeIsUnsupported) {
+          DLOG(WARNING) << base::SysNSStringToUTF8(error.localizedDescription);
+        }
         execution_result = [result copy];
         execution_completed = true;
       }];

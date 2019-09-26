@@ -57,17 +57,17 @@ class MemoryTracingTest : public ContentBrowserTest {
     // the run loop (which is the IN_PROC_BROWSER_TEST_F main thread).
     if (!task_runner->RunsTasksInCurrentSequence()) {
       task_runner->PostTask(
-          FROM_HERE,
-          base::BindOnce(&MemoryTracingTest::OnGlobalMemoryDumpDone,
-                         base::Unretained(this), task_runner, closure,
-                         request_index, success, dump_guid));
+          FROM_HERE, base::BindOnce(&MemoryTracingTest::OnGlobalMemoryDumpDone,
+                                    base::Unretained(this), task_runner,
+                                    std::move(closure), request_index, success,
+                                    dump_guid));
       return;
     }
     if (success)
       EXPECT_NE(0u, dump_guid);
     OnMemoryDumpDone(request_index, success);
     if (!closure.is_null())
-      closure.Run();
+      std::move(closure).Run();
   }
 
   void RequestGlobalDumpWithClosure(
@@ -85,11 +85,11 @@ class MemoryTracingTest : public ContentBrowserTest {
               RequestGlobalDumpAndAppendToTrace,
           base::Unretained(
               memory_instrumentation::MemoryInstrumentation::GetInstance()),
-          dump_type, level_of_detail, callback));
+          dump_type, level_of_detail, std::move(callback)));
     } else {
       memory_instrumentation::MemoryInstrumentation::GetInstance()
           ->RequestGlobalDumpAndAppendToTrace(dump_type, level_of_detail,
-                                              callback);
+                                              std::move(callback));
     }
   }
 
@@ -137,7 +137,9 @@ class MemoryTracingTest : public ContentBrowserTest {
         TracingControllerImpl::CreateCallbackEndpoint(base::BindRepeating(
             [](base::Closure quit_closure,
                std::unique_ptr<const base::DictionaryValue> metadata,
-               base::RefCountedString* trace_str) { quit_closure.Run(); },
+               base::RefCountedString* trace_str) {
+              std::move(quit_closure).Run();
+            },
             run_loop.QuitClosure())));
     EXPECT_TRUE(success);
     run_loop.Run();
@@ -185,10 +187,17 @@ class SingleProcessMemoryTracingTest : public MemoryTracingTest {
   }
 };
 
+// https://crbug.com/788788
+#if defined(OS_ANDROID) && defined(ADDRESS_SANITIZER)
+#define MAYBE_BrowserInitiatedSingleDump DISABLED_BrowserInitiatedSingleDump
+#else
+#define MAYBE_BrowserInitiatedSingleDump BrowserInitiatedSingleDump
+#endif  // defined(OS_ANDROID) && defined(ADDRESS_SANITIZER)
+
 // Checks that a memory dump initiated from a the main browser thread ends up in
 // a single dump even in single process mode.
 IN_PROC_BROWSER_TEST_F(SingleProcessMemoryTracingTest,
-                       BrowserInitiatedSingleDump) {
+                       MAYBE_BrowserInitiatedSingleDump) {
   Navigate(shell());
 
   EXPECT_CALL(*mock_dump_provider_, OnMemoryDump(_,_)).WillOnce(Return(true));
@@ -326,7 +335,8 @@ IN_PROC_BROWSER_TEST_F(SingleProcessMemoryTracingTest, DISABLED_QueuedDumps) {
 #endif  // defined(OS_ANDROID)
 
 // Non-deterministic races under TSan. crbug.com/529678
-#if defined(THREAD_SANITIZER)
+// Flaky on Mac. crbug.com/809809
+#if defined(THREAD_SANITIZER) || defined(OS_MACOSX)
 #define MAYBE_BrowserInitiatedDump DISABLED_BrowserInitiatedDump
 #else
 #define MAYBE_BrowserInitiatedDump BrowserInitiatedDump

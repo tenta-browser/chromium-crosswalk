@@ -36,7 +36,8 @@ FakeSigninManager::FakeSigninManager(
                     token_service,
                     account_tracker_service,
                     cookie_manager_service,
-                    signin_error_controller),
+                    signin_error_controller,
+                    signin::AccountConsistencyMethod::kDisabled),
       token_service_(token_service) {}
 
 FakeSigninManager::~FakeSigninManager() {}
@@ -62,11 +63,7 @@ void FakeSigninManager::StartSignInWithRefreshToken(
 void FakeSigninManager::CompletePendingSignin() {
   SetAuthenticatedAccountId(GetAccountIdForAuthInProgress());
   set_auth_in_progress(std::string());
-  for (auto& observer : observer_list_) {
-    observer.GoogleSigninSucceeded(authenticated_account_id_, username_);
-    observer.GoogleSigninSucceededWithPassword(authenticated_account_id_,
-                                               username_, password_);
-  }
+  FireGoogleSigninSucceeded();
 }
 
 void FakeSigninManager::SignIn(const std::string& gaia_id,
@@ -91,19 +88,30 @@ void FakeSigninManager::FailSignin(const GoogleServiceAuthError& error) {
 void FakeSigninManager::DoSignOut(
     signin_metrics::ProfileSignout signout_source_metric,
     signin_metrics::SignoutDelete signout_delete_metric,
-    bool remove_all_accounts) {
+    RemoveAccountsOption remove_option) {
   if (IsSignoutProhibited())
     return;
   set_auth_in_progress(std::string());
   set_password(std::string());
+  AccountInfo account_info = GetAuthenticatedAccountInfo();
   const std::string account_id = GetAuthenticatedAccountId();
-  const std::string username = GetAuthenticatedAccountInfo().email;
+  const std::string username = account_info.email;
   authenticated_account_id_.clear();
-  if (token_service_ && remove_all_accounts)
-    token_service_->RevokeAllCredentials();
+  switch (remove_option) {
+    case RemoveAccountsOption::kRemoveAllAccounts:
+      if (token_service_)
+        token_service_->RevokeAllCredentials();
+      break;
+    case RemoveAccountsOption::kRemoveAuthenticatedAccountIfInError:
+      if (token_service_ && token_service_->RefreshTokenHasError(account_id))
+        token_service_->RevokeCredentials(account_id);
+      break;
+    case RemoveAccountsOption::kKeepAllAccounts:
+      // Do nothing.
+      break;
+  }
 
-  for (auto& observer : observer_list_)
-    observer.GoogleSignedOut(account_id, username);
+  FireGoogleSignedOut(account_id, account_info);
 }
 
 #endif  // !defined (OS_CHROMEOS)

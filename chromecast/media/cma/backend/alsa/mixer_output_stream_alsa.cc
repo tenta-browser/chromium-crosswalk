@@ -77,7 +77,7 @@ constexpr int64_t kNoTimestamp = std::numeric_limits<int64_t>::min();
 constexpr char kOutputDeviceDefaultName[] = "default";
 
 constexpr bool kPcmRecoverIsSilent = false;
-constexpr int kDefaultOutputBufferSizeFrames = 4096;
+constexpr int kDefaultOutputBufferSizeFrames = 1024;
 
 // A list of supported sample rates.
 // TODO(jyw): move this up into chromecast/public for 1) documentation and
@@ -143,10 +143,6 @@ void MixerOutputStreamAlsa::SetAlsaWrapperForTest(
   alsa_ = std::move(alsa);
 }
 
-bool MixerOutputStreamAlsa::IsFixedSampleRate() {
-  return fixed_sample_rate_ != kInvalidSampleRate;
-}
-
 bool MixerOutputStreamAlsa::Start(int sample_rate, int channels) {
   if (!alsa_) {
     alsa_ = std::make_unique<AlsaWrapper>();
@@ -200,22 +196,9 @@ MixerOutputStreamAlsa::GetRenderingDelay() {
   return rendering_delay_;
 }
 
-bool MixerOutputStreamAlsa::GetTimeUntilUnderrun(base::TimeDelta* result) {
+int MixerOutputStreamAlsa::OptimalWriteFramesCount() {
   CHECK_PCM_INITIALIZED();
-  if (alsa_->PcmStatus(pcm_, pcm_status_) != 0) {
-    LOG(ERROR) << "Failed to get status";
-    return false;
-  }
-  if (alsa_->PcmStatusGetState(pcm_status_) == SND_PCM_STATE_XRUN) {
-    // Underrun already happened.
-    *result = base::TimeDelta();
-    return true;
-  }
-
-  int frames_in_buffer =
-      alsa_buffer_size_ - alsa_->PcmStatusGetAvail(pcm_status_);
-  *result = base::TimeDelta::FromSeconds(1) * frames_in_buffer / sample_rate_;
-  return true;
+  return alsa_period_size_;
 }
 
 bool MixerOutputStreamAlsa::Write(const float* data,
@@ -257,7 +240,7 @@ bool MixerOutputStreamAlsa::Write(const float* data,
     DCHECK_GE(frames_left, 0);
     output_data += frames_or_error * num_output_channels_ * bytes_per_sample;
   }
-  UpdateRenderingDelay(frames);
+  UpdateRenderingDelay();
 
   return true;
 }
@@ -403,11 +386,14 @@ void MixerOutputStreamAlsa::DefineAlsaParameters() {
       switches::kAlsaOutputBufferSize, kDefaultOutputBufferSizeFrames);
 
   alsa_period_size_ = GetSwitchValueNonNegativeInt(
-      switches::kAlsaOutputPeriodSize, alsa_buffer_size_ / 16);
+      switches::kAlsaOutputPeriodSize, alsa_buffer_size_ / 2);
   if (alsa_period_size_ >= alsa_buffer_size_) {
     LOG(DFATAL) << "ALSA period size must be smaller than the buffer size";
     alsa_period_size_ = alsa_buffer_size_ / 2;
   }
+
+  LOG(INFO) << "ALSA buffer = " << alsa_buffer_size_
+            << ", period = " << alsa_period_size_;
 
   alsa_start_threshold_ = GetSwitchValueNonNegativeInt(
       switches::kAlsaOutputStartThreshold,
@@ -427,22 +413,9 @@ void MixerOutputStreamAlsa::DefineAlsaParameters() {
     LOG(DFATAL) << "ALSA avail min must be no larger than the buffer size";
     alsa_avail_min_ = alsa_period_size_;
   }
-
-  fixed_sample_rate_ = GetSwitchValueNonNegativeInt(
-      switches::kAlsaFixedOutputSampleRate, kInvalidSampleRate);
-  if (fixed_sample_rate_ != kInvalidSampleRate) {
-    LOG(INFO) << "Setting fixed sample rate to " << fixed_sample_rate_;
-  }
 }
 
 int MixerOutputStreamAlsa::DetermineOutputRate(int requested_sample_rate) {
-  if (fixed_sample_rate_ != kInvalidSampleRate) {
-    LOG(INFO) << "Requested output rate is " << requested_sample_rate;
-    LOG(INFO) << "Cannot change rate since it is fixed to "
-              << fixed_sample_rate_;
-    return fixed_sample_rate_;
-  }
-
   unsigned int unsigned_output_sample_rate = requested_sample_rate;
 
   // Try the requested sample rate. If the ALSA driver doesn't know how to deal
@@ -479,8 +452,7 @@ int MixerOutputStreamAlsa::DetermineOutputRate(int requested_sample_rate) {
   return unsigned_output_sample_rate;
 }
 
-void MixerOutputStreamAlsa::UpdateRenderingDelay(int newly_pushed_frames) {
-  // TODO(bshaya): Add rendering delay from post-processors.
+void MixerOutputStreamAlsa::UpdateRenderingDelay() {
   if (alsa_->PcmStatus(pcm_, pcm_status_) != 0 ||
       alsa_->PcmStatusGetState(pcm_status_) != SND_PCM_STATE_RUNNING) {
     rendering_delay_.timestamp_microseconds = kNoTimestamp;
@@ -490,6 +462,13 @@ void MixerOutputStreamAlsa::UpdateRenderingDelay(int newly_pushed_frames) {
 
   snd_htimestamp_t status_timestamp = {};
   alsa_->PcmStatusGetHtstamp(pcm_status_, &status_timestamp);
+  if (status_timestamp.tv_sec == 0 && status_timestamp.tv_nsec == 0) {
+    // ALSA didn't actually give us a timestamp.
+    rendering_delay_.timestamp_microseconds = kNoTimestamp;
+    rendering_delay_.delay_microseconds = 0;
+    return;
+  }
+
   rendering_delay_.timestamp_microseconds =
       TimespecToMicroseconds(status_timestamp);
   snd_pcm_sframes_t delay_frames = alsa_->PcmStatusGetDelay(pcm_status_);

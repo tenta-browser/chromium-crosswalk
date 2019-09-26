@@ -8,7 +8,6 @@
 #include <utility>
 
 #include "base/json/json_reader.h"
-#include "base/memory/ptr_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/test/test_mock_time_task_runner.h"
 #include "base/time/tick_clock.h"
@@ -64,9 +63,8 @@ class JsonRequestTest : public testing::Test {
             ntp_snippets::kArticleSuggestionsFeature.name,
             {{"send_top_languages", "true"}, {"send_user_class", "true"}},
             {ntp_snippets::kArticleSuggestionsFeature.name}),
-        pref_service_(base::MakeUnique<TestingPrefServiceSimple>()),
+        pref_service_(std::make_unique<TestingPrefServiceSimple>()),
         mock_task_runner_(new base::TestMockTimeTaskRunner()),
-        clock_(mock_task_runner_->GetMockClock()),
         request_context_getter_(
             new net::TestURLRequestContextGetter(mock_task_runner_.get())) {
     language::UrlLanguageHistogram::RegisterProfilePrefs(
@@ -76,7 +74,7 @@ class JsonRequestTest : public testing::Test {
   std::unique_ptr<language::UrlLanguageHistogram> MakeLanguageHistogram(
       const std::set<std::string>& codes) {
     std::unique_ptr<language::UrlLanguageHistogram> language_histogram =
-        base::MakeUnique<language::UrlLanguageHistogram>(pref_service_.get());
+        std::make_unique<language::UrlLanguageHistogram>(pref_service_.get());
     // There must be at least 10 visits before the top languages are defined.
     for (int i = 0; i < 10; i++) {
       for (const std::string& code : codes) {
@@ -89,7 +87,7 @@ class JsonRequestTest : public testing::Test {
   JsonRequest::Builder CreateMinimalBuilder() {
     JsonRequest::Builder builder;
     builder.SetUrl(GURL("http://valid-url.test"))
-        .SetClock(clock_.get())
+        .SetClock(mock_task_runner_->GetMockClock())
         .SetUrlRequestContextGetter(request_context_getter_.get());
     return builder;
   }
@@ -98,7 +96,6 @@ class JsonRequestTest : public testing::Test {
   variations::testing::VariationParamsManager params_manager_;
   std::unique_ptr<TestingPrefServiceSimple> pref_service_;
   scoped_refptr<base::TestMockTimeTaskRunner> mock_task_runner_;
-  std::unique_ptr<base::Clock> clock_;
   scoped_refptr<net::TestURLRequestContextGetter> request_context_getter_;
   net::TestURLFetcherFactory fetcher_factory_;
 

@@ -32,18 +32,9 @@ const char kDisableDriveSearchInChromeLauncher[] =
 // list hasn't been enabled (as in kEnableAppList) yet.
 const char kResetAppListInstallState[] = "reset-app-list-install-state";
 
-bool IsVoiceSearchEnabled() {
-  // Speech recognition in AppList is only for ChromeOS right now.
-  return true;
-}
-
 bool ShouldNotDismissOnBlur() {
   return base::CommandLine::ForCurrentProcess()->HasSwitch(
       kDisableAppListDismissOnBlur);
-}
-
-bool IsDriveAppsInAppListEnabled() {
-  return true;
 }
 
 bool IsDriveSearchInChromeLauncherEnabled() {

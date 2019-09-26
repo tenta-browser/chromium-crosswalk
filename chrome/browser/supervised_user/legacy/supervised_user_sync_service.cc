@@ -11,7 +11,6 @@
 
 #include "base/bind.h"
 #include "base/callback.h"
-#include "base/memory/ptr_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/stringprintf.h"
 #include "base/values.h"
@@ -426,7 +425,7 @@ SyncMergeResult SupervisedUserSyncService::MergeDataAndStartSyncing(
     const ManagedUserSpecifics& supervised_user =
         sync_data.GetSpecifics().managed_user();
     std::unique_ptr<base::DictionaryValue> value =
-        base::MakeUnique<base::DictionaryValue>();
+        std::make_unique<base::DictionaryValue>();
     value->SetString(kName, supervised_user.name());
     value->SetBoolean(kAcknowledged, supervised_user.acknowledged());
     value->SetString(kMasterKey, supervised_user.master_key());
@@ -516,7 +515,7 @@ SyncError SupervisedUserSyncService::ProcessSyncChanges(
           NotifySupervisedUserAcknowledged(supervised_user.id());
 
         std::unique_ptr<base::DictionaryValue> value =
-            base::MakeUnique<base::DictionaryValue>();
+            std::make_unique<base::DictionaryValue>();
         value->SetString(kName, supervised_user.name());
         value->SetBoolean(kAcknowledged, supervised_user.acknowledged());
         value->SetString(kMasterKey, supervised_user.master_key());

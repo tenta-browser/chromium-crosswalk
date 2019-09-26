@@ -121,16 +121,17 @@
     </div>
     <template is="dom-if" if="[[!isGuest_]]">
       <div class="settings-box two-line" id="advancedButton"
-          on-tap="openAdvancedExtension_" actionable>
+          on-click="openAdvancedExtension_" actionable>
         <div class="start">
           $i18n{advancedFontSettings}
           <div class="secondary" id="advancedButtonSublabel">
             [[advancedExtensionSublabel_]]
           </div>
         </div>
-        <button class="icon-external" is="paper-icon-button-light"
-            aria-label="$i18n{advancedFontSettings}"
-            aria-describedby="advancedButtonSublabel"></button>
+        <paper-icon-button-light class="icon-external">
+          <button aria-label="$i18n{advancedFontSettings}"
+              aria-describedby="advancedButtonSublabel"></button>
+        </paper-icon-button-light>
       </div>
     </template>
   </template>

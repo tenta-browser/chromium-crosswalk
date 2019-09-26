@@ -16,6 +16,7 @@ import android.text.TextUtils;
 
 import org.chromium.base.BuildInfo;
 import org.chromium.base.ContextUtils;
+import org.chromium.base.ThreadUtils;
 import org.chromium.base.VisibleForTesting;
 import org.chromium.base.metrics.RecordHistogram;
 import org.chromium.base.metrics.RecordUserAction;
@@ -94,7 +95,7 @@ public class BookmarkUtils {
                     createSnackbarControllerForEditButton(activity, bookmarkId);
             if (getLastUsedParent(activity) == null) {
                 if (fromCustomTab) {
-                    String packageLabel = BuildInfo.getPackageLabel();
+                    String packageLabel = BuildInfo.getInstance().hostPackageLabel;
                     snackbar = Snackbar.make(
                             activity.getString(R.string.bookmark_page_saved, packageLabel),
                             snackbarController, Snackbar.TYPE_ACTION, Snackbar.UMA_BOOKMARK_ADDED);
@@ -156,14 +157,13 @@ public class BookmarkUtils {
 
     /**
      * Shows bookmark main UI.
+     * @param activity An activity to start the manager with.
      */
     public static void showBookmarkManager(ChromeActivity activity) {
+        ThreadUtils.assertOnUiThread();
         String url = getFirstUrlToLoad(activity);
 
-        if (activity.getBottomSheet() != null) {
-            activity.getBottomSheetContentController().showContentAndOpenSheet(
-                    R.id.action_bookmarks);
-        } else if (DeviceFormFactor.isTablet()) {
+        if (DeviceFormFactor.isNonMultiDisplayContextOnTablet(activity)) {
             openUrl(activity, url, activity.getComponentName());
         } else {
             Intent intent = new Intent(activity, BookmarkActivity.class);
@@ -251,7 +251,7 @@ public class BookmarkUtils {
         RecordHistogram.recordEnumeratedHistogram(
                 "Bookmarks.OpenBookmarkType", bookmarkId.getType(), BookmarkType.LAST + 1);
 
-        if (DeviceFormFactor.isTablet()) {
+        if (DeviceFormFactor.isNonMultiDisplayContextOnTablet(activity)) {
             // For tablets, the bookmark manager is open in a tab in the ChromeActivity. Use
             // the ComponentName of the ChromeActivity passed into this method.
             openUrl(activity, url, activity.getComponentName());

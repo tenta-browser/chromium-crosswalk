@@ -7,6 +7,7 @@
 #include <memory>
 #include <vector>
 
+#include "ash/accessibility/accessibility_controller.h"
 #include "ash/ime/ime_controller.h"
 #include "ash/resources/vector_icons/vector_icons.h"
 #include "ash/shell.h"
@@ -26,7 +27,7 @@
 #include "base/logging.h"
 #include "base/metrics/user_metrics.h"
 #include "base/strings/utf_string_conversions.h"
-#include "ui/accessibility/ax_enums.h"
+#include "ui/accessibility/ax_enums.mojom.h"
 #include "ui/accessibility/ax_node_data.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/gfx/font.h"
@@ -158,14 +159,14 @@ TrayIME::TrayIME(SystemTray* system_tray)
   DCHECK(ime_controller_);
   SystemTrayNotifier* tray_notifier = Shell::Get()->system_tray_notifier();
   tray_notifier->AddVirtualKeyboardObserver(this);
-  tray_notifier->AddAccessibilityObserver(this);
   tray_notifier->AddIMEObserver(this);
+  Shell::Get()->accessibility_controller()->AddObserver(this);
 }
 
 TrayIME::~TrayIME() {
+  Shell::Get()->accessibility_controller()->RemoveObserver(this);
   SystemTrayNotifier* tray_notifier = Shell::Get()->system_tray_notifier();
   tray_notifier->RemoveIMEObserver(this);
-  tray_notifier->RemoveAccessibilityObserver(this);
   tray_notifier->RemoveVirtualKeyboardObserver(this);
 }
 
@@ -174,8 +175,7 @@ void TrayIME::OnKeyboardSuppressionChanged(bool suppressed) {
   Update();
 }
 
-void TrayIME::OnAccessibilityStatusChanged(
-    AccessibilityNotificationVisibility notify) {
+void TrayIME::OnAccessibilityStatusChanged() {
   Update();
 }
 
@@ -213,7 +213,7 @@ void TrayIME::UpdateTrayLabel(const mojom::ImeInfo& current, size_t count) {
 
 bool TrayIME::ShouldShowKeyboardToggle() {
   return keyboard_suppressed_ &&
-         !Shell::Get()->accessibility_delegate()->IsVirtualKeyboardEnabled();
+         !Shell::Get()->accessibility_controller()->IsVirtualKeyboardEnabled();
 }
 
 base::string16 TrayIME::GetDefaultViewLabel(bool show_ime_label) {

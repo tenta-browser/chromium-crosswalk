@@ -9,7 +9,7 @@
 #ifndef VPX_CONFIG_H
 #define VPX_CONFIG_H
 #define RESTRICT    
-#define INLINE      __forceinline
+#define INLINE      __inline
 #define ARCH_ARM 0
 #define ARCH_MIPS 0
 #define ARCH_X86 1
@@ -90,7 +90,6 @@
 #define CONFIG_EXPERIMENTAL 0
 #define CONFIG_SIZE_LIMIT 1
 #define CONFIG_ALWAYS_ADJUST_BPM 0
-#define CONFIG_SPATIAL_SVC 0
 #define CONFIG_FP_MB_STATS 0
 #define CONFIG_EMULATE_HARDWARE 0
 #define DECODE_WIDTH_LIMIT 16384

@@ -5,7 +5,6 @@
 #include "ash/display/display_configuration_controller.h"
 
 #include "ash/display/display_animator.h"
-#include "ash/display/display_animator_chromeos.h"
 #include "ash/display/display_util.h"
 #include "ash/display/window_tree_host_manager.h"
 #include "ash/rotator/screen_rotation_animator.h"
@@ -18,7 +17,7 @@
 #include "ui/display/display_layout.h"
 #include "ui/display/manager/display_manager.h"
 
-DECLARE_UI_CLASS_PROPERTY_TYPE(ash::ScreenRotationAnimator*);
+DEFINE_UI_CLASS_PROPERTY_TYPE(ash::ScreenRotationAnimator*);
 
 namespace {
 
@@ -68,7 +67,7 @@ DisplayConfigurationController::DisplayConfigurationController(
   window_tree_host_manager_->AddObserver(this);
   if (chromeos::IsRunningAsSystemCompositor())
     limiter_.reset(new DisplayChangeLimiter);
-  display_animator_.reset(new DisplayAnimatorChromeOS());
+  display_animator_.reset(new DisplayAnimator());
 }
 
 DisplayConfigurationController::~DisplayConfigurationController() {
@@ -203,7 +202,9 @@ void DisplayConfigurationController::SetDisplayLayoutImpl(
 }
 
 void DisplayConfigurationController::SetMirrorModeImpl(bool mirror) {
-  display_manager_->SetMirrorMode(mirror);
+  display_manager_->SetMirrorMode(
+      mirror ? display::MirrorMode::kNormal : display::MirrorMode::kOff,
+      base::nullopt);
   if (display_animator_)
     display_animator_->StartFadeInAnimation();
 }

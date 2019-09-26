@@ -9,6 +9,7 @@
 #include "base/strings/stringprintf.h"
 #include "base/trace_event/memory_dump_manager.h"
 #include "base/trace_event/trace_event_argument.h"
+#include "build/build_config.h"
 
 namespace memory_instrumentation {
 
@@ -30,11 +31,10 @@ bool IsMemoryInfraTracingEnabled() {
 
 void OsDumpAsValueInto(TracedValue* value, const mojom::OSMemDump& os_dump) {
   value->SetString(
-      "resident_set_bytes",
-      base::StringPrintf("%" PRIx32, os_dump.resident_set_kb * 1024));
-  value->SetString(
       "private_footprint_bytes",
-      base::StringPrintf("%" PRIx32, os_dump.private_footprint_kb * 1024));
+      base::StringPrintf(
+          "%" PRIx64,
+          static_cast<uint64_t>(os_dump.private_footprint_kb) * 1024));
 }
 
 };  // namespace
@@ -193,6 +193,8 @@ void TracingObserver::MemoryMapsAsValueInto(
       value->SetString("mf", region->mapped_file);
     }
 
+// The following stats are only well defined on Linux-derived OSes.
+#if !defined(OS_MACOSX) && !defined(OS_WIN)
     value->BeginDictionary("bs");  // byte stats
     value->SetString(
         "pss",
@@ -212,6 +214,7 @@ void TracingObserver::MemoryMapsAsValueInto(
     value->SetString("sw",
                      base::StringPrintf(kHexFmt, region->byte_stats_swapped));
     value->EndDictionary();
+#endif
 
     value->EndDictionary();
   }

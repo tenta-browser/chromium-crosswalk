@@ -8,7 +8,7 @@
 
 #include <utility>
 
-#include "base/memory/ptr_util.h"
+#include "base/files/platform_file.h"
 #include "third_party/skia/include/core/SkCanvas.h"
 #include "ui/display/types/display_snapshot.h"
 #include "ui/gfx/geometry/point.h"
@@ -31,9 +31,9 @@ namespace {
 void FillModesetBuffer(const scoped_refptr<DrmDevice>& drm,
                        HardwareDisplayController* controller,
                        ScanoutBuffer* buffer) {
-  DrmConsoleBuffer modeset_buffer(drm, buffer->GetFramebufferId());
+  DrmConsoleBuffer modeset_buffer(drm, buffer->GetOpaqueFramebufferId());
   if (!modeset_buffer.Initialize()) {
-    VLOG(2) << "Failed to grab framebuffer " << buffer->GetFramebufferId();
+    VLOG(2) << "Failed to grab framebuffer " << buffer->GetOpaqueFramebufferId();
     return;
   }
 
@@ -351,7 +351,7 @@ OverlayPlane ScreenManager::GetModesetBuffer(
 
   gfx::BufferFormat format = display::DisplaySnapshot::PrimaryFormat();
   uint32_t fourcc_format = ui::GetFourCCFormatForOpaqueFramebuffer(format);
-
+  const auto& modifiers = controller->GetFormatModifiers(fourcc_format);
   if (window) {
     const OverlayPlane* primary = window->GetLastModesetBuffer();
     const DrmDevice* drm = controller->GetAllocationDrmDevice().get();
@@ -361,7 +361,6 @@ OverlayPlane ScreenManager::GetModesetBuffer(
       // modifier either and we can reuse the buffer. Otherwise, check
       // to see if the controller supports the buffers format
       // modifier.
-      const auto& modifiers = controller->GetFormatModifiers(fourcc_format);
       if (modifiers.empty())
         return *primary;
       for (const uint64_t modifier : modifiers) {
@@ -373,15 +372,16 @@ OverlayPlane ScreenManager::GetModesetBuffer(
 
   scoped_refptr<DrmDevice> drm = controller->GetAllocationDrmDevice();
   scoped_refptr<ScanoutBuffer> buffer =
-      buffer_generator_->Create(drm, fourcc_format, bounds.size());
+      buffer_generator_->Create(drm, fourcc_format, modifiers, bounds.size());
   if (!buffer) {
     LOG(ERROR) << "Failed to create scanout buffer";
     return OverlayPlane(nullptr, 0, gfx::OVERLAY_TRANSFORM_INVALID, gfx::Rect(),
-                        gfx::RectF());
+                        gfx::RectF(), /* enable_blend */ true,
+                        base::kInvalidPlatformFile);
   }
 
   FillModesetBuffer(drm, controller, buffer.get());
-  return OverlayPlane(buffer);
+  return OverlayPlane(buffer, base::kInvalidPlatformFile);
 }
 
 bool ScreenManager::EnableController(HardwareDisplayController* controller) {

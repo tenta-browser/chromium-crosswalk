@@ -69,8 +69,8 @@ layer at (0,0) size 800x454
         LayoutInline {SPAN} at (0,0) size 160x19 [color=#FFFFFF]
           LayoutText {#text} at (568,0) size 160x19
             text run at (568,0) width 160: " FAIL FAIL FAIL FAIL "
-        LayoutText {#text} at (727,0) size 767x39
-          text run at (727,0) width 40: "\x{2190}and"
+        LayoutText {#text} at (728,0) size 767x39
+          text run at (728,0) width 39: "\x{2190}and"
           text run at (0,20) width 31: "here."
       LayoutBlockFlow {P} at (0,402) size 784x20 [color=#000080]
         LayoutText {#text} at (0,0) size 343x19

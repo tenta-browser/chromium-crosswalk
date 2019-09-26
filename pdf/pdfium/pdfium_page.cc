@@ -305,7 +305,8 @@ PDFiumPage::Area PDFiumPage::FormTypeToArea(int form_type) {
     case FPDF_FORMFIELD_TEXTFIELD:
 #if defined(PDF_ENABLE_XFA)
     // TODO(bug_353450): figure out selection and copying for XFA fields.
-    case FPDF_FORMFIELD_XFA:
+    case FPDF_FORMFIELD_XFA_COMBOBOX:
+    case FPDF_FORMFIELD_XFA_TEXTFIELD:
 #endif
       return FORM_TEXT_AREA;
     default:
@@ -357,19 +358,24 @@ PDFiumPage::Area PDFiumPage::GetLinkTarget(FPDF_LINK link, LinkTarget* target) {
 PDFiumPage::Area PDFiumPage::GetDestinationTarget(FPDF_DEST destination,
                                                   LinkTarget* target) {
   if (!target)
-    return DOCLINK_AREA;
+    return NONSELECTABLE_AREA;
 
-  target->page = FPDFDest_GetPageIndex(engine_->doc(), destination);
-  GetPageYTarget(destination, target);
+  int page_index = FPDFDest_GetDestPageIndex(engine_->doc(), destination);
+  if (page_index < 0)
+    return NONSELECTABLE_AREA;
+
+  target->page = page_index;
+
+  base::Optional<gfx::PointF> xy = GetPageXYTarget(destination);
+  if (xy)
+    target->y_in_pixels = TransformPageToScreenXY(xy.value()).y();
 
   return DOCLINK_AREA;
 }
 
-void PDFiumPage::GetPageYTarget(FPDF_DEST destination, LinkTarget* target) {
-  if (!available_) {
-    target->y_in_pixels.reset();
-    return;
-  }
+base::Optional<gfx::PointF> PDFiumPage::GetPageXYTarget(FPDF_DEST destination) {
+  if (!available_)
+    return {};
 
   FPDF_BOOL has_x_coord;
   FPDF_BOOL has_y_coord;
@@ -380,14 +386,19 @@ void PDFiumPage::GetPageYTarget(FPDF_DEST destination, LinkTarget* target) {
   FPDF_BOOL success = FPDFDest_GetLocationInPage(
       destination, &has_x_coord, &has_y_coord, &has_zoom, &x, &y, &zoom);
 
-  if (!success || !has_x_coord || !has_y_coord) {
-    target->y_in_pixels.reset();
-    return;
-  }
+  if (!success || !has_x_coord || !has_y_coord)
+    return {};
 
-  pp::FloatRect page_rect(x, y, 0, 0);
+  return {gfx::PointF(x, y)};
+}
+
+gfx::PointF PDFiumPage::TransformPageToScreenXY(const gfx::PointF& xy) {
+  if (!available_)
+    return gfx::PointF();
+
+  pp::FloatRect page_rect(xy.x(), xy.y(), 0, 0);
   pp::FloatRect pixel_rect(FloatPageRectToPixelRect(GetPage(), page_rect));
-  target->y_in_pixels = pixel_rect.y();
+  return gfx::PointF(pixel_rect.x(), pixel_rect.y());
 }
 
 PDFiumPage::Area PDFiumPage::GetURITarget(FPDF_ACTION uri_action,
@@ -588,6 +599,7 @@ const PDFEngine::PageFeatures* PDFiumPage::GetPageFeatures() {
     FPDF_ANNOTATION annotation = FPDFPage_GetAnnot(page, i);
     FPDF_ANNOTATION_SUBTYPE subtype = FPDFAnnot_GetSubtype(annotation);
     page_features_.annotation_types.insert(subtype);
+    FPDFPage_CloseAnnot(annotation);
   }
 
   return &page_features_;

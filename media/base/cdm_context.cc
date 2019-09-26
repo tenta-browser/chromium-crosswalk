@@ -10,10 +10,30 @@ CdmContext::CdmContext() = default;
 
 CdmContext::~CdmContext() = default;
 
-void IgnoreCdmAttached(bool /* success */) {}
+Decryptor* CdmContext::GetDecryptor() {
+  return nullptr;
+}
+
+int CdmContext::GetCdmId() const {
+  return kInvalidCdmId;
+}
+
+#if BUILDFLAG(ENABLE_LIBRARY_CDMS)
+CdmProxyContext* CdmContext::GetCdmProxyContext() {
+  return nullptr;
+}
+#endif  // BUILDFLAG(ENABLE_LIBRARY_CDMS)
+
+#if defined(OS_ANDROID)
+MediaCryptoContext* CdmContext::GetMediaCryptoContext() {
+  return nullptr;
+}
+#endif
 
 void* CdmContext::GetClassIdentifier() const {
   return nullptr;
 }
+
+void IgnoreCdmAttached(bool /* success */) {}
 
 }  // namespace media

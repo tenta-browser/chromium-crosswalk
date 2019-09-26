@@ -53,11 +53,11 @@ void GetPlatformCrashpadAnnotations(
 #endif
 }
 
-base::FilePath PlatformCrashpadInitialization(
-    bool initial_client,
-    bool browser_process,
-    bool embedded_handler,
-    const std::string& user_data_dir) {
+base::FilePath PlatformCrashpadInitialization(bool initial_client,
+                                              bool browser_process,
+                                              bool embedded_handler,
+                                              const std::string& user_data_dir,
+                                              const base::FilePath& exe_path) {
   base::FilePath database_path;  // Only valid in the browser process.
   base::FilePath metrics_path;  // Only valid in the browser process.
 
@@ -90,11 +90,14 @@ base::FilePath PlatformCrashpadInitialization(
     // isn't present in the environment then the default URL will remain.
     env->GetVar(kServerUrlVar, &url);
 
-    wchar_t exe_file_path[MAX_PATH] = {};
-    CHECK(
-        ::GetModuleFileName(nullptr, exe_file_path, arraysize(exe_file_path)));
+    base::FilePath exe_file(exe_path);
+    if (exe_file.empty()) {
+      wchar_t exe_file_path[MAX_PATH] = {};
+      CHECK(::GetModuleFileName(nullptr, exe_file_path,
+                                arraysize(exe_file_path)));
 
-    base::FilePath exe_file(exe_file_path);
+      exe_file = base::FilePath(exe_file_path);
+    }
 
     if (crash_reporter_client->GetShouldDumpLargerDumps()) {
       const uint32_t kIndirectMemoryLimit = 4 * 1024 * 1024;
@@ -159,36 +162,13 @@ base::FilePath PlatformCrashpadInitialization(
 }
 
 // We need to prevent ICF from folding DumpProcessForHungInputThread(),
-// DumpProcessForHungInputNoCrashKeysThread() together, since that makes them
-// indistinguishable in crash dumps. We do this by making the function
-// bodies unique, and prevent optimization from shuffling things around.
+// together, since that makes them indistinguishable in crash dumps.
+// We do this by making the function body unique, and prevent optimization
+// from shuffling things around.
 MSVC_DISABLE_OPTIMIZE()
 MSVC_PUSH_DISABLE_WARNING(4748)
 
-// TODO(dtapuska): Remove when enough information is gathered where the crash
-// reports without crash keys come from.
-DWORD WINAPI DumpProcessForHungInputThread(void* crash_keys_str) {
-  base::StringPairs crash_keys;
-  if (crash_keys_str && base::SplitStringIntoKeyValuePairs(
-                            reinterpret_cast<const char*>(crash_keys_str), ':',
-                            ',', &crash_keys)) {
-    for (const auto& crash_key : crash_keys) {
-      base::debug::SetCrashKeyValue(crash_key.first, crash_key.second);
-    }
-  }
-  DumpWithoutCrashing();
-  return 0;
-}
-
-// TODO(dtapuska): Remove when enough information is gathered where the crash
-// reports without crash keys come from.
-DWORD WINAPI DumpProcessForHungInputNoCrashKeysThread(void* reason) {
-#pragma warning(push)
-#pragma warning(disable : 4311 4302)
-  base::debug::SetCrashKeyValue(
-      "hung-reason", base::IntToString(reinterpret_cast<int>(reason)));
-#pragma warning(pop)
-
+DWORD WINAPI DumpProcessForHungInputThread(void* param) {
   DumpWithoutCrashing();
   return 0;
 }
@@ -253,7 +233,8 @@ void RegisterNonABICompliantCodeRangeImpl(void* start, size_t size_in_bytes) {
   // mov imm64, rax
   record->thunk[0] = 0x48;
   record->thunk[1] = 0xb8;
-  void* handler = &CrashForExceptionInNonABICompliantCodeRange;
+  void* handler =
+      reinterpret_cast<void*>(&CrashForExceptionInNonABICompliantCodeRange);
   memcpy(&record->thunk[2], &handler, 8);
 
   // jmp rax

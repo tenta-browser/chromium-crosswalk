@@ -20,6 +20,7 @@
 #include "base/atomic_sequence_num.h"
 #include "base/bits.h"
 #include "base/compiler_specific.h"
+#include "base/containers/span.h"
 #include "base/numerics/safe_math.h"
 #include "base/strings/string_split.h"
 #include "base/strings/stringprintf.h"
@@ -38,29 +39,59 @@
 #include "gpu/command_buffer/client/shared_memory_limits.h"
 #include "gpu/command_buffer/client/transfer_buffer.h"
 #include "gpu/command_buffer/client/vertex_array_object_manager.h"
-#include "gpu/command_buffer/common/gles2_cmd_utils.h"
+#include "gpu/command_buffer/common/context_creation_attribs.h"
 #include "gpu/command_buffer/common/id_allocator.h"
 #include "gpu/command_buffer/common/sync_token.h"
 #include "ui/gfx/geometry/rect.h"
 #include "ui/gfx/geometry/rect_f.h"
 
-#if defined(GPU_CLIENT_DEBUG)
-#include "base/command_line.h"
-#include "gpu/command_buffer/client/gpu_switches.h"
-#endif
-
-#if !defined(OS_NACL)
-#include "cc/paint/display_item_list.h"  // nogncheck
-#include "cc/paint/paint_op_buffer_serializer.h"
-#include "cc/paint/transfer_cache_entry.h"
-#include "ui/gfx/geometry/rect_conversions.h"
-#include "ui/gfx/skia_util.h"
-#endif
-
 #if !defined(__native_client__)
 #include "ui/gfx/color_space.h"
 #include "ui/gfx/ipc/color/gfx_param_traits.h"
 #endif
+
+#if defined(GPU_CLIENT_DEBUG)
+#define GPU_CLIENT_SINGLE_THREAD_CHECK() SingleThreadChecker checker(this);
+#else  // !defined(GPU_CLIENT_DEBUG)
+#define GPU_CLIENT_SINGLE_THREAD_CHECK()
+#endif  // defined(GPU_CLIENT_DEBUG)
+
+// Check that destination pointers point to initialized memory.
+// When the context is lost, calling GL function has no effect so if destination
+// pointers point to initialized memory it can often lead to crash bugs. eg.
+//
+// GLsizei len;
+// glGetShaderSource(shader, max_size, &len, buffer);
+// std::string src(buffer, buffer + len);  // len can be uninitialized here!!!
+//
+// Because this check is not official GL this check happens only on Chrome code,
+// not Pepper.
+//
+// If it was up to us we'd just always write to the destination but the OpenGL
+// spec defines the behavior of OpenGL functions, not us. :-(
+#if defined(__native_client__) || defined(GLES2_CONFORMANCE_TESTS)
+#define GPU_CLIENT_VALIDATE_DESTINATION_INITALIZATION_ASSERT(v)
+#define GPU_CLIENT_DCHECK(v)
+#elif defined(GPU_DCHECK)
+#define GPU_CLIENT_VALIDATE_DESTINATION_INITALIZATION_ASSERT(v) GPU_DCHECK(v)
+#define GPU_CLIENT_DCHECK(v) GPU_DCHECK(v)
+#elif defined(DCHECK)
+#define GPU_CLIENT_VALIDATE_DESTINATION_INITALIZATION_ASSERT(v) DCHECK(v)
+#define GPU_CLIENT_DCHECK(v) DCHECK(v)
+#else
+#define GPU_CLIENT_VALIDATE_DESTINATION_INITALIZATION_ASSERT(v) ASSERT(v)
+#define GPU_CLIENT_DCHECK(v) ASSERT(v)
+#endif
+
+#define GPU_CLIENT_VALIDATE_DESTINATION_INITALIZATION(type, ptr) \
+  GPU_CLIENT_VALIDATE_DESTINATION_INITALIZATION_ASSERT(          \
+      ptr &&                                                     \
+      (ptr[0] == static_cast<type>(0) || ptr[0] == static_cast<type>(-1)));
+
+#define GPU_CLIENT_VALIDATE_DESTINATION_OPTIONAL_INITALIZATION(type, ptr) \
+  GPU_CLIENT_VALIDATE_DESTINATION_INITALIZATION_ASSERT(                   \
+      !ptr ||                                                             \
+      (ptr[0] == static_cast<type>(0) || ptr[0] == static_cast<type>(-1)));
 
 namespace gpu {
 namespace gles2 {
@@ -102,16 +133,9 @@ uint32_t GenerateNextFlushId() {
 
 }  // anonymous namespace
 
-#if !defined(_MSC_VER)
-const size_t GLES2Implementation::kMaxSizeOfSimpleResult;
-const unsigned int GLES2Implementation::kStartingOffset;
-#endif
+GLES2Implementation::GLStaticState::GLStaticState() = default;
 
-GLES2Implementation::GLStaticState::GLStaticState() {
-}
-
-GLES2Implementation::GLStaticState::~GLStaticState() {
-}
+GLES2Implementation::GLStaticState::~GLStaticState() = default;
 
 GLES2Implementation::SingleThreadChecker::SingleThreadChecker(
     GLES2Implementation* gles2_implementation)
@@ -133,8 +157,8 @@ GLES2Implementation::GLES2Implementation(
     bool lose_context_when_out_of_memory,
     bool support_client_side_arrays,
     GpuControl* gpu_control)
-    : helper_(helper),
-      transfer_buffer_(transfer_buffer),
+    : ImplementationBase(helper, transfer_buffer, gpu_control),
+      helper_(helper),
       chromium_framebuffer_multisample_(kUnknownExtensionStatus),
       pack_alignment_(4),
       pack_row_length_(0),
@@ -161,30 +185,20 @@ GLES2Implementation::GLES2Implementation(
       bound_pixel_pack_transfer_buffer_id_(0),
       bound_pixel_unpack_transfer_buffer_id_(0),
       error_bits_(0),
-      debug_(false),
       lose_context_when_out_of_memory_(lose_context_when_out_of_memory),
       support_client_side_arrays_(support_client_side_arrays),
       use_count_(0),
       flush_id_(0),
       max_extra_transfer_buffer_size_(0),
       current_trace_stack_(0),
-      gpu_control_(gpu_control),
-      capabilities_(gpu_control->GetCapabilities()),
       aggressively_free_resources_(false),
       cached_extension_string_(nullptr),
       weak_ptr_factory_(this) {
   DCHECK(helper);
-  DCHECK(transfer_buffer);
-  DCHECK(gpu_control);
 
   std::stringstream ss;
   ss << std::hex << this;
   this_in_hex_ = ss.str();
-
-  GPU_CLIENT_LOG_CODE_BLOCK({
-    debug_ = base::CommandLine::ForCurrentProcess()->HasSwitch(
-        switches::kEnableGPUClientLogging);
-  });
 
   share_group_ =
       (share_group ? std::move(share_group)
@@ -199,27 +213,12 @@ GLES2Implementation::GLES2Implementation(
 gpu::ContextResult GLES2Implementation::Initialize(
     const SharedMemoryLimits& limits) {
   TRACE_EVENT0("gpu", "GLES2Implementation::Initialize");
-  DCHECK_GE(limits.start_transfer_buffer_size, limits.min_transfer_buffer_size);
-  DCHECK_LE(limits.start_transfer_buffer_size, limits.max_transfer_buffer_size);
-  DCHECK_GE(limits.min_transfer_buffer_size, kStartingOffset);
-
-  gpu_control_->SetGpuControlClient(this);
-
-  if (!transfer_buffer_->Initialize(
-          limits.start_transfer_buffer_size, kStartingOffset,
-          limits.min_transfer_buffer_size, limits.max_transfer_buffer_size,
-          kAlignment, kSizeToFlush)) {
-    // TransferBuffer::Initialize doesn't fail for transient reasons such as if
-    // the context was lost. See http://crrev.com/c/720269
-    LOG(ERROR) << "ContextResult::kFatalFailure: "
-               << "TransferBuffer::Initailize() failed";
-    return gpu::ContextResult::kFatalFailure;
+  auto result = ImplementationBase::Initialize(limits);
+  if (result != gpu::ContextResult::kSuccess) {
+    return result;
   }
 
   max_extra_transfer_buffer_size_ = limits.max_mapped_memory_for_texture_upload;
-  mapped_memory_ = std::make_unique<MappedMemoryManager>(
-      helper_, limits.mapped_memory_reclaim_limit);
-  mapped_memory_->set_chunk_size_multiple(limits.mapped_memory_chunk_size);
 
   GLStaticState::ShaderPrecisionMap* shader_precisions =
       &static_state_.shader_precisions;
@@ -238,7 +237,6 @@ gpu::ContextResult GLES2Implementation::Initialize(
   texture_units_ = std::make_unique<TextureUnit[]>(
       capabilities_.max_combined_texture_image_units);
 
-  query_tracker_ = std::make_unique<QueryTracker>(mapped_memory_.get());
   buffer_tracker_ = std::make_unique<BufferTracker>(mapped_memory_.get());
 
   for (int i = 0; i < static_cast<int>(IdNamespaces::kNumIdNamespaces); ++i)
@@ -275,6 +273,7 @@ GLES2Implementation::~GLES2Implementation() {
   // by the queries. The GPU process when validating that memory is still
   // shared will fail and abort (ie, it will stop running).
   WaitForCmd();
+
   query_tracker_.reset();
 
   // GLES2Implementation::Initialize() could fail before allocating
@@ -294,10 +293,6 @@ GLES2Implementation::~GLES2Implementation() {
 
   // Make sure the commands make it the service.
   WaitForCmd();
-
-  // The gpu_control_ outlives this class, so clear the client on it before we
-  // self-destruct.
-  gpu_control_->SetGpuControlClient(nullptr);
 }
 
 GLES2CmdHelper* GLES2Implementation::helper() const {
@@ -324,8 +319,9 @@ void GLES2Implementation::OnGpuControlLostContext() {
   DCHECK(!lost_context_callback_run_);
   lost_context_callback_run_ = true;
   share_group_->Lose();
-  if (!lost_context_callback_.is_null())
-    lost_context_callback_.Run();
+  if (!lost_context_callback_.is_null()) {
+    std::move(lost_context_callback_).Run();
+  }
 }
 
 void GLES2Implementation::OnGpuControlLostContextMaybeReentrant() {
@@ -341,77 +337,53 @@ void GLES2Implementation::OnGpuControlErrorMessage(const char* message,
     error_message_callback_.Run(message, id);
 }
 
-void* GLES2Implementation::GetResultBuffer() {
-  return transfer_buffer_->GetResultBuffer();
-}
-
-int32_t GLES2Implementation::GetResultShmId() {
-  return transfer_buffer_->GetShmId();
-}
-
-uint32_t GLES2Implementation::GetResultShmOffset() {
-  return transfer_buffer_->GetResultOffset();
-}
-
-void GLES2Implementation::FreeUnusedSharedMemory() {
-  mapped_memory_->FreeUnused();
-}
-
-void GLES2Implementation::FreeEverything() {
-  query_tracker_->Shrink(helper_);
-  FreeUnusedSharedMemory();
-  transfer_buffer_->Free();
-  helper_->FreeRingBuffer();
-}
-
 void GLES2Implementation::FreeSharedMemory(void* mem) {
   mapped_memory_->FreePendingToken(mem, helper_->InsertToken());
 }
 
-void GLES2Implementation::RunIfContextNotLost(base::OnceClosure callback) {
-  if (!lost_context_callback_run_)
-    std::move(callback).Run();
+GLuint GLES2Implementation::CreateGpuFenceCHROMIUM() {
+  GLuint client_id = GetIdAllocator(IdNamespaces::kGpuFences)
+                         ->AllocateIDAtOrAbove(last_gpu_fence_id_ + 1);
+  // Out of paranoia, don't allow IDs to wrap around to avoid potential
+  // collisions on reuse. The space of 2^32 IDs is enough for over a year of
+  // allocating two per frame at 60fps. TODO(crbug.com/790550): Revisit if this
+  // is an issue, for example by deferring ID release if they would be reissued
+  // too soon.
+  CHECK(client_id > last_gpu_fence_id_) << "ID wrap prevented";
+  last_gpu_fence_id_ = client_id;
+  helper_->CreateGpuFenceINTERNAL(client_id);
+  GPU_CLIENT_LOG("returned " << client_id);
+  CheckGLError();
+  return client_id;
 }
 
-void GLES2Implementation::FlushPendingWork() {
-  gpu_control_->FlushPendingWork();
+GLuint GLES2Implementation::CreateClientGpuFenceCHROMIUM(
+    ClientGpuFence source) {
+  GLuint client_id = GetIdAllocator(IdNamespaces::kGpuFences)
+                         ->AllocateIDAtOrAbove(last_gpu_fence_id_ + 1);
+  // See CreateGpuFenceCHROMIUM comment re wraparound.
+  CHECK(client_id > last_gpu_fence_id_) << "ID wrap prevented";
+  last_gpu_fence_id_ = client_id;
+
+  // Create the service-side GpuFenceEntry via gpu_control. This is guaranteed
+  // to arrive before any future GL helper_ commands on this stream, so it's
+  // safe to use the client_id generated here in following commands such as
+  // WaitGpuFenceCHROMIUM without explicit flushing.
+  gpu_control_->CreateGpuFence(client_id, source);
+
+  GPU_CLIENT_LOG("returned " << client_id);
+  CheckGLError();
+  return client_id;
 }
 
-void GLES2Implementation::SignalSyncToken(const gpu::SyncToken& sync_token,
-                                          base::OnceClosure callback) {
-  SyncToken verified_sync_token;
-  if (sync_token.HasData() &&
-      GetVerifiedSyncTokenForIPC(sync_token, &verified_sync_token)) {
-    // We can only send verified sync tokens across IPC.
-    gpu_control_->SignalSyncToken(
-        verified_sync_token,
-        base::Bind(&GLES2Implementation::RunIfContextNotLost,
-                   weak_ptr_factory_.GetWeakPtr(), base::Passed(&callback)));
+void GLES2Implementation::DestroyGpuFenceCHROMIUMHelper(GLuint client_id) {
+  if (GetIdAllocator(IdNamespaces::kGpuFences)->InUse(client_id)) {
+    GetIdAllocator(IdNamespaces::kGpuFences)->FreeID(client_id);
+    helper_->DestroyGpuFenceCHROMIUM(client_id);
   } else {
-    // Invalid sync token, just call the callback immediately.
-    std::move(callback).Run();
+    SetGLError(GL_INVALID_VALUE, "glDestroyGpuFenceCHROMIUM",
+               "id not created by this context.");
   }
-}
-
-// This may be called from any thread. It's safe to access gpu_control_ without
-// the lock because it is const.
-bool GLES2Implementation::IsSyncTokenSignaled(
-    const gpu::SyncToken& sync_token) {
-  // Check that the sync token belongs to this context.
-  DCHECK_EQ(gpu_control_->GetNamespaceID(), sync_token.namespace_id());
-  DCHECK_EQ(gpu_control_->GetCommandBufferID(), sync_token.command_buffer_id());
-  return gpu_control_->IsFenceSyncReleased(sync_token.release_count());
-}
-
-void GLES2Implementation::SignalQuery(uint32_t query,
-                                      base::OnceClosure callback) {
-  // Flush previously entered commands to ensure ordering with any
-  // glBeginQueryEXT() calls that may have been put into the context.
-  ShallowFlushCHROMIUM();
-  gpu_control_->SignalQuery(
-      query,
-      base::Bind(&GLES2Implementation::RunIfContextNotLost,
-                 weak_ptr_factory_.GetWeakPtr(), base::Passed(&callback)));
 }
 
 void GLES2Implementation::SetAggressivelyFreeResources(
@@ -430,53 +402,6 @@ void GLES2Implementation::SetAggressivelyFreeResources(
   } else {
     ShallowFlushCHROMIUM();
   }
-}
-
-bool GLES2Implementation::OnMemoryDump(
-    const base::trace_event::MemoryDumpArgs& args,
-    base::trace_event::ProcessMemoryDump* pmd) {
-  using base::trace_event::MemoryAllocatorDump;
-  using base::trace_event::MemoryDumpLevelOfDetail;
-
-  // Dump owned MappedMemoryManager memory as well.
-  mapped_memory_->OnMemoryDump(args, pmd);
-
-  if (!transfer_buffer_->HaveBuffer())
-    return true;
-
-  const uint64_t tracing_process_id =
-      base::trace_event::MemoryDumpManager::GetInstance()
-          ->GetTracingProcessId();
-
-  MemoryAllocatorDump* dump = pmd->CreateAllocatorDump(base::StringPrintf(
-      "gpu/transfer_buffer_memory/buffer_%d", transfer_buffer_->GetShmId()));
-  dump->AddScalar(MemoryAllocatorDump::kNameSize,
-                  MemoryAllocatorDump::kUnitsBytes,
-                  transfer_buffer_->GetSize());
-
-  if (args.level_of_detail != MemoryDumpLevelOfDetail::BACKGROUND) {
-    dump->AddScalar("free_size", MemoryAllocatorDump::kUnitsBytes,
-                    transfer_buffer_->GetFreeSize());
-    auto shared_memory_guid =
-        transfer_buffer_->shared_memory_handle().GetGUID();
-    const int kImportance = 2;
-    if (!shared_memory_guid.is_empty()) {
-      pmd->CreateSharedMemoryOwnershipEdge(dump->guid(), shared_memory_guid,
-                                           kImportance);
-    } else {
-      auto guid = GetBufferGUIDForTracing(tracing_process_id,
-                                          transfer_buffer_->GetShmId());
-      pmd->CreateSharedGlobalAllocatorDump(guid);
-      pmd->AddOwnershipEdge(dump->guid(), guid, kImportance);
-    }
-  }
-
-  return true;
-}
-
-void GLES2Implementation::WaitForCmd() {
-  TRACE_EVENT0("gpu", "GLES2::WaitForCmd");
-  helper_->CommandBufferHelper::Finish();
 }
 
 bool GLES2Implementation::IsExtensionAvailable(const char* ext) {
@@ -531,22 +456,6 @@ GLenum GLES2Implementation::GetError() {
   GLenum err = GetGLError();
   GPU_CLIENT_LOG("returned " << GLES2Util::GetStringError(err));
   return err;
-}
-
-GLenum GLES2Implementation::GetClientSideGLError() {
-  if (error_bits_ == 0) {
-    return GL_NO_ERROR;
-  }
-
-  GLenum error = GL_NO_ERROR;
-  for (uint32_t mask = 1; mask != 0; mask = mask << 1) {
-    if ((error_bits_ & mask) != 0) {
-      error = GLES2Util::GLErrorBitToGLError(mask);
-      break;
-    }
-  }
-  error_bits_ &= ~GLES2Util::GLErrorToErrorBit(error);
-  return error;
 }
 
 GLenum GLES2Implementation::GetGLError() {
@@ -610,109 +519,6 @@ void GLES2Implementation::SetGLErrorInvalidEnum(
   SetGLError(GL_INVALID_ENUM, function_name,
              (std::string(label) + " was " +
               GLES2Util::GetStringEnum(value)).c_str());
-}
-
-bool GLES2Implementation::GetBucketContents(uint32_t bucket_id,
-                                            std::vector<int8_t>* data) {
-  TRACE_EVENT0("gpu", "GLES2::GetBucketContents");
-  DCHECK(data);
-  const uint32_t kStartSize = 32 * 1024;
-  ScopedTransferBufferPtr buffer(kStartSize, helper_, transfer_buffer_);
-  if (!buffer.valid()) {
-    return false;
-  }
-  typedef cmd::GetBucketStart::Result Result;
-  Result* result = GetResultAs<Result*>();
-  if (!result) {
-    return false;
-  }
-  *result = 0;
-  helper_->GetBucketStart(
-      bucket_id, GetResultShmId(), GetResultShmOffset(),
-      buffer.size(), buffer.shm_id(), buffer.offset());
-  WaitForCmd();
-  uint32_t size = *result;
-  data->resize(size);
-  if (size > 0u) {
-    uint32_t offset = 0;
-    while (size) {
-      if (!buffer.valid()) {
-        buffer.Reset(size);
-        if (!buffer.valid()) {
-          return false;
-        }
-        helper_->GetBucketData(
-            bucket_id, offset, buffer.size(), buffer.shm_id(), buffer.offset());
-        WaitForCmd();
-      }
-      uint32_t size_to_copy = std::min(size, buffer.size());
-      memcpy(&(*data)[offset], buffer.address(), size_to_copy);
-      offset += size_to_copy;
-      size -= size_to_copy;
-      buffer.Release();
-    }
-    // Free the bucket. This is not required but it does free up the memory.
-    // and we don't have to wait for the result so from the client's perspective
-    // it's cheap.
-    helper_->SetBucketSize(bucket_id, 0);
-  }
-  return true;
-}
-
-void GLES2Implementation::SetBucketContents(uint32_t bucket_id,
-                                            const void* data,
-                                            size_t size) {
-  DCHECK(data);
-  helper_->SetBucketSize(bucket_id, size);
-  if (size > 0u) {
-    uint32_t offset = 0;
-    while (size) {
-      ScopedTransferBufferPtr buffer(size, helper_, transfer_buffer_);
-      if (!buffer.valid()) {
-        return;
-      }
-      memcpy(buffer.address(), static_cast<const int8_t*>(data) + offset,
-             buffer.size());
-      helper_->SetBucketData(
-          bucket_id, offset, buffer.size(), buffer.shm_id(), buffer.offset());
-      offset += buffer.size();
-      size -= buffer.size();
-    }
-  }
-}
-
-void GLES2Implementation::SetBucketAsCString(uint32_t bucket_id,
-                                             const char* str) {
-  // NOTE: strings are passed NULL terminated. That means the empty
-  // string will have a size of 1 and no-string will have a size of 0
-  if (str) {
-    SetBucketContents(bucket_id, str, strlen(str) + 1);
-  } else {
-    helper_->SetBucketSize(bucket_id, 0);
-  }
-}
-
-bool GLES2Implementation::GetBucketAsString(uint32_t bucket_id,
-                                            std::string* str) {
-  DCHECK(str);
-  std::vector<int8_t> data;
-  // NOTE: strings are passed NULL terminated. That means the empty
-  // string will have a size of 1 and no-string will have a size of 0
-  if (!GetBucketContents(bucket_id, &data)) {
-    return false;
-  }
-  if (data.empty()) {
-    return false;
-  }
-  str->assign(&data[0], &data[0] + data.size() - 1);
-  return true;
-}
-
-void GLES2Implementation::SetBucketAsString(uint32_t bucket_id,
-                                            const std::string& str) {
-  // NOTE: strings are passed NULL terminated. That means the empty
-  // string will have a size of 1 and no-string will have a size of 0
-  SetBucketContents(bucket_id, str.c_str(), str.size() + 1);
 }
 
 void GLES2Implementation::Disable(GLenum cap) {
@@ -1408,11 +1214,15 @@ void GLES2Implementation::Flush() {
   FlushHelper();
 }
 
-void GLES2Implementation::ShallowFlushCHROMIUM() {
+void GLES2Implementation::IssueShallowFlush() {
   GPU_CLIENT_SINGLE_THREAD_CHECK();
   GPU_CLIENT_LOG("[" << GetLogPrefix() << "] glShallowFlushCHROMIUM()");
   flush_id_ = GenerateNextFlushId();
   FlushHelper();
+}
+
+void GLES2Implementation::ShallowFlushCHROMIUM() {
+  IssueShallowFlush();
 }
 
 void GLES2Implementation::FlushHelper() {
@@ -1517,13 +1327,6 @@ void GLES2Implementation::SwapBuffersWithBoundsCHROMIUM(GLsizei count,
     helper_->WaitForToken(swap_buffers_tokens_.front());
     swap_buffers_tokens_.pop();
   }
-}
-
-void GLES2Implementation::SwapInterval(int interval) {
-  GPU_CLIENT_SINGLE_THREAD_CHECK();
-  GPU_CLIENT_LOG("[" << GetLogPrefix() << "] glSwapInterval("
-      << interval << ")");
-  helper_->SwapInterval(interval);
 }
 
 void GLES2Implementation::BindAttribLocation(
@@ -3775,11 +3578,11 @@ const GLubyte* GLES2Implementation::GetStringHelper(GLenum name) {
     // Adds extensions implemented on client side only.
     if (name == GL_EXTENSIONS) {
       str += std::string(str.empty() ? "" : " ") +
-             "GL_EXT_unpack_subimage "
+             "GL_CHROMIUM_image "
              "GL_CHROMIUM_map_sub "
-             "GL_CHROMIUM_image";
-      if (capabilities_.future_sync_points)
-        str += " GL_CHROMIUM_future_sync_point";
+             "GL_CHROMIUM_ordering_barrier "
+             "GL_CHROMIUM_sync_point "
+             "GL_EXT_unpack_subimage";
     }
 
     // Because of WebGL the extensions can change. We have to cache each unique
@@ -4315,41 +4118,45 @@ void GLES2Implementation::BindBufferStub(GLenum target, GLuint buffer) {
     helper_->CommandBufferHelper::OrderingBarrier();
 }
 
-void GLES2Implementation::BindBufferBaseHelper(
-    GLenum target, GLuint index, GLuint buffer_id) {
-  // TODO(zmo): See note #1 above.
-  // TODO(zmo): See note #2 above.
+bool GLES2Implementation::UpdateIndexedBufferState(GLenum target,
+                                                   GLuint index,
+                                                   GLuint buffer_id,
+                                                   const char* function_name) {
   switch (target) {
     case GL_TRANSFORM_FEEDBACK_BUFFER:
       if (index >=
           static_cast<GLuint>(
               capabilities_.max_transform_feedback_separate_attribs)) {
-        SetGLError(GL_INVALID_VALUE,
-                   "glBindBufferBase", "index out of range");
-        return;
+        SetGLError(GL_INVALID_VALUE, function_name, "index out of range");
+        return false;
       }
-      if (bound_transform_feedback_buffer_ != buffer_id) {
-        bound_transform_feedback_buffer_ = buffer_id;
-      }
+      bound_transform_feedback_buffer_ = buffer_id;
       break;
     case GL_UNIFORM_BUFFER:
       if (index >=
           static_cast<GLuint>(capabilities_.max_uniform_buffer_bindings)) {
-        SetGLError(GL_INVALID_VALUE,
-                   "glBindBufferBase", "index out of range");
-        return;
+        SetGLError(GL_INVALID_VALUE, function_name, "index out of range");
+        return false;
       }
-      if (bound_uniform_buffer_ != buffer_id) {
-        bound_uniform_buffer_ = buffer_id;
-      }
+      bound_uniform_buffer_ = buffer_id;
       break;
     default:
-      SetGLError(GL_INVALID_ENUM, "glBindBufferBase", "invalid target");
-      return;
+      SetGLError(GL_INVALID_ENUM, function_name, "invalid target");
+      return false;
   }
-  GetIdHandler(SharedIdNamespaces::kBuffers)
-      ->MarkAsUsedForBind(this, target, index, buffer_id,
-                          &GLES2Implementation::BindBufferBaseStub);
+  return true;
+}
+
+void GLES2Implementation::BindBufferBaseHelper(GLenum target,
+                                               GLuint index,
+                                               GLuint buffer_id) {
+  // TODO(zmo): See note #1 above.
+  // TODO(zmo): See note #2 above.
+  if (UpdateIndexedBufferState(target, index, buffer_id, "glBindBufferBase")) {
+    GetIdHandler(SharedIdNamespaces::kBuffers)
+        ->MarkAsUsedForBind(this, target, index, buffer_id,
+                            &GLES2Implementation::BindBufferBaseStub);
+  }
 }
 
 void GLES2Implementation::BindBufferBaseStub(
@@ -4364,9 +4171,11 @@ void GLES2Implementation::BindBufferRangeHelper(
     GLintptr offset, GLsizeiptr size) {
   // TODO(zmo): See note #1 above.
   // TODO(zmo): See note #2 above.
-  GetIdHandler(SharedIdNamespaces::kBuffers)
-      ->MarkAsUsedForBind(this, target, index, buffer_id, offset, size,
-                          &GLES2Implementation::BindBufferRangeStub);
+  if (UpdateIndexedBufferState(target, index, buffer_id, "glBindBufferRange")) {
+    GetIdHandler(SharedIdNamespaces::kBuffers)
+        ->MarkAsUsedForBind(this, target, index, buffer_id, offset, size,
+                            &GLES2Implementation::BindBufferRangeStub);
+  }
 }
 
 void GLES2Implementation::BindBufferRangeStub(
@@ -4630,7 +4439,13 @@ void GLES2Implementation::DeleteTexturesHelper(
   }
   for (GLsizei ii = 0; ii < n; ++ii) {
     share_group_->discardable_texture_manager()->FreeTexture(textures[ii]);
+  }
+  UnbindTexturesHelper(n, textures);
+}
 
+void GLES2Implementation::UnbindTexturesHelper(GLsizei n,
+                                               const GLuint* textures) {
+  for (GLsizei ii = 0; ii < n; ++ii) {
     for (GLint tt = 0; tt < capabilities_.max_combined_texture_image_units;
          ++tt) {
       TextureUnit& unit = texture_units_[tt];
@@ -4911,18 +4726,13 @@ void GLES2Implementation::ScheduleOverlayPlane(
     gfx::OverlayTransform plane_transform,
     unsigned overlay_texture_id,
     const gfx::Rect& display_bounds,
-    const gfx::RectF& uv_rect) {
-  ScheduleOverlayPlaneCHROMIUM(plane_z_order,
-                               GetGLESOverlayTransform(plane_transform),
-                               overlay_texture_id,
-                               display_bounds.x(),
-                               display_bounds.y(),
-                               display_bounds.width(),
-                               display_bounds.height(),
-                               uv_rect.x(),
-                               uv_rect.y(),
-                               uv_rect.width(),
-                               uv_rect.height());
+    const gfx::RectF& uv_rect,
+    bool enable_blend) {
+  ScheduleOverlayPlaneCHROMIUM(
+      plane_z_order, GetGLESOverlayTransform(plane_transform),
+      overlay_texture_id, display_bounds.x(), display_bounds.y(),
+      display_bounds.width(), display_bounds.height(), uv_rect.x(), uv_rect.y(),
+      uv_rect.width(), uv_rect.height(), enable_blend);
 }
 
 void GLES2Implementation::ScheduleCALayerSharedStateCHROMIUM(
@@ -5655,7 +5465,7 @@ void GLES2Implementation::BeginQueryEXT(GLenum target, GLuint id) {
     case GL_TRANSFORM_FEEDBACK_PRIMITIVES_WRITTEN:
       if (capabilities_.major_version >= 3)
         break;
-      // Fall through
+      FALLTHROUGH;
     default:
       SetGLError(
           GL_INVALID_ENUM, "glBeginQueryEXT", "unknown query target");
@@ -5906,21 +5716,8 @@ void GLES2Implementation::GenMailboxCHROMIUM(
   memcpy(mailbox, result.name, sizeof(result.name));
 }
 
-void GLES2Implementation::ProduceTextureCHROMIUM(GLenum target,
-                                                 const GLbyte* data) {
-  GPU_CLIENT_SINGLE_THREAD_CHECK();
-  GPU_CLIENT_LOG("[" << GetLogPrefix() << "] glProduceTextureCHROMIUM("
-                     << static_cast<const void*>(data) << ")");
-  const Mailbox& mailbox = *reinterpret_cast<const Mailbox*>(data);
-  DCHECK(mailbox.Verify()) << "ProduceTextureCHROMIUM was passed a "
-                              "mailbox that was not generated by "
-                              "GenMailboxCHROMIUM.";
-  helper_->ProduceTextureCHROMIUMImmediate(target, data);
-  CheckGLError();
-}
-
-void GLES2Implementation::ProduceTextureDirectCHROMIUM(
-    GLuint texture, GLenum target, const GLbyte* data) {
+void GLES2Implementation::ProduceTextureDirectCHROMIUM(GLuint texture,
+                                                       const GLbyte* data) {
   GPU_CLIENT_SINGLE_THREAD_CHECK();
   GPU_CLIENT_LOG("[" << GetLogPrefix() << "] glProduceTextureDirectCHROMIUM("
                      << static_cast<const void*>(data) << ")");
@@ -5928,12 +5725,12 @@ void GLES2Implementation::ProduceTextureDirectCHROMIUM(
   DCHECK(mailbox.Verify()) << "ProduceTextureDirectCHROMIUM was passed a "
                               "mailbox that was not generated by "
                               "GenMailboxCHROMIUM.";
-  helper_->ProduceTextureDirectCHROMIUMImmediate(texture, target, data);
+  helper_->ProduceTextureDirectCHROMIUMImmediate(texture, data);
   CheckGLError();
 }
 
 GLuint GLES2Implementation::CreateAndConsumeTextureCHROMIUM(
-    GLenum target, const GLbyte* data) {
+    const GLbyte* data) {
   GPU_CLIENT_SINGLE_THREAD_CHECK();
   GPU_CLIENT_LOG("[" << GetLogPrefix() << "] glCreateAndConsumeTextureCHROMIUM("
                      << static_cast<const void*>(data) << ")");
@@ -5943,8 +5740,7 @@ GLuint GLES2Implementation::CreateAndConsumeTextureCHROMIUM(
                               "GenMailboxCHROMIUM.";
   GLuint client_id;
   GetIdHandler(SharedIdNamespaces::kTextures)->MakeIds(this, 0, 1, &client_id);
-  helper_->CreateAndConsumeTextureINTERNALImmediate(target,
-      client_id, data);
+  helper_->CreateAndConsumeTextureINTERNALImmediate(client_id, data);
   if (share_group_->bind_generates_resource())
     helper_->CommandBufferHelper::Flush();
   CheckGLError();
@@ -6110,57 +5906,44 @@ void GLES2Implementation::CompleteLockDiscardableTexureOnContextThread(
   helper_->LockDiscardableTextureCHROMIUM(texture_id);
 }
 
-void GLES2Implementation::SetLostContextCallback(
-    const base::Closure& callback) {
-  lost_context_callback_ = callback;
+bool GLES2Implementation::ThreadsafeDiscardableTextureIsDeletedForTracing(
+    uint32_t texture_id) {
+  ClientDiscardableTextureManager* manager =
+      share_group()->discardable_texture_manager();
+  return manager->TextureIsDeletedForTracing(texture_id);
 }
 
-GLuint64 GLES2Implementation::InsertFenceSyncCHROMIUM() {
-  const uint64_t release = gpu_control_->GenerateFenceSyncRelease();
-  helper_->InsertFenceSyncCHROMIUM(release);
-  return release;
-}
-
-void GLES2Implementation::GenSyncTokenCHROMIUM(GLuint64 fence_sync,
-                                               GLbyte* sync_token) {
+void GLES2Implementation::GenSyncTokenCHROMIUM(GLbyte* sync_token) {
   if (!sync_token) {
     SetGLError(GL_INVALID_VALUE, "glGenSyncTokenCHROMIUM", "empty sync_token");
     return;
-  } else if (!gpu_control_->IsFenceSyncRelease(fence_sync)) {
-    SetGLError(GL_INVALID_VALUE, "glGenSyncTokenCHROMIUM",
-               "invalid fence sync");
-    return;
-  } else if (!gpu_control_->IsFenceSyncFlushReceived(fence_sync)) {
-    SetGLError(GL_INVALID_OPERATION, "glGenSyncTokenCHROMIUM",
-               "fence sync must be flushed before generating sync token");
-    return;
   }
 
+  uint64_t fence_sync = gpu_control_->GenerateFenceSyncRelease();
+  helper_->InsertFenceSyncCHROMIUM(fence_sync);
+  helper_->CommandBufferHelper::OrderingBarrier();
+  gpu_control_->EnsureWorkVisible();
+
   // Copy the data over after setting the data to ensure alignment.
-  SyncToken sync_token_data(gpu_control_->GetNamespaceID(), 0,
+  SyncToken sync_token_data(gpu_control_->GetNamespaceID(),
                             gpu_control_->GetCommandBufferID(), fence_sync);
   sync_token_data.SetVerifyFlush();
   memcpy(sync_token, &sync_token_data, sizeof(sync_token_data));
 }
 
-void GLES2Implementation::GenUnverifiedSyncTokenCHROMIUM(GLuint64 fence_sync,
-                                                         GLbyte* sync_token) {
+void GLES2Implementation::GenUnverifiedSyncTokenCHROMIUM(GLbyte* sync_token) {
   if (!sync_token) {
     SetGLError(GL_INVALID_VALUE, "glGenUnverifiedSyncTokenCHROMIUM",
                "empty sync_token");
     return;
-  } else if (!gpu_control_->IsFenceSyncRelease(fence_sync)) {
-    SetGLError(GL_INVALID_VALUE, "glGenUnverifiedSyncTokenCHROMIUM",
-               "invalid fence sync");
-    return;
-  } else if (!gpu_control_->IsFenceSyncFlushed(fence_sync)) {
-    SetGLError(GL_INVALID_OPERATION, "glGenUnverifiedSyncTokenCHROMIUM",
-               "fence sync must be flushed before generating sync token");
-    return;
   }
 
+  uint64_t fence_sync = gpu_control_->GenerateFenceSyncRelease();
+  helper_->InsertFenceSyncCHROMIUM(fence_sync);
+  helper_->CommandBufferHelper::OrderingBarrier();
+
   // Copy the data over after setting the data to ensure alignment.
-  SyncToken sync_token_data(gpu_control_->GetNamespaceID(), 0,
+  SyncToken sync_token_data(gpu_control_->GetNamespaceID(),
                             gpu_control_->GetCommandBufferID(), fence_sync);
   memcpy(sync_token, &sync_token_data, sizeof(sync_token_data));
 }
@@ -6222,21 +6005,6 @@ void GLES2Implementation::WaitSyncTokenCHROMIUM(const GLbyte* sync_token_data) {
   gpu_control_->WaitSyncTokenHint(verified_sync_token);
 }
 
-bool GLES2Implementation::GetVerifiedSyncTokenForIPC(
-    const SyncToken& sync_token,
-    SyncToken* verified_sync_token) {
-  DCHECK(sync_token.HasData());
-  DCHECK(verified_sync_token);
-
-  if (!sync_token.verified_flush() &&
-      !gpu_control_->CanWaitUnverifiedSyncToken(sync_token))
-    return false;
-
-  *verified_sync_token = sync_token;
-  verified_sync_token->SetVerifyFlush();
-  return true;
-}
-
 namespace {
 
 bool CreateImageValidInternalFormat(GLenum internalformat,
@@ -6253,6 +6021,8 @@ bool CreateImageValidInternalFormat(GLenum internalformat,
       return capabilities.texture_format_etc1;
     case GL_R16_EXT:
       return capabilities.texture_norm16;
+    case GL_RGB10_A2_EXT:
+      return capabilities.image_xr30 || capabilities.image_xb30;
     case GL_RED:
     case GL_RG_EXT:
     case GL_RGB:
@@ -7090,6 +6860,14 @@ void GLES2Implementation::UnlockDiscardableTextureCHROMIUM(GLuint texture_id) {
                "Texture ID not initialized");
     return;
   }
+
+  // |should_unbind_texture| will be set to true if the texture has been fully
+  // unlocked. In this case, ensure the texture is unbound.
+  bool should_unbind_texture = false;
+  manager->UnlockTexture(texture_id, &should_unbind_texture);
+  if (should_unbind_texture)
+    UnbindTexturesHelper(1, &texture_id);
+
   helper_->UnlockDiscardableTextureCHROMIUM(texture_id);
 }
 
@@ -7109,28 +6887,6 @@ bool GLES2Implementation::LockDiscardableTextureCHROMIUM(GLuint texture_id) {
   }
   helper_->LockDiscardableTextureCHROMIUM(texture_id);
   return true;
-}
-
-void GLES2Implementation::CreateTransferCacheEntryCHROMIUM(
-    GLuint64 handle_id,
-    GLuint handle_shm_id,
-    GLuint handle_shm_offset,
-    const cc::ClientTransferCacheEntry& entry) {
-#if defined(OS_NACL)
-  NOTREACHED();
-#else
-  ScopedMappedMemoryPtr mapped_alloc(entry.SerializedSize(), helper_,
-                                     mapped_memory_.get());
-  DCHECK(mapped_alloc.valid());
-  bool succeeded = entry.Serialize(
-      mapped_alloc.size(), reinterpret_cast<uint8_t*>(mapped_alloc.address()));
-  DCHECK(succeeded);
-
-  helper_->CreateTransferCacheEntryCHROMIUM(
-      handle_id, handle_shm_id, handle_shm_offset,
-      static_cast<uint32_t>(entry.Type()), mapped_alloc.shm_id(),
-      mapped_alloc.offset(), mapped_alloc.size());
-#endif
 }
 
 void GLES2Implementation::UpdateCachedExtensionsIfNeeded() {
@@ -7161,118 +6917,118 @@ void GLES2Implementation::Viewport(GLint x,
   CheckGLError();
 }
 
-#if !defined(OS_NACL)
-struct PaintOpSerializer {
- public:
-  PaintOpSerializer(size_t initial_size,
-                    TransferBufferInterface* transfer_buffer,
-                    GLES2CmdHelper* helper)
-      : transfer_buffer_(initial_size, helper, transfer_buffer),
-        helper_(helper),
-        free_bytes_(initial_size) {
-    DCHECK(transfer_buffer_.valid());
+void* GLES2Implementation::MapRasterCHROMIUM(GLsizeiptr size) {
+  if (size < 0) {
+    SetGLError(GL_INVALID_VALUE, "glMapRasterCHROMIUM", "negative size");
+    return nullptr;
   }
-
-  ~PaintOpSerializer() {
-    // Need to call SendSerializedData;
-    DCHECK(!written_bytes_);
+  if (raster_mapped_buffer_) {
+    SetGLError(GL_INVALID_OPERATION, "glMapRasterCHROMIUM", "already mapped");
+    return nullptr;
   }
-
-  size_t Serialize(const cc::PaintOp* op,
-                   const cc::PaintOp::SerializeOptions& options) {
-    char* memory = static_cast<char*>(transfer_buffer_.address());
-    size_t size = op->Serialize(memory + written_bytes_, free_bytes_, options);
-    if (!size) {
-      SendSerializedData();
-      transfer_buffer_.Reset(kBlockAlloc);
-      memory = static_cast<char*>(transfer_buffer_.address());
-      free_bytes_ = transfer_buffer_.size();
-      size = op->Serialize(memory + written_bytes_, free_bytes_, options);
-    }
-    DCHECK_LE(size, free_bytes_);
-    DCHECK_EQ(free_bytes_ + written_bytes_, transfer_buffer_.size());
-
-    written_bytes_ += size;
-    free_bytes_ -= size;
-    return size;
+  raster_mapped_buffer_.emplace(size, helper_, transfer_buffer_);
+  if (!raster_mapped_buffer_->valid()) {
+    SetGLError(GL_INVALID_OPERATION, "glMapRasterCHROMIUM", "size too big");
+    raster_mapped_buffer_ = base::nullopt;
+    return nullptr;
   }
+  return raster_mapped_buffer_->address();
+}
 
-  void SendSerializedData() {
-    if (!written_bytes_)
-      return;
-    transfer_buffer_.Shrink(written_bytes_);
-    helper_->RasterCHROMIUM(transfer_buffer_.shm_id(),
-                            transfer_buffer_.offset(), written_bytes_);
-    written_bytes_ = 0;
-  }
-
- private:
-  static constexpr unsigned int kBlockAlloc = 512 * 1024;
-
-  ScopedTransferBufferPtr transfer_buffer_;
-  GLES2CmdHelper* helper_;
-
-  size_t written_bytes_ = 0;
-  size_t free_bytes_ = 0;
-};
-#endif
-
-void GLES2Implementation::RasterCHROMIUM(const cc::DisplayItemList* list,
-                                         GLint translate_x,
-                                         GLint translate_y,
-                                         GLint clip_x,
-                                         GLint clip_y,
-                                         GLint clip_w,
-                                         GLint clip_h,
-                                         GLfloat post_translate_x,
-                                         GLfloat post_translate_y,
-                                         GLfloat post_scale) {
-#if defined(OS_NACL)
-  NOTREACHED();
-#else
-  GPU_CLIENT_SINGLE_THREAD_CHECK();
-  GPU_CLIENT_LOG("[" << GetLogPrefix() << "] glRasterChromium(" << list << ", "
-                     << translate_x << ", " << translate_y << ", " << clip_x
-                     << ", " << clip_y << ", " << clip_w << ", " << clip_h
-                     << ", " << post_translate_x << ", " << post_translate_y
-                     << ", " << post_scale << ")");
-
-  if (std::abs(post_scale) < std::numeric_limits<float>::epsilon())
+void GLES2Implementation::UnmapRasterCHROMIUM(GLsizeiptr written_size) {
+  if (written_size < 0) {
+    SetGLError(GL_INVALID_VALUE, "glUnmapRasterCHROMIUM",
+               "negative written_size");
     return;
-
-  gfx::Rect playback_rect(clip_x, clip_y, clip_w, clip_h);
-  gfx::Rect query_rect =
-      gfx::ScaleToEnclosingRect(playback_rect, 1.f / post_scale);
-  std::vector<size_t> offsets = list->rtree_.Search(query_rect);
-  if (offsets.empty())
+  }
+  if (!raster_mapped_buffer_) {
+    SetGLError(GL_INVALID_OPERATION, "glUnmapRasterCHROMIUM", "not mapped");
     return;
-
-  // TODO(enne): tune these numbers
-  // TODO(enne): convert these types here and in transfer buffer to be size_t.
-  static constexpr unsigned int kMinAlloc = 16 * 1024;
-  unsigned int free_size = std::max(transfer_buffer_->GetFreeSize(), kMinAlloc);
-
-  // This section duplicates RasterSource::PlaybackToCanvas setup preamble.
-  cc::PaintOpBufferSerializer::Preamble preamble;
-  preamble.translation =
-      gfx::Vector2dF(SkIntToScalar(translate_x), SkIntToScalar(translate_y));
-  preamble.playback_rect = playback_rect;
-  preamble.post_translation =
-      gfx::Vector2dF(post_translate_x, post_translate_y);
-  preamble.post_scale = post_scale;
-
-  // TODO(enne): need to implement alpha folding optimization from POB.
-  // TODO(enne): don't access private members of DisplayItemList.
-  PaintOpSerializer op_serializer(free_size, transfer_buffer_, helper_);
-  cc::PaintOpBufferSerializer::SerializeCallback serialize_cb = base::Bind(
-      &PaintOpSerializer::Serialize, base::Unretained(&op_serializer));
-  cc::PaintOpBufferSerializer serializer(serialize_cb, nullptr);
-  serializer.Serialize(&list->paint_op_buffer_, &offsets, preamble);
-  DCHECK(serializer.valid());
-  op_serializer.SendSerializedData();
-
+  }
+  DCHECK(raster_mapped_buffer_->valid());
+  if (written_size == 0) {
+    raster_mapped_buffer_->Discard();
+    raster_mapped_buffer_ = base::nullopt;
+    return;
+  }
+  raster_mapped_buffer_->Shrink(written_size);
+  helper_->RasterCHROMIUM(written_size, raster_mapped_buffer_->shm_id(),
+                          raster_mapped_buffer_->offset());
+  raster_mapped_buffer_ = base::nullopt;
   CheckGLError();
-#endif
+}
+
+void GLES2Implementation::IssueBeginQuery(GLenum target,
+                                          GLuint id,
+                                          uint32_t sync_data_shm_id,
+                                          uint32_t sync_data_shm_offset) {
+  helper_->BeginQueryEXT(target, id, sync_data_shm_id, sync_data_shm_offset);
+}
+
+void GLES2Implementation::IssueEndQuery(GLenum target, GLuint submit_count) {
+  helper_->EndQueryEXT(target, submit_count);
+}
+
+void GLES2Implementation::IssueQueryCounter(GLuint id,
+                                            GLenum target,
+                                            uint32_t sync_data_shm_id,
+                                            uint32_t sync_data_shm_offset,
+                                            GLuint submit_count) {
+  helper_->QueryCounterEXT(id, target, sync_data_shm_id, sync_data_shm_offset,
+                           submit_count);
+}
+
+void GLES2Implementation::IssueSetDisjointValueSync(
+    uint32_t sync_data_shm_id,
+    uint32_t sync_data_shm_offset) {
+  helper_->SetDisjointValueSyncCHROMIUM(sync_data_shm_id, sync_data_shm_offset);
+}
+
+GLenum GLES2Implementation::GetClientSideGLError() {
+  if (error_bits_ == 0) {
+    return GL_NO_ERROR;
+  }
+
+  GLenum error = GL_NO_ERROR;
+  for (uint32_t mask = 1; mask != 0; mask = mask << 1) {
+    if ((error_bits_ & mask) != 0) {
+      error = GLES2Util::GLErrorBitToGLError(mask);
+      break;
+    }
+  }
+  error_bits_ &= ~GLES2Util::GLErrorToErrorBit(error);
+  return error;
+}
+
+CommandBufferHelper* GLES2Implementation::cmd_buffer_helper() {
+  return helper_;
+}
+
+void GLES2Implementation::IssueCreateTransferCacheEntry(
+    GLuint entry_type,
+    GLuint entry_id,
+    GLuint handle_shm_id,
+    GLuint handle_shm_offset,
+    GLuint data_shm_id,
+    GLuint data_shm_offset,
+    GLuint data_size) {
+  helper_->CreateTransferCacheEntryINTERNAL(entry_type, entry_id, handle_shm_id,
+                                            handle_shm_offset, data_shm_id,
+                                            data_shm_offset, data_size);
+}
+
+void GLES2Implementation::IssueDeleteTransferCacheEntry(GLuint entry_type,
+                                                        GLuint entry_id) {
+  helper_->DeleteTransferCacheEntryINTERNAL(entry_type, entry_id);
+}
+
+void GLES2Implementation::IssueUnlockTransferCacheEntry(GLuint entry_type,
+                                                        GLuint entry_id) {
+  helper_->UnlockTransferCacheEntryINTERNAL(entry_type, entry_id);
+}
+
+CommandBuffer* GLES2Implementation::command_buffer() const {
+  return helper_->command_buffer();
 }
 
 // Include the auto-generated part of this file. We split this because it means

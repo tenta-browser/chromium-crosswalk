@@ -9,8 +9,8 @@
 
 #include "base/callback.h"
 #include "content/common/content_export.h"
-#include "third_party/WebKit/public/platform/WebURLRequest.h"
-#include "third_party/WebKit/public/platform/modules/fetch/fetch_api_request.mojom-shared.h"
+#include "third_party/blink/public/platform/modules/fetch/fetch_api_request.mojom.h"
+#include "third_party/blink/public/platform/web_url_request.h"
 
 class GURL;
 
@@ -42,8 +42,7 @@ class CONTENT_EXPORT AssociatedResourceFetcher {
   // the request, and the callback will never be run.
   static AssociatedResourceFetcher* Create(const GURL& url);
 
-  virtual void SetServiceWorkerMode(
-      blink::WebURLRequest::ServiceWorkerMode service_worker_mode) = 0;
+  virtual void SetSkipServiceWorker(bool skip_service_worker) = 0;
   virtual void SetCacheMode(blink::mojom::FetchCacheMode mode) = 0;
 
   // Associate the corresponding WebURLLoaderOptions to the loader. Must be
@@ -64,7 +63,7 @@ class CONTENT_EXPORT AssociatedResourceFetcher {
       blink::WebURLRequest::RequestContext request_context,
       network::mojom::FetchRequestMode fetch_request_mode,
       network::mojom::FetchCredentialsMode fetch_credentials_mode,
-      blink::WebURLRequest::FrameType frame_type,
+      network::mojom::RequestContextFrameType frame_type,
       const Callback& callback) = 0;
 
   // Manually cancel the request.

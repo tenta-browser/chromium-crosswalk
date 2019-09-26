@@ -6,10 +6,11 @@
 
 #include <stddef.h>
 
+#include <memory>
+
 #include "base/bind.h"
 #include "base/callback.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
@@ -23,6 +24,7 @@
 #include "chrome/browser/command_updater.h"
 #include "chrome/browser/extensions/api/omnibox/omnibox_api.h"
 #include "chrome/browser/favicon/favicon_service_factory.h"
+#include "chrome/browser/history/history_service_factory.h"
 #include "chrome/browser/net/predictor.h"
 #include "chrome/browser/predictors/autocomplete_action_predictor.h"
 #include "chrome/browser/predictors/autocomplete_action_predictor_factory.h"
@@ -33,6 +35,7 @@
 #include "chrome/browser/search/search.h"
 #include "chrome/browser/search_engines/template_url_service_factory.h"
 #include "chrome/browser/sessions/session_tab_helper.h"
+#include "chrome/browser/ui/layout_constants.h"
 #include "chrome/browser/ui/omnibox/chrome_omnibox_edit_controller.h"
 #include "chrome/browser/ui/omnibox/chrome_omnibox_navigation_observer.h"
 #include "chrome/browser/ui/search/search_tab_helper.h"
@@ -40,9 +43,7 @@
 #include "chrome/common/search/instant_types.h"
 #include "chrome/common/url_constants.h"
 #include "components/favicon/content/content_favicon_driver.h"
-#include "components/favicon/core/favicon_service.h"
-#include "components/favicon_base/favicon_types.h"
-#include "components/feature_engagement/features.h"
+#include "components/feature_engagement/buildflags.h"
 #include "components/omnibox/browser/autocomplete_match.h"
 #include "components/omnibox/browser/autocomplete_result.h"
 #include "components/omnibox/browser/search_provider.h"
@@ -57,6 +58,8 @@
 #include "net/traffic_annotation/network_traffic_annotation.h"
 #include "third_party/skia/include/core/SkBitmap.h"
 #include "ui/base/window_open_disposition.h"
+#include "ui/gfx/paint_vector_icon.h"
+#include "ui/gfx/vector_icon_types.h"
 #include "url/gurl.h"
 
 #if BUILDFLAG(ENABLE_DESKTOP_IN_PRODUCT_HELP)
@@ -95,11 +98,6 @@ void AnswerImageObserver::OnImageChanged(
   callback_.Run(image);
 }
 
-void OnFaviconFetched(const FaviconFetchedCallback& on_favicon_fetched,
-                      const favicon_base::FaviconImageResult& result) {
-  on_favicon_fetched.Run(result.image);
-}
-
 }  // namespace
 
 ChromeOmniboxClient::ChromeOmniboxClient(OmniboxEditController* controller,
@@ -107,7 +105,13 @@ ChromeOmniboxClient::ChromeOmniboxClient(OmniboxEditController* controller,
     : controller_(static_cast<ChromeOmniboxEditController*>(controller)),
       profile_(profile),
       scheme_classifier_(profile),
-      request_id_(BitmapFetcherService::REQUEST_ID_INVALID) {}
+      request_id_(BitmapFetcherService::REQUEST_ID_INVALID),
+      favicon_cache_(FaviconServiceFactory::GetForProfile(
+                         profile,
+                         ServiceAccessType::EXPLICIT_ACCESS),
+                     HistoryServiceFactory::GetForProfile(
+                         profile,
+                         ServiceAccessType::EXPLICIT_ACCESS)) {}
 
 ChromeOmniboxClient::~ChromeOmniboxClient() {
   BitmapFetcherService* image_service =
@@ -118,7 +122,7 @@ ChromeOmniboxClient::~ChromeOmniboxClient() {
 
 std::unique_ptr<AutocompleteProviderClient>
 ChromeOmniboxClient::CreateAutocompleteProviderClient() {
-  return base::MakeUnique<ChromeAutocompleteProviderClient>(profile_);
+  return std::make_unique<ChromeAutocompleteProviderClient>(profile_);
 }
 
 std::unique_ptr<OmniboxNavigationObserver>
@@ -126,7 +130,7 @@ ChromeOmniboxClient::CreateOmniboxNavigationObserver(
     const base::string16& text,
     const AutocompleteMatch& match,
     const AutocompleteMatch& alternate_nav_match) {
-  return base::MakeUnique<ChromeOmniboxNavigationObserver>(
+  return std::make_unique<ChromeOmniboxNavigationObserver>(
       profile_, text, match, alternate_nav_match);
 }
 
@@ -210,6 +214,14 @@ gfx::Image ChromeOmniboxClient::GetIconIfExtensionMatch(
         template_url->GetExtensionId());
   }
   return gfx::Image();
+}
+
+gfx::Image ChromeOmniboxClient::GetSizedIcon(
+    const gfx::VectorIcon& vector_icon_type,
+    SkColor vector_icon_color) const {
+  return gfx::Image(gfx::CreateVectorIcon(
+      vector_icon_type, GetLayoutConstant(LOCATION_BAR_ICON_SIZE),
+      vector_icon_color));
 }
 
 bool ChromeOmniboxClient::ProcessExtensionKeyword(
@@ -316,20 +328,11 @@ void ChromeOmniboxClient::OnResultChanged(
   }
 }
 
-void ChromeOmniboxClient::GetFaviconForPageUrl(
-    base::CancelableTaskTracker* tracker,
+gfx::Image ChromeOmniboxClient::GetFaviconForPageUrl(
     const GURL& page_url,
-    const FaviconFetchedCallback& on_favicon_fetched) {
-  favicon::FaviconService* favicon_service =
-      FaviconServiceFactory::GetForProfile(profile_,
-                                           ServiceAccessType::EXPLICIT_ACCESS);
-  if (!favicon_service)
-    return;
-
-  // TODO(tommycli): Investigate using the version of this method that specifies
-  // the desired size.
-  favicon_service->GetFaviconImageForPageURL(
-      page_url, base::Bind(&OnFaviconFetched, on_favicon_fetched), tracker);
+    FaviconFetchedCallback on_favicon_fetched) {
+  return favicon_cache_.GetFaviconForPageUrl(page_url,
+                                             std::move(on_favicon_fetched));
 }
 
 void ChromeOmniboxClient::OnCurrentMatchChanged(

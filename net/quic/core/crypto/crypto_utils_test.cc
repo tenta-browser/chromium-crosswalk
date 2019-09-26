@@ -5,17 +5,35 @@
 #include "net/quic/core/crypto/crypto_utils.h"
 
 #include "net/quic/core/quic_utils.h"
+#include "net/quic/platform/api/quic_arraysize.h"
+#include "net/quic/platform/api/quic_string.h"
 #include "net/quic/platform/api/quic_test.h"
 #include "net/quic/platform/api/quic_text_utils.h"
 #include "net/quic/test_tools/quic_test_utils.h"
 
-using std::string;
 
 namespace net {
 namespace test {
 namespace {
 
 class CryptoUtilsTest : public QuicTest {};
+
+TEST_F(CryptoUtilsTest, TestQhkdfExpand) {
+  const std::vector<uint8_t> secret = {
+      0x8f, 0x01, 0x00, 0x67, 0x9c, 0x96, 0x5a, 0xc5, 0x9f, 0x28, 0x3a,
+      0x02, 0x52, 0x2a, 0x6e, 0x43, 0xcf, 0xae, 0xf6, 0x3c, 0x45, 0x48,
+      0xb0, 0xa6, 0x8f, 0x91, 0x91, 0x40, 0xee, 0x7d, 0x9a, 0x48};
+  const QuicString label = "client hs";
+  std::vector<uint8_t> out =
+      CryptoUtils::QhkdfExpand(EVP_sha256(), secret, label, 32);
+
+  std::vector<uint8_t> expected_out = {
+      0x8e, 0x28, 0x6a, 0x27, 0x38, 0xe6, 0x66, 0x50, 0xb4, 0xf8, 0x8f,
+      0xac, 0x5d, 0xc5, 0xd0, 0xef, 0x7d, 0x36, 0x9b, 0x07, 0xd4, 0x74,
+      0x42, 0x99, 0x1a, 0x00, 0x0c, 0x55, 0xac, 0xc4, 0x0c, 0xf4};
+
+  EXPECT_EQ(out, expected_out);
+}
 
 TEST_F(CryptoUtilsTest, TestExportKeyingMaterial) {
   const struct TestVector {
@@ -48,20 +66,20 @@ TEST_F(CryptoUtilsTest, TestExportKeyingMaterial) {
        "c9a46ed0757bd1812f1f21b4d41e62125fec8364a21db7"},
   };
 
-  for (size_t i = 0; i < arraysize(test_vector); i++) {
+  for (size_t i = 0; i < QUIC_ARRAYSIZE(test_vector); i++) {
     // Decode the test vector.
-    string subkey_secret =
+    QuicString subkey_secret =
         QuicTextUtils::HexDecode(test_vector[i].subkey_secret);
-    string label = QuicTextUtils::HexDecode(test_vector[i].label);
-    string context = QuicTextUtils::HexDecode(test_vector[i].context);
+    QuicString label = QuicTextUtils::HexDecode(test_vector[i].label);
+    QuicString context = QuicTextUtils::HexDecode(test_vector[i].context);
     size_t result_len = test_vector[i].result_len;
     bool expect_ok = test_vector[i].expected != nullptr;
-    string expected;
+    QuicString expected;
     if (expect_ok) {
       expected = QuicTextUtils::HexDecode(test_vector[i].expected);
     }
 
-    string result;
+    QuicString result;
     bool ok = CryptoUtils::ExportKeyingMaterial(subkey_secret, label, context,
                                                 result_len, &result);
     EXPECT_EQ(expect_ok, ok);

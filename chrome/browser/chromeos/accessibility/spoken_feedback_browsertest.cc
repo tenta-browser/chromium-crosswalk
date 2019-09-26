@@ -5,8 +5,7 @@
 #include <queue>
 
 #include "ash/accelerators/accelerator_controller.h"
-#include "ash/accelerators/accelerator_table.h"
-#include "ash/public/cpp/accessibility_types.h"
+#include "ash/public/cpp/accelerators.h"
 #include "ash/shell.h"
 #include "ash/system/tray/system_tray.h"
 #include "base/command_line.h"
@@ -128,8 +127,7 @@ class LoggedInSpokenFeedbackTest : public InProcessBrowserTest {
     // Enable ChromeVox, skip welcome message/notification, and disable earcons.
     ASSERT_FALSE(AccessibilityManager::Get()->IsSpokenFeedbackEnabled());
 
-    AccessibilityManager::Get()->EnableSpokenFeedback(
-        true, ash::A11Y_NOTIFICATION_NONE);
+    AccessibilityManager::Get()->EnableSpokenFeedback(true);
     EXPECT_TRUE(speech_monitor_.SkipChromeVoxEnabledMessage());
     DisableEarcons();
   }
@@ -279,7 +277,8 @@ IN_PROC_BROWSER_TEST_P(SpokenFeedbackTest, DISABLED_EnableSpokenFeedback) {
 IN_PROC_BROWSER_TEST_P(SpokenFeedbackTest, FocusToolbar) {
   EnableChromeVox();
   chrome::ExecuteCommand(browser(), IDC_FOCUS_TOOLBAR);
-  EXPECT_EQ("Reload", speech_monitor_.GetNextUtterance());
+  while (speech_monitor_.GetNextUtterance() != "Reload") {
+  }
   EXPECT_EQ("Button", speech_monitor_.GetNextUtterance());
 }
 
@@ -314,6 +313,8 @@ IN_PROC_BROWSER_TEST_P(SpokenFeedbackTest, FocusShelf) {
   EXPECT_EQ("Shelf", speech_monitor_.GetNextUtterance());
   EXPECT_EQ("Tool bar", speech_monitor_.GetNextUtterance());
   EXPECT_EQ(", window", speech_monitor_.GetNextUtterance());
+  EXPECT_EQ("Press Search plus Space to activate.",
+            speech_monitor_.GetNextUtterance());
 
   SendKeyPress(ui::VKEY_TAB);
   EXPECT_TRUE(base::MatchPattern(speech_monitor_.GetNextUtterance(), "*"));
@@ -397,7 +398,7 @@ IN_PROC_BROWSER_TEST_P(SpokenFeedbackTest, OpenStatusTray) {
 
 // Fails on ASAN. See http://crbug.com/776308 . (Note MAYBE_ doesn't work well
 // with parameterized tests).
-#if !defined(ADDRESS_SANITIZER)
+#if !defined(ADDRESS_SANITIZER) && !defined(OS_CHROMEOS)
 IN_PROC_BROWSER_TEST_P(SpokenFeedbackTest, NavigateSystemTray) {
   EnableChromeVox();
 
@@ -456,7 +457,7 @@ IN_PROC_BROWSER_TEST_P(SpokenFeedbackTest, NavigateSystemTray) {
       break;
   }
 }
-#endif  // !defined(ADDRESS_SANITIZER)
+#endif  // !defined(ADDRESS_SANITIZER) && !defined(OS_CHROMEOS)
 
 // See http://crbug.com/443608
 IN_PROC_BROWSER_TEST_P(SpokenFeedbackTest, DISABLED_ScreenBrightness) {
@@ -526,7 +527,6 @@ IN_PROC_BROWSER_TEST_P(SpokenFeedbackTest, MAYBE_ChromeVoxShiftSearch) {
     if (utterance == "Click me")
       break;
   }
-  EXPECT_EQ("Button", speech_monitor_.GetNextUtterance());
 
   // Press Search+/ to enter ChromeVox's "find in page".
   SendKeyPressWithSearch(ui::VKEY_OEM_2);
@@ -623,7 +623,7 @@ IN_PROC_BROWSER_TEST_P(SpokenFeedbackTest, DISABLED_TouchExploreStatusTray) {
   // Send an accessibility hover event on the system tray, which is
   // what we get when you tap it on a touch screen when ChromeVox is on.
   ash::SystemTray* tray = ash::Shell::Get()->GetPrimarySystemTray();
-  tray->NotifyAccessibilityEvent(ui::AX_EVENT_HOVER, true);
+  tray->NotifyAccessibilityEvent(ax::mojom::Event::kHover, true);
 
   EXPECT_EQ("Status tray,", speech_monitor_.GetNextUtterance());
   EXPECT_TRUE(base::MatchPattern(speech_monitor_.GetNextUtterance(), "time*,"));
@@ -697,10 +697,9 @@ class GuestSpokenFeedbackTest : public LoggedInSpokenFeedbackTest {
 
 IN_PROC_BROWSER_TEST_F(GuestSpokenFeedbackTest, FocusToolbar) {
   EnableChromeVox();
-
   chrome::ExecuteCommand(browser(), IDC_FOCUS_TOOLBAR);
-
-  EXPECT_EQ("Reload", speech_monitor_.GetNextUtterance());
+  while (speech_monitor_.GetNextUtterance() != "Reload") {
+  }
   EXPECT_EQ("Button", speech_monitor_.GetNextUtterance());
 }
 
@@ -739,8 +738,7 @@ IN_PROC_BROWSER_TEST_F(OobeSpokenFeedbackTest, DISABLED_SpokenFeedbackInOobe) {
   // We expect to be in the language select dropdown for this test to work,
   // so make sure that's the case.
   js_checker().ExecuteAsync("$('language-select').focus()");
-  AccessibilityManager::Get()->EnableSpokenFeedback(
-      true, ash::A11Y_NOTIFICATION_NONE);
+  AccessibilityManager::Get()->EnableSpokenFeedback(true);
   ASSERT_TRUE(speech_monitor_.SkipChromeVoxEnabledMessage());
   // There's no guarantee that ChromeVox speaks anything when injected after
   // the page loads, which is by design.  Tab forward and then backward

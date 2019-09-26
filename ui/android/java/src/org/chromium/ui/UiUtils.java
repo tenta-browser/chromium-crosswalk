@@ -4,6 +4,7 @@
 
 package org.chromium.ui;
 
+import android.annotation.SuppressLint;
 import android.content.Context;
 import android.graphics.Bitmap;
 import android.graphics.Canvas;
@@ -14,7 +15,6 @@ import android.os.Environment;
 import android.os.Handler;
 import android.os.StrictMode;
 import android.text.TextUtils;
-import android.util.Log;
 import android.view.SurfaceView;
 import android.view.View;
 import android.view.View.MeasureSpec;
@@ -26,6 +26,7 @@ import android.widget.AbsListView;
 import android.widget.ListAdapter;
 
 import org.chromium.base.ApiCompatibilityUtils;
+import org.chromium.base.Log;
 
 import java.io.File;
 import java.io.IOException;
@@ -201,6 +202,7 @@ public class UiUtils {
      * @param view    A {@link View}.
      * @return        Whether or not the software keyboard is visible and taking up screen space.
      */
+    @SuppressLint("NewApi")
     public static boolean isKeyboardShowing(Context context, View view) {
         if (sKeyboardShowingDelegate != null
                 && sKeyboardShowingDelegate.disableKeyboardCheck(context, view)) {
@@ -212,9 +214,37 @@ public class UiUtils {
         Rect appRect = new Rect();
         rootView.getWindowVisibleDisplayFrame(appRect);
 
-        final float density = context.getResources().getDisplayMetrics().density;
-        final float bottomMarginDp = Math.abs(rootView.getHeight() - appRect.height()) / density;
-        return bottomMarginDp > KEYBOARD_DETECT_BOTTOM_THRESHOLD_DP;
+        // Assume status bar is always at the top of the screen.
+        final int statusBarHeight = appRect.top;
+
+        int bottomMargin = rootView.getHeight() - (appRect.height() + statusBarHeight);
+
+        // If there is no bottom margin, the keyboard is not showing.
+        if (bottomMargin <= 0) return false;
+
+        // If the display frame width is < root view width, controls are on the side of the screen.
+        // The inverse is not necessarily true; i.e. if navControlsOnSide is false, it doesn't mean
+        // the controls are not on the side or that they _are_ at the bottom. It might just mean the
+        // app is not responsible for drawing their background.
+        boolean navControlsOnSide = appRect.width() != rootView.getWidth();
+
+        // If the Android nav controls are on the sides instead of at the bottom, its height is not
+        // needed.
+        if (!navControlsOnSide) {
+            // When available, get the root view insets.
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                bottomMargin -= rootView.getRootWindowInsets().getStableInsetBottom();
+            } else {
+                // In the event we couldn't get the bottom nav height, use a best guess of the
+                // keyboard height. In certain cases this also means including the height of the
+                // Android navigation.
+                final float density = context.getResources().getDisplayMetrics().density;
+                bottomMargin = (int) (bottomMargin - KEYBOARD_DETECT_BOTTOM_THRESHOLD_DP * density);
+            }
+        }
+
+        // After subtracting the bottom navigation, the remaining margin represents the keyboard.
+        return bottomMargin > 0;
     }
 
     /**
@@ -452,5 +482,23 @@ public class UiUtils {
         }
 
         return maxWidth;
+    }
+
+    /**
+     * Get the index of a child {@link View} in a {@link ViewGroup}.
+     * @param child The child to find the index of.
+     * @return The index of the child in its parent. -1 if the child has no parent.
+     */
+    public static int getChildIndexInParent(View child) {
+        if (child.getParent() == null) return -1;
+        ViewGroup parent = (ViewGroup) child.getParent();
+        int indexInParent = -1;
+        for (int i = 0; i < parent.getChildCount(); i++) {
+            if (parent.getChildAt(i) == child) {
+                indexInParent = i;
+                break;
+            }
+        }
+        return indexInParent;
     }
 }

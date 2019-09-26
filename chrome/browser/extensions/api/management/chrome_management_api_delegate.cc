@@ -4,9 +4,10 @@
 
 #include "chrome/browser/extensions/api/management/chrome_management_api_delegate.h"
 
+#include <memory>
+
 #include "base/callback_helpers.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/extensions/bookmark_app_helper.h"
 #include "chrome/browser/extensions/chrome_extension_function_details.h"
@@ -26,16 +27,14 @@
 #include "chrome/common/web_application_info.h"
 #include "components/favicon/core/favicon_service.h"
 #include "content/public/browser/browser_context.h"
-#include "content/public/browser/utility_process_host.h"
-#include "content/public/browser/utility_process_host_client.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/service_manager_connection.h"
 #include "extensions/browser/api/management/management_api.h"
 #include "extensions/browser/api/management/management_api_constants.h"
+#include "extensions/browser/disable_reason.h"
 #include "extensions/browser/extension_prefs.h"
 #include "extensions/browser/extension_registry.h"
 #include "extensions/browser/extension_system.h"
-#include "extensions/common/disable_reason.h"
 #include "extensions/common/extension.h"
 #include "services/data_decoder/public/cpp/safe_json_parser.h"
 
@@ -60,7 +59,7 @@ class ManagementSetEnabledFunctionInstallPromptDelegate
                        OnInstallPromptDone,
                    weak_factory_.GetWeakPtr()),
         extension, nullptr,
-        base::MakeUnique<ExtensionInstallPrompt::Prompt>(type),
+        std::make_unique<ExtensionInstallPrompt::Prompt>(type),
         ExtensionInstallPrompt::GetDefaultShowDialogCallback());
   }
   ~ManagementSetEnabledFunctionInstallPromptDelegate() override {}
@@ -95,20 +94,33 @@ class ManagementUninstallFunctionUninstallDialogDelegate
     extension_uninstall_dialog_.reset(
         extensions::ExtensionUninstallDialog::Create(
             details.GetProfile(), details.GetNativeWindowForUI(), this));
-    extensions::UninstallSource source =
-        function->source_context_type() == extensions::Feature::WEBUI_CONTEXT
-            ? extensions::UNINSTALL_SOURCE_CHROME_EXTENSIONS_PAGE
-            : extensions::UNINSTALL_SOURCE_EXTENSION;
+    bool uninstall_from_webstore =
+        function->extension() &&
+        function->extension()->id() == extensions::kWebStoreAppId;
+    extensions::UninstallSource source;
+    extensions::UninstallReason reason;
+    if (uninstall_from_webstore) {
+      source = extensions::UNINSTALL_SOURCE_CHROME_WEBSTORE;
+      reason = extensions::UNINSTALL_REASON_CHROME_WEBSTORE;
+    } else if (function->source_context_type() ==
+               extensions::Feature::WEBUI_CONTEXT) {
+      source = extensions::UNINSTALL_SOURCE_CHROME_EXTENSIONS_PAGE;
+      // TODO: Update this to a new reason; it shouldn't be lumped in with
+      // other uninstalls if it's from the chrome://extensions page.
+      reason = extensions::UNINSTALL_REASON_MANAGEMENT_API;
+    } else {
+      source = extensions::UNINSTALL_SOURCE_EXTENSION;
+      reason = extensions::UNINSTALL_REASON_MANAGEMENT_API;
+    }
     if (show_programmatic_uninstall_ui) {
       extension_uninstall_dialog_->ConfirmUninstallByExtension(
-          target_extension, function->extension(),
-          extensions::UNINSTALL_REASON_MANAGEMENT_API, source);
+          target_extension, function->extension(), reason, source);
     } else {
-      extension_uninstall_dialog_->ConfirmUninstall(
-          target_extension, extensions::UNINSTALL_REASON_MANAGEMENT_API,
-          source);
+      extension_uninstall_dialog_->ConfirmUninstall(target_extension, reason,
+                                                    source);
     }
   }
+
   ~ManagementUninstallFunctionUninstallDialogDelegate() override {}
 
   // ExtensionUninstallDialog::Delegate implementation.
@@ -149,7 +161,8 @@ class ChromeAppForLinkDelegate : public extensions::AppForLinkDelegate {
     }
 
     bookmark_app_helper_.reset(new extensions::BookmarkAppHelper(
-        Profile::FromBrowserContext(context), web_app, NULL));
+        Profile::FromBrowserContext(context), web_app, nullptr,
+        WebappInstallSource::MANAGEMENT_API));
     bookmark_app_helper_->Create(
         base::Bind(&extensions::ManagementGenerateAppForLinkFunction::
                        FinishCreateBookmarkApp,

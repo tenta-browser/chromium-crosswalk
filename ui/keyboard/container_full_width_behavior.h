@@ -7,6 +7,7 @@
 
 #include "ui/aura/window.h"
 #include "ui/compositor/scoped_layer_animation_settings.h"
+#include "ui/events/event.h"
 #include "ui/keyboard/container_behavior.h"
 #include "ui/keyboard/container_type.h"
 #include "ui/keyboard/keyboard_controller.h"
@@ -34,13 +35,14 @@ class KEYBOARD_EXPORT ContainerFullWidthBehavior : public ContainerBehavior {
   void InitializeShowAnimationStartingState(aura::Window* container) override;
   const gfx::Rect AdjustSetBoundsRequest(
       const gfx::Rect& display_bounds,
-      const gfx::Rect& requested_bounds) override;
+      const gfx::Rect& requested_bounds_in_screen_coords) override;
   bool IsOverscrollAllowed() const override;
   bool IsDragHandle(const gfx::Vector2d& offset,
                     const gfx::Size& keyboard_size) const override;
-  void SavePosition(const gfx::Point& position) override;
-  void HandlePointerEvent(bool isMouseButtonPressed,
-                          const gfx::Vector2d& kb_offset) override;
+  void SavePosition(const gfx::Rect& keyboard_bounds,
+                    const gfx::Size& screen_size) override;
+  bool HandlePointerEvent(const ui::LocatedEvent& event,
+                          const display::Display& current_display) override;
   void SetCanonicalBounds(aura::Window* container,
                           const gfx::Rect& display_bounds) override;
   ContainerType GetType() const override;

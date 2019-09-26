@@ -45,7 +45,7 @@ class StubPasswordManagerClient : public PasswordManagerClient {
   void NotifyStorePasswordCalled() override;
   void AutomaticPasswordSave(
       std::unique_ptr<PasswordFormManager> saved_manager) override;
-  PrefService* GetPrefs() override;
+  PrefService* GetPrefs() const override;
   PasswordStore* GetPasswordStore() const override;
   const GURL& GetLastCommittedEntryURL() const override;
   const CredentialsFilter* GetStoreResultFilter() const override;
@@ -61,7 +61,6 @@ class StubPasswordManagerClient : public PasswordManagerClient {
       bool password_field_exists) override;
   void LogPasswordReuseDetectedEvent() override;
 #endif
-  ukm::UkmRecorder* GetUkmRecorder() override;
   ukm::SourceId GetUkmSourceId() override;
   PasswordManagerMetricsRecorder& GetMetricsRecorder() override;
 

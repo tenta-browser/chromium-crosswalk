@@ -14,6 +14,7 @@
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "components/autofill/core/common/password_form.h"
+#include "components/autofill/core/common/signatures_util.h"
 #include "components/password_manager/core/browser/password_form_user_action.h"
 #include "components/password_manager/core/browser/password_manager_metrics_util.h"
 #include "services/metrics/public/cpp/ukm_builders.h"
@@ -41,17 +42,9 @@ class PasswordFormMetricsRecorder
     : public base::RefCounted<PasswordFormMetricsRecorder> {
  public:
   // Records UKM metrics and reports them on destruction. The |source_id| is
-  // (re-)bound to |main_frame_url| shortly before reporting. As such it is
-  // crucial that the |source_id| is never bound to a different URL by another
-  // consumer. The reason for this late binding is that metrics can be
-  // collected for a WebContents for a long period of time and by the time the
-  // reporting happens, the binding of |source_id| to |main_frame_url| is
-  // already purged. |ukm_recorder| may be a nullptr, in which case no UKM
-  // metrics are recorded.
+  // the ID of the WebContents document that the forms belong to.
   PasswordFormMetricsRecorder(bool is_main_frame_secure,
-                              ukm::UkmRecorder* ukm_recorder,
-                              ukm::SourceId source_id,
-                              const GURL& main_frame_url);
+                              ukm::SourceId source_id);
 
   // ManagerAction - What does the PasswordFormManager do with this form? Either
   // it fills it, or it doesn't. If it doesn't fill it, that's either
@@ -231,6 +224,13 @@ class PasswordFormMetricsRecorder
   // Records a DetailedUserAction UKM metric.
   void RecordDetailedUserAction(DetailedUserAction action);
 
+  // Hash algorithm for RecordFormSignature. Public for testing.
+  static int64_t HashFormSignature(autofill::FormSignature form_signature);
+
+  // Records a low entropy hash of the form signature in order to be able to
+  // distinguish two forms on the same site.
+  void RecordFormSignature(autofill::FormSignature form_signature);
+
  private:
   friend class base::RefCounted<PasswordFormMetricsRecorder>;
 
@@ -307,17 +307,8 @@ class PasswordFormMetricsRecorder
   // data the user has entered.
   SubmittedFormType submitted_form_type_ = kSubmittedFormTypeUnspecified;
 
-  // Recorder to which metrics are sent. Has to outlive this
-  // PasswordFormMetricsRecorder.
-  ukm::UkmRecorder* ukm_recorder_;
-
-  // A SourceId of |ukm_recorder_|. This id gets bound to |main_frame_url_| on
-  // destruction. It can be shared across multiple metrics recorders as long as
-  // they all bind it to the same URL.
+  // The UKM SourceId of the document the form belongs to.
   ukm::SourceId source_id_;
-
-  // URL for which UKMs are reported.
-  GURL main_frame_url_;
 
   // Holds URL keyed metrics (UKMs) to be recorded on destruction.
   ukm::builders::PasswordForm ukm_entry_builder_;

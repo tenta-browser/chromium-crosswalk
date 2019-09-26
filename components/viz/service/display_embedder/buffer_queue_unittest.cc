@@ -12,10 +12,10 @@
 
 #include "base/memory/ptr_util.h"
 #include "build/build_config.h"
-#include "cc/test/test_context_provider.h"
-#include "cc/test/test_web_graphics_context_3d.h"
 #include "components/viz/common/gl_helper.h"
+#include "components/viz/test/test_context_provider.h"
 #include "components/viz/test/test_gpu_memory_buffer_manager.h"
+#include "components/viz/test/test_web_graphics_context_3d.h"
 #include "gpu/GLES2/gl2extchromium.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -94,6 +94,9 @@ const gpu::SurfaceHandle kFakeSurfaceHandle =
 const gpu::SurfaceHandle kFakeSurfaceHandle = 1;
 #endif
 
+const unsigned int kBufferQueueInternalformat = GL_RGBA;
+const gfx::BufferFormat kBufferQueueFormat = gfx::BufferFormat::RGBA_8888;
+
 class MockBufferQueue : public BufferQueue {
  public:
   MockBufferQueue(gpu::gles2::GLES2Interface* gl,
@@ -102,8 +105,8 @@ class MockBufferQueue : public BufferQueue {
                   unsigned int internalformat)
       : BufferQueue(gl,
                     target,
-                    internalformat,
-                    display::DisplaySnapshot::PrimaryFormat(),
+                    kBufferQueueInternalformat,
+                    kBufferQueueFormat,
                     nullptr,
                     gpu_memory_buffer_manager,
                     kFakeSurfaceHandle) {}
@@ -115,17 +118,16 @@ class BufferQueueTest : public ::testing::Test {
  public:
   BufferQueueTest() : doublebuffering_(true), first_frame_(true) {}
 
-  void SetUp() override {
-    InitWithContext(cc::TestWebGraphicsContext3D::Create());
-  }
+  void SetUp() override { InitWithContext(TestWebGraphicsContext3D::Create()); }
 
-  void InitWithContext(std::unique_ptr<cc::TestWebGraphicsContext3D> context) {
-    context_provider_ = cc::TestContextProvider::Create(std::move(context));
+  void InitWithContext(std::unique_ptr<TestWebGraphicsContext3D> context) {
+    context_provider_ = TestContextProvider::Create(std::move(context));
     context_provider_->BindToCurrentThread();
     gpu_memory_buffer_manager_.reset(new StubGpuMemoryBufferManager);
     mock_output_surface_ = new MockBufferQueue(context_provider_->ContextGL(),
                                                gpu_memory_buffer_manager_.get(),
-                                               GL_TEXTURE_2D, GL_RGB);
+                                               GL_TEXTURE_2D,
+                                               kBufferQueueInternalformat);
     output_surface_.reset(mock_output_surface_);
     output_surface_->Initialize();
   }
@@ -203,7 +205,7 @@ class BufferQueueTest : public ::testing::Test {
     return true;
   }
 
-  scoped_refptr<cc::TestContextProvider> context_provider_;
+  scoped_refptr<TestContextProvider> context_provider_;
   std::unique_ptr<StubGpuMemoryBufferManager> gpu_memory_buffer_manager_;
   std::unique_ptr<BufferQueue> output_surface_;
   MockBufferQueue* mock_output_surface_;
@@ -223,7 +225,7 @@ GLuint CreateImageDefault() {
   return ++id;
 }
 
-class MockedContext : public cc::TestWebGraphicsContext3D {
+class MockedContext : public TestWebGraphicsContext3D {
  public:
   MockedContext() {
     ON_CALL(*this, createImageCHROMIUM(_, _, _, _))
@@ -243,19 +245,19 @@ class BufferQueueMockedContextTest : public BufferQueueTest {
  public:
   void SetUp() override {
     context_ = new MockedContext();
-    InitWithContext(std::unique_ptr<cc::TestWebGraphicsContext3D>(context_));
+    InitWithContext(std::unique_ptr<TestWebGraphicsContext3D>(context_));
   }
 
  protected:
   MockedContext* context_;
 };
 
-scoped_refptr<cc::TestContextProvider> CreateMockedContextProvider(
+scoped_refptr<TestContextProvider> CreateMockedContextProvider(
     MockedContext** context) {
   std::unique_ptr<MockedContext> owned_context(new MockedContext);
   *context = owned_context.get();
-  scoped_refptr<cc::TestContextProvider> context_provider =
-      cc::TestContextProvider::Create(std::move(owned_context));
+  scoped_refptr<TestContextProvider> context_provider =
+      TestContextProvider::Create(std::move(owned_context));
   context_provider->BindToCurrentThread();
   return context_provider;
 }
@@ -265,7 +267,7 @@ std::unique_ptr<BufferQueue> CreateBufferQueue(
     gpu::gles2::GLES2Interface* gl,
     gpu::GpuMemoryBufferManager* gpu_memory_buffer_manager) {
   std::unique_ptr<BufferQueue> buffer_queue(new BufferQueue(
-      gl, target, GL_RGB, display::DisplaySnapshot::PrimaryFormat(), nullptr,
+      gl, target, kBufferQueueInternalformat, kBufferQueueFormat, nullptr,
       gpu_memory_buffer_manager, kFakeSurfaceHandle));
   buffer_queue->Initialize();
   return buffer_queue;
@@ -273,7 +275,7 @@ std::unique_ptr<BufferQueue> CreateBufferQueue(
 
 TEST(BufferQueueStandaloneTest, FboInitialization) {
   MockedContext* context;
-  scoped_refptr<cc::TestContextProvider> context_provider =
+  scoped_refptr<TestContextProvider> context_provider =
       CreateMockedContextProvider(&context);
   std::unique_ptr<StubGpuMemoryBufferManager> gpu_memory_buffer_manager(
       new StubGpuMemoryBufferManager);
@@ -294,7 +296,7 @@ TEST(BufferQueueStandaloneTest, FboBinding) {
     GLenum target = targets[i];
 
     MockedContext* context;
-    scoped_refptr<cc::TestContextProvider> context_provider =
+    scoped_refptr<TestContextProvider> context_provider =
         CreateMockedContextProvider(&context);
     std::unique_ptr<StubGpuMemoryBufferManager> gpu_memory_buffer_manager(
         new StubGpuMemoryBufferManager);
@@ -304,7 +306,8 @@ TEST(BufferQueueStandaloneTest, FboBinding) {
     EXPECT_CALL(*context, bindTexture(target, Ne(0U)));
     EXPECT_CALL(*context, destroyImageCHROMIUM(1));
     Expectation image =
-        EXPECT_CALL(*context, createImageCHROMIUM(_, 0, 0, GL_RGB))
+        EXPECT_CALL(*context,
+                    createImageCHROMIUM(_, 0, 0, kBufferQueueInternalformat))
             .WillOnce(Return(1));
     Expectation fb =
         EXPECT_CALL(*context, bindFramebuffer(GL_FRAMEBUFFER, Ne(0U)));
@@ -322,8 +325,8 @@ TEST(BufferQueueStandaloneTest, FboBinding) {
 }
 
 TEST(BufferQueueStandaloneTest, CheckBoundFramebuffer) {
-  scoped_refptr<cc::TestContextProvider> context_provider =
-      cc::TestContextProvider::Create();
+  scoped_refptr<TestContextProvider> context_provider =
+      TestContextProvider::Create();
   context_provider->BindToCurrentThread();
   std::unique_ptr<StubGpuMemoryBufferManager> gpu_memory_buffer_manager;
   std::unique_ptr<BufferQueue> output_surface;
@@ -334,8 +337,9 @@ TEST(BufferQueueStandaloneTest, CheckBoundFramebuffer) {
                                context_provider->ContextSupport()));
 
   output_surface.reset(new BufferQueue(
-      context_provider->ContextGL(), GL_TEXTURE_2D, GL_RGB,
-      display::DisplaySnapshot::PrimaryFormat(), gl_helper.get(),
+      context_provider->ContextGL(), GL_TEXTURE_2D,
+      kBufferQueueInternalformat, kBufferQueueFormat,
+      gl_helper.get(),
       gpu_memory_buffer_manager.get(), kFakeSurfaceHandle));
   output_surface->Initialize();
   output_surface->Reshape(screen_size, 1.0f, gfx::ColorSpace(), false);
@@ -624,7 +628,8 @@ TEST_F(BufferQueueMockedContextTest, RecreateBuffers) {
   // Expect all 4 images to be destroyed, 3 of the existing textures to be
   // copied from and 3 new images to be created.
   EXPECT_CALL(*context_, createImageCHROMIUM(_, screen_size.width(),
-                                             screen_size.height(), GL_RGB))
+                                             screen_size.height(),
+                                             kBufferQueueInternalformat))
       .Times(3);
   Expectation copy1 = EXPECT_CALL(*mock_output_surface_,
                                   CopyBufferDamage(_, displayed->texture, _, _))

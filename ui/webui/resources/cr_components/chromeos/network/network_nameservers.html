@@ -69,7 +69,7 @@
           <template is="dom-if"
               if="[[i18nExists('networkGoogleNameserversLearnMoreUrl')]]">
             <a href="[[i18n('networkGoogleNameserversLearnMoreUrl')]]"
-                target="_blank">
+                target="_blank" on-tap="doNothing_">
               [[i18n('networkNameserversLearnMore')]]
             </a>
           </template>
@@ -90,7 +90,7 @@
               <paper-input-container no-label-float>
                 <input id="nameserver[[index]]" is="iron-input" value="[[item]]"
                     disabled="[[!canEdit_(editable, nameserversType_)]]"
-                    on-change="onValueChange_">
+                    on-change="onValueChange_" slot="input">
               </paper-input-container>
             </template>
           </div>

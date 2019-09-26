@@ -20,6 +20,7 @@
 #include "ash/shell.h"
 #include "ash/system/status_area_layout_manager.h"
 #include "ash/system/status_area_widget.h"
+#include "ash/system/tray/system_tray.h"
 #include "base/command_line.h"
 #include "ui/compositor/layer.h"
 #include "ui/compositor/scoped_layer_animation_settings.h"
@@ -72,7 +73,8 @@ class ShelfWidget::DelegateView : public views::WidgetDelegate,
     default_last_focusable_child_ = default_last_focusable_child;
   }
 
-  // views::WidgetDelegateView:
+  // views::WidgetDelegate:
+  void DeleteDelegate() override { delete this; }
   views::Widget* GetWidget() override { return View::GetWidget(); }
   const views::Widget* GetWidget() const override { return View::GetWidget(); }
 
@@ -105,7 +107,9 @@ ShelfWidget::DelegateView::DelegateView(ShelfWidget* shelf_widget)
       focus_cycler_(nullptr),
       opaque_background_(ui::LAYER_SOLID_COLOR) {
   DCHECK(shelf_widget_);
-  SetLayoutManager(new views::FillLayout());
+  set_owned_by_client();  // Deleted by DeleteDelegate().
+
+  SetLayoutManager(std::make_unique<views::FillLayout>());
   set_allow_deactivate_on_esc(true);
   opaque_background_.SetBounds(GetLocalBounds());
 }
@@ -113,12 +117,21 @@ ShelfWidget::DelegateView::DelegateView(ShelfWidget* shelf_widget)
 ShelfWidget::DelegateView::~DelegateView() = default;
 
 // static
-bool ShelfWidget::IsUsingMdLoginShelf() {
-  return !switches::IsUsingWebUiLock() &&
-         (Shell::Get()->session_controller()->GetSessionState() ==
-              session_manager::SessionState::LOCKED ||
-          Shell::Get()->session_controller()->GetSessionState() ==
-              session_manager::SessionState::LOGIN_SECONDARY);
+bool ShelfWidget::IsUsingViewsShelf() {
+  switch (Shell::Get()->session_controller()->GetSessionState()) {
+    case session_manager::SessionState::ACTIVE:
+      return true;
+    // See https://crbug.com/798869.
+    case session_manager::SessionState::OOBE:
+      return false;
+    case session_manager::SessionState::LOCKED:
+    case session_manager::SessionState::LOGIN_SECONDARY:
+      return switches::IsUsingViewsLock();
+    case session_manager::SessionState::UNKNOWN:
+    case session_manager::SessionState::LOGIN_PRIMARY:
+    case session_manager::SessionState::LOGGED_IN_NOT_ACTIVE:
+      return switches::IsUsingViewsLogin();
+  }
 }
 
 void ShelfWidget::DelegateView::SetParentLayer(ui::Layer* layer) {
@@ -143,7 +156,7 @@ void ShelfWidget::DelegateView::OnBoundsChanged(const gfx::Rect& old_bounds) {
 views::View* ShelfWidget::DelegateView::GetDefaultFocusableChild() {
   // If views-based login shelf is shown, we want to focus either its first or
   // last child, otherwise focus on the first child as default.
-  if (IsUsingMdLoginShelf())
+  if (IsUsingViewsShelf())
     return FindFirstOrLastFocusableChild(shelf_widget_->login_shelf_view_,
                                          default_last_focusable_child_);
   return GetFirstFocusableChild();
@@ -155,7 +168,6 @@ void ShelfWidget::DelegateView::UpdateShelfBackground(SkColor color) {
 
 ShelfWidget::ShelfWidget(aura::Window* shelf_container, Shelf* shelf)
     : shelf_(shelf),
-      status_area_widget_(nullptr),
       delegate_view_(new DelegateView(this)),
       shelf_view_(new ShelfView(Shell::Get()->shelf_model(), shelf_, this)),
       login_shelf_view_(
@@ -200,16 +212,34 @@ ShelfWidget::ShelfWidget(aura::Window* shelf_container, Shelf* shelf)
   // Calls back into |this| and depends on |shelf_view_|.
   background_animator_.AddObserver(this);
   background_animator_.AddObserver(delegate_view_);
-
-  // Sets initial session state to make sure the UI is properly shown.
-  OnSessionStateChanged(Shell::Get()->session_controller()->GetSessionState());
 }
 
 ShelfWidget::~ShelfWidget() {
   // Must call Shutdown() before destruction.
   DCHECK(!status_area_widget_);
+}
+
+void ShelfWidget::Initialize() {
+  // Sets initial session state to make sure the UI is properly shown.
+  OnSessionStateChanged(Shell::Get()->session_controller()->GetSessionState());
+}
+
+void ShelfWidget::Shutdown() {
+  // Shutting down the status area widget may cause some widgets (e.g. bubbles)
+  // to close, so uninstall the ShelfLayoutManager event filters first. Don't
+  // reset the pointer until later because other widgets (e.g. app list) may
+  // access it later in shutdown.
+  shelf_layout_manager_->PrepareForShutdown();
+
+  background_animator_.RemoveObserver(status_area_widget_.get());
+  Shell::Get()->focus_cycler()->RemoveWidget(status_area_widget_.get());
+  status_area_widget_.reset();
+
+  // Don't need to update the shelf background during shutdown.
   background_animator_.RemoveObserver(delegate_view_);
   background_animator_.RemoveObserver(this);
+
+  // Don't need to observe focus/activation during shutdown.
   Shell::Get()->focus_cycler()->RemoveWidget(this);
   SetFocusCycler(nullptr);
   RemoveObserver(this);
@@ -218,12 +248,11 @@ ShelfWidget::~ShelfWidget() {
 void ShelfWidget::CreateStatusAreaWidget(aura::Window* status_container) {
   DCHECK(status_container);
   DCHECK(!status_area_widget_);
-  status_area_widget_ = new StatusAreaWidget(status_container, shelf_);
-  status_area_widget_->CreateTrayViews();
-  // NOTE: Container may be hidden depending on login/display state.
-  status_area_widget_->Show();
-  Shell::Get()->focus_cycler()->AddWidget(status_area_widget_);
-  background_animator_.AddObserver(status_area_widget_);
+  status_area_widget_ =
+      std::make_unique<StatusAreaWidget>(status_container, shelf_);
+  status_area_widget_->Initialize();
+  Shell::Get()->focus_cycler()->AddWidget(status_area_widget_.get());
+  background_animator_.AddObserver(status_area_widget_.get());
   status_container->SetLayoutManager(new StatusAreaLayoutManager(this));
 }
 
@@ -257,7 +286,7 @@ void ShelfWidget::PostCreateShelf() {
 
   shelf_layout_manager_->LayoutShelf();
   shelf_layout_manager_->UpdateAutoHideState();
-  Show();
+  ShowIfHidden();
 }
 
 bool ShelfWidget::IsShowingAppList() const {
@@ -280,24 +309,6 @@ void ShelfWidget::SetFocusCycler(FocusCycler* focus_cycler) {
 
 FocusCycler* ShelfWidget::GetFocusCycler() {
   return delegate_view_->focus_cycler();
-}
-
-void ShelfWidget::Shutdown() {
-  // Shutting down the status area widget may cause some widgets (e.g. bubbles)
-  // to close, so uninstall the ShelfLayoutManager event filters first. Don't
-  // reset the pointer until later because other widgets (e.g. app list) may
-  // access it later in shutdown.
-  if (shelf_layout_manager_)
-    shelf_layout_manager_->PrepareForShutdown();
-
-  if (status_area_widget_) {
-    background_animator_.RemoveObserver(status_area_widget_);
-    Shell::Get()->focus_cycler()->RemoveWidget(status_area_widget_);
-    status_area_widget_->Shutdown();
-    status_area_widget_ = nullptr;
-  }
-
-  CloseNow();
 }
 
 void ShelfWidget::UpdateIconPositionForPanel(aura::Window* panel) {
@@ -329,6 +340,10 @@ AppListButton* ShelfWidget::GetAppListButton() const {
   return shelf_view_->GetAppListButton();
 }
 
+BackButton* ShelfWidget::GetBackButton() const {
+  return shelf_view_->GetBackButton();
+}
+
 app_list::ApplicationDragAndDropHost*
 ShelfWidget::GetDragAndDropHostForAppList() {
   return shelf_view_;
@@ -358,28 +373,52 @@ void ShelfWidget::WillDeleteShelfLayoutManager() {
 }
 
 void ShelfWidget::OnSessionStateChanged(session_manager::SessionState state) {
-  switch (state) {
-    case session_manager::SessionState::ACTIVE:
-      login_shelf_view_->SetVisible(false);
-      shelf_view_->SetVisible(true);
-      // TODO(wzang): Combine with the codes specific to SessionState::ACTIVE
-      // in PostCreateShelf() when view-based shelf on login screen is
-      // supported.
-      break;
-    case session_manager::SessionState::LOCKED:
-    case session_manager::SessionState::LOGIN_SECONDARY:
-      shelf_view_->SetVisible(false);
-      login_shelf_view_->SetVisible(true);
-      break;
-    case session_manager::SessionState::OOBE:
-    case session_manager::SessionState::LOGIN_PRIMARY:
-    case session_manager::SessionState::LOGGED_IN_NOT_ACTIVE:
-    case session_manager::SessionState::UNKNOWN:
-      login_shelf_view_->SetVisible(false);
-      shelf_view_->SetVisible(false);
-      break;
+  // Do not show shelf widget:
+  // * when views based shelf is disabled
+  // * in UNKNOWN state - it might be called before shelf was initialized
+  // * on secondary screens in states other than ACTIVE
+  bool using_views_shelf = IsUsingViewsShelf();
+  bool unknown_state = state == session_manager::SessionState::UNKNOWN;
+  bool hide_on_secondary_screen = shelf_->ShouldHideOnSecondaryDisplay(state);
+  if (!using_views_shelf || unknown_state || hide_on_secondary_screen) {
+    HideIfShown();
+  } else {
+    switch (state) {
+      case session_manager::SessionState::ACTIVE:
+        login_shelf_view_->SetVisible(false);
+        shelf_view_->SetVisible(true);
+        break;
+      case session_manager::SessionState::LOCKED:
+      case session_manager::SessionState::LOGIN_SECONDARY:
+        shelf_view_->SetVisible(false);
+        login_shelf_view_->SetVisible(true);
+        break;
+      case session_manager::SessionState::OOBE:
+        login_shelf_view_->SetVisible(true);
+        shelf_view_->SetVisible(false);
+        break;
+      case session_manager::SessionState::LOGIN_PRIMARY:
+      case session_manager::SessionState::LOGGED_IN_NOT_ACTIVE:
+        login_shelf_view_->SetVisible(true);
+        shelf_view_->SetVisible(false);
+        break;
+      default:
+        // session_manager::SessionState::UNKNOWN handled in if statement above.
+        NOTREACHED();
+    }
+    ShowIfHidden();
   }
   login_shelf_view_->UpdateAfterSessionStateChange(state);
+}
+
+void ShelfWidget::HideIfShown() {
+  if (IsVisible())
+    Hide();
+}
+
+void ShelfWidget::ShowIfHidden() {
+  if (!IsVisible())
+    Show();
 }
 
 }  // namespace ash

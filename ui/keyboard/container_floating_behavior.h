@@ -7,6 +7,7 @@
 
 #include "ui/aura/window.h"
 #include "ui/compositor/scoped_layer_animation_settings.h"
+#include "ui/events/event.h"
 #include "ui/gfx/geometry/point.h"
 #include "ui/keyboard/container_behavior.h"
 #include "ui/keyboard/container_type.h"
@@ -21,6 +22,11 @@ namespace keyboard {
 // of the keyboard.
 constexpr int kDefaultDistanceFromScreenBottom = 20;
 constexpr int kDefaultDistanceFromScreenRight = 20;
+
+struct KeyboardPosition {
+  double left_padding_allotment_ratio;
+  double top_padding_allotment_ratio;
+};
 
 class KEYBOARD_EXPORT ContainerFloatingBehavior : public ContainerBehavior {
  public:
@@ -37,13 +43,14 @@ class KEYBOARD_EXPORT ContainerFloatingBehavior : public ContainerBehavior {
   void InitializeShowAnimationStartingState(aura::Window* container) override;
   const gfx::Rect AdjustSetBoundsRequest(
       const gfx::Rect& display_bounds,
-      const gfx::Rect& requested_bounds) override;
+      const gfx::Rect& requested_bounds_in_screen_coords) override;
   bool IsOverscrollAllowed() const override;
   bool IsDragHandle(const gfx::Vector2d& offset,
                     const gfx::Size& keyboard_size) const override;
-  void SavePosition(const gfx::Point& position) override;
-  void HandlePointerEvent(bool isMouseButtonPressed,
-                          const gfx::Vector2d& kb_offset) override;
+  void SavePosition(const gfx::Rect& keyboard_bounds,
+                    const gfx::Size& screen_size) override;
+  bool HandlePointerEvent(const ui::LocatedEvent& event,
+                          const display::Display& current_display) override;
   void SetCanonicalBounds(aura::Window* container,
                           const gfx::Rect& display_bounds) override;
   ContainerType GetType() const override;
@@ -51,6 +58,11 @@ class KEYBOARD_EXPORT ContainerFloatingBehavior : public ContainerBehavior {
   bool BoundsObscureUsableRegion() const override;
   bool BoundsAffectWorkspaceLayout() const override;
   bool SetDraggableArea(const gfx::Rect& rect) override;
+
+  // Calculate the position of the keyboard for when it is being shown.
+  gfx::Point GetPositionForShowingKeyboard(
+      const gfx::Size& keyboard_size,
+      const gfx::Rect& display_bounds) const;
 
  private:
   // Ensures that the keyboard is neither off the screen nor overlapping an
@@ -62,19 +74,11 @@ class KEYBOARD_EXPORT ContainerFloatingBehavior : public ContainerBehavior {
   // Saves the current keyboard location for use the next time it is displayed.
   void UpdateLastPoint(const gfx::Point& position);
 
-  // Returns true if the keyboard has not been display/moved yet and the default
-  // position should be used.
-  bool UseDefaultPosition() const;
-
-  // Calculate the position of the keyboard for when it is being shown.
-  gfx::Point GetPositionForShowingKeyboard(
-      const gfx::Size& keyboard_size,
-      const gfx::Rect& display_bounds) const;
-
   KeyboardController* controller_;
 
   // TODO(blakeo): cache the default_position_ on a per-display basis.
-  gfx::Point default_position_ = gfx::Point(-1, -1);
+  std::unique_ptr<struct keyboard::KeyboardPosition> default_position_ =
+      nullptr;
 
   // Current state of a cursor drag to move the keyboard, if one exists.
   // Otherwise nullptr.

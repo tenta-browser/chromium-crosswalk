@@ -11,13 +11,12 @@
 #include <vector>
 
 #include "base/bind.h"
-#include "base/memory/ptr_util.h"
 #include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "base/time/time.h"
 #include "chromecast/media/audio/cast_audio_manager.h"
 #include "chromecast/media/audio/cast_audio_output_stream.h"
-#include "chromecast/media/cma/test/mock_media_pipeline_backend_factory.h"
+#include "chromecast/media/cma/backend/cma_backend_factory.h"
 #include "media/audio/test_audio_thread.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -91,7 +90,7 @@ class MockCastAudioOutputStream : public CastAudioOutputStream {
 class MockCastAudioManager : public CastAudioManager {
  public:
   MockCastAudioManager()
-      : CastAudioManager(base::MakeUnique<::media::TestAudioThread>(),
+      : CastAudioManager(std::make_unique<::media::TestAudioThread>(),
                          nullptr,
                          nullptr,
                          nullptr,

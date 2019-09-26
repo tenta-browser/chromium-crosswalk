@@ -5,7 +5,6 @@
 #include "services/preferences/public/cpp/in_process_service_factory.h"
 
 #include "base/bind.h"
-#include "base/memory/ptr_util.h"
 #include "components/prefs/persistent_pref_store.h"
 #include "components/prefs/pref_registry.h"
 #include "services/preferences/public/cpp/pref_service_main.h"
@@ -39,7 +38,7 @@ class InProcessPrefServiceFactory::RegisteringDelegate
             PrefStore* user_prefs,
             PrefStore* recommended_prefs,
             PrefStore* default_prefs,
-            PrefNotifier* pref_notifier) override {
+            PrefNotifier* /*pref_notifier*/) override {
     if (!factory_)
       return;
 

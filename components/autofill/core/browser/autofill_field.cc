@@ -6,7 +6,9 @@
 
 #include <stdint.h>
 
+#include "base/feature_list.h"
 #include "base/strings/string_number_conversions.h"
+#include "components/autofill/core/browser/autofill_experiments.h"
 #include "components/autofill/core/browser/autofill_type.h"
 #include "components/autofill/core/browser/field_types.h"
 #include "components/autofill/core/browser/proto/server.pb.h"
@@ -91,37 +93,46 @@ void AutofillField::SetTypeTo(ServerFieldType type) {
 }
 
 AutofillType AutofillField::Type() const {
+  // If autocomplete=tel/tel-* and server confirms it really is a phone field,
+  // we always user the server prediction as html types are not very reliable.
+  if ((GroupTypeOfHtmlFieldType(html_type_, html_mode_) == PHONE_BILLING ||
+       GroupTypeOfHtmlFieldType(html_type_, html_mode_) == PHONE_HOME) &&
+      (GroupTypeOfServerFieldType(overall_server_type_) == PHONE_BILLING ||
+       GroupTypeOfServerFieldType(overall_server_type_) == PHONE_HOME)) {
+    return AutofillType(overall_server_type_);
+  }
+
   // Use the html type specified by the website unless it is unrecognized and
   // autofill predicts a credit card type.
   if (html_type_ != HTML_TYPE_UNSPECIFIED &&
       !(html_type_ == HTML_TYPE_UNRECOGNIZED && IsCreditCardPrediction())) {
-    // If autocomplete=tel and server says it's a phone field without country
-    // code, we override html prediction(autocomplete=tel leads to whole number
-    // prediction).
-    if (html_type_ == HTML_TYPE_TEL &&
-        overall_server_type_ == PHONE_HOME_CITY_AND_NUMBER) {
-      return AutofillType(PHONE_HOME_CITY_AND_NUMBER);
-    }
-
     return AutofillType(html_type_, html_mode_);
   }
 
   if (overall_server_type_ != NO_SERVER_DATA) {
-    // See http://crbug.com/429236 for background on why we might not always
-    // believe the server.
-    // TODO(http://crbug.com/589129) investigate how well the server is doing in
-    // regard to credit card predictions.
-    bool believe_server =
-        !(overall_server_type_ == NAME_FULL &&
-          heuristic_type_ == CREDIT_CARD_NAME_FULL) &&
-        !(overall_server_type_ == CREDIT_CARD_NAME_FULL &&
-          heuristic_type_ == NAME_FULL) &&
-        !(overall_server_type_ == NAME_FIRST &&
-          heuristic_type_ == CREDIT_CARD_NAME_FIRST) &&
-        !(overall_server_type_ == NAME_LAST &&
-          heuristic_type_ == CREDIT_CARD_NAME_LAST) &&
-        // CVC is sometimes type="password", which tricks the server.
-        // See http://crbug.com/469007
+    // Sometimes the server and heuristics disagree on whether a name field
+    // should be associated with an address or a credit card. There was a
+    // decision to prefer the heuristics in these cases, but it looks like
+    // it might be better to fix this server-side.
+    // See http://crbug.com/429236 for background.
+    bool believe_server;
+    if (base::FeatureList::IsEnabled(kAutofillPreferServerNamePredictions)) {
+      believe_server = true;
+    } else {
+      believe_server = !(overall_server_type_ == NAME_FULL &&
+                         heuristic_type_ == CREDIT_CARD_NAME_FULL) &&
+                       !(overall_server_type_ == CREDIT_CARD_NAME_FULL &&
+                         heuristic_type_ == NAME_FULL) &&
+                       !(overall_server_type_ == NAME_FIRST &&
+                         heuristic_type_ == CREDIT_CARD_NAME_FIRST) &&
+                       !(overall_server_type_ == NAME_LAST &&
+                         heuristic_type_ == CREDIT_CARD_NAME_LAST);
+    }
+
+    // Either way, retain a preference for the the CVC heuristic over the
+    // server's password predictions (http://crbug.com/469007)
+    believe_server =
+        believe_server &&
         !(AutofillType(overall_server_type_).group() == PASSWORD_FIELD &&
           heuristic_type_ == CREDIT_CARD_VERIFICATION_CODE);
     if (believe_server)

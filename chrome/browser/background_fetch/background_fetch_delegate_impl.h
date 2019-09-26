@@ -13,14 +13,16 @@
 
 #include "base/containers/flat_set.h"
 #include "base/memory/weak_ptr.h"
-#include "components/download/public/download_params.h"
+#include "components/download/public/background_service/download_params.h"
 #include "components/keyed_service/core/keyed_service.h"
 #include "components/offline_items_collection/core/offline_content_provider.h"
 #include "components/offline_items_collection/core/offline_item.h"
 #include "content/public/browser/background_fetch_delegate.h"
+#include "ui/gfx/image/image.h"
 #include "url/origin.h"
 
 class Profile;
+class SkBitmap;
 
 namespace download {
 class DownloadService;
@@ -46,10 +48,12 @@ class BackgroundFetchDelegateImpl
   void Shutdown() override;
 
   // BackgroundFetchDelegate implementation:
+  void GetIconDisplaySize(GetIconDisplaySizeCallback callback) override;
   void CreateDownloadJob(
       const std::string& job_unique_id,
       const std::string& title,
       const url::Origin& origin,
+      const SkBitmap& icon,
       int completed_parts,
       int total_parts,
       const std::vector<std::string>& current_guids) override;
@@ -74,16 +78,15 @@ class BackgroundFetchDelegateImpl
                            uint64_t size);
 
   // OfflineContentProvider implementation:
-  bool AreItemsAvailable() override;
   void OpenItem(const offline_items_collection::ContentId& id) override;
   void RemoveItem(const offline_items_collection::ContentId& id) override;
   void CancelDownload(const offline_items_collection::ContentId& id) override;
   void PauseDownload(const offline_items_collection::ContentId& id) override;
   void ResumeDownload(const offline_items_collection::ContentId& id,
                       bool has_user_gesture) override;
-  const offline_items_collection::OfflineItem* GetItemById(
-      const offline_items_collection::ContentId& id) override;
-  OfflineItemList GetAllItems() override;
+  void GetItemById(const offline_items_collection::ContentId& id,
+                   SingleItemCallback callback) override;
+  void GetAllItems(MultipleItemCallback callback) override;
   void GetVisualsForItem(const offline_items_collection::ContentId& id,
                          const VisualsCallback& callback) override;
   void AddObserver(Observer* observer) override;
@@ -99,6 +102,7 @@ class BackgroundFetchDelegateImpl
     JobDetails(const std::string& job_unique_id,
                const std::string& title,
                const url::Origin& origin,
+               const SkBitmap& icon,
                int completed_parts,
                int total_parts);
     ~JobDetails();
@@ -107,6 +111,7 @@ class BackgroundFetchDelegateImpl
 
     std::string title;
     const url::Origin origin;
+    gfx::Image icon;
     int completed_parts;
     const int total_parts;
     bool cancelled;

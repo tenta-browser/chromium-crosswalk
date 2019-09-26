@@ -5,7 +5,7 @@
 /** @fileoverview Tests for shared Polymer elements. */
 
 /** @const {string} Path to source root. */
-var ROOT_PATH = '../../../../../';
+const ROOT_PATH = '../../../../../';
 
 // Polymer BrowserTest fixture.
 GEN_INCLUDE(
@@ -129,8 +129,10 @@ CrElementsDrawerTest.prototype = {
   browsePreload: 'chrome://resources/cr_elements/cr_drawer/cr_drawer.html',
 
   /** @override */
-  extraLibraries: CrElementsBrowserTest.prototype.extraLibraries.concat(
-      ['cr_drawer_tests.js', ROOT_PATH + 'ui/webui/resources/js/util.js']),
+  extraLibraries: CrElementsBrowserTest.prototype.extraLibraries.concat([
+    '../settings/test_util.js',
+    'cr_drawer_tests.js',
+  ]),
 };
 
 TEST_F('CrElementsDrawerTest', 'All', function() {
@@ -298,6 +300,10 @@ CrElementsToastTest.prototype = {
     'cr_toast_test.js',
   ]),
 };
+
+TEST_F('CrElementsToastTest', 'All', function() {
+  mocha.run();
+});
 
 /**
  * @constructor

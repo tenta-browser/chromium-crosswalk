@@ -6,12 +6,14 @@
 
 #include <utility>
 
-#include "base/memory/ptr_util.h"
+#include "base/trace_event/trace_event.h"
 #include "chrome/browser/predictors/resource_prefetch_predictor.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/resource_hints.h"
 #include "net/base/net_errors.h"
 #include "net/http/transport_security_state.h"
+#include "net/proxy_resolution/proxy_info.h"
+#include "net/proxy_resolution/proxy_resolution_service.h"
 #include "net/url_request/url_request_context.h"
 
 namespace predictors {
@@ -79,7 +81,7 @@ void PreconnectManager::Start(const GURL& url,
     return;
 
   auto iterator_and_whether_inserted = preresolve_info_.emplace(
-      host, base::MakeUnique<PreresolveInfo>(url, requests.size()));
+      host, std::make_unique<PreresolveInfo>(url, requests.size()));
   PreresolveInfo* info = iterator_and_whether_inserted.first->second.get();
 
   for (const auto& request : requests) {
@@ -161,9 +163,16 @@ void PreconnectManager::TryToLaunchPreresolveJobs() {
     PreresolveInfo* info = job.info;
 
     if (!info || !info->was_canceled) {
-      int status = PreresolveUrl(
-          job.url, base::Bind(&PreconnectManager::OnPreresolveFinished,
-                              weak_factory_.GetWeakPtr(), job));
+      int status;
+      if (WouldLikelyProxyURL(job.url)) {
+        // Skip preresolve and go straight to preconnect if a proxy is enabled.
+        status = net::OK;
+      } else {
+        status = PreresolveUrl(
+            job.url, base::Bind(&PreconnectManager::OnPreresolveFinished,
+                                weak_factory_.GetWeakPtr(), job));
+      }
+
       if (status == net::ERR_IO_PENDING) {
         // Will complete asynchronously.
         if (info)
@@ -242,6 +251,19 @@ GURL PreconnectManager::GetHSTSRedirect(const GURL& url) const {
   GURL::Replacements replacements;
   replacements.SetSchemeStr(url::kHttpsScheme);
   return url.ReplaceComponents(replacements);
+}
+
+bool PreconnectManager::WouldLikelyProxyURL(const GURL& url) const {
+  auto* proxy_resolution_service =
+      context_getter_->GetURLRequestContext()->proxy_resolution_service();
+  if (!proxy_resolution_service)
+    return false;
+
+  net::ProxyInfo info;
+  bool synchronous_success =
+      proxy_resolution_service->TryResolveProxySynchronously(
+          url, std::string(), &info, nullptr, net::NetLogWithSource());
+  return synchronous_success && !info.is_direct();
 }
 
 }  // namespace predictors

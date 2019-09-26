@@ -33,7 +33,7 @@ namespace {
 // |render_process_host|.
 ProcessResourceUsage* CreateRendererResourcesSampler(
     content::RenderProcessHost* render_process_host) {
-  chrome::mojom::ResourceUsageReporterPtr service;
+  content::mojom::ResourceUsageReporterPtr service;
   BindInterface(render_process_host, &service);
   return new ProcessResourceUsage(std::move(service));
 }
@@ -158,7 +158,7 @@ base::string16 RendererTask::GetProfileName() const {
   return profile_name_;
 }
 
-int RendererTask::GetTabId() const {
+SessionID RendererTask::GetTabId() const {
   return SessionTabHelper::IdForTab(web_contents_);
 }
 

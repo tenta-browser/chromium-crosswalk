@@ -10,7 +10,7 @@
 
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
-#include "components/offline_pages/core/offline_page_metadata_store.h"
+#include "components/offline_pages/core/offline_page_metadata_store_sql.h"
 #include "components/offline_pages/core/offline_page_model.h"
 #include "components/offline_pages/core/offline_page_types.h"
 #include "components/offline_pages/core/task.h"
@@ -60,6 +60,14 @@ class DeletePageTask : public Task {
       OfflinePageMetadataStoreSQL* store,
       DeletePageTask::DeletePageTaskCallback callback,
       const std::vector<ClientId>& client_ids);
+
+  // Creates a task to delete pages with the client ids in |client_ids|
+  // provided they also have origin |origin|.
+  static std::unique_ptr<DeletePageTask> CreateTaskMatchingClientIdsAndOrigin(
+      OfflinePageMetadataStoreSQL* store,
+      DeletePageTask::DeletePageTaskCallback callback,
+      const std::vector<ClientId>& client_ids,
+      const std::string& origin);
 
   // Creates a task to delete pages which satisfy |predicate|.
   static std::unique_ptr<DeletePageTask>

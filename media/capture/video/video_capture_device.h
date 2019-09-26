@@ -28,7 +28,7 @@
 #include "build/build_config.h"
 #include "media/base/video_frame.h"
 #include "media/capture/capture_export.h"
-#include "media/capture/mojo/image_capture.mojom.h"
+#include "media/capture/mojom/image_capture.mojom.h"
 #include "media/capture/video/video_capture_buffer_handle.h"
 #include "media/capture/video/video_capture_device_descriptor.h"
 #include "media/capture/video_capture_types.h"
@@ -283,9 +283,10 @@ class CAPTURE_EXPORT VideoCaptureDevice
                                SetPhotoOptionsCallback callback);
 
   // Asynchronously takes a photo, possibly reconfiguring the capture objects
-  // and/or interrupting the capture flow. Runs |callback| on the thread
-  // where TakePhoto() is called, if the photo was successfully taken. On
-  // failure, drops callback without invoking it.
+  // and/or interrupting the capture flow. Runs |callback|, if the photo was
+  // successfully taken. On failure, drops callback without invoking it.
+  // Note that |callback| may be runned on a thread different than the thread
+  // where TakePhoto() was called.
   using TakePhotoCallback = base::OnceCallback<void(mojom::BlobPtr blob)>;
   virtual void TakePhoto(TakePhotoCallback callback);
 

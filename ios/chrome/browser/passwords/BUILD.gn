@@ -40,6 +40,8 @@ source_set("passwords") {
     "password_manager_internals_service_factory.h",
     "password_tab_helper.h",
     "password_tab_helper.mm",
+    "passwords_directory_util.h",
+    "passwords_directory_util.mm",
     "update_password_infobar_controller.h",
     "update_password_infobar_controller.mm",
   ]
@@ -57,6 +59,7 @@ source_set("passwords") {
     "//components/keyed_service/core",
     "//components/keyed_service/ios",
     "//components/password_manager/core/browser",
+    "//components/password_manager/core/browser/form_parsing",
     "//components/password_manager/core/common",
     "//components/password_manager/sync/browser",
     "//components/prefs",
@@ -84,6 +87,7 @@ source_set("passwords") {
     "//ios/public/provider/chrome/browser/ui",
     "//ios/third_party/material_components_ios:material_components_ios",
     "//ios/web",
+    "//net",
     "//third_party/material_design_icons:ic_account_circle",
     "//ui/base",
     "//url",
@@ -118,6 +122,7 @@ source_set("unit_tests") {
     "js_credential_manager_unittest.mm",
     "password_controller_js_unittest.mm",
     "password_controller_unittest.mm",
+    "passwords_directory_util_unittest.mm",
     "test_helpers.cc",
     "test_helpers.h",
   ]
@@ -137,6 +142,8 @@ source_set("unit_tests") {
     "//ios/chrome/browser/browser_state:test_support",
     "//ios/chrome/browser/ssl",
     "//ios/chrome/browser/ui/commands",
+    "//ios/chrome/browser/web:test_support",
+    "//ios/chrome/browser/web:web_internal",
     "//ios/testing:ios_test_support",
     "//ios/testing:ocmock_support",
     "//ios/web",
@@ -180,11 +187,13 @@ source_set("eg_tests") {
   ]
 }
 
-# TODO(crbug.com/487804): use js_compile_checked instead once the errors have
-# been fixed.
-js_compile_unchecked("injected_js") {
+js_compile_checked("injected_js") {
   visibility = [ ":passwords" ]
   sources = [
     "resources/password_controller.js",
+  ]
+  js_modules = [
+    "//components/autofill/ios/fill/resources/form.js",
+    "//components/autofill/ios/fill/resources/fill.js",
   ]
 }

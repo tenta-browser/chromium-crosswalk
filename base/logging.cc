@@ -101,6 +101,11 @@ typedef pthread_mutex_t* MutexHandle;
 #include <android/log.h>
 #endif
 
+#if defined(OS_FUCHSIA)
+#include <zircon/process.h>
+#include <zircon/syscalls.h>
+#endif
+
 namespace logging {
 
 namespace {
@@ -161,6 +166,11 @@ LogMessageHandlerFunction log_message_handler = nullptr;
 int32_t CurrentProcessId() {
 #if defined(OS_WIN)
   return GetCurrentProcessId();
+#elif defined(OS_FUCHSIA)
+  zx_info_handle_basic_t basic = {};
+  zx_object_get_info(zx_process_self(), ZX_INFO_HANDLE_BASIC, &basic,
+                     sizeof(basic), nullptr, nullptr);
+  return basic.koid;
 #elif defined(OS_POSIX)
   return getpid();
 #endif
@@ -171,6 +181,9 @@ uint64_t TickCount() {
   return GetTickCount();
 #elif defined(OS_MACOSX)
   return mach_absolute_time();
+#elif defined(OS_FUCHSIA)
+  return zx_clock_get(ZX_CLOCK_MONOTONIC) /
+         static_cast<zx_time_t>(base::Time::kNanosecondsPerMicrosecond);
 #elif defined(OS_NACL)
   // NaCl sadly does not have _POSIX_TIMERS enabled in sys/features.h
   // So we have to use clock() for now.
@@ -372,12 +385,12 @@ void CloseLogFileUnlocked() {
 
 }  // namespace
 
-#if DCHECK_IS_ON() && defined(SYZYASAN)
-// In DCHECK-enabled SyzyASAN builds, allow the meaning of LOG_DCHECK to be
+#if DCHECK_IS_CONFIGURABLE
+// In DCHECK-enabled Chrome builds, allow the meaning of LOG_DCHECK to be
 // determined at run-time. We default it to INFO, to avoid it triggering
 // crashes before the run-time has explicitly chosen the behaviour.
 BASE_EXPORT logging::LogSeverity LOG_DCHECK = LOG_INFO;
-#endif
+#endif  // DCHECK_IS_CONFIGURABLE
 
 // This is never instantiated, it's just used for EAT_STREAM_PARAMETERS to have
 // an object of the correct type on the LHS of the unused part of the ternary
@@ -815,11 +828,9 @@ LogMessage::~LogMessage() {
 
     // Ensure the first characters of the string are on the stack so they
     // are contained in minidumps for diagnostic purposes.
-    char str_stack[1024];
-    str_newline.copy(str_stack, arraysize(str_stack));
-    base::debug::Alias(str_stack);
+    DEBUG_ALIAS_FOR_CSTR(str_stack, str_newline.c_str(), 1024);
 
-    if (!(log_assert_handler_stack == nullptr) &&
+    if (log_assert_handler_stack.IsCreated() &&
         !log_assert_handler_stack.Get().empty()) {
       LogAssertHandlerFunction log_assert_handler =
           log_assert_handler_stack.Get().top();

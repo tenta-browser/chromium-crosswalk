@@ -11,28 +11,31 @@
 
 namespace metrics {
 // Observer for tracking browser visibility events.
-class ChromeVisibilityObserver : public chrome::BrowserListObserver {
+class ChromeVisibilityObserver : public BrowserListObserver {
  public:
   ChromeVisibilityObserver();
   ~ChromeVisibilityObserver() override;
 
- protected:
+ private:
+  friend class ChromeVisibilityObserverInteractiveTest;
+
   // Notifies |DesktopSessionDurationTracker| of visibility changes. Overridden
   // by tests.
   virtual void SendVisibilityChangeEvent(bool active, base::TimeDelta time_ago);
 
- private:
   // Cancels visibility change in case when the browser becomes visible after a
   // short gap.
   void CancelVisibilityChange();
 
-  // chrome::BrowserListObserver:
+  // BrowserListObserver:
   void OnBrowserSetLastActive(Browser* browser) override;
   void OnBrowserNoLongerActive(Browser* browser) override;
   void OnBrowserRemoved(Browser* browser) override;
 
   // Sets |visibility_gap_timeout_| based on variation params.
   void InitVisibilityGapTimeout();
+
+  void SetVisibilityGapTimeoutForTesting(base::TimeDelta timeout);
 
   // Timeout interval for waiting after loss of visibility. This allows merging
   // two visibility session if they happened very shortly after each other, for

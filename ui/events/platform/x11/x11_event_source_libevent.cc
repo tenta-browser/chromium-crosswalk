@@ -6,7 +6,6 @@
 
 #include <memory>
 
-#include "base/memory/ptr_util.h"
 #include "base/message_loop/message_loop.h"
 #include "ui/events/event.h"
 #include "ui/events/event_utils.h"
@@ -14,6 +13,10 @@
 #include "ui/events/platform/platform_event_dispatcher.h"
 #include "ui/events/x/events_x_utils.h"
 #include "ui/gfx/x/x11.h"
+
+#if defined(OS_CHROMEOS)
+#include "ui/events/ozone/chromeos/cursor_controller.h"
+#endif
 
 namespace ui {
 
@@ -97,6 +100,11 @@ std::unique_ptr<ui::Event> TranslateXEventToEvent(const XEvent& xev) {
   switch (xev.type) {
     case LeaveNotify:
     case EnterNotify:
+      // Don't generate synthetic mouse move events for EnterNotify/LeaveNotify
+      // from nested XWindows. https://crbug.com/792322
+      if (xev.xcrossing.detail == NotifyInferior)
+        return nullptr;
+
       return std::make_unique<MouseEvent>(EventTypeFromXEvent(xev),
                                           EventLocationFromXEvent(xev),
                                           EventSystemLocationFromXEvent(xev),
@@ -172,6 +180,12 @@ void X11EventSourceLibevent::RemoveXEventDispatcher(
 void X11EventSourceLibevent::ProcessXEvent(XEvent* xevent) {
   std::unique_ptr<ui::Event> translated_event = TranslateXEventToEvent(*xevent);
   if (translated_event) {
+#if defined(OS_CHROMEOS)
+    if (translated_event->IsLocatedEvent()) {
+      ui::CursorController::GetInstance()->SetCursorLocation(
+          translated_event->AsLocatedEvent()->location_f());
+    }
+#endif
     DispatchPlatformEvent(translated_event.get(), xevent);
   } else {
     // Only if we can't translate XEvent into ui::Event, try to dispatch XEvent

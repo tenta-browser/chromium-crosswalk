@@ -7,6 +7,8 @@ package org.chromium.chrome.browser.download;
 import android.content.Context;
 
 import org.chromium.components.offline_items_collection.ContentId;
+import org.chromium.components.offline_items_collection.FailState;
+import org.chromium.components.offline_items_collection.PendingState;
 
 /**
  * DownloadNotifier implementation that creates and updates download notifications.
@@ -46,9 +48,9 @@ public class SystemDownloadNotifier2 implements DownloadNotifier {
     }
 
     @Override
-    public void notifyDownloadFailed(DownloadInfo info) {
+    public void notifyDownloadFailed(DownloadInfo info, @FailState int failState) {
         mDownloadNotificationService.notifyDownloadFailed(
-                info.getContentId(), info.getFileName(), info.getIcon());
+                info.getContentId(), info.getFileName(), info.getIcon(), failState);
     }
 
     @Override
@@ -64,14 +66,15 @@ public class SystemDownloadNotifier2 implements DownloadNotifier {
     public void notifyDownloadPaused(DownloadInfo info) {
         mDownloadNotificationService.notifyDownloadPaused(info.getContentId(), info.getFileName(),
                 true, false, info.isOffTheRecord(), info.getIsTransient(), info.getIcon(), false,
-                false);
+                false, PendingState.NOT_PENDING);
     }
 
     @Override
-    public void notifyDownloadInterrupted(DownloadInfo info, boolean isAutoResumable) {
+    public void notifyDownloadInterrupted(
+            DownloadInfo info, boolean isAutoResumable, @PendingState int pendingState) {
         mDownloadNotificationService.notifyDownloadPaused(info.getContentId(), info.getFileName(),
                 info.isResumable(), isAutoResumable, info.isOffTheRecord(), info.getIsTransient(),
-                info.getIcon(), false, false);
+                info.getIcon(), false, false, pendingState);
     }
 
     @Override

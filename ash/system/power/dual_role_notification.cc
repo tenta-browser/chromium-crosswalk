@@ -11,16 +11,14 @@
 #include "ash/shell.h"
 #include "ash/strings/grit/ash_strings.h"
 #include "ash/system/power/power_status.h"
-#include "ash/system/system_notifier.h"
 #include "ash/system/tray/system_tray_controller.h"
 #include "base/strings/utf_string_conversions.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/l10n/time_format.h"
-#include "ui/base/resource/resource_bundle.h"
 #include "ui/gfx/image/image.h"
 #include "ui/message_center/message_center.h"
-#include "ui/message_center/notification.h"
-#include "ui/message_center/notification_delegate.h"
+#include "ui/message_center/public/cpp/notification.h"
+#include "ui/message_center/public/cpp/notification_delegate.h"
 
 using message_center::MessageCenter;
 using message_center::Notification;
@@ -29,23 +27,7 @@ namespace ash {
 namespace {
 
 const char kDualRoleNotificationId[] = "dual-role";
-
-// Opens power settings on click.
-class DualRoleNotificationDelegate
-    : public message_center::NotificationDelegate {
- public:
-  DualRoleNotificationDelegate() = default;
-
-  // Overridden from message_center::NotificationDelegate.
-  void Click() override {
-    Shell::Get()->system_tray_controller()->ShowPowerSettings();
-  }
-
- private:
-  ~DualRoleNotificationDelegate() override = default;
-
-  DISALLOW_COPY_AND_ASSIGN(DualRoleNotificationDelegate);
-};
+const char kNotifierDualRole[] = "ash.dual-role";
 
 }  // namespace
 
@@ -141,19 +123,22 @@ std::unique_ptr<Notification> DualRoleNotification::CreateNotification() {
         IDS_ASH_STATUS_TRAY_CHARGING_DUAL_ROLE_DEVICES_TITLE);
   }
 
+  auto delegate =
+      base::MakeRefCounted<message_center::HandleNotificationClickDelegate>(
+          base::BindRepeating([]() {
+            Shell::Get()->system_tray_controller()->ShowPowerSettings();
+          }));
+
   std::unique_ptr<Notification> notification =
-      system_notifier::CreateSystemNotification(
+      Notification::CreateSystemNotification(
           message_center::NOTIFICATION_TYPE_SIMPLE, kDualRoleNotificationId,
           title,
           l10n_util::GetStringUTF16(IDS_ASH_STATUS_TRAY_DUAL_ROLE_MESSAGE),
-          ui::ResourceBundle::GetSharedInstance().GetImageNamed(
-              IDR_AURA_NOTIFICATION_LOW_POWER_CHARGER),
-          base::string16(), GURL(),
+          gfx::Image(), base::string16(), GURL(),
           message_center::NotifierId(
-              message_center::NotifierId::SYSTEM_COMPONENT,
-              system_notifier::kNotifierDualRole),
-          message_center::RichNotificationData(),
-          new DualRoleNotificationDelegate, kNotificationChargingUsbCIcon,
+              message_center::NotifierId::SYSTEM_COMPONENT, kNotifierDualRole),
+          message_center::RichNotificationData(), std::move(delegate),
+          kNotificationChargingUsbCIcon,
           message_center::SystemNotificationWarningLevel::NORMAL);
   notification->set_priority(message_center::MIN_PRIORITY);
   return notification;

@@ -11,7 +11,6 @@
 #include <utility>
 
 #include "base/callback.h"
-#include "base/memory/ptr_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
@@ -817,7 +816,7 @@ Status ProcessInputActionSequence(Session* session,
     }
 
     session->active_input_sources->Append(
-        base::MakeUnique<base::DictionaryValue>(std::move(tmp_source)));
+        std::make_unique<base::DictionaryValue>(std::move(tmp_source)));
 
     base::DictionaryValue tmp_state;
     if (type == "key") {
@@ -844,7 +843,7 @@ Status ProcessInputActionSequence(Session* session,
       tmp_state.SetInteger("y", y);
     }
     session->input_state_table->SetDictionary(
-        id, base::MakeUnique<base::DictionaryValue>(std::move(tmp_state)));
+        id, std::make_unique<base::DictionaryValue>(std::move(tmp_state)));
   }
 
   const base::ListValue* actions;
@@ -1211,8 +1210,9 @@ Status ExecuteGetStorageKeys(const char* storage,
                              Timeout* timeout) {
   const char script[] =
       "var keys = [];"
-      "for (var key in %s) {"
-      "  keys.push(key);"
+      "var storage = %s;"
+      "for (var i = 0; i < storage.length; i++) {"
+      "  keys.push(storage.key(i));"
       "}"
       "keys";
   return web_view->EvaluateScript(

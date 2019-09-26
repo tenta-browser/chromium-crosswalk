@@ -5,7 +5,9 @@
 #include "chrome/browser/ui/ash/accessibility/accessibility_controller_client.h"
 
 #include "ash/public/interfaces/constants.mojom.h"
+#include "chrome/browser/chromeos/accessibility/accessibility_manager.h"
 #include "chrome/browser/profiles/profile_manager.h"
+#include "chrome/browser/speech/tts_controller.h"
 #include "chrome/browser/ui/aura/accessibility/automation_manager_aura.h"
 #include "chrome/grit/generated_resources.h"
 #include "content/public/common/service_manager_connection.h"
@@ -13,8 +15,6 @@
 #include "ui/base/l10n/l10n_util.h"
 
 namespace {
-
-AccessibilityControllerClient* g_instance = nullptr;
 
 void SetAutomationManagerEnabled(content::BrowserContext* context,
                                  bool enabled) {
@@ -29,20 +29,9 @@ void SetAutomationManagerEnabled(content::BrowserContext* context,
 }  // namespace
 
 AccessibilityControllerClient::AccessibilityControllerClient()
-    : binding_(this) {
-  DCHECK(!g_instance);
-  g_instance = this;
-}
+    : binding_(this) {}
 
-AccessibilityControllerClient::~AccessibilityControllerClient() {
-  DCHECK_EQ(this, g_instance);
-  g_instance = nullptr;
-}
-
-// static
-AccessibilityControllerClient* AccessibilityControllerClient::Get() {
-  return g_instance;
-}
+AccessibilityControllerClient::~AccessibilityControllerClient() = default;
 
 void AccessibilityControllerClient::Init() {
   content::ServiceManagerConnection::GetForProcess()
@@ -59,8 +48,6 @@ void AccessibilityControllerClient::InitForTesting(
 
 void AccessibilityControllerClient::TriggerAccessibilityAlert(
     ash::mojom::AccessibilityAlert alert) {
-  last_a11y_alert_for_test_ = alert;
-
   Profile* profile = ProfileManager::GetActiveUserProfile();
   if (!profile)
     return;
@@ -82,17 +69,8 @@ void AccessibilityControllerClient::TriggerAccessibilityAlert(
     case ash::mojom::AccessibilityAlert::SCREEN_OFF:
       msg = IDS_A11Y_ALERT_SCREEN_OFF;
       break;
-    case ash::mojom::AccessibilityAlert::WINDOW_MOVED_TO_ABOVE_DISPLAY:
-      msg = IDS_A11Y_ALERT_WINDOW_MOVED_TO_ABOVE_DISPLAY;
-      break;
-    case ash::mojom::AccessibilityAlert::WINDOW_MOVED_TO_BELOW_DISPLAY:
-      msg = IDS_A11Y_ALERT_WINDOW_MOVED_TO_BELOW_DISPLAY;
-      break;
-    case ash::mojom::AccessibilityAlert::WINDOW_MOVED_TO_LEFT_DISPLAY:
-      msg = IDS_A11Y_ALERT_WINDOW_MOVED_TO_LEFT_DISPLAY;
-      break;
-    case ash::mojom::AccessibilityAlert::WINDOW_MOVED_TO_RIGHT_DISPLAY:
-      msg = IDS_A11Y_ALERT_WINDOW_MOVED_TO_RIGHT_DISPLAY;
+    case ash::mojom::AccessibilityAlert::WINDOW_MOVED_TO_ANOTHER_DISPLAY:
+      msg = IDS_A11Y_ALERT_WINDOW_MOVED_TO_ANOTHER_DISPLAY;
       break;
     case ash::mojom::AccessibilityAlert::WINDOW_NEEDED:
       msg = IDS_A11Y_ALERT_WINDOW_NEEDED;
@@ -113,6 +91,51 @@ void AccessibilityControllerClient::TriggerAccessibilityAlert(
     if (alert == ash::mojom::AccessibilityAlert::SCREEN_OFF)
       SetAutomationManagerEnabled(profile, false);
   }
+}
+
+void AccessibilityControllerClient::PlayEarcon(int32_t sound_key) {
+  chromeos::AccessibilityManager::Get()->PlayEarcon(
+      sound_key, chromeos::PlaySoundOption::ONLY_IF_SPOKEN_FEEDBACK_ENABLED);
+}
+
+void AccessibilityControllerClient::PlayShutdownSound(
+    PlayShutdownSoundCallback callback) {
+  base::TimeDelta sound_duration =
+      chromeos::AccessibilityManager::Get()->PlayShutdownSound();
+  std::move(callback).Run(sound_duration);
+}
+
+void AccessibilityControllerClient::HandleAccessibilityGesture(
+    ax::mojom::Gesture gesture) {
+  chromeos::AccessibilityManager::Get()->HandleAccessibilityGesture(gesture);
+}
+
+void AccessibilityControllerClient::ToggleDictation() {
+  chromeos::AccessibilityManager::Get()->ToggleDictation();
+}
+
+void AccessibilityControllerClient::SilenceSpokenFeedback() {
+  TtsController::GetInstance()->Stop();
+}
+
+void AccessibilityControllerClient::OnTwoFingerTouchStart() {
+  chromeos::AccessibilityManager::Get()->OnTwoFingerTouchStart();
+}
+
+void AccessibilityControllerClient::OnTwoFingerTouchStop() {
+  chromeos::AccessibilityManager::Get()->OnTwoFingerTouchStop();
+}
+
+void AccessibilityControllerClient::ShouldToggleSpokenFeedbackViaTouch(
+    ShouldToggleSpokenFeedbackViaTouchCallback callback) {
+  std::move(callback).Run(chromeos::AccessibilityManager::Get()
+                              ->ShouldToggleSpokenFeedbackViaTouch());
+}
+
+void AccessibilityControllerClient::PlaySpokenFeedbackToggleCountdown(
+    int tick_count) {
+  chromeos::AccessibilityManager::Get()->PlaySpokenFeedbackToggleCountdown(
+      tick_count);
 }
 
 void AccessibilityControllerClient::FlushForTesting() {

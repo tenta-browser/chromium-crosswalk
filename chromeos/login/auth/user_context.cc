@@ -59,6 +59,24 @@ Key* UserContext::GetKey() {
   return &key_;
 }
 
+const Key* UserContext::GetPasswordKey() const {
+  return &password_key_;
+}
+
+Key* UserContext::GetMutablePasswordKey() {
+  return &password_key_;
+}
+
+const std::vector<ChallengeResponseKey>& UserContext::GetChallengeResponseKeys()
+    const {
+  return challenge_response_keys_;
+}
+
+std::vector<ChallengeResponseKey>*
+UserContext::GetMutableChallengeResponseKeys() {
+  return &challenge_response_keys_;
+}
+
 const std::string& UserContext::GetAuthCode() const {
   return auth_code_;
 }
@@ -111,6 +129,11 @@ const std::string& UserContext::GetGAPSCookie() const {
   return gaps_cookie_;
 }
 
+const base::Optional<password_manager::SyncPasswordData>&
+UserContext::GetSyncPasswordData() const {
+  return sync_password_data_;
+}
+
 bool UserContext::HasCredentials() const {
   return (account_id_.is_valid() && !key_.GetSecret().empty()) ||
          !auth_code_.empty();
@@ -122,6 +145,10 @@ void UserContext::SetAccountId(const AccountId& account_id) {
 
 void UserContext::SetKey(const Key& key) {
   key_ = key;
+}
+
+void UserContext::SetPasswordKey(const Key& key) {
+  password_key_ = key;
 }
 
 void UserContext::SetAuthCode(const std::string& auth_code) {
@@ -176,8 +203,14 @@ void UserContext::SetGAPSCookie(const std::string& gaps_cookie) {
   gaps_cookie_ = gaps_cookie;
 }
 
+void UserContext::SetSyncPasswordData(
+    const password_manager::SyncPasswordData& sync_password_data) {
+  sync_password_data_ = {sync_password_data};
+}
+
 void UserContext::ClearSecrets() {
   key_.ClearSecret();
+  password_key_.ClearSecret();
   auth_code_.clear();
   refresh_token_.clear();
 }

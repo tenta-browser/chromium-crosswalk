@@ -10,7 +10,6 @@
 #include <vector>
 
 #include "base/guid.h"
-#include "base/memory/ptr_util.h"
 #include "base/path_service.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/resource_context.h"
@@ -92,6 +91,7 @@ HeadlessBrowserContextImpl::HeadlessBrowserContextImpl(
 
 HeadlessBrowserContextImpl::~HeadlessBrowserContextImpl() {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
+  NotifyWillBeDestroyed(this);
 
   // Inform observers that we're going away.
   {
@@ -103,11 +103,19 @@ HeadlessBrowserContextImpl::~HeadlessBrowserContextImpl() {
   // Destroy all web contents before shutting down storage partitions.
   web_contents_map_.clear();
 
-  ShutdownStoragePartitions();
-
   if (resource_context_) {
     content::BrowserThread::DeleteSoon(content::BrowserThread::IO, FROM_HERE,
                                        resource_context_.release());
+  }
+
+  ShutdownStoragePartitions();
+
+  if (url_request_getter_) {
+    content::BrowserThread::PostTask(
+        content::BrowserThread::IO, FROM_HERE,
+        base::BindOnce(
+            &HeadlessURLRequestContextGetter::NotifyContextShuttingDown,
+            url_request_getter_));
   }
 }
 
@@ -201,8 +209,7 @@ void HeadlessBrowserContextImpl::Close() {
 
 void HeadlessBrowserContextImpl::InitWhileIOAllowed() {
   if (!context_options_->user_data_dir().empty()) {
-    path_ =
-        context_options_->user_data_dir().Append(FILE_PATH_LITERAL("Default"));
+    path_ = context_options_->user_data_dir().Append(kDefaultProfileName);
   } else {
     PathService::Get(base::DIR_EXE, &path_);
   }
@@ -275,15 +282,14 @@ HeadlessBrowserContextImpl::GetBrowsingDataRemoverDelegate() {
 net::URLRequestContextGetter* HeadlessBrowserContextImpl::CreateRequestContext(
     content::ProtocolHandlerMap* protocol_handlers,
     content::URLRequestInterceptorScopedVector request_interceptors) {
-  scoped_refptr<HeadlessURLRequestContextGetter> url_request_context_getter(
-      new HeadlessURLRequestContextGetter(
-          content::BrowserThread::GetTaskRunnerForThread(
-              content::BrowserThread::IO),
-          protocol_handlers, context_options_->TakeProtocolHandlers(),
-          std::move(request_interceptors), context_options_.get(),
-          browser_->browser_main_parts()->net_log(), this));
-  resource_context_->set_url_request_context_getter(url_request_context_getter);
-  return url_request_context_getter.get();
+  url_request_getter_ = base::MakeRefCounted<HeadlessURLRequestContextGetter>(
+      content::BrowserThread::GetTaskRunnerForThread(
+          content::BrowserThread::IO),
+      protocol_handlers, context_options_->TakeProtocolHandlers(),
+      std::move(request_interceptors), context_options_.get(),
+      browser_->net_log(), this);
+  resource_context_->set_url_request_context_getter(url_request_getter_);
+  return url_request_getter_.get();
 }
 
 net::URLRequestContextGetter*
@@ -390,10 +396,18 @@ void HeadlessBrowserContextImpl::NotifyChildContentsCreated(
 void HeadlessBrowserContextImpl::NotifyUrlRequestFailed(
     net::URLRequest* request,
     int net_error,
-    bool canceled_by_devtools) {
+    DevToolsStatus devtools_status) {
   base::AutoLock lock(observers_lock_);
   for (auto& observer : observers_)
-    observer.UrlRequestFailed(request, net_error, canceled_by_devtools);
+    observer.UrlRequestFailed(request, net_error, devtools_status);
+}
+
+void HeadlessBrowserContextImpl::NotifyMetadataForResource(const GURL& url,
+                                                           net::IOBuffer* buf,
+                                                           int buf_len) {
+  base::AutoLock lock(observers_lock_);
+  for (auto& observer : observers_)
+    observer.OnMetadataForResource(url, buf, buf_len);
 }
 
 void HeadlessBrowserContextImpl::SetNetworkConditions(
@@ -475,6 +489,26 @@ HeadlessBrowserContext::Builder::SetIncognitoMode(bool incognito_mode) {
 }
 
 HeadlessBrowserContext::Builder&
+HeadlessBrowserContext::Builder::SetSitePerProcess(bool site_per_process) {
+  options_->site_per_process_ = site_per_process;
+  return *this;
+}
+
+HeadlessBrowserContext::Builder&
+HeadlessBrowserContext::Builder::SetBlockNewWebContents(
+    bool block_new_web_contents) {
+  options_->block_new_web_contents_ = block_new_web_contents;
+  return *this;
+}
+
+HeadlessBrowserContext::Builder&
+HeadlessBrowserContext::Builder::SetInitialVirtualTime(
+    base::Time initial_virtual_time) {
+  options_->initial_virtual_time_ = initial_virtual_time;
+  return *this;
+}
+
+HeadlessBrowserContext::Builder&
 HeadlessBrowserContext::Builder::SetAllowCookies(bool allow_cookies) {
   options_->allow_cookies_ = allow_cookies;
   return *this;
@@ -499,8 +533,15 @@ HeadlessBrowserContext::Builder::EnableUnsafeNetworkAccessWithMojoBindings(
 
 HeadlessBrowserContext::Builder&
 HeadlessBrowserContext::Builder::SetOverrideWebPreferencesCallback(
-    base::Callback<void(WebPreferences*)> callback) {
+    base::RepeatingCallback<void(WebPreferences*)> callback) {
   options_->override_web_preferences_callback_ = std::move(callback);
+  return *this;
+}
+
+HeadlessBrowserContext::Builder&
+HeadlessBrowserContext::Builder::SetCaptureResourceMetadata(
+    bool capture_resource_metadata) {
+  options_->capture_resource_metadata_ = capture_resource_metadata;
   return *this;
 }
 
@@ -510,9 +551,9 @@ HeadlessBrowserContext* HeadlessBrowserContext::Builder::Build() {
     // context with mojo bindings.
     if (!enable_http_and_https_if_mojo_used_) {
       options_->protocol_handlers_[url::kHttpScheme] =
-          base::MakeUnique<BlackHoleProtocolHandler>();
+          std::make_unique<BlackHoleProtocolHandler>();
       options_->protocol_handlers_[url::kHttpsScheme] =
-          base::MakeUnique<BlackHoleProtocolHandler>();
+          std::make_unique<BlackHoleProtocolHandler>();
     }
   }
 

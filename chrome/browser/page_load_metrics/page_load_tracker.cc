@@ -10,8 +10,8 @@
 #include <utility>
 
 #include "base/logging.h"
-#include "base/memory/ptr_util.h"
 #include "base/metrics/histogram_macros.h"
+#include "base/trace_event/trace_event.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/page_load_metrics/page_load_metrics_embedder_interface.h"
 #include "chrome/browser/page_load_metrics/page_load_metrics_util.h"
@@ -28,14 +28,18 @@
 // This macro invokes the specified method on each observer, passing the
 // variable length arguments as the method's arguments, and removes the observer
 // from the list of observers if the given method returns STOP_OBSERVING.
-#define INVOKE_AND_PRUNE_OBSERVERS(observers, Method, ...)    \
-  for (auto it = observers.begin(); it != observers.end();) { \
-    if ((*it)->Method(__VA_ARGS__) ==                         \
-        PageLoadMetricsObserver::STOP_OBSERVING) {            \
-      it = observers.erase(it);                               \
-    } else {                                                  \
-      ++it;                                                   \
-    }                                                         \
+#define INVOKE_AND_PRUNE_OBSERVERS(observers, Method, ...)      \
+  {                                                             \
+    TRACE_EVENT0(TRACE_DISABLED_BY_DEFAULT("loading"),          \
+                 "PageLoadMetricsObserver::" #Method);          \
+    for (auto it = observers.begin(); it != observers.end();) { \
+      if ((*it)->Method(__VA_ARGS__) ==                         \
+          PageLoadMetricsObserver::STOP_OBSERVING) {            \
+        it = observers.erase(it);                               \
+      } else {                                                  \
+        ++it;                                                   \
+      }                                                         \
+    }                                                           \
   }
 
 namespace page_load_metrics {
@@ -119,7 +123,7 @@ void DispatchObserverTimingCallbacks(
     const mojom::PageLoadTiming& new_timing,
     const PageLoadExtraInfo& extra_info) {
   if (!last_timing.Equals(new_timing))
-    observer->OnTimingUpdate(false /* is_subframe */, new_timing, extra_info);
+    observer->OnTimingUpdate(nullptr, new_timing, extra_info);
   if (new_timing.document_timing->dom_content_loaded_event_start &&
       !last_timing.document_timing->dom_content_loaded_event_start)
     observer->OnDomContentLoadedEventStart(new_timing, extra_info);
@@ -129,6 +133,9 @@ void DispatchObserverTimingCallbacks(
   if (new_timing.document_timing->first_layout &&
       !last_timing.document_timing->first_layout)
     observer->OnFirstLayout(new_timing, extra_info);
+  if (new_timing.interactive_timing->first_input_delay &&
+      !last_timing.interactive_timing->first_input_delay)
+    observer->OnFirstInputInPage(new_timing, extra_info);
   if (new_timing.paint_timing->first_paint &&
       !last_timing.paint_timing->first_paint)
     observer->OnFirstPaintInPage(new_timing, extra_info);
@@ -585,12 +592,6 @@ void PageLoadTracker::MediaStartedPlaying(
     observer->MediaStartedPlaying(video_type, is_in_main_frame);
 }
 
-void PageLoadTracker::OnNavigationDelayComplete(base::TimeDelta scheduled_delay,
-                                                base::TimeDelta actual_delay) {
-  for (const auto& observer : observers_)
-    observer->OnNavigationDelayComplete(scheduled_delay, actual_delay);
-}
-
 void PageLoadTracker::OnTimingChanged() {
   DCHECK(!last_dispatched_merged_page_timing_->Equals(
       metrics_update_dispatcher_.timing()));
@@ -606,10 +607,12 @@ void PageLoadTracker::OnTimingChanged() {
 }
 
 void PageLoadTracker::OnSubFrameTimingChanged(
+    content::RenderFrameHost* rfh,
     const mojom::PageLoadTiming& timing) {
   PageLoadExtraInfo extra_info(ComputePageLoadExtraInfo());
+  DCHECK(rfh->GetParent());
   for (const auto& observer : observers_) {
-    observer->OnTimingUpdate(true /* is_subframe*/, timing, extra_info);
+    observer->OnTimingUpdate(rfh, timing, extra_info);
   }
 }
 

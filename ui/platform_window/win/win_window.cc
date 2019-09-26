@@ -13,6 +13,8 @@
 #include "ui/gfx/win/msg_util.h"
 #include "ui/platform_window/platform_window_delegate.h"
 
+#include <windows.h>
+
 namespace ui {
 
 namespace {
@@ -99,13 +101,17 @@ void WinWindow::SetTitle(const base::string16& title) {
 }
 
 void WinWindow::SetCapture() {
-  if (::GetCapture() != hwnd())
+  if (!HasCapture())
     ::SetCapture(hwnd());
 }
 
 void WinWindow::ReleaseCapture() {
-  if (::GetCapture() == hwnd())
+  if (HasCapture())
     ::ReleaseCapture();
+}
+
+bool WinWindow::HasCapture() const {
+  return ::GetCapture() == hwnd();
 }
 
 void WinWindow::ToggleFullscreen() {}

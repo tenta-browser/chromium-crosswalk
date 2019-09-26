@@ -240,9 +240,9 @@ FileSystemContext::CreateQuotaReservationOnFileTaskRunner(
 
 void FileSystemContext::Shutdown() {
   if (!io_task_runner_->RunsTasksInCurrentSequence()) {
-    io_task_runner_->PostTask(
-        FROM_HERE,
-        base::Bind(&FileSystemContext::Shutdown, base::WrapRefCounted(this)));
+    io_task_runner_->PostTask(FROM_HERE,
+                              base::BindOnce(&FileSystemContext::Shutdown,
+                                             base::WrapRefCounted(this)));
     return;
   }
   operation_runner_->Shutdown();
@@ -386,15 +386,14 @@ void FileSystemContext::ResolveURL(const FileSystemURL& url,
 }
 
 void FileSystemContext::AttemptAutoMountForURLRequest(
-    const net::URLRequest* url_request,
-    const std::string& storage_domain,
+    const FileSystemRequestInfo& request_info,
     StatusCallback callback) {
-  FileSystemURL filesystem_url(url_request->url());
+  const FileSystemURL filesystem_url(request_info.url);
   auto copyable_callback = base::AdaptCallbackForRepeating(std::move(callback));
   if (filesystem_url.type() == kFileSystemTypeExternal) {
     for (size_t i = 0; i < auto_mount_handlers_.size(); i++) {
-      if (auto_mount_handlers_[i].Run(url_request, filesystem_url,
-                                      storage_domain, copyable_callback)) {
+      if (auto_mount_handlers_[i].Run(request_info, filesystem_url,
+                                      copyable_callback)) {
         return;
       }
     }

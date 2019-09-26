@@ -40,7 +40,7 @@ import org.mockito.MockitoAnnotations;
 import org.robolectric.RuntimeEnvironment;
 import org.robolectric.annotation.Config;
 
-import org.chromium.base.ContextUtils;
+import org.chromium.base.test.BaseRobolectricTestRunner;
 import org.chromium.chrome.browser.ChromeFeatureList;
 import org.chromium.chrome.browser.favicon.IconType;
 import org.chromium.chrome.browser.favicon.LargeIconBridge.LargeIconCallback;
@@ -51,9 +51,7 @@ import org.chromium.chrome.browser.suggestions.TileView.Style;
 import org.chromium.chrome.browser.widget.displaystyle.UiConfig;
 import org.chromium.chrome.test.util.browser.Features;
 import org.chromium.chrome.test.util.browser.Features.DisableFeatures;
-import org.chromium.chrome.test.util.browser.Features.EnableFeatures;
 import org.chromium.chrome.test.util.browser.suggestions.FakeMostVisitedSites;
-import org.chromium.testing.local.LocalRobolectricTestRunner;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -62,10 +60,9 @@ import java.util.List;
 /**
  * Unit tests for {@link TileGroup}.
  */
-@RunWith(LocalRobolectricTestRunner.class)
+@RunWith(BaseRobolectricTestRunner.class)
 @Config(manifest = Config.NONE)
-@EnableFeatures({ChromeFeatureList.NTP_OFFLINE_PAGES_FEATURE_NAME, ChromeFeatureList.CHROME_HOME})
-@DisableFeatures({ChromeFeatureList.NTP_MODERN_LAYOUT})
+@DisableFeatures({ChromeFeatureList.NTP_MODERN_LAYOUT, ChromeFeatureList.CHROME_MODERN_DESIGN})
 public class TileGroupUnitTest {
     private static final int MAX_TILES_TO_FETCH = 4;
     private static final int TILE_TITLE_LINES = 1;
@@ -87,7 +84,6 @@ public class TileGroupUnitTest {
     public void setUp() {
         CardsVariationParameters.setTestVariationParams(new HashMap<>());
         MockitoAnnotations.initMocks(this);
-        ContextUtils.initApplicationContextForTests(RuntimeEnvironment.application);
 
         mImageFetcher = new FakeImageFetcher();
         mTileRenderer = new TileRenderer(

@@ -9,7 +9,6 @@
 #include <utility>
 
 #include "base/containers/queue.h"
-#include "base/memory/ptr_util.h"
 #include "services/ui/public/interfaces/cursor/cursor.mojom.h"
 #include "services/ui/ws/drag_source.h"
 #include "services/ui/ws/drag_target_connection.h"
@@ -41,7 +40,7 @@ class DragTestWindow : public DragTargetConnection {
 
   DragTestWindow(DragControllerTest* parent,
                  TestServerWindowDelegate* window_delegate,
-                 const WindowId& id)
+                 const viz::FrameSinkId& id)
       : parent_(parent),
         window_delegate_(window_delegate),
         window_(window_delegate_, id) {
@@ -146,10 +145,9 @@ class DragControllerTest : public testing::Test,
                            public DragSource {
  public:
   std::unique_ptr<DragTestWindow> BuildWindow() {
-    WindowId id(1, ++window_id_);
+    viz::FrameSinkId id(1, ++window_id_);
     std::unique_ptr<DragTestWindow> p =
         std::make_unique<DragTestWindow>(this, window_delegate_.get(), id);
-    server_window_by_id_[id] = p->window();
     connection_by_window_[p->window()] = p.get();
     return p;
   }
@@ -196,7 +194,6 @@ class DragControllerTest : public testing::Test,
 
   void OnTestWindowDestroyed(DragTestWindow* test_window) {
     drag_operation_->OnWillDestroyDragTargetConnection(test_window);
-    server_window_by_id_.erase(test_window->window()->id());
     connection_by_window_.erase(test_window->window());
   }
 
@@ -218,8 +215,8 @@ class DragControllerTest : public testing::Test,
 
     window_delegate_ = std::make_unique<TestServerWindowDelegate>(
         ws_test_helper_.window_server()->GetVizHostProxy());
-    root_window_ =
-        std::make_unique<ServerWindow>(window_delegate_.get(), WindowId(1, 2));
+    root_window_ = std::make_unique<ServerWindow>(window_delegate_.get(),
+                                                  viz::FrameSinkId(1, 2));
     window_delegate_->set_root_window(root_window_.get());
     root_window_->SetVisible(true);
   }
@@ -229,7 +226,6 @@ class DragControllerTest : public testing::Test,
     root_window_.reset();
     window_delegate_.reset();
 
-    DCHECK(server_window_by_id_.empty());
     DCHECK(connection_by_window_.empty());
 
     testing::Test::TearDown();
@@ -249,13 +245,6 @@ class DragControllerTest : public testing::Test,
     drag_completed_value_ = success;
   }
 
-  ServerWindow* GetWindowById(const WindowId& id) override {
-    auto it = server_window_by_id_.find(id);
-    if (it == server_window_by_id_.end())
-      return nullptr;
-    return it->second;
-  }
-
   DragTargetConnection* GetDragTargetForWindow(
       const ServerWindow* window) override {
     auto it = connection_by_window_.find(const_cast<ServerWindow*>(window));
@@ -270,7 +259,6 @@ class DragControllerTest : public testing::Test,
 
   ui::CursorType cursor_;
 
-  std::map<WindowId, ServerWindow*> server_window_by_id_;
   std::map<ServerWindow*, DragTargetConnection*> connection_by_window_;
 
   std::unique_ptr<TestServerWindowDelegate> window_delegate_;

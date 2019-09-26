@@ -27,54 +27,58 @@ namespace app_list {
 
 namespace {
 
-constexpr int kPreferredWidth = 360;
-constexpr int kPreferredHeight = 48;
-constexpr int kBottomSeparatorHeight = 1;
-constexpr int kMaxFolderNameWidth = 300;
-constexpr int kMaxFolderNameWidthFullScreen = 236;
+constexpr int kMaxFolderNameWidth = 204;
+constexpr SkColor kFolderNameColor = SkColorSetARGBMacro(138, 0, 0, 0);
 
 }  // namespace
 
 class FolderHeaderView::FolderNameView : public views::Textfield {
  public:
-  FolderNameView() { SetBorder(views::CreateEmptyBorder(1, 1, 1, 1)); }
+  explicit FolderNameView(FolderHeaderView* folder_header_view)
+      : folder_header_view_(folder_header_view) {
+    DCHECK(folder_header_view_);
+    SetBorder(views::CreateEmptyBorder(1, 1, 1, 1));
+  }
 
-  ~FolderNameView() override {}
+  ~FolderNameView() override = default;
 
   void OnFocus() override {
-    if (features::IsAppListFocusEnabled())
-      SelectAll(false);
+    SelectAll(false);
     Textfield::OnFocus();
   }
 
+  void OnBlur() override {
+    // Collapse whitespace when FolderNameView loses focus.
+    SetText(base::CollapseWhitespace(text(), false));
+    folder_header_view_->ContentsChanged(this, text());
+    Textfield::OnBlur();
+  }
+
  private:
+  // The parent FolderHeaderView, owns this.
+  FolderHeaderView* folder_header_view_;
+
   DISALLOW_COPY_AND_ASSIGN(FolderNameView);
 };
 
 FolderHeaderView::FolderHeaderView(FolderHeaderViewDelegate* delegate)
     : folder_item_(nullptr),
-      folder_name_view_(new FolderNameView),
+      folder_name_view_(new FolderNameView(this)),
       folder_name_placeholder_text_(
           ui::ResourceBundle::GetSharedInstance().GetLocalizedString(
               IDS_APP_LIST_FOLDER_NAME_PLACEHOLDER)),
       delegate_(delegate),
-      folder_name_visible_(true),
-      is_fullscreen_app_list_enabled_(features::IsFullscreenAppListEnabled()) {
+      folder_name_visible_(true) {
   ui::ResourceBundle& rb = ui::ResourceBundle::GetSharedInstance();
   gfx::FontList font_list = rb.GetFontList(ui::ResourceBundle::MediumFont);
   folder_name_view_->set_placeholder_text_color(kFolderTitleHintTextColor);
   folder_name_view_->set_placeholder_text(folder_name_placeholder_text_);
   folder_name_view_->SetBorder(views::NullBorder());
-  if (is_fullscreen_app_list_enabled_) {
-    // Make folder name font size 14px.
-    folder_name_view_->SetFontList(font_list.DeriveWithSizeDelta(-1));
-    folder_name_view_->SetBackgroundColor(SK_ColorTRANSPARENT);
-    folder_name_view_->SetTextColor(kGridTitleColor);
-  } else {
-    folder_name_view_->SetFontList(font_list);
-    folder_name_view_->SetBackgroundColor(kContentsBackgroundColor);
-    folder_name_view_->SetTextColor(kFolderTitleColor);
-  }
+
+  // Make folder name font size 14px.
+  folder_name_view_->SetFontList(font_list.DeriveWithSizeDelta(-1));
+  folder_name_view_->SetBackgroundColor(SK_ColorTRANSPARENT);
+  folder_name_view_->SetTextColor(kFolderNameColor);
   folder_name_view_->set_controller(this);
   AddChildView(folder_name_view_);
 }
@@ -156,12 +160,8 @@ bool FolderHeaderView::IsFolderNameEnabledForTest() const {
 }
 
 gfx::Size FolderHeaderView::CalculatePreferredSize() const {
-  const int preferred_height = is_fullscreen_app_list_enabled_
-                                   ? kPreferredHeight +
-                                         kBottomSeparatorBottomPadding +
-                                         AppsGridView::GetTilePadding().top()
-                                   : kPreferredHeight;
-  return gfx::Size(kPreferredWidth, preferred_height);
+  return gfx::Size(kMaxFolderNameWidth,
+                   folder_name_view_->GetPreferredSize().height());
 }
 
 views::View* FolderHeaderView::GetFolderNameViewForTest() const {
@@ -169,8 +169,7 @@ views::View* FolderHeaderView::GetFolderNameViewForTest() const {
 }
 
 int FolderHeaderView::GetMaxFolderNameWidth() const {
-  return is_fullscreen_app_list_enabled_ ? kMaxFolderNameWidthFullScreen
-                                         : kMaxFolderNameWidth;
+  return kMaxFolderNameWidth;
 }
 
 base::string16 FolderHeaderView::GetElidedFolderName(
@@ -208,38 +207,6 @@ void FolderHeaderView::Layout() {
   folder_name_view_->SetBoundsRect(text_bounds);
 }
 
-bool FolderHeaderView::OnKeyPressed(const ui::KeyEvent& event) {
-  if (event.key_code() == ui::VKEY_RETURN)
-    delegate_->GiveBackFocusToSearchBox();
-
-  return false;
-}
-
-void FolderHeaderView::OnPaint(gfx::Canvas* canvas) {
-  views::View::OnPaint(canvas);
-
-  gfx::Rect rect(GetContentsBounds());
-  if (rect.IsEmpty() || !folder_name_visible_)
-    return;
-
-  // Draw bottom separator line.
-  rect.Inset(is_fullscreen_app_list_enabled_
-                 ? kAppsGridLeftRightPadding +
-                       (-AppsGridView::GetTilePadding().left()) +
-                       kBottomSeparatorLeftRightPadding
-                 : kAppsGridPadding,
-             0);
-  int extra_bottom_padding =
-      is_fullscreen_app_list_enabled_
-          ? kBottomSeparatorBottomPadding + AppsGridView::GetTilePadding().top()
-          : 0;
-  rect.set_y(rect.bottom() - kBottomSeparatorHeight - extra_bottom_padding);
-  rect.set_height(kBottomSeparatorHeight);
-  SkColor color = is_fullscreen_app_list_enabled_ ? kBottomSeparatorColor
-                                                  : kBottomSeparatorColor;
-  canvas->FillRect(rect, color);
-}
-
 void FolderHeaderView::ContentsChanged(views::Textfield* sender,
                                        const base::string16& new_contents) {
   // Temporarily remove from observer to ignore data change caused by us.
@@ -261,8 +228,12 @@ void FolderHeaderView::ContentsChanged(views::Textfield* sender,
 
 bool FolderHeaderView::HandleKeyEvent(views::Textfield* sender,
                                       const ui::KeyEvent& key_event) {
-  if (!features::IsAppListFocusEnabled())
-    return false;
+  if (key_event.key_code() == ui::VKEY_RETURN &&
+      key_event.type() == ui::ET_KEY_PRESSED) {
+    delegate_->GiveBackFocusToSearchBox();
+    delegate_->NavigateBack(folder_item_, key_event);
+    return true;
+  }
   if (!CanProcessLeftRightKeyTraversal(key_event))
     return false;
   return ProcessLeftRightKeyTraversalForTextfield(folder_name_view_, key_event);

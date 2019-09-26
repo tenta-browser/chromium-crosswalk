@@ -11,11 +11,16 @@
 #include "base/containers/flat_set.h"
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
+#include "content/browser/devtools/devtools_url_loader_interceptor.h"
 #include "content/browser/devtools/protocol/devtools_domain_handler.h"
 #include "content/browser/devtools/protocol/network.h"
-#include "content/public/common/network_service.mojom.h"
 #include "net/base/net_errors.h"
 #include "net/cookies/canonical_cookie.h"
+#include "services/network/public/mojom/network_service.mojom.h"
+
+namespace base {
+class UnguessableToken;
+};
 
 namespace net {
 class HttpRequestHeaders;
@@ -23,21 +28,22 @@ class URLRequest;
 }  // namespace net
 
 namespace network {
+struct ResourceResponseHead;
+struct ResourceRequest;
 struct URLLoaderCompletionStatus;
 }  // namespace network
 
 namespace content {
+class BrowserContext;
 class DevToolsAgentHostImpl;
 class RenderFrameHostImpl;
-struct GlobalRequestID;
 class InterceptionHandle;
 class NavigationHandle;
 class NavigationRequest;
 class NavigationThrottle;
+class StoragePartition;
 struct GlobalRequestID;
 struct InterceptedRequestInfo;
-struct ResourceRequest;
-struct ResourceResponseHead;
 
 namespace protocol {
 
@@ -50,12 +56,15 @@ class NetworkHandler : public DevToolsDomainHandler,
   static std::vector<NetworkHandler*> ForAgentHost(DevToolsAgentHostImpl* host);
 
   void Wire(UberDispatcher* dispatcher) override;
-  void SetRenderer(RenderProcessHost* process_host,
+  void SetRenderer(int render_process_id,
                    RenderFrameHostImpl* frame_host) override;
 
   Response Enable(Maybe<int> max_total_size,
-                  Maybe<int> max_resource_size) override;
+                  Maybe<int> max_resource_size,
+                  Maybe<int> max_post_data_size) override;
   Response Disable() override;
+
+  Response SetCacheDisabled(bool cache_disabled) override;
 
   void ClearBrowserCache(
       std::unique_ptr<ClearBrowserCacheCallback> callback) override;
@@ -116,16 +125,30 @@ class NetworkHandler : public DevToolsDomainHandler,
       std::unique_ptr<GetResponseBodyForInterceptionCallback> callback)
       override;
 
-  void NavigationPreloadRequestSent(int worker_version_id,
-                                    const std::string& request_id,
-                                    const ResourceRequest& request);
-  void NavigationPreloadResponseReceived(int worker_version_id,
-                                         const std::string& request_id,
-                                         const GURL& url,
-                                         const ResourceResponseHead& head);
-  void NavigationPreloadCompleted(
+  bool MaybeCreateProxyForInterception(
+      const base::UnguessableToken& frame_token,
+      int process_id,
+      network::mojom::URLLoaderFactoryRequest* target_factory_request);
+
+  void ApplyOverrides(net::HttpRequestHeaders* headers,
+                      bool* skip_service_worker,
+                      bool* disable_cache);
+  void NavigationRequestWillBeSent(const NavigationRequest& nav_request);
+  void RequestSent(const std::string& request_id,
+                   const std::string& loader_id,
+                   const network::ResourceRequest& request,
+                   const char* initiator_type);
+  void ResponseReceived(const std::string& request_id,
+                        const std::string& loader_id,
+                        const GURL& url,
+                        const char* resource_type,
+                        const network::ResourceResponseHead& head,
+                        Maybe<std::string> frame_id);
+  void LoadingComplete(
       const std::string& request_id,
+      const char* resource_type,
       const network::URLLoaderCompletionStatus& completion_status);
+
   void NavigationFailed(NavigationRequest* navigation_request);
 
   bool enabled() const { return enabled_; }
@@ -133,28 +156,34 @@ class NetworkHandler : public DevToolsDomainHandler,
   Network::Frontend* frontend() const { return frontend_.get(); }
 
   static GURL ClearUrlRef(const GURL& url);
+  static std::unique_ptr<Network::Request> CreateRequestFromResourceRequest(
+      const network::ResourceRequest& request);
   static std::unique_ptr<Network::Request> CreateRequestFromURLRequest(
       const net::URLRequest* request);
 
   std::unique_ptr<NavigationThrottle> CreateThrottleForNavigation(
       NavigationHandle* navigation_handle);
   bool ShouldCancelNavigation(const GlobalRequestID& global_request_id);
-  void AppendDevToolsHeaders(net::HttpRequestHeaders* headers);
-  bool ShouldBypassServiceWorker() const;
+  void WillSendNavigationRequest(net::HttpRequestHeaders* headers,
+                                 bool* skip_service_worker,
+                                 bool* disable_cache);
 
  private:
   void RequestIntercepted(std::unique_ptr<InterceptedRequestInfo> request_info);
-  void SetNetworkConditions(mojom::NetworkConditionsPtr conditions);
+  void SetNetworkConditions(network::mojom::NetworkConditionsPtr conditions);
 
   std::unique_ptr<Network::Frontend> frontend_;
-  RenderProcessHost* process_;
+  BrowserContext* browser_context_;
+  StoragePartition* storage_partition_;
   RenderFrameHostImpl* host_;
   bool enabled_;
   std::string user_agent_;
   std::vector<std::pair<std::string, std::string>> extra_headers_;
   std::string host_id_;
   std::unique_ptr<InterceptionHandle> interception_handle_;
+  std::unique_ptr<DevToolsURLLoaderInterceptor> url_loader_interceptor_;
   bool bypass_service_worker_;
+  bool cache_disabled_;
   base::WeakPtrFactory<NetworkHandler> weak_factory_;
 
   DISALLOW_COPY_AND_ASSIGN(NetworkHandler);

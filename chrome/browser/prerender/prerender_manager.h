@@ -34,13 +34,10 @@ class Profile;
 namespace base {
 class DictionaryValue;
 class ListValue;
-class SimpleTestTickClock;
 class TickClock;
 }
 
-namespace chrome {
 struct NavigateParams;
-}
 
 namespace chrome_browser_net {
 enum class NetworkPredictionStatus;
@@ -161,26 +158,12 @@ class PrerenderManager : public content::NotificationObserver,
   // to swap it and merge browsing histories. Returns |true| and updates
   // |params->target_contents| if a prerendered page is swapped in, |false|
   // otherwise.
-  bool MaybeUsePrerenderedPage(const GURL& url,
-                               chrome::NavigateParams* params);
+  bool MaybeUsePrerenderedPage(const GURL& url, NavigateParams* params);
 
   // Moves a PrerenderContents to the pending delete list from the list of
   // active prerenders when prerendering should be cancelled.
   virtual void MoveEntryToPendingDelete(PrerenderContents* entry,
                                         FinalStatus final_status);
-
-  // Called when a NoStatePrefetch request has received a response (including
-  // redirects). May be called several times per resource, in case of redirects.
-  void RecordPrefetchResponseReceived(Origin origin,
-                                      bool is_main_resource,
-                                      bool is_redirect,
-                                      bool is_no_store);
-
-  // Called when a NoStatePrefetch resource has been loaded. This is called only
-  // once per resource, when all redirects have been resolved.
-  void RecordPrefetchRedirectCount(Origin origin,
-                                   bool is_main_resource,
-                                   int redirect_count);
 
   // Called to record the time to First Contentful Paint for all pages that were
   // not prerendered.
@@ -259,13 +242,6 @@ class PrerenderManager : public content::NotificationObserver,
   // Checks whether |url| has been recently navigated to.
   bool HasRecentlyBeenNavigatedTo(Origin origin, const GURL& url);
 
-  // Returns true iff the scheme of the URL given is valid for prerendering.
-  static bool DoesURLHaveValidScheme(const GURL& url);
-
-  // Returns true iff the scheme of the subresource URL given is valid for
-  // prerendering.
-  static bool DoesSubresourceURLHaveValidScheme(const GURL& url);
-
   // Returns a Value object containing the active pages being prerendered, and
   // a history of pages which were prerendered.
   std::unique_ptr<base::DictionaryValue> CopyAsValue() const;
@@ -308,8 +284,7 @@ class PrerenderManager : public content::NotificationObserver,
   // testing.
   base::Time GetCurrentTime() const;
   base::TimeTicks GetCurrentTimeTicks() const;
-  void SetTickClockForTesting(
-      std::unique_ptr<base::SimpleTestTickClock> tick_clock);
+  void SetTickClockForTesting(const base::TickClock* tick_clock);
 
   void DisablePageLoadMetricsObserverForTesting() {
     page_load_metric_observer_disabled_ = true;
@@ -600,7 +575,7 @@ class PrerenderManager : public content::NotificationObserver,
   using PrerenderProcessSet = std::set<content::RenderProcessHost*>;
   PrerenderProcessSet prerender_process_hosts_;
 
-  std::unique_ptr<base::TickClock> tick_clock_;
+  const base::TickClock* tick_clock_;
 
   bool page_load_metric_observer_disabled_;
 

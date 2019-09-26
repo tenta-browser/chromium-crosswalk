@@ -15,6 +15,7 @@
 #include "net/quic/platform/api/quic_containers.h"
 #include "net/quic/platform/api/quic_export.h"
 #include "net/quic/platform/api/quic_socket_address.h"
+#include "net/quic/platform/api/quic_string.h"
 
 namespace net {
 
@@ -67,7 +68,9 @@ class QUIC_EXPORT_PRIVATE QuicBufferedPacketStore {
     std::list<BufferedPacket> buffered_packets;
     QuicTime creation_time;
     // The alpn from the CHLO, if one was found.
-    std::string alpn;
+    QuicString alpn;
+    // Indicating whether this is an IETF QUIC connection.
+    bool ietf_quic;
   };
 
   typedef QuicLinkedHashMap<QuicConnectionId, BufferedPacketList>
@@ -94,11 +97,12 @@ class QUIC_EXPORT_PRIVATE QuicBufferedPacketStore {
 
   // Adds a copy of packet into packet queue for given connection.
   EnqueuePacketResult EnqueuePacket(QuicConnectionId connection_id,
+                                    bool ietf_quic,
                                     const QuicReceivedPacket& packet,
                                     QuicSocketAddress server_address,
                                     QuicSocketAddress client_address,
                                     bool is_chlo,
-                                    const std::string& alpn);
+                                    const QuicString& alpn);
 
   // Returns true if there are any packets buffered for |connection_id|.
   bool HasBufferedPackets(QuicConnectionId connection_id) const;

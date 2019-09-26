@@ -6,7 +6,7 @@
 
 #include "base/i18n/char_iterator.h"
 #include "content/common/input_messages.h"
-#include "third_party/WebKit/public/platform/WebKeyboardEvent.h"
+#include "third_party/blink/public/platform/web_keyboard_event.h"
 #include "ui/latency/mojo/latency_info_struct_traits.h"
 
 namespace mojo {
@@ -111,18 +111,17 @@ bool StructTraits<content::mojom::EventDataView, InputEventUniquePtr>::Read(
     if (!event.ReadGestureData<content::mojom::GestureDataPtr>(&gesture_data))
       return false;
     (*out)->web_event.reset(new blink::WebGestureEvent(
-        type, event.modifiers(), event.timestamp_seconds()));
+        type, event.modifiers(), event.timestamp_seconds(),
+        gesture_data->source_device));
 
     blink::WebGestureEvent* gesture_event =
         static_cast<blink::WebGestureEvent*>((*out)->web_event.get());
-    gesture_event->x = gesture_data->widget_position.x();
-    gesture_event->y = gesture_data->widget_position.y();
-    gesture_event->global_x = gesture_data->screen_position.x();
-    gesture_event->global_y = gesture_data->screen_position.y();
+    gesture_event->SetPositionInWidget(gesture_data->widget_position);
+    gesture_event->SetPositionInScreen(gesture_data->screen_position);
     gesture_event->is_source_touch_event_set_non_blocking =
         gesture_data->is_source_touch_event_set_non_blocking;
     gesture_event->primary_pointer_type = gesture_data->primary_pointer_type;
-    gesture_event->source_device = gesture_data->source_device;
+    gesture_event->SetSourceDevice(gesture_data->source_device);
     gesture_event->unique_touch_event_id = gesture_data->unique_touch_event_id;
     gesture_event->resending_plugin_id = gesture_data->resending_plugin_id;
 
@@ -277,6 +276,7 @@ bool StructTraits<content::mojom::EventDataView, InputEventUniquePtr>::Read(
     touch_event->dispatch_type = touch_data->cancelable;
     touch_event->moved_beyond_slop_region =
         touch_data->moved_beyond_slop_region;
+    touch_event->hovering = touch_data->hovering;
     touch_event->touch_start_or_first_touch_move =
         touch_data->touch_start_or_first_move;
     touch_event->unique_touch_event_id = touch_data->unique_touch_event_id;
@@ -394,7 +394,7 @@ StructTraits<content::mojom::EventDataView, InputEventUniquePtr>::gesture_data(
   auto gesture_data = content::mojom::GestureData::New();
   gesture_data->screen_position = gesture_event->PositionInScreen();
   gesture_data->widget_position = gesture_event->PositionInWidget();
-  gesture_data->source_device = gesture_event->source_device;
+  gesture_data->source_device = gesture_event->SourceDevice();
   gesture_data->is_source_touch_event_set_non_blocking =
       gesture_event->is_source_touch_event_set_non_blocking;
   gesture_data->primary_pointer_type = gesture_event->primary_pointer_type;
@@ -492,7 +492,7 @@ StructTraits<content::mojom::EventDataView, InputEventUniquePtr>::touch_data(
       static_cast<const blink::WebTouchEvent*>(event->web_event.get());
   auto touch_data = content::mojom::TouchData::New(
       touch_event->dispatch_type, touch_event->moved_beyond_slop_region,
-      touch_event->touch_start_or_first_touch_move,
+      touch_event->touch_start_or_first_touch_move, touch_event->hovering,
       touch_event->unique_touch_event_id,
       std::vector<content::mojom::TouchPointPtr>());
   for (unsigned i = 0; i < touch_event->touches_length; ++i) {

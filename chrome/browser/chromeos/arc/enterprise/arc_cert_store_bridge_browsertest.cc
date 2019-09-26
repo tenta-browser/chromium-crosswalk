@@ -31,6 +31,7 @@
 #include "components/arc/arc_service_manager.h"
 #include "components/arc/arc_util.h"
 #include "components/arc/common/cert_store.mojom.h"
+#include "components/arc/test/connection_holder_util.h"
 #include "components/policy/policy_constants.h"
 #include "content/public/browser/browser_thread.h"
 #include "crypto/scoped_test_system_nss_key_slot.h"
@@ -64,7 +65,7 @@ class FakeArcCertStoreInstance : public mojom::CertStoreInstance {
  public:
   // mojom::CertStoreInstance:
   void InitDeprecated(mojom::CertStoreHostPtr host) override {
-    Init(std::move(host), base::BindOnce(&base::DoNothing));
+    Init(std::move(host), base::DoNothing());
   }
 
   void Init(mojom::CertStoreHostPtr host, InitCallback callback) override {
@@ -112,6 +113,18 @@ class ArcCertStoreBridgeTest : public InProcessBrowserTest {
                                     kFakeUserName);
     command_line->AppendSwitchASCII(chromeos::switches::kLoginProfile,
                                     TestingProfile::kTestUserProfileDir);
+    // Don't require policy for our sessions - this is required because
+    // this test creates a secondary profile synchronously, so we need to
+    // let the policy code know not to expect cached policy.
+    command_line->AppendSwitchASCII(chromeos::switches::kProfileRequiresPolicy,
+                                    "false");
+
+    // Tell the policy subsystem to wait for an initial policy load, even
+    // though we are using a synchronously loaded profile.
+    // TODO(edmanp): Update this test to properly use an asynchronously loaded
+    // user profile and remove the use of this flag (crbug.com/795737).
+    command_line->AppendSwitchASCII(
+        chromeos::switches::kWaitForInitialPolicyFetchForTest, "true");
   }
 
   void SetUpOnMainThread() override {
@@ -134,11 +147,12 @@ class ArcCertStoreBridgeTest : public InProcessBrowserTest {
     instance_ = std::make_unique<FakeArcCertStoreInstance>();
     ASSERT_TRUE(arc_bridge());
     arc_bridge()->cert_store()->SetInstance(instance_.get());
+    WaitForInstanceReady(arc_bridge()->cert_store());
   }
 
   void TearDownOnMainThread() override {
     ASSERT_TRUE(arc_bridge());
-    arc_bridge()->cert_store()->SetInstance(nullptr);
+    arc_bridge()->cert_store()->CloseInstance(instance_.get());
     instance_.reset();
 
     // Since ArcServiceLauncher is (re-)set up with profile() in
@@ -249,7 +263,8 @@ class ArcCertStoreBridgeTest : public InProcessBrowserTest {
     std::string client_cert1_spki(
         client_cert1_->derPublicKey.data,
         client_cert1_->derPublicKey.data + client_cert1_->derPublicKey.len);
-    permissions_for_ext->RegisterKeyForCorporateUsage(client_cert1_spki);
+    permissions_for_ext->RegisterKeyForCorporateUsage(
+        client_cert1_spki, {chromeos::KeyPermissions::KeyLocation::kUserSlot});
     done_callback.Run();
   }
 
@@ -345,7 +360,7 @@ IN_PROC_BROWSER_TEST_F(ArcCertStoreBridgeTest, ListCertificatesTest) {
   mojom_cert1->alias = client_cert1_->nickname;
   auto x509_cert = net::x509_util::CreateX509CertificateFromCERTCertificate(
       client_cert1_.get());
-  net::X509Certificate::GetPEMEncoded(x509_cert->os_cert_handle(),
+  net::X509Certificate::GetPEMEncoded(x509_cert->cert_buffer(),
                                       &mojom_cert1->cert);
 
   std::vector<mojom::CertificatePtr> expected_certs;

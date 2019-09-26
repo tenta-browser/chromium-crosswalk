@@ -7,11 +7,13 @@
 
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
+#include "base/optional.h"
+#include "base/time/time.h"
 #include "content/browser/loader/navigation_url_loader.h"
 #include "content/public/browser/content_browser_client.h"
 #include "content/public/browser/ssl_status.h"
-#include "content/public/common/url_loader.mojom.h"
-#include "content/public/common/url_loader_factory.mojom.h"
+#include "services/network/public/mojom/url_loader.mojom.h"
+#include "services/network/public/mojom/url_loader_factory.mojom.h"
 
 namespace net {
 struct RedirectInfo;
@@ -19,18 +21,20 @@ struct RedirectInfo;
 
 namespace content {
 
-class ResourceContext;
+class NavigationData;
 class NavigationPostDataHandler;
+class ResourceContext;
 class StoragePartition;
-class URLLoaderRequestHandler;
+class NavigationLoaderInterceptor;
+struct GlobalRequestID;
 
 // This is an implementation of NavigationURLLoader used when
-// --enable-network-service is used.
+// --enable-features=NetworkService is used.
 class CONTENT_EXPORT NavigationURLLoaderNetworkService
     : public NavigationURLLoader {
  public:
   // The caller is responsible for ensuring that |delegate| outlives the loader.
-  // Note |initial_handlers| is there for test purposes only.
+  // Note |initial_interceptors| is there for test purposes only.
   NavigationURLLoaderNetworkService(
       ResourceContext* resource_context,
       StoragePartition* storage_partition,
@@ -39,35 +43,36 @@ class CONTENT_EXPORT NavigationURLLoaderNetworkService
       ServiceWorkerNavigationHandle* service_worker_handle,
       AppCacheNavigationHandle* appcache_handle,
       NavigationURLLoaderDelegate* delegate,
-      std::vector<std::unique_ptr<URLLoaderRequestHandler>> initial_handlers);
+      std::vector<std::unique_ptr<NavigationLoaderInterceptor>>
+          initial_interceptors);
   ~NavigationURLLoaderNetworkService() override;
 
   // NavigationURLLoader implementation:
   void FollowRedirect() override;
   void ProceedWithResponse() override;
-  void InterceptNavigation(NavigationInterceptionCB callback) override;
 
-  void OnReceiveResponse(scoped_refptr<ResourceResponse> response,
-                         const base::Optional<net::SSLInfo>& ssl_info,
-                         mojom::DownloadedTempFilePtr downloaded_file);
+  void OnReceiveResponse(
+      scoped_refptr<network::ResourceResponse> response,
+      network::mojom::URLLoaderClientEndpointsPtr url_loader_client_endpoints,
+      std::unique_ptr<NavigationData> navigation_data,
+      const GlobalRequestID& global_request_id,
+      bool is_download,
+      bool is_stream,
+      network::mojom::DownloadedTempFilePtr downloaded_file);
   void OnReceiveRedirect(const net::RedirectInfo& redirect_info,
-                         scoped_refptr<ResourceResponse> response);
-  void OnStartLoadingResponseBody(mojo::ScopedDataPipeConsumerHandle body);
+                         scoped_refptr<network::ResourceResponse> response);
   void OnComplete(const network::URLLoaderCompletionStatus& status);
 
  private:
   class URLLoaderRequestController;
-
-  bool IsDownload() const;
+  void OnRequestStarted(base::TimeTicks timestamp);
 
   void BindNonNetworkURLLoaderFactoryRequest(
+      int frame_tree_node_id,
       const GURL& url,
-      mojom::URLLoaderFactoryRequest factory);
+      network::mojom::URLLoaderFactoryRequest factory);
 
   NavigationURLLoaderDelegate* delegate_;
-
-  scoped_refptr<ResourceResponse> response_;
-  net::SSLInfo ssl_info_;
 
   // Lives on the IO thread.
   std::unique_ptr<URLLoaderRequestController> request_controller_;

@@ -8,16 +8,13 @@
 async_test(function(t) {
     var video = document.querySelector("video");
     var canvas = document.querySelector("canvas");
-    navigator.webkitGetUserMedia({ video: true }, function(stream) {
+    navigator.mediaDevices.getUserMedia({ video: true }).then(function(stream) {
         // start preview.
-        video.src = URL.createObjectURL(stream);
-    }, getStreamFailed);
+        video.srcObject = stream;
+        video.play();
+    }, t.unreached_func);
 
-    function getStreamFailed(error) {
-        t.unreached_func();
-    }
-
-    video.oncanplaythrough = t.step_func_done(function() {
+    video.onplaying = t.step_func_done(function() {
         var width = canvas.width;
         var height = canvas.height;
         var ctx = canvas.getContext("2d");

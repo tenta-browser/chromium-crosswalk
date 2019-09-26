@@ -9,16 +9,18 @@
 #include <utility>
 
 #include "base/logging.h"
-#include "base/memory/ptr_util.h"
 #include "base/optional.h"
 #include "base/time/default_clock.h"
 #include "base/time/tick_clock.h"
 #include "base/time/time.h"
+#include "chrome/browser/chromeos/login/users/chrome_user_manager_util.h"
 #include "chrome/browser/chromeos/policy/off_hours/off_hours_proto_parser.h"
 #include "chrome/browser/chromeos/policy/off_hours/time_utils.h"
 #include "chrome/browser/chromeos/settings/cros_settings.h"
 #include "chrome/browser/chromeos/settings/device_settings_service.h"
 #include "chromeos/dbus/dbus_thread_manager.h"
+#include "components/user_manager/user.h"
+#include "components/user_manager/user_manager.h"
 
 namespace em = enterprise_management;
 
@@ -26,8 +28,8 @@ namespace policy {
 namespace off_hours {
 
 DeviceOffHoursController::DeviceOffHoursController()
-    : timer_(base::MakeUnique<base::OneShotTimer>()),
-      clock_(base::MakeUnique<base::DefaultClock>()) {
+    : timer_(std::make_unique<base::OneShotTimer>()),
+      clock_(base::DefaultClock::GetInstance()) {
   // IsInitialized() check is used for testing. Otherwise it has to be already
   // initialized.
   if (chromeos::DBusThreadManager::IsInitialized()) {
@@ -63,23 +65,48 @@ void DeviceOffHoursController::RemoveObserver(Observer* observer) {
 }
 
 void DeviceOffHoursController::SetClockForTesting(
-    std::unique_ptr<base::Clock> clock,
-    base::TickClock* timer_clock) {
-  clock_ = std::move(clock);
-  timer_ = base::MakeUnique<base::OneShotTimer>(timer_clock);
+    base::Clock* clock,
+    const base::TickClock* timer_clock) {
+  clock_ = clock;
+  timer_ = std::make_unique<base::OneShotTimer>(timer_clock);
+}
+
+bool DeviceOffHoursController::IsCurrentSessionAllowedOnlyForOffHours() const {
+  if (!is_off_hours_mode())
+    return false;
+
+  const user_manager::UserManager* user_manager =
+      user_manager::UserManager::Get();
+  const user_manager::UserList& logged_in_users =
+      user_manager->GetLoggedInUsers();
+  // If at least one logged in user won't be allowed after OffHours,
+  // the session will be terminated.
+  for (auto* user : logged_in_users) {
+    if (user->GetType() != user_manager::USER_TYPE_REGULAR &&
+        user->GetType() != user_manager::USER_TYPE_GUEST &&
+        user->GetType() != user_manager::USER_TYPE_SUPERVISED &&
+        user->GetType() != user_manager::USER_TYPE_CHILD) {
+      continue;
+    }
+    if (!chromeos::chrome_user_manager_util::IsUserAllowed(
+            *user, device_settings_proto_)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 void DeviceOffHoursController::UpdateOffHoursPolicy(
     const em::ChromeDeviceSettingsProto& device_settings_proto) {
+  device_settings_proto_ = device_settings_proto;
   std::vector<OffHoursInterval> off_hours_intervals;
   if (device_settings_proto.has_device_off_hours()) {
     const em::DeviceOffHoursProto& container(
         device_settings_proto.device_off_hours());
     base::Optional<std::string> timezone = ExtractTimezoneFromProto(container);
     if (timezone) {
-      off_hours_intervals =
-          ConvertIntervalsToGmt(ExtractOffHoursIntervalsFromProto(container),
-                                clock_.get(), *timezone);
+      off_hours_intervals = ConvertIntervalsToGmt(
+          ExtractOffHoursIntervalsFromProto(container), clock_, *timezone);
     }
   }
   off_hours_intervals_.swap(off_hours_intervals);
@@ -114,7 +141,7 @@ void DeviceOffHoursController::UpdateOffHoursMode() {
     SetOffHoursMode(false);
     return;
   }
-  WeeklyTime current_time = WeeklyTime::GetCurrentWeeklyTime(clock_.get());
+  WeeklyTime current_time = WeeklyTime::GetCurrentWeeklyTime(clock_);
   for (const auto& interval : off_hours_intervals_) {
     if (interval.Contains(current_time)) {
       base::TimeDelta remaining_off_hours_duration =

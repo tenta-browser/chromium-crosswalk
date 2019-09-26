@@ -11,7 +11,7 @@
 #include <utility>
 
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
+#include "base/test/simple_test_tick_clock.h"
 #include "build/build_config.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/events/devices/x11/device_data_manager_x11.h"
@@ -65,6 +65,15 @@ void InitKeyEvent(Display* display,
   key_event->state = state;
 }
 #endif
+
+float ComputeRotationAngle(float twist) {
+  float rotation_angle = twist;
+  while (rotation_angle < 0)
+    rotation_angle += 180.f;
+  while (rotation_angle >= 180)
+    rotation_angle -= 180.f;
+  return rotation_angle;
+}
 
 }  // namespace
 
@@ -245,9 +254,9 @@ TEST_F(EventsXTest, TouchEventBasic) {
             gfx::ToFlooredPoint(ui::EventLocationFromNative(scoped_xevent))
                 .ToString());
   EXPECT_EQ(GetTouchId(scoped_xevent), 0);
-  EXPECT_FLOAT_EQ(GetTouchAngle(scoped_xevent), 0.15f);
   PointerDetails pointer_details =
       GetTouchPointerDetailsFromNative(scoped_xevent);
+  EXPECT_FLOAT_EQ(ComputeRotationAngle(pointer_details.twist), 0.15f);
   EXPECT_FLOAT_EQ(pointer_details.radius_x, 10.0f);
   EXPECT_FLOAT_EQ(pointer_details.force, 0.1f);
 
@@ -262,8 +271,8 @@ TEST_F(EventsXTest, TouchEventBasic) {
             gfx::ToFlooredPoint(ui::EventLocationFromNative(scoped_xevent))
                 .ToString());
   EXPECT_EQ(GetTouchId(scoped_xevent), 0);
-  EXPECT_FLOAT_EQ(GetTouchAngle(scoped_xevent), 0.25f);
   pointer_details = GetTouchPointerDetailsFromNative(scoped_xevent);
+  EXPECT_FLOAT_EQ(ComputeRotationAngle(pointer_details.twist), 0.25f);
   EXPECT_FLOAT_EQ(pointer_details.radius_x, 10.0f);
   EXPECT_FLOAT_EQ(pointer_details.force, 0.1f);
 
@@ -280,8 +289,8 @@ TEST_F(EventsXTest, TouchEventBasic) {
             gfx::ToFlooredPoint(ui::EventLocationFromNative(scoped_xevent))
                 .ToString());
   EXPECT_EQ(GetTouchId(scoped_xevent), 1);
-  EXPECT_FLOAT_EQ(GetTouchAngle(scoped_xevent), 0.45f);
   pointer_details = GetTouchPointerDetailsFromNative(scoped_xevent);
+  EXPECT_FLOAT_EQ(ComputeRotationAngle(pointer_details.twist), 0.45f);
   EXPECT_FLOAT_EQ(pointer_details.radius_x, 50.0f);
   EXPECT_FLOAT_EQ(pointer_details.force, 0.5f);
 
@@ -296,8 +305,8 @@ TEST_F(EventsXTest, TouchEventBasic) {
             gfx::ToFlooredPoint(ui::EventLocationFromNative(scoped_xevent))
                 .ToString());
   EXPECT_EQ(GetTouchId(scoped_xevent), 0);
-  EXPECT_FLOAT_EQ(GetTouchAngle(scoped_xevent), 0.25f);
   pointer_details = GetTouchPointerDetailsFromNative(scoped_xevent);
+  EXPECT_FLOAT_EQ(ComputeRotationAngle(pointer_details.twist), 0.25f);
   EXPECT_FLOAT_EQ(pointer_details.radius_x, 10.0f);
   EXPECT_FLOAT_EQ(pointer_details.force, 0.f);
 
@@ -312,8 +321,8 @@ TEST_F(EventsXTest, TouchEventBasic) {
             gfx::ToFlooredPoint(ui::EventLocationFromNative(scoped_xevent))
                 .ToString());
   EXPECT_EQ(GetTouchId(scoped_xevent), 1);
-  EXPECT_FLOAT_EQ(GetTouchAngle(scoped_xevent), 0.45f);
   pointer_details = GetTouchPointerDetailsFromNative(scoped_xevent);
+  EXPECT_FLOAT_EQ(ComputeRotationAngle(pointer_details.twist), 0.45f);
   EXPECT_FLOAT_EQ(pointer_details.radius_x, 25.0f);
   EXPECT_FLOAT_EQ(pointer_details.force, 0.f);
 }
@@ -372,7 +381,7 @@ TEST_F(EventsXTest, TouchEventNotRemovingFromNativeMapping) {
 
 // Copied events should not remove native touch id mappings, as this causes a
 // crash (crbug.com/467102). Copied events do not contain a proper
-// base::NativeEvent and should not attempt to access it.
+// PlatformEvent and should not attempt to access it.
 TEST_F(EventsXTest, CopiedTouchEventNotRemovingFromNativeMapping) {
   std::vector<int> devices;
   devices.push_back(0);
@@ -539,30 +548,22 @@ base::TimeTicks TimeTicksFromMillis(int64_t millis) {
   return base::TimeTicks() + base::TimeDelta::FromMilliseconds(millis);
 }
 
-class MockTickClock : public base::TickClock {
- public:
-  explicit MockTickClock(int64_t milliseconds)
-      : ticks_(TimeTicksFromMillis(milliseconds)) {}
-  base::TimeTicks NowTicks() override { return ticks_; }
-
- private:
-  base::TimeTicks ticks_;
-};
-
 }  // namespace
 
 TEST_F(EventsXTest, TimestampRolloverAndAdjustWhenDecreasing) {
   XEvent event;
   InitButtonEvent(&event, true, gfx::Point(5, 10), 1, 0);
 
-  ResetTimestampRolloverCountersForTesting(
-      std::make_unique<MockTickClock>(0x100000001));
+  base::SimpleTestTickClock clock;
+  clock.SetNowTicks(TimeTicksFromMillis(0x100000001));
+  SetEventTickClockForTesting(&clock);
+  ResetTimestampRolloverCountersForTesting();
 
   event.xbutton.time = 0xFFFFFFFF;
   EXPECT_EQ(TimeTicksFromMillis(0xFFFFFFFF), ui::EventTimeFromNative(&event));
 
-  ResetTimestampRolloverCountersForTesting(
-      std::make_unique<MockTickClock>(0x100000007));
+  clock.SetNowTicks(TimeTicksFromMillis(0x100000007));
+  ResetTimestampRolloverCountersForTesting();
 
   event.xbutton.time = 3;
   EXPECT_EQ(TimeTicksFromMillis(0x100000000 + 3),
@@ -573,15 +574,18 @@ TEST_F(EventsXTest, NoTimestampRolloverWhenMonotonicIncreasing) {
   XEvent event;
   InitButtonEvent(&event, true, gfx::Point(5, 10), 1, 0);
 
-  ResetTimestampRolloverCountersForTesting(std::make_unique<MockTickClock>(10));
+  base::SimpleTestTickClock clock;
+  clock.SetNowTicks(TimeTicksFromMillis(10));
+  SetEventTickClockForTesting(&clock);
+  ResetTimestampRolloverCountersForTesting();
 
   event.xbutton.time = 6;
   EXPECT_EQ(TimeTicksFromMillis(6), ui::EventTimeFromNative(&event));
   event.xbutton.time = 7;
   EXPECT_EQ(TimeTicksFromMillis(7), ui::EventTimeFromNative(&event));
 
-  ResetTimestampRolloverCountersForTesting(
-      std::make_unique<MockTickClock>(0x100000005));
+  clock.SetNowTicks(TimeTicksFromMillis(0x100000005));
+  ResetTimestampRolloverCountersForTesting();
 
   event.xbutton.time = 0xFFFFFFFF;
   EXPECT_EQ(TimeTicksFromMillis(0xFFFFFFFF), ui::EventTimeFromNative(&event));

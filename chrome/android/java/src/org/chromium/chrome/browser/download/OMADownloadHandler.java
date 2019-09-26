@@ -293,6 +293,8 @@ public class OMADownloadHandler extends BroadcastReceiver
             }
             manager.remove(mDownloadId);
             mFreeSpace = Environment.getExternalStorageDirectory().getUsableSpace();
+            DownloadMetrics.recordDownloadOpen(
+                    DownloadMetrics.ANDROID_DOWNLOAD_MANAGER, mDownloadInfo.getMimeType());
             return omaInfo;
         }
 
@@ -882,7 +884,8 @@ public class OMADownloadHandler extends BroadcastReceiver
      */
     static void storeDownloadInfo(
             SharedPreferences sharedPrefs, String type, Set<String> downloadInfo) {
-        DownloadManagerService.storeDownloadInfo(sharedPrefs, type, downloadInfo);
+        DownloadManagerService.storeDownloadInfo(
+                sharedPrefs, type, downloadInfo, false /* forceCommit */);
     }
 
     /**

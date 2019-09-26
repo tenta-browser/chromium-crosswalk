@@ -9,6 +9,7 @@
 #include <utility>
 
 #include "base/bind.h"
+#include "base/callback.h"
 #include "base/logging.h"
 #include "base/stl_util.h"
 #include "base/strings/string_number_conversions.h"
@@ -108,8 +109,7 @@ void NetLog::ThreadSafeObserver::OnAddEntryData(
 NetLog::NetLog() : last_id_(0), is_capturing_(0) {
 }
 
-NetLog::~NetLog() {
-}
+NetLog::~NetLog() = default;
 
 void NetLog::AddGlobalEntry(NetLogEventType type) {
   AddEntry(type, NetLogSource(NetLogSourceType::NONE, NextID()),

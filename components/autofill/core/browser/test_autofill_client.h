@@ -16,8 +16,7 @@
 #include "components/autofill/core/browser/autofill_client.h"
 #include "components/prefs/pref_service.h"
 #include "components/ukm/test_ukm_recorder.h"
-#include "google_apis/gaia/fake_identity_provider.h"
-#include "google_apis/gaia/fake_oauth2_token_service.h"
+#include "services/identity/public/cpp/identity_test_environment.h"
 
 namespace autofill {
 
@@ -32,7 +31,7 @@ class TestAutofillClient : public AutofillClient {
   scoped_refptr<AutofillWebDataService> GetDatabase() override;
   PrefService* GetPrefs() override;
   syncer::SyncService* GetSyncService() override;
-  IdentityProvider* GetIdentityProvider() override;
+  identity::IdentityManager* GetIdentityManager() override;
   ukm::UkmRecorder* GetUkmRecorder() override;
   AddressNormalizer* GetAddressNormalizer() override;
   SaveCardBubbleController* GetSaveCardBubbleController() override;
@@ -76,6 +75,7 @@ class TestAutofillClient : public AutofillClient {
   bool IsContextSecure() override;
   bool ShouldShowSigninPromo() override;
   bool IsAutofillSupported() override;
+  bool AreServerCardsSupported() override;
   void ExecuteCommand(int id) override;
 
   void SetPrefs(std::unique_ptr<PrefService> prefs) {
@@ -84,11 +84,16 @@ class TestAutofillClient : public AutofillClient {
 
   void set_form_origin(const GURL& url) { form_origin_ = url; }
 
+  void set_sync_service(syncer::SyncService* test_sync_service) {
+    test_sync_service_ = test_sync_service;
+  }
+
  private:
+  identity::IdentityTestEnvironment identity_test_env_;
+  syncer::SyncService* test_sync_service_ = nullptr;
+
   // NULL by default.
   std::unique_ptr<PrefService> prefs_;
-  std::unique_ptr<FakeOAuth2TokenService> token_service_;
-  std::unique_ptr<FakeIdentityProvider> identity_provider_;
 #if !defined(OS_ANDROID)
   std::unique_ptr<SaveCardBubbleController> save_card_bubble_controller_;
 #endif

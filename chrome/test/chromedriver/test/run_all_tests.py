@@ -199,10 +199,25 @@ def main():
 
       # TODO(samuong): speculative fix for crbug.com/611886
       os.environ['CHROME_DEVEL_SANDBOX'] = '/opt/chromium/chrome_sandbox'
-    else:
-      versions['63'] = '508578'
-      versions['62'] = '499119'
-      versions['61'] = '488595'
+
+    # Linux64 build numbers
+    elif util.IsLinux():
+      versions['66'] = '540276'
+      versions['65'] = '530372'
+      versions['64'] = '520842'
+
+    # Mac build numbers
+    elif util.IsMac():
+      versions['66'] = '540271'
+      versions['65'] = '530368'
+      versions['64'] = '520840'
+
+    # Windows build numbers
+    elif util.IsWindows():
+      versions['66'] = '540272'
+      versions['65'] = '530366'
+      versions['64'] = '520840'
+
     code = 0
     for version, revision in versions.iteritems():
       if options.chrome_version and version != options.chrome_version:

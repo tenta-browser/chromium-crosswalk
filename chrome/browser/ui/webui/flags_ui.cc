@@ -46,10 +46,8 @@
 #include "chrome/browser/chromeos/ownership/owner_settings_service_chromeos_factory.h"
 #include "chrome/browser/chromeos/settings/cros_settings.h"
 #include "chrome/browser/chromeos/settings/owner_flags_storage.h"
-#include "chromeos/cryptohome/cryptohome_parameters.h"
-#include "chromeos/dbus/dbus_thread_manager.h"
-#include "chromeos/dbus/session_manager_client.h"
 #include "components/pref_registry/pref_registry_syncable.h"
+#include "components/signin/core/account_id/account_id.h"
 #include "components/user_manager/user_manager.h"
 #endif
 
@@ -62,47 +60,21 @@ content::WebUIDataSource* CreateFlagsUIHTMLSource() {
   content::WebUIDataSource* source =
       content::WebUIDataSource::Create(chrome::kChromeUIFlagsHost);
 
-  source->AddLocalizedString(flags_ui::kFlagsSearchPlaceholder,
-                             IDS_FLAGS_UI_SEARCH_PLACEHOLDER);
-  source->AddLocalizedString(flags_ui::kFlagsTitle, IDS_FLAGS_UI_TITLE);
-  source->AddLocalizedString(flags_ui::kFlagsWarningHeader,
-                             IDS_FLAGS_UI_WARNING_HEADER);
-  source->AddLocalizedString(flags_ui::kFlagsBlurb, IDS_FLAGS_UI_WARNING_TEXT);
-  source->AddLocalizedString(flags_ui::kChannelPromoBeta,
-                             IDS_FLAGS_UI_PROMOTE_BETA_CHANNEL);
-  source->AddLocalizedString(flags_ui::kChannelPromoDev,
-                             IDS_FLAGS_UI_PROMOTE_DEV_CHANNEL);
-  source->AddLocalizedString(flags_ui::kFlagsSupportedTitle,
-                             IDS_FLAGS_UI_SUPPORTED_TITLE);
-  source->AddLocalizedString(flags_ui::kFlagsUnsupportedTitle,
-                             IDS_FLAGS_UI_UNSUPPORTED_TITLE);
-  source->AddLocalizedString(flags_ui::kFlagsNotSupported,
-                             IDS_FLAGS_UI_NOT_AVAILABLE);
   source->AddLocalizedString(flags_ui::kFlagsRestartNotice,
                              IDS_FLAGS_UI_RELAUNCH_NOTICE);
-  source->AddLocalizedString(flags_ui::kFlagsRestartButton,
-                             IDS_FLAGS_UI_RELAUNCH_BUTTON);
-  source->AddLocalizedString(flags_ui::kResetAllButton,
-                             IDS_FLAGS_UI_RESET_ALL_BUTTON);
-  source->AddLocalizedString(flags_ui::kFlagsNoMatches,
-                             IDS_FLAGS_UI_NO_MATCHES);
-  source->AddLocalizedString(flags_ui::kDisable, IDS_FLAGS_UI_DISABLE);
-  source->AddLocalizedString(flags_ui::kEnable, IDS_FLAGS_UI_ENABLE);
   source->AddString(flags_ui::kVersion, version_info::GetVersionNumber());
 
 #if defined(OS_CHROMEOS)
   if (!user_manager::UserManager::Get()->IsCurrentUserOwner() &&
       base::SysInfo::IsRunningOnChromeOS()) {
-    // Set the strings to show which user can actually change the flags.
+    // Set the string to show which user can actually change the flags.
     std::string owner;
     chromeos::CrosSettings::Get()->GetString(chromeos::kDeviceOwner, &owner);
-    source->AddString(flags_ui::kOwnerWarning,
-                      l10n_util::GetStringFUTF16(IDS_FLAGS_UI_SYSTEM_OWNER_ONLY,
-                                                 base::UTF8ToUTF16(owner)));
+    source->AddString(flags_ui::kOwnerEmail, base::UTF8ToUTF16(owner));
   } else {
     // The warning will be only shown on ChromeOS, when the current user is not
     // the owner.
-    source->AddString(flags_ui::kOwnerWarning, base::string16());
+    source->AddString(flags_ui::kOwnerEmail, base::string16());
   }
 #endif
 
@@ -158,20 +130,21 @@ class FlagsDOMHandler : public WebUIMessageHandler {
 void FlagsDOMHandler::RegisterMessages() {
   web_ui()->RegisterMessageCallback(
       flags_ui::kRequestExperimentalFeatures,
-      base::Bind(&FlagsDOMHandler::HandleRequestExperimentalFeatures,
-                 base::Unretained(this)));
+      base::BindRepeating(&FlagsDOMHandler::HandleRequestExperimentalFeatures,
+                          base::Unretained(this)));
   web_ui()->RegisterMessageCallback(
       flags_ui::kEnableExperimentalFeature,
-      base::Bind(&FlagsDOMHandler::HandleEnableExperimentalFeatureMessage,
-                 base::Unretained(this)));
+      base::BindRepeating(
+          &FlagsDOMHandler::HandleEnableExperimentalFeatureMessage,
+          base::Unretained(this)));
   web_ui()->RegisterMessageCallback(
       flags_ui::kRestartBrowser,
-      base::Bind(&FlagsDOMHandler::HandleRestartBrowser,
-                 base::Unretained(this)));
+      base::BindRepeating(&FlagsDOMHandler::HandleRestartBrowser,
+                          base::Unretained(this)));
   web_ui()->RegisterMessageCallback(
       flags_ui::kResetAllFlags,
-      base::Bind(&FlagsDOMHandler::HandleResetAllFlags,
-                 base::Unretained(this)));
+      base::BindRepeating(&FlagsDOMHandler::HandleResetAllFlags,
+                          base::Unretained(this)));
 }
 
 void FlagsDOMHandler::Init(flags_ui::FlagsStorage* flags_storage,
@@ -249,19 +222,20 @@ void FlagsDOMHandler::HandleRestartBrowser(const base::ListValue* args) {
 
   // Apply additional switches from policy that should not be dropped when
   // applying flags..
-  chromeos::UserSessionManager::MaybeAppendPolicySwitches(&user_flags);
+  chromeos::UserSessionManager::MaybeAppendPolicySwitches(
+      Profile::FromWebUI(web_ui())->GetPrefs(), &user_flags);
 
   base::CommandLine::StringVector flags;
   // argv[0] is the program name |base::CommandLine::NO_PROGRAM|.
   flags.assign(user_flags.argv().begin() + 1, user_flags.argv().end());
   VLOG(1) << "Restarting to apply per-session flags...";
-  chromeos::DBusThreadManager::Get()
-      ->GetSessionManagerClient()
-      ->SetFlagsForUser(
-          cryptohome::Identification(user_manager::UserManager::Get()
-                                         ->GetActiveUser()
-                                         ->GetAccountId()),
-          flags);
+  AccountId account_id =
+      user_manager::UserManager::Get()->GetActiveUser()->GetAccountId();
+  chromeos::UserSessionManager::GetInstance()->SetSwitchesForUser(
+      account_id,
+      chromeos::UserSessionManager::CommandLineSwitchesType::
+          kPolicyAndFlagsAndKioskControl,
+      flags);
 #endif
   chrome::AttemptRestart();
 }
@@ -317,7 +291,7 @@ FlagsUI::FlagsUI(content::WebUI* web_ui)
       weak_factory_(this) {
   Profile* profile = Profile::FromWebUI(web_ui);
 
-  auto handler_owner = base::MakeUnique<FlagsDOMHandler>();
+  auto handler_owner = std::make_unique<FlagsDOMHandler>();
   FlagsDOMHandler* handler = handler_owner.get();
   web_ui->AddMessageHandler(std::move(handler_owner));
 

@@ -11,7 +11,6 @@
 #include "base/command_line.h"
 #include "base/location.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/memory/ref_counted.h"
 #include "base/run_loop.h"
 #include "base/threading/thread_task_runner_handle.h"
@@ -25,17 +24,19 @@
 #include "chrome/browser/chromeos/login/supervised/supervised_user_creation_screen.h"
 #include "chrome/browser/chromeos/login/ui/mock_login_display.h"
 #include "chrome/browser/chromeos/login/ui/mock_login_display_host.h"
+#include "chrome/browser/chromeos/login/users/chrome_user_manager.h"
 #include "chrome/browser/chromeos/login/wizard_controller.h"
 #include "chrome/browser/chromeos/policy/browser_policy_connector_chromeos.h"
 #include "chrome/browser/chromeos/policy/device_local_account.h"
 #include "chrome/browser/chromeos/policy/device_local_account_policy_service.h"
 #include "chrome/browser/chromeos/policy/device_policy_cros_browser_test.h"
 #include "chrome/browser/chromeos/settings/cros_settings.h"
-#include "chrome/browser/notifications/notification_ui_manager.h"
+#include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/webui/chromeos/login/supervised_user_creation_screen_handler.h"
 #include "chrome/grit/generated_resources.h"
 #include "chrome/test/base/testing_browser_process.h"
 #include "chromeos/chromeos_switches.h"
+#include "chromeos/dbus/fake_auth_policy_client.h"
 #include "chromeos/dbus/fake_session_manager_client.h"
 #include "chromeos/login/auth/authpolicy_login_helper.h"
 #include "chromeos/login/auth/key.h"
@@ -43,6 +44,7 @@
 #include "chromeos/login/auth/user_context.h"
 #include "chromeos/settings/cros_settings_names.h"
 #include "chromeos/settings/cros_settings_provider.h"
+#include "components/password_manager/core/common/password_manager_pref_names.h"
 #include "components/policy/core/common/cloud/cloud_policy_constants.h"
 #include "components/policy/core/common/cloud/cloud_policy_core.h"
 #include "components/policy/core/common/cloud/cloud_policy_store.h"
@@ -52,6 +54,7 @@
 #include "components/policy/proto/device_management_backend.pb.h"
 #include "components/prefs/pref_service.h"
 #include "components/prefs/scoped_user_pref_update.h"
+#include "components/user_manager/scoped_user_manager.h"
 #include "components/user_manager/user.h"
 #include "components/user_manager/user_manager.h"
 #include "components/user_manager/user_type.h"
@@ -77,6 +80,8 @@ namespace {
 
 const char kGaiaID[] = "12345";
 const char kUsername[] = "test_user@gmail.com";
+const char kUserWhitelist[] = "*@gmail.com";
+const char kUserNotMatchingWhitelist[] = "user@another_mail.com";
 const char kSupervisedUserID[] = "supervised_user@locally-managed.localhost";
 const char kPassword[] = "test_password";
 const char kActiveDirectoryRealm[] = "active.directory.realm";
@@ -103,14 +108,6 @@ void WaitForPermanentlyUntrustedStatusAndRun(const base::Closure& callback) {
         break;
     }
   }
-}
-
-// Clear notifications such as GoogleServiceAuthError::INVALID_GAIA_CREDENTIALS
-// that are shown when signin in. Because the tests here manipulate the
-// message loop and don't always have have a browser window, the test runner
-// ends up clearing them at the wrong moment and crashes.
-void ClearNotifications() {
-  g_browser_process->notification_ui_manager()->CancelAll();
 }
 
 }  // namespace
@@ -195,7 +192,7 @@ class ExistingUserControllerTest : public policy::DevicePolicyCrosBrowserTest {
   void RegisterUser(const std::string& user_id) {
     ListPrefUpdate users_pref(g_browser_process->local_state(),
                               "LoggedInUsers");
-    users_pref->AppendIfNotPresent(base::MakeUnique<base::Value>(user_id));
+    users_pref->AppendIfNotPresent(std::make_unique<base::Value>(user_id));
   }
 
   // ExistingUserController private member accessors.
@@ -257,10 +254,6 @@ IN_PROC_BROWSER_TEST_F(ExistingUserControllerTest, DISABLED_ExistingUserLogin) {
   existing_user_controller()->Login(user_context, SigninSpecifics());
 
   profile_prepared_observer.Wait();
-
-  base::ThreadTaskRunnerHandle::Get()->PostTask(
-      FROM_HERE, base::BindOnce(&ClearNotifications));
-  content::RunAllPendingInMessageLoop();
 }
 
 // Verifies that when the cros settings are untrusted, no new session can be
@@ -429,19 +422,17 @@ class ExistingUserControllerPublicSessionTest
     WizardController* controller = WizardController::default_controller();
     if (controller && controller->current_screen())
       controller->current_screen()->Hide();
-
-    if (LoginDisplayHost::default_host())
-      LoginDisplayHost::default_host()->Finalize(base::OnceClosure());
-    base::RunLoop().RunUntilIdle();
   }
 
   void ExpectSuccessfulLogin(const UserContext& user_context) {
     test::UserSessionManagerTestApi session_manager_test_api(
         UserSessionManager::GetInstance());
     session_manager_test_api.InjectStubUserContext(user_context);
+    // There may be in-session oobe or an initial login screen created from
+    // --login-manager.
     EXPECT_CALL(*mock_login_display_host_,
                 StartWizard(OobeScreen::SCREEN_TERMS_OF_SERVICE))
-        .Times(0);
+        .Times(AnyNumber());
     EXPECT_CALL(*mock_login_display_, SetUIEnabled(false)).Times(AnyNumber());
     EXPECT_CALL(*mock_login_display_, SetUIEnabled(true)).Times(AnyNumber());
   }
@@ -618,8 +609,6 @@ IN_PROC_BROWSER_TEST_F(ExistingUserControllerPublicSessionTest,
   // Timer should still be stopped after login completes.
   ASSERT_TRUE(auto_login_timer());
   EXPECT_FALSE(auto_login_timer()->IsRunning());
-
-  ClearNotifications();
 }
 
 IN_PROC_BROWSER_TEST_F(ExistingUserControllerPublicSessionTest,
@@ -786,9 +775,45 @@ class ExistingUserControllerActiveDirectoryTest
     EXPECT_CALL(*mock_login_display_, SetUIEnabled(true)).Times(1);
   }
 
+  void ExpectLoginWhitelistFailure() {
+    EXPECT_CALL(*mock_login_display_, SetUIEnabled(false)).Times(2);
+    EXPECT_CALL(*mock_login_display_, ShowWhitelistCheckFailedError()).Times(1);
+    EXPECT_CALL(*mock_login_display_, SetUIEnabled(true)).Times(1);
+  }
+
   void ExpectLoginSuccess() {
     EXPECT_CALL(*mock_login_display_, SetUIEnabled(false)).Times(2);
     EXPECT_CALL(*mock_login_display_, SetUIEnabled(true)).Times(1);
+  }
+};
+
+class ExistingUserControllerActiveDirectoryUserWhitelistTest
+    : public ExistingUserControllerActiveDirectoryTest {
+ public:
+  ExistingUserControllerActiveDirectoryUserWhitelistTest() = default;
+
+  void SetUpInProcessBrowserTestFixture() override {
+    ExistingUserControllerActiveDirectoryTest::
+        SetUpInProcessBrowserTestFixture();
+    chromeos::FakeAuthPolicyClient* fake_authpolicy_client =
+        static_cast<chromeos::FakeAuthPolicyClient*>(
+            chromeos::DBusThreadManager::Get()->GetAuthPolicyClient());
+    em::ChromeDeviceSettingsProto device_policy;
+    device_policy.mutable_user_whitelist()->add_user_whitelist()->assign(
+        kUserWhitelist);
+    fake_authpolicy_client->set_device_policy(device_policy);
+  }
+
+  void SetUpLoginDisplay() override {
+    EXPECT_CALL(*mock_login_display_host_.get(), CreateLoginDisplay(_))
+        .Times(1)
+        .WillOnce(Return(mock_login_display_));
+    EXPECT_CALL(*mock_login_display_host_.get(), GetNativeWindow())
+        .Times(1)
+        .WillOnce(ReturnNull());
+    EXPECT_CALL(*mock_login_display_host_.get(), OnPreferencesChanged())
+        .Times(1);
+    EXPECT_CALL(*mock_login_display_, Init(_, false, true, false)).Times(1);
   }
 };
 
@@ -808,9 +833,6 @@ IN_PROC_BROWSER_TEST_F(ExistingUserControllerActiveDirectoryTest,
   existing_user_controller()->CompleteLogin(user_context);
 
   profile_prepared_observer.Wait();
-  base::ThreadTaskRunnerHandle::Get()->PostTask(
-      FROM_HERE, base::BindOnce(&ClearNotifications));
-  content::RunAllPendingInMessageLoop();
 }
 
 // Tests that Active Directory offline login succeeds on the Active Directory
@@ -828,9 +850,6 @@ IN_PROC_BROWSER_TEST_F(ExistingUserControllerActiveDirectoryTest,
   existing_user_controller()->Login(user_context, SigninSpecifics());
 
   profile_prepared_observer.Wait();
-  base::ThreadTaskRunnerHandle::Get()->PostTask(
-      FROM_HERE, base::BindOnce(&ClearNotifications));
-  content::RunAllPendingInMessageLoop();
 }
 
 // Tests that Gaia login fails on the Active Directory managed device.
@@ -841,6 +860,94 @@ IN_PROC_BROWSER_TEST_F(ExistingUserControllerActiveDirectoryTest,
   user_context.SetKey(Key(kPassword));
   user_context.SetUserIDHash(gaia_account_id_.GetUserEmail());
   existing_user_controller()->CompleteLogin(user_context);
+}
+
+// Tests that authentication succeeds if user email matches whitelist.
+IN_PROC_BROWSER_TEST_F(ExistingUserControllerActiveDirectoryUserWhitelistTest,
+                       Success) {
+  ExpectLoginSuccess();
+  UserContext user_context(ad_account_id_);
+  user_context.SetKey(Key(kPassword));
+  user_context.SetUserIDHash(ad_account_id_.GetUserEmail());
+  user_context.SetAuthFlow(UserContext::AUTH_FLOW_ACTIVE_DIRECTORY);
+  user_context.SetUserType(user_manager::UserType::USER_TYPE_ACTIVE_DIRECTORY);
+  content::WindowedNotificationObserver profile_prepared_observer(
+      chrome::NOTIFICATION_LOGIN_USER_PROFILE_PREPARED,
+      content::NotificationService::AllSources());
+  existing_user_controller()->CompleteLogin(user_context);
+
+  profile_prepared_observer.Wait();
+}
+
+// Tests that authentication fails if user email does not match whitelist.
+IN_PROC_BROWSER_TEST_F(ExistingUserControllerActiveDirectoryUserWhitelistTest,
+                       Fail) {
+  ExpectLoginWhitelistFailure();
+  AccountId account_id =
+      AccountId::AdFromUserEmailObjGuid(kUserNotMatchingWhitelist, kGaiaID);
+  UserContext user_context(account_id);
+  user_context.SetKey(Key(kPassword));
+  user_context.SetUserIDHash(account_id.GetUserEmail());
+  user_context.SetAuthFlow(UserContext::AUTH_FLOW_ACTIVE_DIRECTORY);
+  user_context.SetUserType(user_manager::UserType::USER_TYPE_ACTIVE_DIRECTORY);
+  existing_user_controller()->CompleteLogin(user_context);
+}
+
+class ExistingUserControllerSavePasswordHashTest
+    : public ExistingUserControllerTest {
+ public:
+  ExistingUserControllerSavePasswordHashTest() = default;
+
+  void SetUpSessionManager() override {
+    InstallOwnerKey();
+    RefreshDevicePolicy();
+  }
+};
+
+// Tests that successful GAIA online login saves SyncPasswordData to user
+// profile prefs.
+IN_PROC_BROWSER_TEST_F(ExistingUserControllerSavePasswordHashTest,
+                       GaiaOnlineLoginSavesPasswordHashToPrefs) {
+  UserContext user_context(gaia_account_id_);
+  user_context.SetKey(Key(kPassword));
+  user_context.SetUserIDHash(gaia_account_id_.GetUserEmail());
+  content::WindowedNotificationObserver profile_prepared_observer(
+      chrome::NOTIFICATION_LOGIN_USER_PROFILE_PREPARED,
+      content::NotificationService::AllSources());
+  existing_user_controller()->CompleteLogin(user_context);
+
+  profile_prepared_observer.Wait();
+
+  // Verify password hash and salt are saved to prefs.
+  Profile* profile =
+      content::Details<Profile>(profile_prepared_observer.details()).ptr();
+  EXPECT_TRUE(profile->GetPrefs()->HasPrefPath(
+      password_manager::prefs::kSyncPasswordHash));
+  EXPECT_TRUE(profile->GetPrefs()->HasPrefPath(
+      password_manager::prefs::kSyncPasswordLengthAndHashSalt));
+}
+
+// Tests that successful offline login saves SyncPasswordData to user profile
+// prefs.
+IN_PROC_BROWSER_TEST_F(ExistingUserControllerSavePasswordHashTest,
+                       OfflineLoginSavesPasswordHashToPrefs) {
+  UserContext user_context(gaia_account_id_);
+  user_context.SetKey(Key(kPassword));
+  user_context.SetUserIDHash(gaia_account_id_.GetUserEmail());
+  content::WindowedNotificationObserver profile_prepared_observer(
+      chrome::NOTIFICATION_LOGIN_USER_PROFILE_PREPARED,
+      content::NotificationService::AllSources());
+  existing_user_controller()->Login(user_context, SigninSpecifics());
+
+  profile_prepared_observer.Wait();
+
+  // Verify password hash and salt are saved to prefs.
+  Profile* profile =
+      content::Details<Profile>(profile_prepared_observer.details()).ptr();
+  EXPECT_TRUE(profile->GetPrefs()->HasPrefPath(
+      password_manager::prefs::kSyncPasswordHash));
+  EXPECT_TRUE(profile->GetPrefs()->HasPrefPath(
+      password_manager::prefs::kSyncPasswordLengthAndHashSalt));
 }
 
 }  // namespace chromeos

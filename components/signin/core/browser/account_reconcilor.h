@@ -15,6 +15,7 @@
 #include "base/observer_list.h"
 #include "base/threading/thread_checker.h"
 #include "base/time/time.h"
+#include "base/timer/timer.h"
 #include "components/content_settings/core/browser/content_settings_observer.h"
 #include "components/content_settings/core/common/content_settings_pattern.h"
 #include "components/keyed_service/core/keyed_service.h"
@@ -120,7 +121,10 @@ class AccountReconcilor : public KeyedService,
   FRIEND_TEST_ALL_PREFIXES(AccountReconcilorTest, DiceLastKnownFirstAccount);
   FRIEND_TEST_ALL_PREFIXES(AccountReconcilorTest, UnverifiedAccountNoop);
   FRIEND_TEST_ALL_PREFIXES(AccountReconcilorTest, UnverifiedAccountMerge);
+  FRIEND_TEST_ALL_PREFIXES(AccountReconcilorTest, HandleSigninDuringReconcile);
   FRIEND_TEST_ALL_PREFIXES(AccountReconcilorTest, DiceMigrationAfterNoop);
+  FRIEND_TEST_ALL_PREFIXES(AccountReconcilorTest,
+                           DiceNoMigrationWhenTokensNotReady);
   FRIEND_TEST_ALL_PREFIXES(AccountReconcilorTest,
                            DiceNoMigrationAfterReconcile);
   FRIEND_TEST_ALL_PREFIXES(AccountReconcilorTest,
@@ -145,6 +149,7 @@ class AccountReconcilor : public KeyedService,
   FRIEND_TEST_ALL_PREFIXES(AccountReconcilorTest, StartReconcileNoopWithDots);
   FRIEND_TEST_ALL_PREFIXES(AccountReconcilorTest, StartReconcileNoopMultiple);
   FRIEND_TEST_ALL_PREFIXES(AccountReconcilorTest, StartReconcileAddToCookie);
+  FRIEND_TEST_ALL_PREFIXES(AccountReconcilorTest, AuthErrorTriggersListAccount);
   FRIEND_TEST_ALL_PREFIXES(AccountReconcilorTest,
                            SignoutAfterErrorDoesNotRecordUma);
   FRIEND_TEST_ALL_PREFIXES(AccountReconcilorTest,
@@ -160,6 +165,12 @@ class AccountReconcilor : public KeyedService,
                            AddAccountToCookieCompletedWithBogusAccount);
   FRIEND_TEST_ALL_PREFIXES(AccountReconcilorTest, NoLoopWithBadPrimary);
   FRIEND_TEST_ALL_PREFIXES(AccountReconcilorTest, WontMergeAccountsWithError);
+  FRIEND_TEST_ALL_PREFIXES(AccountReconcilorTest, DelegateTimeoutIsCalled);
+  FRIEND_TEST_ALL_PREFIXES(AccountReconcilorTest, DelegateTimeoutIsNotCalled);
+  FRIEND_TEST_ALL_PREFIXES(AccountReconcilorTest,
+                           DelegateTimeoutIsNotCalledIfTimeoutIsNotReached);
+
+  void set_timer_for_testing(std::unique_ptr<base::Timer> timer);
 
   bool IsRegisteredWithTokenService() const {
     return registered_with_token_service_;
@@ -183,13 +194,15 @@ class AccountReconcilor : public KeyedService,
   // Used during periodic reconciliation.
   void StartReconcile();
   // |gaia_accounts| are the accounts in the Gaia cookie.
-  void FinishReconcile(const std::vector<std::string>& chrome_accounts,
+  void FinishReconcile(const std::string& primary_account,
+                       const std::vector<std::string>& chrome_accounts,
                        std::vector<gaia::ListedAccount>&& gaia_accounts);
   void AbortReconcile();
   void CalculateIfReconcileIsDone();
   void ScheduleStartReconcileIfChromeAccountsChanged();
-  // Revokes tokens for all accounts in chrome_accounts but primary_account_.
+  // Revokes tokens for all accounts in chrome_accounts but the primary account.
   void RevokeAllSecondaryTokens(
+      const std::string& primary_account,
       const std::vector<std::string>& chrome_accounts);
 
   // Returns the list of valid accounts from the TokenService.
@@ -220,6 +233,8 @@ class AccountReconcilor : public KeyedService,
   // Overriden from OAuth2TokenService::Observer.
   void OnEndBatchChanges() override;
   void OnRefreshTokensLoaded() override;
+  void OnAuthErrorChanged(const std::string& account_id,
+                          const GoogleServiceAuthError& error) override;
 
   // Lock related methods.
   void IncrementLockCount();
@@ -227,6 +242,8 @@ class AccountReconcilor : public KeyedService,
   void BlockReconcile();
   void UnblockReconcile();
   bool IsReconcileBlocked() const;
+
+  void HandleReconcileTimeout();
 
   std::unique_ptr<signin::AccountReconcilorDelegate> delegate_;
 
@@ -263,7 +280,6 @@ class AccountReconcilor : public KeyedService,
 
   // Used during reconcile action.
   // These members are used to validate the tokens in OAuth2TokenService.
-  std::string primary_account_;
   std::vector<std::string> add_to_cookie_;
   bool chrome_accounts_changed_;
 
@@ -274,6 +290,11 @@ class AccountReconcilor : public KeyedService,
   bool reconcile_on_unblock_;
 
   base::ObserverList<Observer, true> observer_list_;
+
+  // A timer to set off reconciliation timeout handlers, if account
+  // reconciliation does not happen in a given timeout duration.
+  std::unique_ptr<base::Timer> timer_;
+  base::TimeDelta timeout_;
 
   DISALLOW_COPY_AND_ASSIGN(AccountReconcilor);
 };

@@ -23,8 +23,8 @@ SearchResultActionsView::SearchResultActionsView(
     SearchResultActionsViewDelegate* delegate)
     : delegate_(delegate),
       selected_action_(-1) {
-  SetLayoutManager(new views::BoxLayout(views::BoxLayout::kHorizontal,
-                                        gfx::Insets(10, 0), 0));
+  SetLayoutManager(std::make_unique<views::BoxLayout>(
+      views::BoxLayout::kHorizontal, gfx::Insets(10, 0), 0));
 }
 
 SearchResultActionsView::~SearchResultActionsView() {}
@@ -56,7 +56,7 @@ void SearchResultActionsView::SetSelectedAction(int action_index) {
 
   if (IsValidActionIndex(selected_action_)) {
     child_at(selected_action_)
-        ->NotifyAccessibilityEvent(ui::AX_EVENT_HOVER, true);
+        ->NotifyAccessibilityEvent(ax::mojom::Event::kHover, true);
   }
 }
 

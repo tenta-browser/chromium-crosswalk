@@ -41,7 +41,7 @@ InfoBarContainerIOS::InfoBarContainerIOS(
     infobars::InfoBarContainer::Delegate* delegate)
     : InfoBarContainer(delegate), delegate_(delegate) {
   DCHECK(delegate);
-  container_view_.reset([[InfoBarContainerView alloc] init]);
+  container_view_ = [[InfoBarContainerView alloc] init];
   [container_view_ setAutoresizingMask:UIViewAutoresizingFlexibleWidth |
                                        UIViewAutoresizingFlexibleTopMargin];
 }
@@ -65,12 +65,12 @@ void InfoBarContainerIOS::PlatformSpecificRemoveInfoBar(
     infobars::InfoBar* infobar) {
   InfoBarIOS* infobar_ios = static_cast<InfoBarIOS*>(infobar);
   infobar_ios->RemoveView();
-  // If total_height() is 0, then the infobar was removed after an animation. In
-  // this case, signal the delegate that the state changed.
+  // If computed_height() is 0, then the infobar was removed after an animation.
+  // In this case, signal the delegate that the state changed.
   // Otherwise, the infobar is being replaced by another one. Do not call the
   // delegate in this case, as the delegate will be updated when the new infobar
   // is added.
-  if (infobar->total_height() == 0 && delegate_)
+  if (infobar->computed_height() == 0 && delegate_)
     delegate_->InfoBarContainerStateChanged(false);
 }
 

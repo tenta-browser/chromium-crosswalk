@@ -13,11 +13,11 @@
 #include "base/command_line.h"
 #include "base/macros.h"
 #include "base/run_loop.h"
+#include "base/scoped_observer.h"
 #include "base/stl_util.h"
 #include "base/strings/stringprintf.h"
 #include "build/build_config.h"
 #include "chrome/app/chrome_command_ids.h"
-#include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/extensions/test_extension_system.h"
 #include "chrome/browser/infobars/infobar_service.h"
 #include "chrome/browser/renderer_context_menu/render_view_context_menu_test_util.h"
@@ -34,6 +34,7 @@
 #include "chrome/test/base/testing_browser_process.h"
 #include "chrome/test/base/testing_profile.h"
 #include "components/infobars/core/infobar.h"
+#include "components/infobars/core/infobar_manager.h"
 #include "components/prefs/pref_change_registrar.h"
 #include "components/prefs/pref_service.h"
 #include "components/translate/content/browser/content_translate_driver.h"
@@ -52,6 +53,7 @@
 #include "content/public/browser/navigation_entry.h"
 #include "content/public/browser/notification_details.h"
 #include "content/public/browser/notification_registrar.h"
+#include "content/public/browser/notification_types.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/browser_side_navigation_policy.h"
 #include "content/public/common/url_constants.h"
@@ -64,7 +66,7 @@
 #include "net/url_request/url_request_status.h"
 #include "net/url_request/url_request_test_util.h"
 #include "testing/gmock/include/gmock/gmock.h"
-#include "third_party/WebKit/public/web/WebContextMenuData.h"
+#include "third_party/blink/public/web/web_context_menu_data.h"
 #include "url/gurl.h"
 
 namespace {
@@ -207,12 +209,13 @@ class NavEntryCommittedObserver : public content::NotificationObserver {
 
 class TranslateManagerRenderViewHostTest
     : public ChromeRenderViewHostTestHarness,
-      public content::NotificationObserver {
+      public infobars::InfoBarManager::Observer {
  public:
   TranslateManagerRenderViewHostTest()
       : pref_callback_(
             base::Bind(&TranslateManagerRenderViewHostTest::OnPreferenceChanged,
-                       base::Unretained(this))) {}
+                       base::Unretained(this))),
+        infobar_observer_(this) {}
 
 #if !defined(USE_AURA)
   // Ensure that we are testing under the bubble UI.
@@ -301,8 +304,7 @@ class TranslateManagerRenderViewHostTest
     details.adopted_language = lang;
     ChromeTranslateClient::FromWebContents(web_contents())
         ->translate_driver()
-        .RegisterPage(fake_page_.BindToNewPagePtr(), details,
-                      page_translatable);
+        .OnPageReady(fake_page_.BindToNewPagePtr(), details, page_translatable);
   }
 
   void SimulateOnPageTranslated(const std::string& source_lang,
@@ -445,13 +447,12 @@ class TranslateManagerRenderViewHostTest
                                          params);
   }
 
-  virtual void Observe(int type,
-                       const content::NotificationSource& source,
-                       const content::NotificationDetails& details) {
-    DCHECK_EQ(chrome::NOTIFICATION_TAB_CONTENTS_INFOBAR_REMOVED, type);
-    removed_infobars_.insert(
-        content::Details<infobars::InfoBar::RemovedDetails>(
-            details)->first->delegate());
+  void OnInfoBarRemoved(infobars::InfoBar* infobar, bool animate) override {
+    removed_infobars_.insert(infobar->delegate());
+  }
+
+  void OnManagerShuttingDown(infobars::InfoBarManager* manager) override {
+    infobar_observer_.Remove(manager);
   }
 
   MOCK_METHOD1(OnPreferenceChanged, void(const std::string&));
@@ -480,17 +481,11 @@ class TranslateManagerRenderViewHostTest
         ->translate_driver()
         .set_translate_max_reload_attempts(0);
 
-    notification_registrar_.Add(
-        this,
-        chrome::NOTIFICATION_TAB_CONTENTS_INFOBAR_REMOVED,
-        content::Source<InfoBarService>(infobar_service()));
+    infobar_observer_.Add(infobar_service());
   }
 
   virtual void TearDown() {
-    notification_registrar_.Remove(
-        this,
-        chrome::NOTIFICATION_TAB_CONTENTS_INFOBAR_REMOVED,
-        content::Source<InfoBarService>(infobar_service()));
+    infobar_observer_.Remove(infobar_service());
 
     ChromeRenderViewHostTestHarness::TearDown();
     TranslateService::ShutdownForTesting();
@@ -543,7 +538,6 @@ class TranslateManagerRenderViewHostTest
   PrefChangeRegistrar::NamedChangeCallback pref_callback_;
 
  private:
-  content::NotificationRegistrar notification_registrar_;
   net::TestURLFetcherFactory url_fetcher_factory_;
 
   // The infobars that have been removed.
@@ -552,6 +546,9 @@ class TranslateManagerRenderViewHostTest
 
   std::unique_ptr<MockTranslateBubbleFactory> bubble_factory_;
   FakePageImpl fake_page_;
+
+  ScopedObserver<infobars::InfoBarManager, infobars::InfoBarManager::Observer>
+      infobar_observer_;
 
   DISALLOW_COPY_AND_ASSIGN(TranslateManagerRenderViewHostTest);
 };
@@ -648,8 +645,7 @@ TEST_F(TranslateManagerRenderViewHostTest, NormalTranslate) {
     return;
 
   // http://crbug.com/695624
-  if (content::IsBrowserSideNavigationEnabled())
-    return;
+  return;
 
   SimulateNavigation(GURL("http://www.google.fr"), "fr", true);
 
@@ -978,16 +974,16 @@ TEST_F(TranslateManagerRenderViewHostTest, ReloadFromLocationBar) {
   EXPECT_TRUE(CloseTranslateUi());
 }
 
-// Tests that a closed translate infobar does not reappear when navigating
-// in-page.
-TEST_F(TranslateManagerRenderViewHostTest, CloseInfoBarInPageNavigation) {
+// Tests that a closed translate infobar does not reappear when performing
+// same-document navigation.
+TEST_F(TranslateManagerRenderViewHostTest, CloseInfoBarSameDocumentNavigation) {
   EnableBubbleTest();
 
   SimulateNavigation(GURL("http://www.google.fr"), "fr", true);
 
   EXPECT_TRUE(CloseTranslateUi());
 
-  // Navigate in page, no infobar should be shown.
+  // For same-document, no infobar should be shown.
   SimulateNavigation(GURL("http://www.google.fr/#ref1"), "fr", true);
   EXPECT_FALSE(TranslateUiVisible());
 
@@ -1033,8 +1029,10 @@ TEST_F(TranslateManagerRenderViewHostTest, CloseInfoBarInSubframeNavigation) {
   }
 }
 
-// Tests that denying translation is sticky when navigating in page.
-TEST_F(TranslateManagerRenderViewHostTest, DenyTranslateInPageNavigation) {
+// Tests that denying translation is sticky when performing same-document
+// navigation.
+TEST_F(TranslateManagerRenderViewHostTest,
+       DenyTranslateSameDocumentNavigation) {
   EnableBubbleTest();
 
   SimulateNavigation(GURL("http://www.google.fr"), "fr", true);
@@ -1042,19 +1040,19 @@ TEST_F(TranslateManagerRenderViewHostTest, DenyTranslateInPageNavigation) {
   // Simulate clicking 'Nope' (don't translate).
   EXPECT_TRUE(DenyTranslation());
 
-  // Navigate in page, no infobar should be shown.
+  // Same-document navigation, no infobar should be shown.
   SimulateNavigation(GURL("http://www.google.fr/#ref1"), "fr", true);
   EXPECT_FALSE(TranslateUiVisible());
 
-  // Navigate out of page, a new infobar should show. (Infobar only).
+  // Navigate to a new document, a new infobar should show. (Infobar only).
   SimulateNavigation(GURL("http://www.google.fr/foot"), "fr", true);
   EXPECT_NE(TranslateService::IsTranslateBubbleEnabled(), TranslateUiVisible());
 }
 
 // Tests that after translating and closing the infobar, the infobar does not
-// return when navigating in page.
+// return for same-document navigation.
 TEST_F(TranslateManagerRenderViewHostTest,
-       TranslateCloseInfoBarInPageNavigation) {
+       TranslateCloseInfoBarSameDocumentNavigation) {
   EnableBubbleTest();
 
   SimulateNavigation(GURL("http://www.google.fr"), "fr", true);
@@ -1068,11 +1066,11 @@ TEST_F(TranslateManagerRenderViewHostTest,
 
   EXPECT_TRUE(CloseTranslateUi());
 
-  // Navigate in page, no infobar should be shown.
+  // Same-document navigation, no infobar should be shown.
   SimulateNavigation(GURL("http://www.google.fr/#ref1"), "fr", true);
   EXPECT_FALSE(TranslateUiVisible());
 
-  // Navigate out of page, a new infobar should show.
+  // Navigate to a new document, a new infobar should show.
   // Note that we navigate to a page in a different language so we don't trigger
   // the auto-translate feature (it would translate the page automatically and
   // the before translate infobar would not be shown).
@@ -1080,9 +1078,9 @@ TEST_F(TranslateManagerRenderViewHostTest,
   EXPECT_TRUE(TranslateUiVisible());
 }
 
-// Tests that the after translate the infobar still shows when navigating
-// in-page.
-TEST_F(TranslateManagerRenderViewHostTest, TranslateInPageNavigation) {
+// Tests that the after translate the infobar still shows when performing
+// same-document navigation.
+TEST_F(TranslateManagerRenderViewHostTest, TranslateSameDocumentNavigation) {
   EnableBubbleTest();
 
   SimulateNavigation(GURL("http://www.google.fr"), "fr", true);
@@ -1099,8 +1097,8 @@ TEST_F(TranslateManagerRenderViewHostTest, TranslateInPageNavigation) {
   if (!TranslateService::IsTranslateBubbleEnabled())
     infobar = GetTranslateInfoBar();
 
-  // Navigate out of page, a new infobar should show.
-  // See note in TranslateCloseInfoBarInPageNavigation test on why it is
+  // Navigate to a new document, a new infobar should show.
+  // See note in TranslateCloseInfoBarSameDocumentNavigation test on why it is
   // important to navigate to a page in a different language for this test.
   SimulateNavigation(GURL("http://www.google.de"), "de", true);
   // The old infobar is gone. Can't verify this for bubbles.

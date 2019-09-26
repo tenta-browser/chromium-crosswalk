@@ -7,18 +7,17 @@
   await TestRunner.loadModule('console_test_runner');
   await TestRunner.loadModule('performance_test_runner');
   await TestRunner.showPanel('timeline');
-  await TestRunner.addScriptTag('../resources/timeline-data.js');
 
   var timeline = UI.panels.timeline;
   timeline._onModeChanged();
-  timeline._currentView._automaticallySizeWindow = true;
+  timeline._flameChart._automaticallySizeWindow = true;
 
-  function requestWindowTimesHook(startTime, endTime) {
+  function setWindowTimesHook(startTime, endTime) {
     if (startTime)
       TestRunner.addResult('time delta: ' + (endTime - startTime));
   }
 
-  timeline.requestWindowTimes = requestWindowTimesHook;
+  timeline._overviewPane.setWindowTimes = setWindowTimesHook;
   await PerformanceTestRunner.loadTimeline(PerformanceTestRunner.timelineData());
   TestRunner.completeTest();
 })();

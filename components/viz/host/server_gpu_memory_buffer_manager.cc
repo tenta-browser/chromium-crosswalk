@@ -4,13 +4,15 @@
 
 #include "components/viz/host/server_gpu_memory_buffer_manager.h"
 
+#include <utility>
+
 #include "base/logging.h"
 #include "base/strings/stringprintf.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "base/trace_event/memory_dump_manager.h"
 #include "base/trace_event/process_memory_dump.h"
-#include "gpu/ipc/client/gpu_memory_buffer_impl.h"
-#include "gpu/ipc/client/gpu_memory_buffer_impl_shared_memory.h"
+#include "gpu/ipc/common/gpu_memory_buffer_impl.h"
+#include "gpu/ipc/common/gpu_memory_buffer_impl_shared_memory.h"
 #include "gpu/ipc/common/gpu_memory_buffer_support.h"
 #include "services/viz/privileged/interfaces/gl/gpu_service.mojom.h"
 #include "ui/gfx/buffer_format_util.h"
@@ -33,10 +35,13 @@ ServerGpuMemoryBufferManager::BufferInfo::~BufferInfo() = default;
 
 ServerGpuMemoryBufferManager::ServerGpuMemoryBufferManager(
     mojom::GpuService* gpu_service,
-    int client_id)
+    int client_id,
+    std::unique_ptr<gpu::GpuMemoryBufferSupport> gpu_memory_buffer_support)
     : gpu_service_(gpu_service),
       client_id_(client_id),
-      native_configurations_(gpu::GetNativeGpuMemoryBufferConfigurations()),
+      gpu_memory_buffer_support_(std::move(gpu_memory_buffer_support)),
+      native_configurations_(gpu::GetNativeGpuMemoryBufferConfigurations(
+          gpu_memory_buffer_support_.get())),
       task_runner_(base::ThreadTaskRunnerHandle::Get()),
       weak_factory_(this) {
   weak_ptr_ = weak_factory_.GetWeakPtr();
@@ -53,17 +58,19 @@ void ServerGpuMemoryBufferManager::AllocateGpuMemoryBuffer(
     gpu::SurfaceHandle surface_handle,
     base::OnceCallback<void(const gfx::GpuMemoryBufferHandle&)> callback) {
   DCHECK(task_runner_->RunsTasksInCurrentSequence());
-  if (gpu::GetNativeGpuMemoryBufferType() != gfx::EMPTY_BUFFER) {
+  if (gpu_memory_buffer_support_->GetNativeGpuMemoryBufferType() !=
+      gfx::EMPTY_BUFFER) {
     const bool is_native = native_configurations_.find(std::make_pair(
                                format, usage)) != native_configurations_.end();
     if (is_native) {
       pending_buffers_.insert(client_id);
       gpu_service_->CreateGpuMemoryBuffer(
           id, size, format, usage, client_id, surface_handle,
-          base::Bind(&ServerGpuMemoryBufferManager::OnGpuMemoryBufferAllocated,
-                     weak_ptr_, client_id,
-                     gfx::BufferSizeForBufferFormat(size, format),
-                     base::Passed(std::move(callback))));
+          base::BindOnce(
+              &ServerGpuMemoryBufferManager::OnGpuMemoryBufferAllocated,
+              weak_ptr_, client_id,
+              gfx::BufferSizeForBufferFormat(size, format),
+              std::move(callback)));
       return;
     }
   }
@@ -123,7 +130,7 @@ ServerGpuMemoryBufferManager::CreateGpuMemoryBuffer(
   // The destruction callback can be called on any thread. So use an
   // intermediate callback here as the destruction callback, which bounces off
   // onto the |task_runner_| thread to do the real work.
-  return gpu::GpuMemoryBufferImpl::CreateFromHandle(
+  return gpu_memory_buffer_support_->CreateGpuMemoryBufferImplFromHandle(
       handle, size, format, usage,
       base::Bind(
           &OnGpuMemoryBufferDestroyed, task_runner_,

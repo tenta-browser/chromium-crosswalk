@@ -37,6 +37,13 @@ DisplayScheduler::DisplayScheduler(BeginFrameSource* begin_frame_source,
       weak_ptr_factory_(this) {
   begin_frame_deadline_closure_ = base::Bind(
       &DisplayScheduler::OnBeginFrameDeadline, weak_ptr_factory_.GetWeakPtr());
+
+  // The DisplayScheduler handles animate_only BeginFrames as if they were
+  // normal BeginFrames: Clients won't commit a CompositorFrame but will still
+  // acknowledge when they have completed the BeginFrame via BeginFrameAcks and
+  // the DisplayScheduler will still indicate when all clients have finished via
+  // DisplayObserver::OnDisplayDidFinishFrame.
+  wants_animate_only_begin_frames_ = true;
 }
 
 DisplayScheduler::~DisplayScheduler() {
@@ -63,7 +70,11 @@ void DisplayScheduler::SetVisible(bool visible) {
 void DisplayScheduler::SetRootSurfaceResourcesLocked(bool locked) {
   TRACE_EVENT1("viz", "DisplayScheduler::SetRootSurfaceResourcesLocked",
                "locked", locked);
+  if (root_surface_resources_locked_ == locked)
+    return;
+
   root_surface_resources_locked_ = locked;
+  MaybeStartObservingBeginFrames();
   ScheduleBeginFrameDeadline();
 }
 
@@ -285,7 +296,8 @@ void DisplayScheduler::StopObservingBeginFrames() {
 bool DisplayScheduler::ShouldDraw() {
   // Note: When any of these cases becomes true, MaybeStartObservingBeginFrames
   // must be called to ensure the draw will happen.
-  return needs_draw_ && !output_surface_lost_ && visible_;
+  return needs_draw_ && !output_surface_lost_ && visible_ &&
+         !root_surface_resources_locked_;
 }
 
 void DisplayScheduler::OnBeginFrameSourcePausedChanged(bool paused) {
@@ -295,10 +307,14 @@ void DisplayScheduler::OnBeginFrameSourcePausedChanged(bool paused) {
     NOTIMPLEMENTED();
 }
 
+void DisplayScheduler::OnSurfaceCreated(const SurfaceId& surface_id) {}
+
 void DisplayScheduler::OnFirstSurfaceActivation(
     const SurfaceInfo& surface_info) {}
 
-void DisplayScheduler::OnSurfaceActivated(const SurfaceId& surface_id) {}
+void DisplayScheduler::OnSurfaceActivated(
+    const SurfaceId& surface_id,
+    base::Optional<base::TimeDelta> duration) {}
 
 void DisplayScheduler::OnSurfaceDestroyed(const SurfaceId& surface_id) {
   auto it = surface_states_.find(surface_id);
@@ -334,8 +350,6 @@ void DisplayScheduler::OnSurfaceDamageExpected(const SurfaceId& surface_id,
   if (UpdateHasPendingSurfaces())
     ScheduleBeginFrameDeadline();
 }
-
-void DisplayScheduler::OnSurfaceSubtreeDamaged(const SurfaceId& surface_id) {}
 
 base::TimeTicks DisplayScheduler::DesiredBeginFrameDeadlineTime() const {
   switch (AdjustedBeginFrameDeadlineMode()) {
@@ -469,7 +483,7 @@ bool DisplayScheduler::AttemptDrawAndSwap() {
   begin_frame_deadline_task_time_ = base::TimeTicks();
 
   if (ShouldDraw()) {
-    if (pending_swaps_ < max_pending_swaps_ && !root_surface_resources_locked_)
+    if (pending_swaps_ < max_pending_swaps_)
       return DrawAndSwap();
   } else {
     // We are going idle, so reset expectations.

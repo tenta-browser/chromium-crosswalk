@@ -8,13 +8,14 @@ import android.support.v7.media.MediaRouter;
 
 import org.chromium.base.ContextUtils;
 import org.chromium.base.Log;
+import org.chromium.base.StrictModeContext;
 import org.chromium.base.SysUtils;
 import org.chromium.base.VisibleForTesting;
 import org.chromium.base.annotations.CalledByNative;
 import org.chromium.base.annotations.JNINamespace;
+import org.chromium.chrome.browser.ChromeFeatureList;
+import org.chromium.chrome.browser.media.router.caf.CafMediaRouteProvider;
 import org.chromium.chrome.browser.media.router.cast.CastMediaRouteProvider;
-import org.chromium.chrome.browser.media.router.cast.MediaSink;
-import org.chromium.chrome.browser.media.router.cast.MediaSource;
 import org.chromium.chrome.browser.media.router.cast.remoting.RemotingMediaRouteProvider;
 
 import java.util.ArrayList;
@@ -37,17 +38,27 @@ public class ChromeMediaRouter implements MediaRouteManager {
             new MediaRouteProvider.Factory() {
                 @Override
                 public void addProviders(MediaRouteManager manager) {
-                    MediaRouteProvider castProvider = CastMediaRouteProvider.create(manager);
-                    manager.addMediaRouteProvider(castProvider);
+                    // Bypass feature check in tests as ChromeFeatureList might not be initialized
+                    // yet.
+                    if (ChromeFeatureList.isInitialized()
+                            && ChromeFeatureList.isEnabled(
+                                       ChromeFeatureList.CAF_MEDIA_ROUTER_IMPL)) {
+                        MediaRouteProvider cafProvider = CafMediaRouteProvider.create(manager);
+                        manager.addMediaRouteProvider(cafProvider);
+                    } else {
+                        MediaRouteProvider castProvider = CastMediaRouteProvider.create(manager);
+                        manager.addMediaRouteProvider(castProvider);
 
-                    MediaRouteProvider remotingProvider =
-                            RemotingMediaRouteProvider.create(manager);
-                    manager.addMediaRouteProvider(remotingProvider);
+                        MediaRouteProvider remotingProvider =
+                                RemotingMediaRouteProvider.create(manager);
+                        manager.addMediaRouteProvider(remotingProvider);
+                    }
                 }
             };
 
-    // The pointer to the native object. Can be null only during tests.
-    private final long mNativeMediaRouterAndroidBridge;
+    // The pointer to the native object. Can be null during tests, or when the
+    // native object has been destroyed.
+    private long mNativeMediaRouterAndroidBridge;
     private final List<MediaRouteProvider> mRouteProviders = new ArrayList<MediaRouteProvider>();
     private final Map<String, MediaRouteProvider> mRouteIdsToProviders =
             new HashMap<String, MediaRouteProvider>();
@@ -97,7 +108,10 @@ public class ChromeMediaRouter implements MediaRouteManager {
     @Nullable
     public static MediaRouter getAndroidMediaRouter() {
         if (sAndroidMediaRouterSetForTest) return sAndroidMediaRouterForTest;
-        try {
+
+        // Some manufacturers have an implementation that causes StrictMode
+        // violations. See https://crbug.com/818325.
+        try (StrictModeContext unused = StrictModeContext.allowDiskReads()) {
             // Pre-MR1 versions of JB do not have the complete MediaRouter APIs,
             // so getting the MediaRouter instance will throw an exception.
             return MediaRouter.getInstance(ContextUtils.getApplicationContext());
@@ -173,12 +187,16 @@ public class ChromeMediaRouter implements MediaRouteManager {
 
     @Override
     public void onMessageSentResult(boolean success, int callbackId) {
-        nativeOnMessageSentResult(mNativeMediaRouterAndroidBridge, success, callbackId);
+        if (mNativeMediaRouterAndroidBridge != 0) {
+            nativeOnMessageSentResult(mNativeMediaRouterAndroidBridge, success, callbackId);
+        }
     }
 
     @Override
     public void onMessage(String mediaRouteId, String message) {
-        nativeOnMessage(mNativeMediaRouterAndroidBridge, mediaRouteId, message);
+        if (mNativeMediaRouterAndroidBridge != 0) {
+            nativeOnMessage(mNativeMediaRouterAndroidBridge, mediaRouteId, message);
+        }
     }
 
     /**
@@ -351,9 +369,35 @@ public class ChromeMediaRouter implements MediaRouteManager {
         provider.sendStringMessage(routeId, message, callbackId);
     }
 
+    /**
+     * Gets a media controller to be used by native.
+     * @param routeId The route ID tied to the CastSession for which we want a media controller.
+     * @return A MediaControllerBridge if it can be obtained from |routeId|, null otherwise.
+     */
+    @Nullable
+    @CalledByNative
+    public MediaControllerBridge getMediaControllerBridge(String routeId) {
+        MediaRouteProvider provider = mRouteIdsToProviders.get(routeId);
+        if (provider == null) return null;
+
+        MediaController controller = provider.getMediaController(routeId);
+        if (controller == null) return null;
+
+        return new MediaControllerBridge(controller);
+    }
+
     @VisibleForTesting
     protected ChromeMediaRouter(long nativeMediaRouterAndroidBridge) {
         mNativeMediaRouterAndroidBridge = nativeMediaRouterAndroidBridge;
+    }
+
+    /**
+     * Called when the native object is being destroyed.
+     */
+    @CalledByNative
+    public void teardown() {
+        // The native object has been destroyed.
+        mNativeMediaRouterAndroidBridge = 0;
     }
 
     private MediaSink getSink(String sourceId, int index) {

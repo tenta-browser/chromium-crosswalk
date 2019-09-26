@@ -10,7 +10,6 @@
 
 #include <vector>
 
-#include "base/memory/ptr_util.h"
 
 namespace {
 
@@ -256,6 +255,6 @@ EdgeDatabaseReader::OpenTableEnumerator(const base::string16& table_name) {
                                  nullptr, 0, JET_bitTableReadOnly, &table_id)))
     return nullptr;
 
-  return base::MakeUnique<EdgeDatabaseTableEnumerator>(table_name, session_id_,
+  return std::make_unique<EdgeDatabaseTableEnumerator>(table_name, session_id_,
                                                        table_id);
 }

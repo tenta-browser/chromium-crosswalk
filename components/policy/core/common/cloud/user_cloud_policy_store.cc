@@ -77,9 +77,8 @@ const size_t kKeySizeLimit = 16 * 1024;
 
 // Loads policy from the backing file. Returns a PolicyLoadResult with the
 // results of the fetch.
-policy::PolicyLoadResult LoadPolicyFromDisk(
-    const base::FilePath& policy_path,
-    const base::FilePath& key_path) {
+policy::PolicyLoadResult LoadPolicyFromDisk(const base::FilePath& policy_path,
+                                            const base::FilePath& key_path) {
   policy::PolicyLoadResult result;
   // If the backing file does not exist, just return. We don't verify the key
   // path here, because the key is optional (the validation code will fail if
@@ -169,34 +168,19 @@ void StorePolicyToDiskOnBackgroundThread(
 
 }  // namespace
 
-UserCloudPolicyStore::UserCloudPolicyStore(
+DesktopCloudPolicyStore::DesktopCloudPolicyStore(
     const base::FilePath& policy_path,
     const base::FilePath& key_path,
-    scoped_refptr<base::SequencedTaskRunner> background_task_runner)
-    : UserCloudPolicyStoreBase(background_task_runner),
+    scoped_refptr<base::SequencedTaskRunner> background_task_runner,
+    PolicyScope policy_scope)
+    : UserCloudPolicyStoreBase(background_task_runner, policy_scope),
       policy_path_(policy_path),
       key_path_(key_path),
       weak_factory_(this) {}
 
-UserCloudPolicyStore::~UserCloudPolicyStore() {}
+DesktopCloudPolicyStore::~DesktopCloudPolicyStore() {}
 
-// static
-std::unique_ptr<UserCloudPolicyStore> UserCloudPolicyStore::Create(
-    const base::FilePath& profile_path,
-    scoped_refptr<base::SequencedTaskRunner> background_task_runner) {
-  base::FilePath policy_path =
-      profile_path.Append(kPolicyDir).Append(kPolicyCacheFile);
-  base::FilePath key_path =
-      profile_path.Append(kPolicyDir).Append(kKeyCacheFile);
-  return base::WrapUnique(
-      new UserCloudPolicyStore(policy_path, key_path, background_task_runner));
-}
-
-void UserCloudPolicyStore::SetSigninUsername(const std::string& username) {
-  signin_username_ = username;
-}
-
-void UserCloudPolicyStore::LoadImmediately() {
+void DesktopCloudPolicyStore::LoadImmediately() {
   DVLOG(1) << "Initiating immediate policy load from disk";
   // Cancel any pending Load/Store/Validate operations.
   weak_factory_.InvalidateWeakPtrs();
@@ -206,13 +190,13 @@ void UserCloudPolicyStore::LoadImmediately() {
   PolicyLoaded(false, result);
 }
 
-void UserCloudPolicyStore::Clear() {
+void DesktopCloudPolicyStore::Clear() {
+  background_task_runner()->PostTask(
+      FROM_HERE, base::BindOnce(base::IgnoreResult(&base::DeleteFile),
+                                policy_path_, false));
   background_task_runner()->PostTask(
       FROM_HERE,
-      base::Bind(base::IgnoreResult(&base::DeleteFile), policy_path_, false));
-  background_task_runner()->PostTask(
-      FROM_HERE,
-      base::Bind(base::IgnoreResult(&base::DeleteFile), key_path_, false));
+      base::BindOnce(base::IgnoreResult(&base::DeleteFile), key_path_, false));
   policy_.reset();
   policy_map_.Clear();
   policy_signature_public_key_.clear();
@@ -220,7 +204,7 @@ void UserCloudPolicyStore::Clear() {
   NotifyStoreLoaded();
 }
 
-void UserCloudPolicyStore::Load() {
+void DesktopCloudPolicyStore::Load() {
   DVLOG(1) << "Initiating policy load from disk";
   // Cancel any pending Load/Store/Validate operations.
   weak_factory_.InvalidateWeakPtrs();
@@ -228,19 +212,17 @@ void UserCloudPolicyStore::Load() {
   // Start a new Load operation and have us get called back when it is
   // complete.
   base::PostTaskAndReplyWithResult(
-      background_task_runner().get(),
-      FROM_HERE,
-      base::Bind(&LoadPolicyFromDisk, policy_path_, key_path_),
-      base::Bind(&UserCloudPolicyStore::PolicyLoaded,
-                 weak_factory_.GetWeakPtr(),
-                 true));
+      background_task_runner().get(), FROM_HERE,
+      base::BindOnce(&LoadPolicyFromDisk, policy_path_, key_path_),
+      base::BindOnce(&DesktopCloudPolicyStore::PolicyLoaded,
+                     weak_factory_.GetWeakPtr(), true));
 }
 
-void UserCloudPolicyStore::PolicyLoaded(bool validate_in_background,
-                                        PolicyLoadResult result) {
+void DesktopCloudPolicyStore::PolicyLoaded(bool validate_in_background,
+                                           PolicyLoadResult result) {
+  // TODO(zmin): figure out what do with the metrics. https://crbug.com/814371
   UMA_HISTOGRAM_ENUMERATION("Enterprise.UserCloudPolicyStore.LoadStatus",
-                            result.status,
-                            LOAD_RESULT_SIZE);
+                            result.status, LOAD_RESULT_SIZE);
   switch (result.status) {
     case LOAD_RESULT_LOAD_ERROR:
       status_ = STATUS_LOAD_ERROR;
@@ -272,12 +254,12 @@ void UserCloudPolicyStore::PolicyLoaded(bool validate_in_background,
         // we've done our first key rotation).
       }
 
-      Validate(
-          std::move(cloud_policy), std::move(key), validate_in_background,
-          base::Bind(&UserCloudPolicyStore::InstallLoadedPolicyAfterValidation,
-                     weak_factory_.GetWeakPtr(), doing_key_rotation,
-                     result.key.has_signing_key() ? result.key.signing_key()
-                                                  : std::string()));
+      Validate(std::move(cloud_policy), std::move(key), validate_in_background,
+               base::BindRepeating(
+                   &DesktopCloudPolicyStore::InstallLoadedPolicyAfterValidation,
+                   weak_factory_.GetWeakPtr(), doing_key_rotation,
+                   result.key.has_signing_key() ? result.key.signing_key()
+                                                : std::string()));
       break;
     }
     default:
@@ -285,14 +267,68 @@ void UserCloudPolicyStore::PolicyLoaded(bool validate_in_background,
   }
 }
 
-void UserCloudPolicyStore::InstallLoadedPolicyAfterValidation(
+void DesktopCloudPolicyStore::ValidateKeyAndSignature(
+    UserCloudPolicyValidator* validator,
+    const em::PolicySigningKey* cached_key,
+    const std::string& owning_domain) {
+  // There are 4 cases:
+  //
+  // 1) Validation after loading from cache with no cached key.
+  // Action: Just validate signature with an empty key - this will result in
+  // a failed validation and the cached policy will be rejected.
+  //
+  // 2) Validation after loading from cache with a cached key
+  // Action: Validate signature on policy blob but don't allow key rotation.
+  //
+  // 3) Validation after loading new policy from the server with no cached key
+  // Action: Validate as initial key provisioning (case where we are migrating
+  // from unsigned policy)
+  //
+  // 4) Validation after loading new policy from the server with a cached key
+  // Action: Validate as normal, and allow key rotation.
+  if (cached_key) {
+    // Case #1/#2 - loading from cache. Validate the cached key (if no key,
+    // then the validation will fail), then do normal policy data signature
+    // validation using the cached key.
+
+    // Loading from cache should not change the cached keys.
+    DCHECK(persisted_policy_key_.empty() ||
+           persisted_policy_key_ == cached_key->signing_key());
+    DLOG_IF(WARNING, !cached_key->has_signing_key())
+        << "Unsigned policy blob detected";
+
+    validator->ValidateCachedKey(cached_key->signing_key(),
+                                 cached_key->signing_key_signature(),
+                                 owning_domain);
+    // Loading from cache, so don't allow key rotation.
+    validator->ValidateSignature(cached_key->signing_key());
+  } else {
+    // No passed cached_key - this is not validating the initial policy load
+    // from cache, but rather an update from the server.
+    if (persisted_policy_key_.empty()) {
+      // Case #3 - no valid existing policy key (either this is the initial
+      // policy fetch, or we're doing a key rotation), so this new policy fetch
+      // should include an initial key provision.
+      validator->ValidateInitialKey(owning_domain);
+    } else {
+      // Case #4 - verify new policy with existing key. We always allow key
+      // rotation - the verification key will prevent invalid policy from being
+      // injected. |persisted_policy_key_| is already known to be valid, so no
+      // need to verify via ValidateCachedKey().
+      validator->ValidateSignatureAllowingRotation(persisted_policy_key_,
+                                                   owning_domain);
+    }
+  }
+}
+
+void DesktopCloudPolicyStore::InstallLoadedPolicyAfterValidation(
     bool doing_key_rotation,
     const std::string& signing_key,
     UserCloudPolicyValidator* validator) {
+  // TODO(zmin): metrics
   UMA_HISTOGRAM_ENUMERATION(
       "Enterprise.UserCloudPolicyStore.LoadValidationStatus",
-      validator->status(),
-      CloudPolicyValidatorBase::VALIDATION_STATUS_SIZE);
+      validator->status(), CloudPolicyValidatorBase::VALIDATION_STATUS_SIZE);
   validation_status_ = validator->status();
   if (!validator->success()) {
     DVLOG(1) << "Validation failed: status=" << validation_status_;
@@ -301,8 +337,8 @@ void UserCloudPolicyStore::InstallLoadedPolicyAfterValidation(
     return;
   }
 
-  DVLOG(1) << "Validation succeeded - installing policy with dm_token: " <<
-      validator->policy_data()->request_token();
+  DVLOG(1) << "Validation succeeded - installing policy with dm_token: "
+           << validator->policy_data()->request_token();
   DVLOG(1) << "Device ID: " << validator->policy_data()->device_id();
 
   // If we're doing a key rotation, clear the public key version so a future
@@ -321,15 +357,73 @@ void UserCloudPolicyStore::InstallLoadedPolicyAfterValidation(
   NotifyStoreLoaded();
 }
 
-void UserCloudPolicyStore::Store(const em::PolicyFetchResponse& policy) {
+void DesktopCloudPolicyStore::Store(const em::PolicyFetchResponse& policy) {
   // Stop any pending requests to store policy, then validate the new policy
   // before storing it.
   weak_factory_.InvalidateWeakPtrs();
   std::unique_ptr<em::PolicyFetchResponse> policy_copy(
       new em::PolicyFetchResponse(policy));
-  Validate(std::move(policy_copy), std::unique_ptr<em::PolicySigningKey>(),
-           true, base::Bind(&UserCloudPolicyStore::StorePolicyAfterValidation,
-                            weak_factory_.GetWeakPtr()));
+  Validate(
+      std::move(policy_copy), std::unique_ptr<em::PolicySigningKey>(), true,
+      base::BindRepeating(&DesktopCloudPolicyStore::StorePolicyAfterValidation,
+                          weak_factory_.GetWeakPtr()));
+}
+
+void DesktopCloudPolicyStore::StorePolicyAfterValidation(
+    UserCloudPolicyValidator* validator) {
+  UMA_HISTOGRAM_ENUMERATION(
+      "Enterprise.UserCloudPolicyStore.StoreValidationStatus",
+      validator->status(), CloudPolicyValidatorBase::VALIDATION_STATUS_SIZE);
+  validation_status_ = validator->status();
+  DVLOG(1) << "Policy validation complete: status = " << validation_status_;
+  if (!validator->success()) {
+    status_ = STATUS_VALIDATION_ERROR;
+    NotifyStoreError();
+    return;
+  }
+
+  // Persist the validated policy (just fire a task - don't bother getting a
+  // reply because we can't do anything if it fails).
+  background_task_runner()->PostTask(
+      FROM_HERE,
+      base::BindRepeating(&StorePolicyToDiskOnBackgroundThread, policy_path_,
+                          key_path_, *validator->policy()));
+
+  // If the key was rotated, update our local cache of the key.
+  if (validator->policy()->has_new_public_key())
+    persisted_policy_key_ = validator->policy()->new_public_key();
+
+  InstallPolicy(std::move(validator->policy_data()),
+                std::move(validator->payload()), persisted_policy_key_);
+  status_ = STATUS_OK;
+  NotifyStoreLoaded();
+}
+
+UserCloudPolicyStore::UserCloudPolicyStore(
+    const base::FilePath& policy_path,
+    const base::FilePath& key_path,
+    scoped_refptr<base::SequencedTaskRunner> background_task_runner)
+    : DesktopCloudPolicyStore(policy_path,
+                              key_path,
+                              background_task_runner,
+                              PolicyScope::POLICY_SCOPE_USER) {}
+
+UserCloudPolicyStore::~UserCloudPolicyStore() {}
+
+// static
+std::unique_ptr<UserCloudPolicyStore> UserCloudPolicyStore::Create(
+    const base::FilePath& profile_path,
+    scoped_refptr<base::SequencedTaskRunner> background_task_runner) {
+  base::FilePath policy_path =
+      profile_path.Append(kPolicyDir).Append(kPolicyCacheFile);
+  base::FilePath key_path =
+      profile_path.Append(kPolicyDir).Append(kKeyCacheFile);
+  return base::WrapUnique(
+      new UserCloudPolicyStore(policy_path, key_path, background_task_runner));
+}
+
+void UserCloudPolicyStore::SetSigninUsername(const std::string& username) {
+  signin_username_ = username;
 }
 
 void UserCloudPolicyStore::Validate(
@@ -359,54 +453,7 @@ void UserCloudPolicyStore::Validate(
         gaia::CanonicalizeEmail(gaia::SanitizeEmail(signin_username_)));
   }
 
-  // There are 4 cases:
-  //
-  // 1) Validation after loading from cache with no cached key.
-  // Action: Just validate signature with an empty key - this will result in
-  // a failed validation and the cached policy will be rejected.
-  //
-  // 2) Validation after loading from cache with a cached key
-  // Action: Validate signature on policy blob but don't allow key rotation.
-  //
-  // 3) Validation after loading new policy from the server with no cached key
-  // Action: Validate as initial key provisioning (case where we are migrating
-  // from unsigned policy)
-  //
-  // 4) Validation after loading new policy from the server with a cached key
-  // Action: Validate as normal, and allow key rotation.
-  if (cached_key) {
-    // Case #1/#2 - loading from cache. Validate the cached key (if no key,
-    // then the validation will fail), then do normal policy data signature
-    // validation using the cached key.
-
-    // Loading from cache should not change the cached keys.
-    DCHECK(persisted_policy_key_.empty() ||
-           persisted_policy_key_ == cached_key->signing_key());
-    DLOG_IF(WARNING, !cached_key->has_signing_key()) <<
-        "Unsigned policy blob detected";
-
-    validator->ValidateCachedKey(cached_key->signing_key(),
-                                 cached_key->signing_key_signature(),
-                                 owning_domain);
-    // Loading from cache, so don't allow key rotation.
-    validator->ValidateSignature(cached_key->signing_key());
-  } else {
-    // No passed cached_key - this is not validating the initial policy load
-    // from cache, but rather an update from the server.
-    if (persisted_policy_key_.empty()) {
-      // Case #3 - no valid existing policy key (either this is the initial
-      // policy fetch, or we're doing a key rotation), so this new policy fetch
-      // should include an initial key provision.
-      validator->ValidateInitialKey(owning_domain);
-    } else {
-      // Case #4 - verify new policy with existing key. We always allow key
-      // rotation - the verification key will prevent invalid policy from being
-      // injected. |persisted_policy_key_| is already known to be valid, so no
-      // need to verify via ValidateCachedKey().
-      validator->ValidateSignatureAllowingRotation(persisted_policy_key_,
-                                                   owning_domain);
-    }
-  }
+  ValidateKeyAndSignature(validator.get(), cached_key.get(), owning_domain);
 
   if (validate_in_background) {
     // Start validation in the background.
@@ -418,34 +465,5 @@ void UserCloudPolicyStore::Validate(
   }
 }
 
-void UserCloudPolicyStore::StorePolicyAfterValidation(
-    UserCloudPolicyValidator* validator) {
-  UMA_HISTOGRAM_ENUMERATION(
-      "Enterprise.UserCloudPolicyStore.StoreValidationStatus",
-      validator->status(),
-      CloudPolicyValidatorBase::VALIDATION_STATUS_SIZE);
-  validation_status_ = validator->status();
-  DVLOG(1) << "Policy validation complete: status = " << validation_status_;
-  if (!validator->success()) {
-    status_ = STATUS_VALIDATION_ERROR;
-    NotifyStoreError();
-    return;
-  }
-
-  // Persist the validated policy (just fire a task - don't bother getting a
-  // reply because we can't do anything if it fails).
-  background_task_runner()->PostTask(
-      FROM_HERE, base::Bind(&StorePolicyToDiskOnBackgroundThread, policy_path_,
-                            key_path_, *validator->policy()));
-
-  // If the key was rotated, update our local cache of the key.
-  if (validator->policy()->has_new_public_key())
-    persisted_policy_key_ = validator->policy()->new_public_key();
-
-  InstallPolicy(std::move(validator->policy_data()),
-                std::move(validator->payload()), persisted_policy_key_);
-  status_ = STATUS_OK;
-  NotifyStoreLoaded();
-}
 
 }  // namespace policy

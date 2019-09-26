@@ -6,6 +6,7 @@
 
 #include <algorithm>
 
+#include "base/metrics/histogram_macros.h"
 #include "base/stl_util.h"
 #include "components/autofill/core/browser/autofill_client.h"
 #include "components/autofill/core/browser/popup_item_ids.h"
@@ -14,12 +15,64 @@
 #include "components/password_manager/core/browser/log_manager.h"
 #include "components/password_manager/core/browser/password_manager_client.h"
 #include "components/password_manager/core/browser/password_manager_metrics_util.h"
+#include "components/password_manager/core/browser/password_store_consumer.h"
 #include "components/password_manager/core/common/password_manager_features.h"
+#include "components/password_manager/core/common/password_manager_pref_names.h"
+#include "components/prefs/pref_service.h"
 #include "components/sync/driver/sync_service.h"
-#include "crypto/openssl_util.h"
-#include "third_party/boringssl/src/include/openssl/evp.h"
 
 namespace password_manager_util {
+namespace {
+
+// Clears username/password on the blacklisted credentials.
+class BlacklistedCredentialsCleaner
+    : public password_manager::PasswordStoreConsumer {
+ public:
+  BlacklistedCredentialsCleaner(password_manager::PasswordStore* store,
+                                PrefService* prefs)
+      : store_(store), prefs_(prefs) {
+    store_->GetBlacklistLogins(this);
+  }
+  ~BlacklistedCredentialsCleaner() override = default;
+
+  void OnGetPasswordStoreResults(
+      std::vector<std::unique_ptr<autofill::PasswordForm>> results) override {
+    bool cleaned_something = false;
+    for (const auto& form : results) {
+      DCHECK(form->blacklisted_by_user);
+      if (!form->username_value.empty() || !form->password_value.empty()) {
+        cleaned_something = true;
+        store_->RemoveLogin(*form);
+        form->username_value.clear();
+        form->password_value.clear();
+        store_->AddLogin(*form);
+      }
+    }
+
+    // Update the pref if no forms were handled. The password store is async,
+    // therefore, one can't be sure that the changes applied cleanly.
+    if (!cleaned_something) {
+      prefs_->SetBoolean(
+          password_manager::prefs::kBlacklistedCredentialsStripped, true);
+    }
+    delete this;
+  }
+
+ private:
+  password_manager::PasswordStore* store_;
+  PrefService* prefs_;
+
+  DISALLOW_COPY_AND_ASSIGN(BlacklistedCredentialsCleaner);
+};
+
+void StartCleaningBlacklisted(
+    const scoped_refptr<password_manager::PasswordStore>& store,
+    PrefService* prefs) {
+  // The object will delete itself once the credentials are retrieved.
+  new BlacklistedCredentialsCleaner(store.get(), prefs);
+}
+
+}  // namespace
 
 password_manager::PasswordSyncState GetPasswordSyncState(
     const syncer::SyncService* sync_service) {
@@ -90,40 +143,6 @@ bool IsLoggingActive(const password_manager::PasswordManagerClient* client) {
   return log_manager && log_manager->IsLoggingActive();
 }
 
-uint64_t CalculateSyncPasswordHash(const base::StringPiece16& text,
-                                   const std::string& salt) {
-  crypto::OpenSSLErrStackTracer err_tracer(FROM_HERE);
-  constexpr size_t kBytesFromHash = 8;
-  constexpr uint64_t kScryptCost = 32;  // It must be power of 2.
-  constexpr uint64_t kScryptBlockSize = 8;
-  constexpr uint64_t kScryptParallelization = 1;
-  constexpr size_t kScryptMaxMemory = 1024 * 1024;
-
-  uint8_t hash[kBytesFromHash];
-  base::StringPiece text_8bits(reinterpret_cast<const char*>(text.data()),
-                               text.size() * 2);
-  const uint8_t* salt_ptr = reinterpret_cast<const uint8_t*>(salt.c_str());
-
-  int scrypt_ok = EVP_PBE_scrypt(text_8bits.data(), text_8bits.size(), salt_ptr,
-                                 salt.size(), kScryptCost, kScryptBlockSize,
-                                 kScryptParallelization, kScryptMaxMemory, hash,
-                                 kBytesFromHash);
-
-  // EVP_PBE_scrypt can only fail due to memory allocation error (which aborts
-  // Chromium) or invalid parameters. In case of a failure a hash could leak
-  // information from the stack, so using CHECK is better than DCHECK.
-  CHECK(scrypt_ok);
-
-  // Take 37 bits of |hash|.
-  uint64_t hash37 = ((static_cast<uint64_t>(hash[0]))) |
-                    ((static_cast<uint64_t>(hash[1])) << 8) |
-                    ((static_cast<uint64_t>(hash[2])) << 16) |
-                    ((static_cast<uint64_t>(hash[3])) << 24) |
-                    (((static_cast<uint64_t>(hash[4])) & 0x1F) << 32);
-
-  return hash37;
-}
-
 bool ManualPasswordGenerationEnabled(syncer::SyncService* sync_service) {
   if (!(base::FeatureList::IsEnabled(
             password_manager::features::kEnableManualPasswordGeneration) &&
@@ -150,6 +169,8 @@ bool ShowAllSavedPasswordsContextMenuEnabled() {
 
 void UserTriggeredShowAllSavedPasswordsFromContextMenu(
     autofill::AutofillClient* autofill_client) {
+  if (!autofill_client)
+    return;
   autofill_client->ExecuteCommand(
       autofill::POPUP_ITEM_ID_ALL_SAVED_PASSWORDS_ENTRY);
   password_manager::metrics_util::LogContextOfShowAllSavedPasswordsAccepted(
@@ -162,6 +183,23 @@ void UserTriggeredManualGenerationFromContextMenu(
   password_manager_client->GeneratePassword();
   LogPasswordGenerationEvent(
       autofill::password_generation::PASSWORD_GENERATION_CONTEXT_MENU_PRESSED);
+}
+
+void CleanUserDataInBlacklistedCredentials(
+    password_manager::PasswordStore* store,
+    PrefService* prefs,
+    int delay_in_seconds) {
+  bool need_to_clean = !prefs->GetBoolean(
+      password_manager::prefs::kBlacklistedCredentialsStripped);
+  UMA_HISTOGRAM_BOOLEAN("PasswordManager.BlacklistedSites.NeedToBeCleaned",
+                        need_to_clean);
+  if (need_to_clean) {
+    base::SequencedTaskRunnerHandle::Get()->PostDelayedTask(
+        FROM_HERE,
+        base::BindOnce(&StartCleaningBlacklisted, base::WrapRefCounted(store),
+                       prefs),
+        base::TimeDelta::FromSeconds(delay_in_seconds));
+  }
 }
 
 }  // namespace password_manager_util

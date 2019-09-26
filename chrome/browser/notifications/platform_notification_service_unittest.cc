@@ -18,7 +18,6 @@
 #include "chrome/browser/notifications/metrics/notification_metrics_logger_factory.h"
 #include "chrome/browser/notifications/notification_display_service_tester.h"
 #include "chrome/browser/notifications/platform_notification_service_impl.h"
-#include "chrome/browser/notifications/web_notification_delegate.h"
 #include "chrome/common/chrome_features.h"
 #include "chrome/test/base/testing_browser_process.h"
 #include "chrome/test/base/testing_profile.h"
@@ -26,7 +25,7 @@
 #include "content/public/common/notification_resources.h"
 #include "content/public/common/platform_notification_data.h"
 #include "content/public/test/test_browser_thread_bundle.h"
-#include "extensions/features/features.h"
+#include "extensions/buildflags/buildflags.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -40,7 +39,7 @@
 #include "extensions/common/extension_builder.h"
 #include "extensions/common/permissions/api_permission.h"
 #include "extensions/common/value_builder.h"
-#include "third_party/WebKit/public/platform/modules/permissions/permission_status.mojom.h"
+#include "third_party/blink/public/platform/modules/permissions/permission_status.mojom.h"
 #endif
 
 using content::NotificationResources;
@@ -155,14 +154,14 @@ TEST_F(PlatformNotificationServiceTest, OnPersistentNotificationClick) {
   EXPECT_CALL(*mock_logger_, LogPersistentNotificationClickWithoutPermission());
   service()->OnPersistentNotificationClick(
       profile_, "jskdcjdslkcjlds", GURL("https://example.com/"), base::nullopt,
-      base::nullopt, base::BindOnce(&base::DoNothing));
+      base::nullopt, base::DoNothing());
 }
 
 TEST_F(PlatformNotificationServiceTest, OnPersistentNotificationClosedByUser) {
   EXPECT_CALL(*mock_logger_, LogPersistentNotificationClosedByUser());
   service()->OnPersistentNotificationClose(
       profile_, "some_random_id_123", GURL("https://example.com/"),
-      true /* by_user */, base::BindOnce(&base::DoNothing));
+      true /* by_user */, base::DoNothing());
 }
 
 TEST_F(PlatformNotificationServiceTest,
@@ -170,7 +169,7 @@ TEST_F(PlatformNotificationServiceTest,
   EXPECT_CALL(*mock_logger_, LogPersistentNotificationClosedProgrammatically());
   service()->OnPersistentNotificationClose(
       profile_, "some_random_id_738", GURL("https://example.com/"),
-      false /* by_user */, base::BindOnce(&base::DoNothing));
+      false /* by_user */, base::DoNothing());
 }
 
 TEST_F(PlatformNotificationServiceTest, DisplayNonPersistentPropertiesMatch) {
@@ -248,9 +247,9 @@ TEST_F(PlatformNotificationServiceTest, DisplayPersistentPropertiesMatch) {
   const auto& buttons = notification.buttons();
   ASSERT_EQ(2u, buttons.size());
   EXPECT_EQ("Button 1", base::UTF16ToUTF8(buttons[0].title));
-  EXPECT_EQ(message_center::ButtonType::BUTTON, buttons[0].type);
+  EXPECT_FALSE(buttons[0].placeholder);
   EXPECT_EQ("Button 2", base::UTF16ToUTF8(buttons[1].title));
-  EXPECT_EQ(message_center::ButtonType::TEXT, buttons[1].type);
+  EXPECT_TRUE(buttons[1].placeholder);
 }
 
 #if BUILDFLAG(ENABLE_EXTENSIONS)
@@ -340,8 +339,7 @@ TEST_F(PlatformNotificationServiceTest, CreateNotificationFromData) {
 
   Notification notification = service()->CreateNotificationFromData(
       profile_, origin, "id", notification_data, NotificationResources(),
-      new WebNotificationDelegate(NotificationHandler::Type::WEB_PERSISTENT,
-                                  profile_, "id", origin));
+      nullptr /* delegate */);
   EXPECT_TRUE(notification.context_message().empty());
 
   // Create a mocked extension.
@@ -363,9 +361,7 @@ TEST_F(PlatformNotificationServiceTest, CreateNotificationFromData) {
   notification = service()->CreateNotificationFromData(
       profile_,
       GURL("chrome-extension://honijodknafkokifofgiaalefdiedpko/main.html"),
-      "id", notification_data, NotificationResources(),
-      new WebNotificationDelegate(NotificationHandler::Type::EXTENSION,
-                                  profile_, "id", origin));
+      "id", notification_data, NotificationResources(), nullptr /* delegate */);
   EXPECT_EQ("NotificationTest",
             base::UTF16ToUTF8(notification.context_message()));
 }

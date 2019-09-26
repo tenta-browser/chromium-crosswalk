@@ -12,8 +12,8 @@
 #include "chrome/test/base/ui_test_utils.h"
 #include "content/public/test/browser_test_utils.h"
 #include "ui/aura/window_tree_host.h"
-#include "ui/keyboard/content/keyboard_constants.h"
 #include "ui/keyboard/keyboard_controller.h"
+#include "ui/keyboard/keyboard_resource_util.h"
 #include "ui/keyboard/keyboard_switches.h"
 #include "ui/keyboard/keyboard_test_util.h"
 #include "ui/keyboard/keyboard_util.h"
@@ -106,6 +106,16 @@ IN_PROC_BROWSER_TEST_F(KeyboardEndToEndTest, OpenOnlyOnSyncFocus) {
 
   ClickElementWithId(web_contents, "blur");
   ASSERT_TRUE(keyboard::WaitUntilHidden());
+
+  // If async focus occurs quickly after blur, then it should still invoke the
+  // keyboard.
+  ClickElementWithId(web_contents, "async");
+  helper.WaitForTextInputStateChanged(ui::TEXT_INPUT_TYPE_TEXT);
+  EXPECT_TRUE(IsKeyboardVisible());
+
+  ClickElementWithId(web_contents, "blur");
+  ASSERT_TRUE(keyboard::WaitUntilHidden());
+  helper.WaitForPassageOfTimeMillis(3600);
 
   ClickElementWithId(web_contents, "async");
   helper.WaitForTextInputStateChanged(ui::TEXT_INPUT_TYPE_TEXT);

@@ -11,15 +11,6 @@
 namespace cryptauth {
 
 class RemoteDeviceLoader;
-class SecureMessageDelegate;
-
-// TODO(khorimoto): Move SecureMessageDelegateFactory to another file.
-class SecureMessageDelegateFactory {
- public:
-  virtual std::unique_ptr<SecureMessageDelegate>
-  CreateSecureMessageDelegate() = 0;
-  virtual ~SecureMessageDelegateFactory(){};
-};
 
 // Concrete RemoteDeviceProvider implementation.
 class RemoteDeviceProviderImpl : public RemoteDeviceProvider,
@@ -30,32 +21,29 @@ class RemoteDeviceProviderImpl : public RemoteDeviceProvider,
     static std::unique_ptr<RemoteDeviceProvider> NewInstance(
         CryptAuthDeviceManager* device_manager,
         const std::string& user_id,
-        const std::string& user_private_key,
-        SecureMessageDelegateFactory* secure_message_delegate_factory);
+        const std::string& user_private_key);
 
     static void SetInstanceForTesting(Factory* factory);
 
    protected:
+    virtual ~Factory();
     virtual std::unique_ptr<RemoteDeviceProvider> BuildInstance(
         CryptAuthDeviceManager* device_manager,
         const std::string& user_id,
-        const std::string& user_private_key,
-        SecureMessageDelegateFactory* secure_message_delegate_factory);
+        const std::string& user_private_key);
 
    private:
     static Factory* factory_instance_;
   };
 
-  RemoteDeviceProviderImpl(
-      CryptAuthDeviceManager* device_manager,
-      const std::string& user_id,
-      const std::string& user_private_key,
-      SecureMessageDelegateFactory* secure_message_delegate_factory);
+  RemoteDeviceProviderImpl(CryptAuthDeviceManager* device_manager,
+                           const std::string& user_id,
+                           const std::string& user_private_key);
 
   ~RemoteDeviceProviderImpl() override;
 
   // Returns a list of all RemoteDevices that have been synced.
-  const RemoteDeviceList GetSyncedDevices() const override;
+  const RemoteDeviceList& GetSyncedDevices() const override;
 
   // CryptAuthDeviceManager::Observer:
   void OnSyncFinished(
@@ -74,7 +62,6 @@ class RemoteDeviceProviderImpl : public RemoteDeviceProvider,
   // The private key used to generate RemoteDevices.
   const std::string user_private_key_;
 
-  SecureMessageDelegateFactory* secure_message_delegate_factory_;
   std::unique_ptr<RemoteDeviceLoader> remote_device_loader_;
   RemoteDeviceList synced_remote_devices_;
   base::WeakPtrFactory<RemoteDeviceProviderImpl> weak_ptr_factory_;

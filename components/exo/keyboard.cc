@@ -38,8 +38,6 @@ const struct {
   ui::KeyboardCode keycode;
   int modifiers;
 } kReservedAccelerators[] = {
-    {ui::VKEY_SPACE, ui::EF_CONTROL_DOWN},
-    {ui::VKEY_SPACE, ui::EF_SHIFT_DOWN | ui::EF_CONTROL_DOWN},
     {ui::VKEY_F13, ui::EF_NONE},
     {ui::VKEY_I, ui::EF_SHIFT_DOWN | ui::EF_ALT_DOWN}};
 
@@ -69,24 +67,29 @@ bool ConsumedByIme(Surface* focus, const ui::KeyEvent* event) {
   if (event->key_code() == ui::VKEY_PROCESSKEY)
     return true;
 
+  // Except for PROCESSKEY, never discard "key-up" events. A keydown not paired
+  // by a keyup can trigger a never-ending key repeat in the client, which can
+  // never be desirable.
+  if (event->type() == ui::ET_KEY_RELEASED)
+    return false;
+
   // Case 2:
   // When IME ate a key event and generated a single character input, it leaves
   // the key event as-is, and in addition calls the active ui::TextInputClient's
   // InsertChar() method. (In our case, arc::ArcImeService::InsertChar()).
   //
-  // In Chrome OS (and Web) convention, the two calls wont't cause duplicates,
+  // In Chrome OS (and Web) convention, the two calls won't cause duplicates,
   // because key-down events do not mean any character inputs there.
   // (InsertChar issues a DOM "keypress" event, which is distinct from keydown.)
   // Unfortunately, this is not necessary the case for our clients that may
   // treat keydown as a trigger of text inputs. We need suppression for keydown.
-  if (event->type() == ui::ET_KEY_PRESSED) {
-    // Same condition as components/arc/ime/arc_ime_service.cc#InsertChar.
-    const base::char16 ch = event->GetCharacter();
-    const bool is_control_char =
-        (0x00 <= ch && ch <= 0x1f) || (0x7f <= ch && ch <= 0x9f);
-    if (!is_control_char && !ui::IsSystemKeyModifier(event->flags()))
-      return true;
-  }
+  //
+  // Same condition as components/arc/ime/arc_ime_service.cc#InsertChar.
+  const base::char16 ch = event->GetCharacter();
+  const bool is_control_char =
+      (0x00 <= ch && ch <= 0x1f) || (0x7f <= ch && ch <= 0x9f);
+  if (!is_control_char && !ui::IsSystemKeyModifier(event->flags()))
+    return true;
 
   // Case 3:
   // Workaround for apps that doesn't handle hardware keyboard events well.
@@ -127,6 +130,11 @@ bool IsReservedAccelerator(const ui::KeyEvent* event) {
     }
   }
   return false;
+}
+
+// Returns false if an accelerator is not reserved or it's not enabled.
+bool ProcessAcceleratorIfReserved(Surface* surface, ui::KeyEvent* event) {
+  return IsReservedAccelerator(event) && ProcessAccelerator(surface, event);
 }
 
 }  // namespace
@@ -179,7 +187,7 @@ bool Keyboard::HasObserver(KeyboardObserver* observer) const {
 }
 
 void Keyboard::RemoveObserver(KeyboardObserver* observer) {
-  observer_list_.HasObserver(observer);
+  observer_list_.RemoveObserver(observer);
 }
 
 void Keyboard::SetNeedKeyboardKeyAcks(bool need_acks) {
@@ -206,11 +214,15 @@ void Keyboard::AckKeyboardKey(uint32_t serial, bool handled) {
 // ui::EventHandler overrides:
 
 void Keyboard::OnKeyEvent(ui::KeyEvent* event) {
-  int modifier_flags = event->flags() & kModifierMask;
-  if (modifier_flags != modifier_flags_) {
-    modifier_flags_ = modifier_flags;
-    if (focus_)
-      delegate_->OnKeyboardModifiers(modifier_flags_);
+  // Process reserved accelerators before sending it to client.
+  if (focus_ && ProcessAcceleratorIfReserved(focus_, event)) {
+    // Discard a key press event if it's a reserved accelerator and it's
+    // enabled.
+    event->SetHandled();
+    // Send leave/enter event instead of key event, so the client can know the
+    // actual state of the keyboard.
+    SetFocus(focus_);
+    return;
   }
 
   // When IME ate a key event, we use the event only for tracking key states and
@@ -218,36 +230,44 @@ void Keyboard::OnKeyEvent(ui::KeyEvent* event) {
   // and client) and causes undesired behavior.
   bool consumed_by_ime = focus_ ? ConsumedByIme(focus_, event) : false;
 
-  switch (event->type()) {
-    case ui::ET_KEY_PRESSED:
-      if (focus_ && !consumed_by_ime && !IsReservedAccelerator(event)) {
-        uint32_t serial =
-            delegate_->OnKeyboardKey(event->time_stamp(), event->code(), true);
-        if (are_keyboard_key_acks_needed_) {
-          pending_key_acks_.insert(
-              {serial,
-               {*event, base::TimeTicks::Now() +
-                            expiration_delay_for_pending_key_acks_}});
-          event->SetHandled();
+  if (focus_ && !consumed_by_ime && !event->handled()) {
+    int modifier_flags = event->flags() & kModifierMask;
+    if (modifier_flags != modifier_flags_) {
+      modifier_flags_ = modifier_flags;
+      delegate_->OnKeyboardModifiers(modifier_flags_);
+    }
+
+    switch (event->type()) {
+      case ui::ET_KEY_PRESSED:
+        if (pressed_keys_.insert(event->code()).second) {
+          uint32_t serial = delegate_->OnKeyboardKey(event->time_stamp(),
+                                                     event->code(), true);
+          if (are_keyboard_key_acks_needed_) {
+            pending_key_acks_.insert(
+                {serial,
+                 {*event, base::TimeTicks::Now() +
+                              expiration_delay_for_pending_key_acks_}});
+            event->SetHandled();
+          }
         }
-      }
-      break;
-    case ui::ET_KEY_RELEASED:
-      if (focus_ && !consumed_by_ime && !IsReservedAccelerator(event)) {
-        uint32_t serial =
-            delegate_->OnKeyboardKey(event->time_stamp(), event->code(), false);
-        if (are_keyboard_key_acks_needed_) {
-          pending_key_acks_.insert(
-              {serial,
-               {*event, base::TimeTicks::Now() +
-                            expiration_delay_for_pending_key_acks_}});
-          event->SetHandled();
+        break;
+      case ui::ET_KEY_RELEASED:
+        if (pressed_keys_.erase(event->code())) {
+          uint32_t serial = delegate_->OnKeyboardKey(event->time_stamp(),
+                                                     event->code(), false);
+          if (are_keyboard_key_acks_needed_) {
+            pending_key_acks_.insert(
+                {serial,
+                 {*event, base::TimeTicks::Now() +
+                              expiration_delay_for_pending_key_acks_}});
+            event->SetHandled();
+          }
         }
-      }
-      break;
-    default:
-      NOTREACHED();
-      break;
+        break;
+      default:
+        NOTREACHED();
+        break;
+    }
   }
 
   if (pending_key_acks_.empty())
@@ -315,8 +335,9 @@ void Keyboard::SetFocus(Surface* surface) {
   }
   if (surface) {
     modifier_flags_ = seat_->modifier_flags() & kModifierMask;
+    pressed_keys_ = seat_->pressed_keys();
     delegate_->OnKeyboardModifiers(modifier_flags_);
-    delegate_->OnKeyboardEnter(surface, seat_->pressed_keys());
+    delegate_->OnKeyboardEnter(surface, pressed_keys_);
     focus_ = surface;
     focus_->AddSurfaceObserver(this);
   }

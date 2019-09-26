@@ -32,6 +32,7 @@
 #include "components/password_manager/core/browser/password_manager_metrics_recorder.h"
 #include "components/password_manager/core/browser/password_manager_metrics_util.h"
 #include "components/password_manager/core/browser/password_manager_util.h"
+#include "components/password_manager/core/browser/password_reuse_defines.h"
 #include "components/password_manager/core/common/password_manager_features.h"
 #include "components/password_manager/core/common/password_manager_pref_names.h"
 #include "components/pref_registry/pref_registry_syncable.h"
@@ -70,11 +71,19 @@ bool URLsEqualUpToHttpHttpsSubstitution(const GURL& a, const GURL& b) {
   return false;
 }
 
+// Since empty or unspecified form's action is automatically set to the page
+// origin, this function checks if a form's action is empty by comparing it to
+// its origin.
+bool HasNonEmptyAction(const autofill::PasswordForm& form) {
+  return form.action != form.origin;
+}
+
 // Checks if the observed form looks like the submitted one to handle "Invalid
 // password entered" case so we don't offer a password save when we shouldn't.
 bool IsPasswordFormReappeared(const autofill::PasswordForm& observed_form,
                               const autofill::PasswordForm& submitted_form) {
-  if (observed_form.action.is_valid() &&
+  if (observed_form.action.is_valid() && HasNonEmptyAction(observed_form) &&
+      HasNonEmptyAction(submitted_form) &&
       URLsEqualUpToHttpHttpsSubstitution(submitted_form.action,
                                          observed_form.action)) {
     return true;
@@ -240,7 +249,6 @@ void PasswordManager::RegisterProfilePrefs(
   registry->RegisterBooleanPref(
       prefs::kCredentialsEnableAutosignin, true,
       user_prefs::PrefRegistrySyncable::SYNCABLE_PRIORITY_PREF);
-  registry->RegisterBooleanPref(prefs::kWasObsoleteHttpDataCleaned, false);
   registry->RegisterStringPref(prefs::kSyncPasswordHash, std::string(),
                                PrefRegistry::NO_REGISTRATION_FLAGS);
   registry->RegisterStringPref(prefs::kSyncPasswordLengthAndHashSalt,
@@ -249,6 +257,7 @@ void PasswordManager::RegisterProfilePrefs(
   registry->RegisterBooleanPref(
       prefs::kWasAutoSignInFirstRunExperienceShown, false,
       user_prefs::PrefRegistrySyncable::SYNCABLE_PRIORITY_PREF);
+  registry->RegisterBooleanPref(prefs::kBlacklistedCredentialsStripped, false);
 #if defined(OS_MACOSX)
   registry->RegisterIntegerPref(
       prefs::kKeychainMigrationStatus,
@@ -486,6 +495,20 @@ void PasswordManager::OnPasswordFormSubmitted(
   pending_login_managers_.clear();
 }
 
+void PasswordManager::OnPasswordFormSubmittedNoChecks(
+    password_manager::PasswordManagerDriver* driver,
+    const autofill::PasswordForm& password_form) {
+  if (password_manager_util::IsLoggingActive(client_)) {
+    BrowserSavePasswordProgressLogger logger(client_->GetLogManager());
+    logger.LogMessage(Logger::STRING_ON_SAME_DOCUMENT_NAVIGATION);
+  }
+
+  ProvisionallySavePassword(password_form, driver);
+
+  if (CanProvisionalManagerSave())
+    OnLoginSuccessful();
+}
+
 void PasswordManager::OnPasswordFormForceSaveRequested(
     password_manager::PasswordManagerDriver* driver,
     const PasswordForm& password_form) {
@@ -525,7 +548,6 @@ void PasswordManager::ShowManualFallbackForSaving(
     client_->ShowManualFallbackForSaving(std::move(provisional_save_manager_),
                                          has_generated_password, is_update);
   } else {
-    provisional_save_manager_.reset();
     HideManualFallbackForSaving();
   }
 }
@@ -566,6 +588,30 @@ void PasswordManager::CreatePendingLoginManagers(
 
   // Record whether or not this top-level URL has at least one password field.
   client_->AnnotateNavigationEntry(!forms.empty());
+
+  // Only report SSL error status for cases where there are potentially forms to
+  // fill or save from.
+  if (!forms.empty()) {
+    metrics_util::CertificateError cert_error =
+        metrics_util::CertificateError::NONE;
+    const net::CertStatus cert_status = client_->GetMainFrameCertStatus();
+    // The order of the if statements matters -- if the status involves multiple
+    // errors, Chrome should report the one highest up in the list below.
+    if (cert_status & net::CERT_STATUS_AUTHORITY_INVALID)
+      cert_error = metrics_util::CertificateError::AUTHORITY_INVALID;
+    else if (cert_status & net::CERT_STATUS_COMMON_NAME_INVALID)
+      cert_error = metrics_util::CertificateError::COMMON_NAME_INVALID;
+    else if (cert_status & net::CERT_STATUS_WEAK_SIGNATURE_ALGORITHM)
+      cert_error = metrics_util::CertificateError::WEAK_SIGNATURE_ALGORITHM;
+    else if (cert_status & net::CERT_STATUS_DATE_INVALID)
+      cert_error = metrics_util::CertificateError::DATE_INVALID;
+    else if (net::IsCertStatusError(cert_status))
+      cert_error = metrics_util::CertificateError::OTHER;
+
+    UMA_HISTOGRAM_ENUMERATION(
+        "PasswordManager.CertificateErrorsWhileSeeingForms", cert_error,
+        metrics_util::CertificateError::COUNT);
+  }
 
   if (!client_->IsFillingEnabledForCurrentPage())
     return;
@@ -782,22 +828,10 @@ void PasswordManager::OnPasswordFormsRendered(
   }
 }
 
-void PasswordManager::OnInPageNavigation(
+void PasswordManager::OnSameDocumentNavigation(
     password_manager::PasswordManagerDriver* driver,
     const PasswordForm& password_form) {
-  std::unique_ptr<BrowserSavePasswordProgressLogger> logger;
-  if (password_manager_util::IsLoggingActive(client_)) {
-    logger.reset(
-        new BrowserSavePasswordProgressLogger(client_->GetLogManager()));
-    logger->LogMessage(Logger::STRING_ON_IN_PAGE_NAVIGATION);
-  }
-
-  ProvisionallySavePassword(password_form, driver);
-
-  if (!CanProvisionalManagerSave())
-    return;
-
-  OnLoginSuccessful();
+  OnPasswordFormSubmittedNoChecks(driver, password_form);
 }
 
 void PasswordManager::OnLoginSuccessful() {
@@ -822,8 +856,7 @@ void PasswordManager::OnLoginSuccessful() {
   DCHECK(provisional_save_manager_->submitted_form());
   if (!client_->GetStoreResultFilter()->ShouldSave(
           *provisional_save_manager_->submitted_form())) {
-#if defined(OS_WIN) || (defined(OS_MACOSX) && !defined(OS_IOS)) || \
-    (defined(OS_LINUX) && !defined(OS_CHROMEOS))
+#if defined(SYNC_PASSWORD_REUSE_DETECTION_ENABLED)
     // When |username_value| is empty, it's not clear whether the submitted
     // credentials are really sync credentials. Don't save sync password hash
     // in that case.
@@ -834,15 +867,15 @@ void PasswordManager::OnLoginSuccessful() {
         bool is_sync_password_change =
             !provisional_save_manager_->submitted_form()
                  ->new_password_element.empty();
-        metrics_util::LogSyncPasswordHashChange(
-            is_sync_password_change
-                ? metrics_util::SyncPasswordHashChange::CHANGED_IN_CONTENT_AREA
-                : metrics_util::SyncPasswordHashChange::SAVED_IN_CONTENT_AREA);
-        store->SaveSyncPasswordHash(
-            is_sync_password_change
-                ? provisional_save_manager_->submitted_form()
-                      ->new_password_value
-                : provisional_save_manager_->submitted_form()->password_value);
+        if (is_sync_password_change) {
+          store->SaveSyncPasswordHash(
+              provisional_save_manager_->submitted_form()->new_password_value,
+              metrics_util::SyncPasswordHashChange::CHANGED_IN_CONTENT_AREA);
+        } else {
+          store->SaveSyncPasswordHash(
+              provisional_save_manager_->submitted_form()->password_value,
+              metrics_util::SyncPasswordHashChange::SAVED_IN_CONTENT_AREA);
+        }
       }
     }
 #endif

@@ -8,6 +8,7 @@
 
 #include "base/callback.h"
 #include "base/logging.h"
+#include "media/audio/mock_audio_debug_recording_manager.h"
 #include "media/base/audio_parameters.h"
 
 namespace media {
@@ -17,7 +18,9 @@ MockAudioManager::MockAudioManager(std::unique_ptr<AudioThread> audio_thread)
 
 MockAudioManager::~MockAudioManager() = default;
 
-void MockAudioManager::ShutdownOnAudioThread() {}
+void MockAudioManager::ShutdownOnAudioThread() {
+  DCHECK(GetTaskRunner()->BelongsToCurrentThread());
+}
 
 bool MockAudioManager::HasAudioOutputDevices() {
   DCHECK(GetTaskRunner()->BelongsToCurrentThread());
@@ -80,6 +83,7 @@ void MockAudioManager::RemoveOutputDeviceChangeListener(
 }
 
 AudioParameters MockAudioManager::GetDefaultOutputStreamParameters() {
+  DCHECK(GetTaskRunner()->BelongsToCurrentThread());
   return default_output_params_;
 }
 
@@ -103,17 +107,42 @@ std::string MockAudioManager::GetAssociatedOutputDeviceID(
              : get_associated_output_device_id_cb_.Run(input_device_id);
 }
 
+std::string MockAudioManager::GetDefaultInputDeviceID() {
+  return std::string();
+}
+std::string MockAudioManager::GetDefaultOutputDeviceID() {
+  return std::string();
+}
+std::string MockAudioManager::GetCommunicationsInputDeviceID() {
+  return std::string();
+}
+std::string MockAudioManager::GetCommunicationsOutputDeviceID() {
+  return std::string();
+}
+
 std::unique_ptr<AudioLog> MockAudioManager::CreateAudioLog(
-    AudioLogFactory::AudioComponent component) {
+    AudioLogFactory::AudioComponent component,
+    int component_id) {
   return nullptr;
 }
 
-void MockAudioManager::InitializeDebugRecording() {}
+void MockAudioManager::InitializeDebugRecording() {
+  if (!GetTaskRunner()->BelongsToCurrentThread()) {
+    GetTaskRunner()->PostTask(
+        FROM_HERE, base::BindOnce(&MockAudioManager::InitializeDebugRecording,
+                                  base::Unretained(this)));
+    return;
+  }
 
-void MockAudioManager::EnableDebugRecording(
-    const base::FilePath& base_file_name) {}
+  DCHECK(!debug_recording_manager_);
+  debug_recording_manager_ =
+      std::make_unique<MockAudioDebugRecordingManager>(GetTaskRunner());
+}
 
-void MockAudioManager::DisableDebugRecording() {}
+AudioDebugRecordingManager* MockAudioManager::GetAudioDebugRecordingManager() {
+  DCHECK(GetTaskRunner()->BelongsToCurrentThread());
+  return debug_recording_manager_.get();
+}
 
 const char* MockAudioManager::GetName() {
   return nullptr;

@@ -49,10 +49,10 @@ class DummyTickClock : public base::TickClock {
  public:
   DummyTickClock() : now_() {}
   ~DummyTickClock() override {}
-  base::TimeTicks NowTicks() override;
+  base::TimeTicks NowTicks() const override;
 
  private:
-  base::TimeTicks now_;
+  mutable base::TimeTicks now_;
 };
 
 class PipelineTestRendererFactory {
@@ -243,6 +243,8 @@ class PipelineIntegrationTestBase : public Pipeline::Client {
   MOCK_METHOD1(OnAudioConfigChange, void(const AudioDecoderConfig&));
   MOCK_METHOD1(OnVideoOpacityChange, void(bool));
   MOCK_METHOD0(OnVideoAverageKeyframeDistanceUpdate, void());
+  MOCK_METHOD1(OnAudioDecoderChange, void(const std::string&));
+  MOCK_METHOD1(OnVideoDecoderChange, void(const std::string&));
 
  private:
   // Helpers that run |*run_loop|, where OnEnded() or OnError() are each

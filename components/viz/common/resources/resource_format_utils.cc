@@ -18,8 +18,9 @@ SkColorType ResourceFormatToClosestSkColorType(ResourceFormat format) {
     case RGBA_4444:
       return kARGB_4444_SkColorType;
     case RGBA_8888:
+      return kRGBA_8888_SkColorType;
     case BGRA_8888:
-      return kN32_SkColorType;
+      return kBGRA_8888_SkColorType;
     case ALPHA_8:
       return kAlpha_8_SkColorType;
     case RGB_565:
@@ -159,29 +160,11 @@ gfx::BufferFormat BufferFormat(ResourceFormat format) {
     case LUMINANCE_8:
     case RGB_565:
     case LUMINANCE_F16:
+      // These types not allowed by IsGpuMemoryBufferFormatSupported(), so
+      // give a default value that will not be used.
       break;
   }
-  NOTREACHED();
   return gfx::BufferFormat::RGBA_8888;
-}
-
-GrPixelConfig ToGrPixelConfig(ResourceFormat format) {
-  switch (format) {
-    case RGBA_8888:
-      return kRGBA_8888_GrPixelConfig;
-    case BGRA_8888:
-      return kBGRA_8888_GrPixelConfig;
-    case RGBA_4444:
-      return kRGBA_4444_GrPixelConfig;
-    case RGBA_F16:
-      return kRGBA_half_GrPixelConfig;
-    case ALPHA_8:
-      return kAlpha_8_GrPixelConfig;
-    default:
-      break;
-  }
-  DCHECK(false) << "Unsupported resource format.";
-  return kSkia8888_GrPixelConfig;
 }
 
 bool IsResourceFormatCompressed(ResourceFormat format) {
@@ -235,6 +218,47 @@ unsigned int TextureStorageFormat(ResourceFormat format) {
   }
   NOTREACHED();
   return GL_RGBA8_OES;
+}
+
+bool IsGpuMemoryBufferFormatSupported(ResourceFormat format) {
+  switch (format) {
+    case BGRA_8888:
+    case RED_8:
+    case R16_EXT:
+    case RGBA_4444:
+    case RGBA_8888:
+    case ETC1:
+    case RGBA_F16:
+      return true;
+    // These formats have no BufferFormat equivalent.
+    case ALPHA_8:
+    case LUMINANCE_8:
+    case RGB_565:
+    case LUMINANCE_F16:
+      return false;
+  }
+  NOTREACHED();
+  return false;
+}
+
+bool IsBitmapFormatSupported(ResourceFormat format) {
+  switch (format) {
+    case RGBA_8888:
+      return true;
+    case RGBA_4444:
+    case BGRA_8888:
+    case ALPHA_8:
+    case LUMINANCE_8:
+    case RGB_565:
+    case ETC1:
+    case RED_8:
+    case LUMINANCE_F16:
+    case RGBA_F16:
+    case R16_EXT:
+      return false;
+  }
+  NOTREACHED();
+  return false;
 }
 
 }  // namespace viz

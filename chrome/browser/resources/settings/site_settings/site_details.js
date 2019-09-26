@@ -74,6 +74,23 @@ Polymer({
       },
     },
 
+    /** @private */
+    enableSensorsContentSetting_: {
+      type: Boolean,
+      readOnly: true,
+      value: function() {
+        return loadTimeData.getBoolean('enableSensorsContentSetting');
+      },
+    },
+
+    /** @private */
+    enablePaymentHandlerContentSetting_: {
+      type: Boolean,
+      value: function() {
+        return loadTimeData.getBoolean('enablePaymentHandlerContentSetting');
+      },
+    },
+
     /**
      * The type of storage for the origin.
      * @private
@@ -108,7 +125,7 @@ Polymer({
    * @protected
    */
   currentRouteChanged: function(route) {
-    var site = settings.getQueryParameters().get('site');
+    const site = settings.getQueryParameters().get('site');
     if (!site)
       return;
     this.origin = site;
@@ -167,7 +184,7 @@ Polymer({
    * @private
    */
   updatePermissions_: function(categoryList) {
-    var permissionsMap =
+    const permissionsMap =
         /** @type {!Object<!settings.ContentSettingsTypes,
          *         !SiteDetailsPermissionElement>} */
         (Array.prototype.reduce.call(
@@ -236,6 +253,8 @@ Polymer({
   onClearAndReset_: function() {
     this.browserProxy.setOriginPermissions(
         this.origin, this.getCategoryList_(), settings.ContentSetting.DEFAULT);
+    if (this.getCategoryList_().includes(settings.ContentSettingsTypes.PLUGINS))
+      this.browserProxy.clearFlashPref(this.origin);
 
     if (this.storedData_ != '')
       this.onClearStorage_();
@@ -249,7 +268,7 @@ Polymer({
    * @private
    */
   getCategoryList_: function() {
-    var categoryList = [];
+    const categoryList = [];
     this.root.querySelectorAll('site-details-permission').forEach((element) => {
       if (!element.hidden)
         categoryList.push(element.category);

@@ -10,9 +10,8 @@
 #include <utility>
 
 #include "base/logging.h"
-#include "base/memory/ptr_util.h"
-#include "base/metrics/user_metrics.h"
 #include "components/infobars/core/infobar_manager.h"
+#include "components/signin/core/browser/signin_metrics.h"
 #include "components/strings/grit/components_strings.h"
 #import "ios/chrome/browser/browser_state/chrome_browser_state.h"
 #include "ios/chrome/browser/infobars/infobar.h"
@@ -78,11 +77,11 @@ ReSignInInfoBarDelegate::CreateInfoBarDelegate(
     authService->SetPromptForSignIn(false);
     return nullptr;
   }
-  base::RecordAction(
-      base::UserMetricsAction("Signin_Impression_FromReSigninInfobar"));
+  signin_metrics::RecordSigninImpressionUserActionForAccessPoint(
+      signin_metrics::AccessPoint::ACCESS_POINT_RESIGNIN_INFOBAR);
   // User needs to be reminded to sign in again. Creates a new infobar delegate
   // and returns it.
-  return base::MakeUnique<ReSignInInfoBarDelegate>(browser_state, presenter);
+  return std::make_unique<ReSignInInfoBarDelegate>(browser_state, presenter);
 }
 
 ReSignInInfoBarDelegate::ReSignInInfoBarDelegate(
@@ -99,7 +98,7 @@ ReSignInInfoBarDelegate::~ReSignInInfoBarDelegate() {}
 
 infobars::InfoBarDelegate::InfoBarIdentifier
 ReSignInInfoBarDelegate::GetIdentifier() const {
-  return RE_SIGN_IN_INFOBAR_DELEGATE;
+  return RE_SIGN_IN_INFOBAR_DELEGATE_IOS;
 }
 
 base::string16 ReSignInInfoBarDelegate::GetMessageText() const {
@@ -121,8 +120,9 @@ gfx::Image ReSignInInfoBarDelegate::GetIcon() const {
 }
 
 bool ReSignInInfoBarDelegate::Accept() {
-  base::RecordAction(
-      base::UserMetricsAction("Signin_Signin_FromReSigninInfobar"));
+  signin_metrics::RecordSigninUserActionForAccessPoint(
+      signin_metrics::AccessPoint::ACCESS_POINT_RESIGNIN_INFOBAR,
+      signin_metrics::PromoAction::PROMO_ACTION_NO_SIGNIN_PROMO);
   UIView* infobarView = static_cast<InfoBarIOS*>(infobar())->view();
   DCHECK(infobarView);
   ShowSigninCommand* command = [[ShowSigninCommand alloc]

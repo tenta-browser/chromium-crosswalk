@@ -4,14 +4,14 @@
 
 #include "chrome/browser/media/cast_remoting_connector.h"
 
+#include <memory>
 #include <utility>
 #include <vector>
 
 #include "base/callback.h"
-#include "base/memory/ptr_util.h"
 #include "base/memory/weak_ptr.h"
 #include "base/run_loop.h"
-#include "chrome/browser/media/router/mock_media_router.h"
+#include "chrome/browser/media/router/test/mock_media_router.h"
 #include "chrome/common/media_router/media_route.h"
 #include "chrome/common/media_router/media_source.h"
 #include "content/public/browser/browser_thread.h"
@@ -42,7 +42,7 @@ using ::testing::AtLeast;
 
 namespace {
 
-constexpr int32_t kRemotingTabId = 2;
+constexpr SessionID kRemotingTabId = SessionID::FromSerializedValue(2);
 
 RemotingSinkMetadataPtr GetDefaultSinkMetadata() {
   RemotingSinkMetadataPtr metadata = RemotingSinkMetadata::New();
@@ -63,21 +63,21 @@ class FakeMediaRouter : public media_router::MockMediaRouter {
   FakeMediaRouter() : weak_factory_(this) {}
   ~FakeMediaRouter() final {}
 
-  void RegisterRemotingSource(int32_t tab_id,
+  void RegisterRemotingSource(SessionID tab_id,
                               CastRemotingConnector* remoting_source) final {
-    EXPECT_EQ(-1, tab_id_);
+    EXPECT_FALSE(tab_id_.is_valid());
     tab_id_ = tab_id;
     connector_ = remoting_source;
   }
 
-  void UnregisterRemotingSource(int32_t tab_id) final {
+  void UnregisterRemotingSource(SessionID tab_id) final {
     EXPECT_EQ(tab_id, tab_id_);
-    tab_id_ = -1;
+    tab_id_ = SessionID::InvalidValue();
     connector_ = nullptr;
   }
 
   void OnMediaRemoterCreated(
-      int32_t tab_id,
+      SessionID tab_id,
       MirrorServiceRemoterPtr remoter,
       MirrorServiceRemotingSourceRequest remoting_source) {
     if (tab_id != tab_id_)
@@ -89,10 +89,10 @@ class FakeMediaRouter : public media_router::MockMediaRouter {
   }
 
   // Get the registered tab ID.
-  int32_t tab_id() const { return tab_id_; }
+  SessionID tab_id() const { return tab_id_; }
 
  private:
-  int32_t tab_id_ = -1;
+  SessionID tab_id_ = SessionID::InvalidValue();
   CastRemotingConnector* connector_ = nullptr;
 
   base::WeakPtrFactory<FakeMediaRouter> weak_factory_;
@@ -214,7 +214,7 @@ TEST_F(CastRemotingConnectorTest, NotifiesWhenSinkIsAvailableAndThenGone) {
   RemoterPtr remoter = CreateRemoter(&source);
 
   std::unique_ptr<MockMediaRemoter> media_remoter =
-      base::MakeUnique<MockMediaRemoter>(&media_router_);
+      std::make_unique<MockMediaRemoter>(&media_router_);
 
   EXPECT_CALL(source, OnSinkAvailable(_)).Times(1);
   media_remoter->OnSinkAvailable();
@@ -233,7 +233,7 @@ TEST_F(CastRemotingConnectorTest,
   RemoterPtr remoter2 = CreateRemoter(&source2);
 
   std::unique_ptr<MockMediaRemoter> media_remoter =
-      base::MakeUnique<MockMediaRemoter>(&media_router_);
+      std::make_unique<MockMediaRemoter>(&media_router_);
 
   EXPECT_CALL(source1, OnSinkAvailable(_)).Times(1);
   EXPECT_CALL(source2, OnSinkAvailable(_)).Times(1);
@@ -251,7 +251,7 @@ TEST_F(CastRemotingConnectorTest, HandlesTeardownOfRemotingSourceFirst) {
   RemoterPtr remoter = CreateRemoter(source.get());
 
   std::unique_ptr<MockMediaRemoter> media_remoter =
-      base::MakeUnique<MockMediaRemoter>(&media_router_);
+      std::make_unique<MockMediaRemoter>(&media_router_);
 
   EXPECT_CALL(*source, OnSinkAvailable(_)).Times(1);
   media_remoter->OnSinkAvailable();
@@ -266,7 +266,7 @@ TEST_F(CastRemotingConnectorTest, HandlesTeardownOfRemoterFirst) {
   RemoterPtr remoter = CreateRemoter(&source);
 
   std::unique_ptr<MockMediaRemoter> media_remoter =
-      base::MakeUnique<MockMediaRemoter>(&media_router_);
+      std::make_unique<MockMediaRemoter>(&media_router_);
 
   EXPECT_CALL(source, OnSinkAvailable(_)).Times(1);
   media_remoter->OnSinkAvailable();
@@ -294,7 +294,7 @@ TEST_F(CastRemotingConnectorTest, UserDisableRemoting) {
   RemoterPtr remoter2 = CreateRemoter(&source2);
 
   std::unique_ptr<MockMediaRemoter> media_remoter =
-      base::MakeUnique<MockMediaRemoter>(&media_router_);
+      std::make_unique<MockMediaRemoter>(&media_router_);
 
   EXPECT_CALL(source1, OnSinkAvailable(_)).Times(1);
   EXPECT_CALL(source2, OnSinkAvailable(_)).Times(1);
@@ -340,7 +340,7 @@ TEST_P(CastRemotingConnectorFullSessionTest, GoesThroughAllTheMotions) {
   std::unique_ptr<MockRemotingSource> other_source(new MockRemotingSource());
   RemoterPtr other_remoter = CreateRemoter(other_source.get());
   std::unique_ptr<MockMediaRemoter> media_remoter =
-      base::MakeUnique<MockMediaRemoter>(&media_router_);
+      std::make_unique<MockMediaRemoter>(&media_router_);
 
   // Throughout this test |other_source| should not participate in the
   // remoting session, and so these method calls should never occur:

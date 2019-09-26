@@ -15,12 +15,13 @@ AutofillHandler::AutofillHandler(AutofillDriver* driver) : driver_(driver) {}
 
 AutofillHandler::~AutofillHandler() {}
 
-bool AutofillHandler::OnWillSubmitForm(const FormData& form,
-                                       const TimeTicks timestamp) {
+bool AutofillHandler::OnFormSubmitted(const FormData& form,
+                                      bool known_success,
+                                      SubmissionSource source,
+                                      base::TimeTicks timestamp) {
   if (!IsValidFormData(form))
     return false;
-
-  return OnWillSubmitFormImpl(form, timestamp);
+  return OnFormSubmittedImpl(form, known_success, source, timestamp);
 }
 
 void AutofillHandler::OnTextFieldDidChange(const FormData& form,
@@ -46,6 +47,18 @@ void AutofillHandler::OnTextFieldDidScroll(const FormData& form,
       driver_->TransformBoundingBoxToViewportCoordinates(bounding_box);
 
   OnTextFieldDidScrollImpl(form, field, transformed_box);
+}
+
+void AutofillHandler::OnSelectControlDidChange(const FormData& form,
+                                               const FormFieldData& field,
+                                               const gfx::RectF& bounding_box) {
+  if (!IsValidFormData(form) || !IsValidFormFieldData(field))
+    return;
+
+  gfx::RectF transformed_box =
+      driver_->TransformBoundingBoxToViewportCoordinates(bounding_box);
+
+  OnSelectControlDidChangeImpl(form, field, transformed_box);
 }
 
 void AutofillHandler::OnQueryFormFieldAutofill(int query_id,

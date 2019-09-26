@@ -23,7 +23,7 @@
         <item name="android:textColorHighlight">@color/text_highlight_color</item>
         <item name="android:textColorLink">@color/light_active_color</item>
         <item name="colorPrimaryDark">@android:color/black</item>
-        <item name="android:colorAccent">@color/google_blue_500</item>
+        <item name="android:colorAccent" tools:targetApi="21">@color/google_blue_500</item>
         <item name="android:statusBarColor" tools:targetApi="21">@android:color/black</item>
 
         <!--  Overriding AppCompat values -->
@@ -44,34 +44,22 @@
     </style>
     <style name="MainTheme" parent="MainThemeBase" />
 
-    <style name="SearchActivityTheme" parent="MainTheme">
+    <!-- Extend MainThemeBase rather than MainTheme to avoid values-v27 navigation bar colors from
+         being applied -->
+    <style name="SearchActivityTheme" parent="MainThemeBase">
         <item name="android:windowBackground">@color/google_grey_500</item>
     </style>
 
-    <style name="TabbedModeTheme" parent="MainTheme">
+    <style name="TabbedModeThemeBase" parent="MainTheme">
         <item name="android:windowBackground">@android:color/white</item>
     </style>
+
+    <style name="TabbedModeTheme" parent="TabbedModeThemeBase" />
 
     <style name="FirstRunTheme" parent="DialogWhenLarge">
     </style>
 
     <style name="TabbedModeFirstRunTheme" parent="TabbedModeTheme">
-    </style>
-
-    <!-- The theme to use when starting Chrome in VR mode.-->
-    <style name="VrSupportTheme" parent="MainTheme">
-       <!-- Android shows a preview window to give the user immediate feedback that the
-            app launched. The default behavior with this preview window is to show system
-            UI (e.g. navigation bars), which looks jarring if the user already has their
-            headset on. We disable the preview window feature when starting Chrome in VR
-            mode.
-       -->
-      <item name="android:windowDisablePreview">true</item>
-      <item name="android:windowBackground">@android:color/black</item>
-    </style>
-    <style name="VrSupportThemeLauncher" parent="@android:style/Theme.NoDisplay">
-      <item name="android:windowDisablePreview">true</item>
-      <item name="android:windowBackground">@android:color/black</item>
     </style>
 
     <style name="FullscreenWhiteBase" parent="Theme.AppCompat.Light" >
@@ -98,7 +86,9 @@
     </style>
 
     <!-- Web app themes -->
-    <style name="WebappTheme" parent="MainTheme">
+    <!-- Extend MainThemeBase rather than MainTheme to avoid values-v27 navigation bar colors from
+         being applied -->
+    <style name="WebappTheme" parent="MainThemeBase">
         <item name="android:windowBackground">@null</item>
         <item name="android:windowDisablePreview">true</item>
     </style>
@@ -122,6 +112,30 @@
 
         <!-- Default TintedImageButton tint -->
         <item name="chrometint">@color/dark_mode_tint</item>
+    </style>
+
+    <style name="ModalDialogTheme" parent="AlertDialogTheme">
+        <item name="android:windowFrame">@null</item>
+        <item name="android:backgroundDimEnabled">false</item>
+        <item name="android:windowBackground">@android:color/transparent</item>
+        <item name="android:windowMinWidthMajor">100%</item>
+        <item name="android:windowMinWidthMinor">100%</item>
+        <item name="buttonBarStyle">@style/ModalDialogButtonBarStyle</item>
+        <item name="buttonBarButtonStyle">@style/ModalDialogButtonStyle</item>
+        <item name="android:windowSoftInputMode">adjustResize|stateHidden</item>
+    </style>
+
+    <style name="ModalDialogButtonBarStyle" parent="Widget.AppCompat.ButtonBar.AlertDialog">
+        <item name="android:orientation">horizontal</item>
+        <item name="android:gravity">bottom|end</item>
+        <item name="android:paddingStart">@dimen/modal_dialog_control_padding_horizontal</item>
+        <item name="android:paddingEnd">@dimen/modal_dialog_control_padding_horizontal</item>
+        <item name="android:paddingTop">@dimen/modal_dialog_control_padding_vertical</item>
+        <item name="android:paddingBottom">@dimen/modal_dialog_control_padding_vertical</item>
+    </style>
+
+    <style name="ModalDialogButtonStyle" parent="Widget.AppCompat.Button.ButtonBar.AlertDialog">
+        <item name="android:textColor">@color/light_active_color</item>
     </style>
 
     <style name="SimpleDialog" parent="AlertDialogTheme">
@@ -251,6 +265,7 @@
     <style name="AlertDialogContent">
         <item name="android:layout_width">match_parent</item>
         <item name="android:layout_height">wrap_content</item>
+        <item name="android:textAlignment">viewStart</item>
         <item name="android:paddingStart">@dimen/dialog_padding_sides</item>
         <item name="android:paddingEnd">@dimen/dialog_padding_sides</item>
         <item name="android:paddingTop">@dimen/dialog_padding_top</item>
@@ -297,28 +312,6 @@
             @drawable/distilled_page_prefs_button_bg
         </item>
     </style>
-    <style name="OverflowMenuHeaderLayout">
-        <item name="android:layout_width">match_parent</item>
-        <item name="android:layout_height">wrap_content</item>
-        <item name="android:background">@color/modern_light_grey</item>
-        <item name="android:orientation">horizontal</item>
-        <item name="android:paddingStart">16dp</item>
-    </style>
-        <!-- Top and bottom padding is used to achieve layout that best matches
-         UX spec. While the text matches @style/BlankHint2, text size and color
-         are set explicitly. When shown in the overflow menu, the header
-         is inflated using the OverflowMenuTheme. The theme's textAppearance
-         will override any textAppearance set on this element. -->
-    <style name="OverflowMenuHeaderText">
-        <item name="android:layout_weight">1</item>
-        <item name="android:layout_width">0dp</item>
-        <item name="android:layout_height">wrap_content</item>
-        <item name="android:layout_gravity">center_vertical</item>
-        <item name="android:paddingTop">9dp</item>
-        <item name="android:paddingBottom">9dp</item>
-        <item name="android:textColor">@color/black_alpha_54</item>
-        <item name="android:textSize">@dimen/text_size_medium</item>
-    </style>
 
     <!-- Button bar styles -->
     <style name="ButtonBarTopSpacerLight">
@@ -355,9 +348,6 @@
         <item name="android:windowEnterAnimation">@anim/textbubble_in</item>
         <item name="android:windowExitAnimation">@anim/textbubble_out</item>
     </style>
-    <style name="FullscreenNotificationBubble" parent="@android:style/Animation.Toast">
-        <item name="android:windowEnterAnimation">@anim/fullscreen_notification_in</item>
-    </style>
 
     <!-- Promo dialogs -->
     <style name="PromoDialog" >
@@ -380,21 +370,6 @@
     </style>
 
     <!-- Cast and media playback notifications -->
-    <style
-        name="MediaNotificationTitle"
-        parent="@android:style/TextAppearance.StatusBar.EventContent.Title"/>
-    <style
-        name="MediaNotificationText"
-        parent="@android:style/TextAppearance.StatusBar.EventContent"/>
-    <style
-        name="RemoteNotificationTitle"
-        parent="@android:style/TextAppearance.StatusBar.EventContent.Title"/>
-    <style
-        name="RemoteNotificationText"
-        parent="@android:style/TextAppearance.StatusBar.EventContent"/>
-    <style
-        name="RemoteNotificationProgressBar"
-        parent="@android:style/Widget.Holo.ProgressBar.Horizontal"/>
     <style name="CastMediaRouteButton" parent="@style/Widget.MediaRouter.MediaRouteButton">
         <item name="android:background">@null</item>
         <item name="android:paddingTop">0dp</item>
@@ -469,10 +444,12 @@
         <item name="android:alpha">0.6</item>
     </style>
 
-    <!-- First Run and Bookmark/recent-tabs dialogs -->
+    <!-- First Run and Bookmark/recent-tabs dialogs.
+         TODO(https://crbug.com/819142): Remove textAppearance when all TextViews have text style
+         explicitly specified. -->
     <style name="DialogWhenLargeBase" parent="Theme.AppCompat.Light.DialogWhenLarge" >
         <item name="android:windowBackground">@drawable/bg_white_dialog</item>
-        <item name="android:textColor">@color/default_text_color</item>
+        <item name="android:textAppearance">@style/BlackBodyDefault</item>
         <item name="android:textColorLink">@color/light_active_color</item>
         <item name="colorPrimaryDark">@android:color/black</item>
         <item name="colorAccent">@color/light_active_color</item>
@@ -562,7 +539,7 @@
     <style name="PaymentsUiSectionPendingTextEndAligned" parent="PaymentsUiSectionDescriptiveTextEndAligned">
         <item name="android:textColor">@color/explanation_text_color</item>
     </style>
-    <style name="PaymentsUiSectionAddButtonLabel">
+    <style name="EditorDialogSectionAddButtonLabel">
         <item name="android:textColor">@color/light_active_color</item>
         <item name="android:textSize">14sp</item>
         <item name="android:textAllCaps">true</item>
@@ -572,19 +549,16 @@
     <style name="LocationBarButton">
         <item name="android:background">@null</item>
     </style>
-    <style name="LocationBarButtonTablet" parent="LocationBarButton">
+    <style name="LocationBarActionButton" parent="LocationBarButton">
         <item name="android:layout_width">@dimen/location_bar_icon_width</item>
         <item name="android:layout_height">match_parent</item>
         <item name="android:scaleType">center</item>
         <item name="android:layout_gravity">end</item>
     </style>
-    <style name="LocationBarMenuButton" parent="LocationBarButton">
-        <item name="android:layout_height">match_parent</item>
-        <item name="android:layout_width">match_parent</item>
-    </style>
     <style name="ModernToolbar" parent="Widget.AppCompat.Toolbar">
         <item name="titleTextAppearance">@style/BlackHeadline1</item>
         <item name="windowActionBarOverlay">true</item>
+        <item name="android:background">@color/modern_primary_color</item>
     </style>
     <style name="ToolbarButton">
         <item name="android:background">?attr/selectableItemBackground</item>
@@ -628,7 +602,7 @@
 
     <!-- New tab page RecyclerView overscroll color -->
     <style name="NewTabPageRecyclerView">
-        <item name="android:colorEdgeEffect">@color/google_grey_300</item>
+        <item name="android:colorEdgeEffect" tools:targetApi="21">@color/google_grey_300</item>
     </style>
 
     <!-- Modern List Item -->
@@ -637,10 +611,8 @@
         <item name="android:layout_height">wrap_content</item>
         <item name="android:minHeight">@dimen/list_item_min_height</item>
         <item name="android:orientation">horizontal</item>
-        <item name="android:layout_gravity">center_vertical</item>
+        <item name="android:gravity">center_vertical</item>
         <item name="android:layout_marginStart">@dimen/list_item_default_margin</item>
-        <item name="android:paddingTop">@dimen/list_item_top_bottom_padding</item>
-        <item name="android:paddingBottom">@dimen/list_item_top_bottom_padding</item>
     </style>
     <style name="ListItemStartIcon">
         <item name="android:layout_width">@dimen/list_item_start_icon_width</item>
@@ -656,8 +628,11 @@
         <item name="android:background">@null</item>
         <item name="android:scaleType">center</item>
     </style>
-    <style name="ListMenuStyle" parent="Widget.AppCompat.ListPopupWindow">
-        <item name="android:popupBackground">@drawable/menu_bg</item>
+    <!-- 18dp padding is added to each side to limit the image width to 20dp (56dp - 2 * 18dp). -->
+    <style name="ListItemEndIconSmall" parent="ListItemEndIcon">
+        <item name="android:paddingStart">18dp</item>
+        <item name="android:paddingEnd">18dp</item>
+        <item name="android:scaleType">centerInside</item>
     </style>
 
     <!-- Download Home -->
@@ -678,7 +653,7 @@
         <item name="android:layout_marginBottom">10dp</item>
         <item name="android:layout_marginStart">@dimen/list_item_default_margin</item>
         <item name="android:layout_marginEnd">@dimen/list_item_default_margin</item>
-        <item name="android:textAppearance">@style/BlackDenseListText2</item>
+        <item name="android:textAppearance">@style/BlackBody</item>
     </style>
     <style name="DownloadTitleStyle">
         <item name="android:layout_width">wrap_content</item>
@@ -687,7 +662,7 @@
         <item name="android:layout_alignParentStart">true</item>
         <item name="android:paddingEnd">16dp</item>
         <item name="android:singleLine">true</item>
-        <item name="android:textAppearance">@style/BlackDenseListText1</item>
+        <item name="android:textAppearance">@style/BlackTitle1</item>
     </style>
     <style name="DownloadDescriptionStyle">
         <item name="android:layout_width">wrap_content</item>
@@ -699,32 +674,47 @@
         <item name="android:textAlignment">viewStart</item>
         <item name="android:ellipsize">start</item>
         <item name="android:singleLine">true</item>
-        <item name="android:textAppearance">@style/BlackDenseListText2</item>
+        <item name="android:textAppearance">@style/BlackBody</item>
     </style>
     <style name="DownloadIconView" parent="@style/ListItemStartIcon">
         <item name="android:background">@color/light_active_color</item>
     </style>
+    <style name="DownloadNewBadgeStyle">
+        <item name="android:layout_width">wrap_content</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:background">@color/light_active_color</item>
+        <item name="android:layout_marginStart">-8dp</item>
+        <item name="android:layout_marginTop">-2dp</item>
+        <item name="android:paddingStart">6dp</item>
+        <item name="android:paddingEnd">6dp</item>
+        <item name="android:singleLine">true</item>
+        <item name="android:textColor">@android:color/white</item>
+        <item name="android:textSize">@dimen/text_size_small</item>
+        <item name="android:textStyle">bold</item>
+        <item name="android:textAllCaps">true</item>
+        <item name="android:text">@string/prefetch_badge_new</item>
+    </style>
 
     <!-- Data Reduction -->
-    <style name="DataReductionPrefSecondaryStyle">
-        <item name="android:textColor">?android:attr/textColorSecondary</item>
-        <item name="android:textSize">12sp</item>
-    </style>
     <style name="DataUsageBreakdownColumnLabel">
         <item name="android:layout_height">wrap_content</item>
         <item name="android:paddingBottom">10dp</item>
         <item name="android:paddingTop">10dp</item>
         <item name="android:singleLine">true</item>
-        <item name="android:textSize">14sp</item>
-        <item name="android:textAppearance">@style/RobotoMediumStyle</item>
+        <item name="android:textAppearance">@style/BlackButtonText</item>
+    </style>
+    <style name="DataUsageBreakdownSavedColumnLabel" parent="DataUsageBreakdownColumnLabel">
+        <item name="android:textAppearance">@style/BlueButtonText2</item>
     </style>
     <style name="DataUsageBreakdownColumnItem">
         <item name="android:layout_height">wrap_content</item>
         <item name="android:paddingBottom">10dp</item>
         <item name="android:paddingTop">10dp</item>
         <item name="android:singleLine">true</item>
-        <item name="android:textColor">@color/data_reduction_breakdown_text_color</item>
-        <item name="android:textSize">12sp</item>
+        <item name="android:textAppearance">@style/BlackCaption</item>
+    </style>
+    <style name="DataUsageBreakdownSavedColumnItem" parent="DataUsageBreakdownColumnItem">
+        <item name="android:textAppearance">@style/BlueLink3</item>
     </style>
 
     <!-- Incognito New Tab Page -->

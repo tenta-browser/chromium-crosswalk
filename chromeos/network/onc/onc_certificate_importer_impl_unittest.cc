@@ -14,6 +14,7 @@
 #include "base/threading/thread_task_runner_handle.h"
 #include "base/values.h"
 #include "chromeos/network/certificate_helper.h"
+#include "chromeos/network/onc/onc_parsed_certificates.h"
 #include "chromeos/network/onc/onc_test_utils.h"
 #include "components/onc/onc_constants.h"
 #include "crypto/scoped_test_nss_db.h"
@@ -76,11 +77,10 @@ class ONCCertificateImporterImplTest : public testing::Test {
     web_trust_certificates_.clear();
     CertificateImporterImpl importer(task_runner_, test_nssdb_.get());
     importer.ImportCertificates(
-        *certificates,
+        std::make_unique<chromeos::onc::OncParsedCertificates>(*certificates),
         ::onc::ONC_SOURCE_USER_IMPORT,  // allow web trust
-        base::Bind(&ONCCertificateImporterImplTest::OnImportCompleted,
-                   base::Unretained(this),
-                   expected_success));
+        base::BindOnce(&ONCCertificateImporterImplTest::OnImportCompleted,
+                       base::Unretained(this), expected_success));
 
     task_runner_->RunUntilIdle();
 
@@ -150,9 +150,8 @@ class ONCCertificateImporterImplTest : public testing::Test {
     std::sort(result.begin(), result.end(),
               [](const net::ScopedCERTCertificate& lhs,
                  const net::ScopedCERTCertificate& rhs) {
-                return net::SHA256HashValueLessThan()(
-                    net::x509_util::CalculateFingerprint256(lhs.get()),
-                    net::x509_util::CalculateFingerprint256(rhs.get()));
+                return net::x509_util::CalculateFingerprint256(lhs.get()) <
+                       net::x509_util::CalculateFingerprint256(rhs.get());
               });
     return result;
   }

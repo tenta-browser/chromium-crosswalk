@@ -18,7 +18,6 @@
 #include "base/files/file_util.h"  // for FileAccessProvider
 #include "base/i18n/string_compare.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/posix/safe_strerror.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/utf_string_conversions.h"
@@ -346,68 +345,72 @@ CertificatesHandler::~CertificatesHandler() {}
 
 void CertificatesHandler::RegisterMessages() {
   web_ui()->RegisterMessageCallback(
-      "viewCertificate", base::Bind(&CertificatesHandler::HandleViewCertificate,
-                                    base::Unretained(this)));
+      "viewCertificate",
+      base::BindRepeating(&CertificatesHandler::HandleViewCertificate,
+                          base::Unretained(this)));
 
   web_ui()->RegisterMessageCallback(
       "getCaCertificateTrust",
-      base::Bind(&CertificatesHandler::HandleGetCATrust,
-                 base::Unretained(this)));
+      base::BindRepeating(&CertificatesHandler::HandleGetCATrust,
+                          base::Unretained(this)));
   web_ui()->RegisterMessageCallback(
       "editCaCertificateTrust",
-      base::Bind(&CertificatesHandler::HandleEditCATrust,
-                 base::Unretained(this)));
+      base::BindRepeating(&CertificatesHandler::HandleEditCATrust,
+                          base::Unretained(this)));
 
   web_ui()->RegisterMessageCallback(
       "cancelImportExportCertificate",
-      base::Bind(&CertificatesHandler::HandleCancelImportExportProcess,
-                 base::Unretained(this)));
+      base::BindRepeating(&CertificatesHandler::HandleCancelImportExportProcess,
+                          base::Unretained(this)));
 
   web_ui()->RegisterMessageCallback(
       "exportPersonalCertificate",
-      base::Bind(&CertificatesHandler::HandleExportPersonal,
-                 base::Unretained(this)));
+      base::BindRepeating(&CertificatesHandler::HandleExportPersonal,
+                          base::Unretained(this)));
   web_ui()->RegisterMessageCallback(
       "exportPersonalCertificatePasswordSelected",
-      base::Bind(&CertificatesHandler::HandleExportPersonalPasswordSelected,
-                 base::Unretained(this)));
+      base::BindRepeating(
+          &CertificatesHandler::HandleExportPersonalPasswordSelected,
+          base::Unretained(this)));
 
   web_ui()->RegisterMessageCallback(
       "importPersonalCertificate",
-      base::Bind(&CertificatesHandler::HandleImportPersonal,
-                 base::Unretained(this)));
+      base::BindRepeating(&CertificatesHandler::HandleImportPersonal,
+                          base::Unretained(this)));
   web_ui()->RegisterMessageCallback(
       "importPersonalCertificatePasswordSelected",
-      base::Bind(&CertificatesHandler::HandleImportPersonalPasswordSelected,
-                 base::Unretained(this)));
+      base::BindRepeating(
+          &CertificatesHandler::HandleImportPersonalPasswordSelected,
+          base::Unretained(this)));
 
   web_ui()->RegisterMessageCallback(
       "importCaCertificate",
-      base::Bind(&CertificatesHandler::HandleImportCA, base::Unretained(this)));
+      base::BindRepeating(&CertificatesHandler::HandleImportCA,
+                          base::Unretained(this)));
   web_ui()->RegisterMessageCallback(
       "importCaCertificateTrustSelected",
-      base::Bind(&CertificatesHandler::HandleImportCATrustSelected,
-                 base::Unretained(this)));
+      base::BindRepeating(&CertificatesHandler::HandleImportCATrustSelected,
+                          base::Unretained(this)));
 
   web_ui()->RegisterMessageCallback(
       "importServerCertificate",
-      base::Bind(&CertificatesHandler::HandleImportServer,
-                 base::Unretained(this)));
+      base::BindRepeating(&CertificatesHandler::HandleImportServer,
+                          base::Unretained(this)));
 
   web_ui()->RegisterMessageCallback(
       "exportCertificate",
-      base::Bind(&CertificatesHandler::HandleExportCertificate,
-                 base::Unretained(this)));
+      base::BindRepeating(&CertificatesHandler::HandleExportCertificate,
+                          base::Unretained(this)));
 
   web_ui()->RegisterMessageCallback(
       "deleteCertificate",
-      base::Bind(&CertificatesHandler::HandleDeleteCertificate,
-                 base::Unretained(this)));
+      base::BindRepeating(&CertificatesHandler::HandleDeleteCertificate,
+                          base::Unretained(this)));
 
   web_ui()->RegisterMessageCallback(
       "refreshCertificates",
-      base::Bind(&CertificatesHandler::HandleRefreshCertificates,
-                 base::Unretained(this)));
+      base::BindRepeating(&CertificatesHandler::HandleRefreshCertificates,
+                          base::Unretained(this)));
 }
 
 void CertificatesHandler::CertificatesRefreshed() {
@@ -582,7 +585,7 @@ void CertificatesHandler::HandleExportPersonalPasswordSelected(
 
   // TODO(mattm): do something smarter about non-extractable keys
   chrome::UnlockCertSlotIfNecessary(
-      selected_cert_list_[0].get(), chrome::kCryptoModulePasswordCertExport,
+      selected_cert_list_[0].get(), kCryptoModulePasswordCertExport,
       net::HostPortPair(),  // unused.
       GetParentWindow(),
       base::Bind(&CertificatesHandler::ExportPersonalSlotsUnlocked,
@@ -719,7 +722,7 @@ void CertificatesHandler::HandleImportPersonalPasswordSelected(
   std::vector<crypto::ScopedPK11Slot> modules;
   modules.push_back(crypto::ScopedPK11Slot(PK11_ReferenceSlot(slot_.get())));
   chrome::UnlockSlotsIfNecessary(
-      std::move(modules), chrome::kCryptoModulePasswordCertImport,
+      std::move(modules), kCryptoModulePasswordCertImport,
       net::HostPortPair(),  // unused.
       GetParentWindow(),
       base::Bind(&CertificatesHandler::ImportPersonalSlotUnlocked,
@@ -1037,7 +1040,7 @@ void CertificatesHandler::PopulateTree(
 
   {
     std::unique_ptr<base::ListValue> nodes =
-        base::MakeUnique<base::ListValue>();
+        std::make_unique<base::ListValue>();
     for (CertificateManagerModel::OrgGroupingMap::iterator i = map.begin();
          i != map.end(); ++i) {
       // Populate first level (org name).
@@ -1046,7 +1049,7 @@ void CertificatesHandler::PopulateTree(
       dict->SetString(kNameField, i->first);
 
       // Populate second level (certs).
-      auto subnodes = base::MakeUnique<base::ListValue>();
+      auto subnodes = std::make_unique<base::ListValue>();
       for (net::ScopedCERTCertificateList::const_iterator org_cert_it =
                i->second.begin();
            org_cert_it != i->second.end(); ++org_cert_it) {
@@ -1123,7 +1126,7 @@ void CertificatesHandler::RejectCallbackWithImportError(
         IDS_SETTINGS_CERTIFICATE_MANAGER_IMPORT_SOME_NOT_IMPORTED);
 
   std::unique_ptr<base::ListValue> cert_error_list =
-      base::MakeUnique<base::ListValue>();
+      std::make_unique<base::ListValue>();
   for (size_t i = 0; i < not_imported.size(); ++i) {
     const net::NSSCertDatabase::ImportCertFailure& failure = not_imported[i];
     std::unique_ptr<base::DictionaryValue> dict(new base::DictionaryValue);

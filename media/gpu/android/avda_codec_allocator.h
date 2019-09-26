@@ -22,7 +22,7 @@
 #include "base/trace_event/trace_event.h"
 #include "media/base/android/android_overlay.h"
 #include "media/base/android/media_codec_bridge_impl.h"
-#include "media/base/android/media_drm_bridge_cdm_context.h"
+#include "media/base/android/media_crypto_context.h"
 #include "media/base/media.h"
 #include "media/base/surface_manager.h"
 #include "media/base/video_codecs.h"
@@ -72,6 +72,11 @@ class MEDIA_GPU_EXPORT CodecConfig
   // Codec specific data (SPS and PPS for H264).
   std::vector<uint8_t> csd0;
   std::vector<uint8_t> csd1;
+
+  // VP9 HDR metadata is only embedded in the container
+  // HDR10 meta data is embedded in the video stream
+  VideoColorSpace container_color_space;
+  base::Optional<HDRMetadata> hdr_metadata;
 
  protected:
   friend class base::RefCountedThreadSafe<CodecConfig>;
@@ -127,6 +132,8 @@ class MEDIA_GPU_EXPORT AVDACodecAllocator {
           const base::android::JavaRef<jobject>& media_crypto,
           const std::vector<uint8_t>& csd0,
           const std::vector<uint8_t>& csd1,
+          const VideoColorSpace& color_space,
+          const base::Optional<HDRMetadata>& hdr_metadata,
           bool allow_adaptive_playback)>;
 
   // Make sure the construction threads are started for |client|.  If the
@@ -169,7 +176,7 @@ class MEDIA_GPU_EXPORT AVDACodecAllocator {
   // |tick_clock| and |stop_event| are for tests only.
   AVDACodecAllocator(AVDACodecAllocator::CodecFactoryCB factory_cb,
                      scoped_refptr<base::SequencedTaskRunner> task_runner,
-                     base::TickClock* tick_clock = nullptr,
+                     const base::TickClock* tick_clock = nullptr,
                      base::WaitableEvent* stop_event = nullptr);
   virtual ~AVDACodecAllocator();
 
@@ -210,7 +217,7 @@ class MEDIA_GPU_EXPORT AVDACodecAllocator {
 
   class HangDetector : public base::MessageLoop::TaskObserver {
    public:
-    HangDetector(base::TickClock* tick_clock);
+    HangDetector(const base::TickClock* tick_clock);
     void WillProcessTask(const base::PendingTask& pending_task) override;
     void DidProcessTask(const base::PendingTask& pending_task) override;
     bool IsThreadLikelyHung();
@@ -221,14 +228,15 @@ class MEDIA_GPU_EXPORT AVDACodecAllocator {
     // Non-null when a task is currently running.
     base::TimeTicks task_start_time_;
 
-    base::TickClock* tick_clock_;
+    const base::TickClock* tick_clock_;
 
     DISALLOW_COPY_AND_ASSIGN(HangDetector);
   };
 
   // Handy combination of a thread and hang detector for it.
   struct ThreadAndHangDetector {
-    ThreadAndHangDetector(const std::string& name, base::TickClock* tick_clock)
+    ThreadAndHangDetector(const std::string& name,
+                          const base::TickClock* tick_clock)
         : thread(name), hang_detector(tick_clock) {}
     base::Thread thread;
     HangDetector hang_detector;

@@ -39,21 +39,9 @@ import zlib
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.dirname(BASE_DIR)))
 
-# Temporary hack to deal with tlslite 0.3.8 -> 0.4.6 upgrade.
-#
-# TODO(davidben): Remove this when it has cycled through all the bots and
-# developer checkouts or when http://crbug.com/356276 is resolved.
-try:
-  os.remove(os.path.join(ROOT_DIR, 'third_party', 'tlslite',
-                         'tlslite', 'utils', 'hmac.pyc'))
-except Exception:
-  pass
-
-# Append at the end of sys.path, it's fine to use the system library.
-sys.path.append(os.path.join(ROOT_DIR, 'third_party', 'pyftpdlib', 'src'))
-
 # Insert at the beginning of the path, we want to use our copies of the library
-# unconditionally.
+# unconditionally (since they contain modifications from anything that might be
+# obtained from e.g. PyPi).
 sys.path.insert(0, os.path.join(ROOT_DIR, 'third_party', 'pywebsocket', 'src'))
 sys.path.insert(0, os.path.join(ROOT_DIR, 'third_party', 'tlslite'))
 
@@ -133,6 +121,13 @@ class HTTPServer(testserver_base.ClientRestrictingServerMixIn,
                  testserver_base.StoppableHTTPServer):
   """This is a specialization of StoppableHTTPServer that adds client
   verification."""
+
+  pass
+
+class ThreadingHTTPServer(SocketServer.ThreadingMixIn,
+                          HTTPServer):
+  """This variant of HTTPServer creates a new thread for every connection. It
+  should only be used with handlers that are known to be threadsafe."""
 
   pass
 
@@ -630,7 +625,7 @@ class TestPageHandler(testserver_base.BasePageHandler):
 
   def EchoHeaderCache(self):
     """This function echoes back the value of a specific request header while
-    allowing caching for 16 hours."""
+    allowing caching for 10 hours."""
 
     return self.EchoHeaderHelper("/echoheadercache")
 
@@ -1907,6 +1902,20 @@ class ServerRunner(testserver_base.TestServerRunner):
        port == 0:
       host = "127.0.0.1"
 
+    # Construct the subjectAltNames for any ad-hoc generated certificates.
+    # As host can be either a DNS name or IP address, attempt to determine
+    # which it is, so it can be placed in the appropriate SAN.
+    dns_sans = None
+    ip_sans = None
+    ip = None
+    try:
+      ip = socket.inet_aton(host)
+      ip_sans = [ip]
+    except socket.error:
+      pass
+    if ip is None:
+      dns_sans = [host]
+
     if self.options.server_type == SERVER_HTTP:
       if self.options.https:
         pem_cert_and_key = None
@@ -1922,11 +1931,17 @@ class ServerRunner(testserver_base.TestServerRunner):
           print ('AIA server started on %s:%d...' %
               (host, self.__ocsp_server.server_port))
 
+          ocsp_server_port = self.__ocsp_server.server_port
+          if self.options.ocsp_proxy_port_number != 0:
+            ocsp_server_port = self.options.ocsp_proxy_port_number
+            server_data['ocsp_port'] = self.__ocsp_server.server_port
+
           (pem_cert_and_key, intermediate_cert_der) = \
               minica.GenerateCertKeyAndIntermediate(
-                  subject = "127.0.0.1",
-                  ca_issuers_url = ("http://%s:%d/ca_issuers" %
-                                    (host, self.__ocsp_server.server_port)),
+                  subject = self.options.cert_common_name,
+                  ip_sans=ip_sans, dns_sans=dns_sans,
+                  ca_issuers_url =
+                      ("http://%s:%d/ca_issuers" % (host, ocsp_server_port)),
                   serial = self.options.cert_serial)
 
           self.__ocsp_server.ocsp_response = None
@@ -1995,10 +2010,16 @@ class ServerRunner(testserver_base.TestServerRunner):
             raise testserver_base.OptionError('unknown OCSP produced: ' +
                 self.options.ocsp_produced)
 
+          ocsp_server_port = self.__ocsp_server.server_port
+          if self.options.ocsp_proxy_port_number != 0:
+            ocsp_server_port = self.options.ocsp_proxy_port_number
+            server_data['ocsp_port'] = self.__ocsp_server.server_port
+
           (pem_cert_and_key, ocsp_der) = minica.GenerateCertKeyAndOCSP(
-              subject = "127.0.0.1",
-              ocsp_url = ("http://%s:%d/ocsp" %
-                  (host, self.__ocsp_server.server_port)),
+              subject = self.options.cert_common_name,
+              ip_sans = ip_sans,
+              dns_sans = dns_sans,
+              ocsp_url = ("http://%s:%d/ocsp" % (host, ocsp_server_port)),
               ocsp_states = ocsp_states,
               ocsp_dates = ocsp_dates,
               ocsp_produced = ocsp_produced,
@@ -2105,7 +2126,7 @@ class ServerRunner(testserver_base.TestServerRunner):
     elif self.options.server_type == SERVER_BASIC_AUTH_PROXY:
       BasicAuthProxyRequestHandler.redirect_connect_to_localhost = \
           self.options.redirect_connect_to_localhost
-      server = HTTPServer((host, port), BasicAuthProxyRequestHandler)
+      server = ThreadingHTTPServer((host, port), BasicAuthProxyRequestHandler)
       print 'BasicAuthProxy server started on port %d...' % server.server_port
       server_data['port'] = server.server_port
     elif self.options.server_type == SERVER_FTP:
@@ -2198,6 +2219,10 @@ class ServerRunner(testserver_base.TestServerRunner):
                                   default=0, type=int,
                                   help='If non-zero then the generated '
                                   'certificate will have this serial number')
+    self.option_parser.add_option('--cert-common-name', dest='cert_common_name',
+                                  default="127.0.0.1",
+                                  help='The generated certificate will have '
+                                  'this common name')
     self.option_parser.add_option('--tls-intolerant', dest='tls_intolerant',
                                   default='0', type='int',
                                   help='If nonzero, certain TLS connections '
@@ -2297,6 +2322,10 @@ class ServerRunner(testserver_base.TestServerRunner):
                                   help='If set, the OCSP server will return '
                                   'a tryLater status rather than the actual '
                                   'OCSP response.')
+    self.option_parser.add_option('--ocsp-proxy-port-number', default=0,
+                                  type='int', dest='ocsp_proxy_port_number',
+                                  help='Port allocated for OCSP proxy '
+                                  'when connection is proxied.')
     self.option_parser.add_option('--alert-after-handshake',
                                   dest='alert_after_handshake',
                                   default=False, action='store_true',

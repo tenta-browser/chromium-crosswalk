@@ -19,8 +19,6 @@
 #include "base/memory/weak_ptr.h"
 #include "base/message_loop/message_loop.h"
 #include "base/observer_list.h"
-#include "base/strings/string16.h"
-#include "base/threading/sequenced_worker_pool.h"
 #include "base/threading/thread.h"
 #include "base/time/time.h"
 #include "base/timer/timer.h"
@@ -131,6 +129,8 @@ namespace browser_sync {
 //
 //   Sync configuration is accomplished via the following APIs:
 //    * OnUserChoseDatatypes(): Set the data types the user wants to sync.
+//    * OnUserChangedSyncEverythingOnly(): Set only the keepEverythingSynced
+//        value.
 //    * SetDecryptionPassphrase(): Attempt to decrypt the user's encrypted data
 //        using the passed passphrase.
 //    * SetEncryptionPassphrase(): Re-encrypt the user's data using the passed
@@ -174,7 +174,8 @@ class ProfileSyncService : public syncer::SyncServiceBase,
                            public GaiaCookieManagerService::Observer {
  public:
   using Status = syncer::SyncEngine::Status;
-  using PlatformSyncAllowedProvider = base::Callback<bool(void)>;
+  using PlatformSyncAllowedProvider = base::RepeatingCallback<bool()>;
+  using SigninScopedDeviceIdCallback = base::RepeatingCallback<std::string()>;
 
   enum SyncEventCodes {
     MIN_SYNC_EVENT_CODE = 0,
@@ -229,6 +230,7 @@ class ProfileSyncService : public syncer::SyncServiceBase,
 
     std::unique_ptr<syncer::SyncClient> sync_client;
     std::unique_ptr<SigninManagerWrapper> signin_wrapper;
+    SigninScopedDeviceIdCallback signin_scoped_device_id_callback;
     ProfileOAuth2TokenService* oauth2_token_service = nullptr;
     GaiaCookieManagerService* gaia_cookie_manager_service = nullptr;
     StartBehavior start_behavior = MANUAL_START;
@@ -237,7 +239,7 @@ class ProfileSyncService : public syncer::SyncServiceBase,
     scoped_refptr<net::URLRequestContextGetter> url_request_context;
     std::string debug_identifier;
     version_info::Channel channel = version_info::Channel::UNKNOWN;
-    syncer::ModelTypeStoreFactory model_type_store_factory;
+    syncer::RepeatingModelTypeStoreFactory model_type_store_factory;
 
    private:
     DISALLOW_COPY_AND_ASSIGN(InitParams);
@@ -314,6 +316,11 @@ class ProfileSyncService : public syncer::SyncServiceBase,
   void GetAllNodes(const base::Callback<void(std::unique_ptr<base::ListValue>)>&
                        callback) override;
   syncer::GlobalIdMapper* GetGlobalIdMapper() const override;
+
+  // Changes only the KeepEverythingSynced value.
+  // TODO(crbug/820625): Refactor sync code for more robust way to get/set
+  // preferred datatypes.
+  void OnUserChangedSyncEverythingOnly(bool sync_everything);
 
   // Add a sync type preference provider. Each provider may only be added once.
   void AddPreferenceProvider(syncer::SyncTypePreferenceProvider* provider);
@@ -393,9 +400,12 @@ class ProfileSyncService : public syncer::SyncServiceBase,
   // Similar to above but with a callback that will be invoked on completion.
   void OnGaiaAccountsInCookieUpdatedWithCallback(
       const std::vector<gaia::ListedAccount>& accounts,
-      const std::vector<gaia::ListedAccount>& signed_out_accounts,
-      const GoogleServiceAuthError& error,
       const base::Closure& callback);
+
+  // Returns true if currently signed in account is not present in the list of
+  // accounts from cookie jar.
+  bool HasCookieJarMismatch(
+      const std::vector<gaia::ListedAccount>& cookie_jar_accounts);
 
   // Get the sync status code.
   SyncStatusSummary QuerySyncStatusSummary();
@@ -556,7 +566,7 @@ class ProfileSyncService : public syncer::SyncServiceBase,
 
   // Returns a function  that will create a ModelTypeStore that shares
   // the sync LevelDB backend. |base_path| should be set to profile path.
-  static syncer::ModelTypeStoreFactory GetModelTypeStoreFactory(
+  static syncer::RepeatingModelTypeStoreFactory GetModelTypeStoreFactory(
       const base::FilePath& base_path);
 
   // Needed to test whether the directory is deleted properly.
@@ -567,9 +577,6 @@ class ProfileSyncService : public syncer::SyncServiceBase,
 
   // Some tests rely on injecting calls to the encryption observer.
   syncer::SyncEncryptionHandler::Observer* GetEncryptionObserverForTest() const;
-
-  // Triggers sync cycle with request to update specified |types|.
-  void RefreshTypesForTest(syncer::ModelTypeSet types);
 
   // Calls sync engine to send ClearServerDataMessage to server. This is used
   // to start accounts with a clean slate when performing end to end testing.
@@ -740,6 +747,8 @@ class ProfileSyncService : public syncer::SyncServiceBase,
   // Called when a SetupInProgressHandle issued by this instance is destroyed.
   virtual void OnSetupInProgressHandleDestroyed();
 
+  SigninScopedDeviceIdCallback signin_scoped_device_id_callback_;
+
   // This is a cache of the last authentication response we received from the
   // sync server. The UI queries this to display appropriate messaging to the
   // user.
@@ -886,7 +895,7 @@ class ProfileSyncService : public syncer::SyncServiceBase,
   // sync bridges created by the ProfileSyncService. The default factory
   // creates an on disk leveldb-backed ModelTypeStore; one might override this
   // default to, e.g., use an in-memory db for unit tests.
-  syncer::ModelTypeStoreFactory model_type_store_factory_;
+  syncer::RepeatingModelTypeStoreFactory model_type_store_factory_;
 
   // This weak factory invalidates its issued pointers when Sync is disabled.
   base::WeakPtrFactory<ProfileSyncService> sync_enabled_weak_factory_;

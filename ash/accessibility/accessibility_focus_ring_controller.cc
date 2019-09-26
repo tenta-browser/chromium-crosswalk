@@ -8,7 +8,12 @@
 
 #include <algorithm>
 #include <memory>
+#include <set>
+#include <utility>
+#include <vector>
 
+#include "ash/accessibility/accessibility_cursor_ring_layer.h"
+#include "ash/accessibility/accessibility_focus_ring_layer.h"
 #include "ash/accessibility/accessibility_highlight_layer.h"
 #include "ash/accessibility/focus_ring_layer.h"
 #include "base/logging.h"
@@ -20,31 +25,31 @@ namespace {
 // The number of pixels the focus ring is outset from the object it outlines,
 // which also determines the border radius of the rounded corners.
 // TODO(dmazzoni): take display resolution into account.
-const int kAccessibilityFocusRingMargin = 7;
+constexpr int kAccessibilityFocusRingMargin = 7;
 
 // Time to transition between one location and the next.
-const int kTransitionTimeMilliseconds = 300;
+constexpr int kTransitionTimeMilliseconds = 300;
 
 // Focus constants.
-const int kFocusFadeInTimeMilliseconds = 100;
-const int kFocusFadeOutTimeMilliseconds = 1600;
+constexpr int kFocusFadeInTimeMilliseconds = 100;
+constexpr int kFocusFadeOutTimeMilliseconds = 1600;
 
 // Cursor constants.
-const int kCursorFadeInTimeMilliseconds = 400;
-const int kCursorFadeOutTimeMilliseconds = 1200;
-const int kCursorRingColorRed = 255;
-const int kCursorRingColorGreen = 51;
-const int kCursorRingColorBlue = 51;
+constexpr int kCursorFadeInTimeMilliseconds = 400;
+constexpr int kCursorFadeOutTimeMilliseconds = 1200;
+constexpr int kCursorRingColorRed = 255;
+constexpr int kCursorRingColorGreen = 51;
+constexpr int kCursorRingColorBlue = 51;
 
 // Caret constants.
-const int kCaretFadeInTimeMilliseconds = 100;
-const int kCaretFadeOutTimeMilliseconds = 1600;
-const int kCaretRingColorRed = 51;
-const int kCaretRingColorGreen = 51;
-const int kCaretRingColorBlue = 255;
+constexpr int kCaretFadeInTimeMilliseconds = 100;
+constexpr int kCaretFadeOutTimeMilliseconds = 1600;
+constexpr int kCaretRingColorRed = 51;
+constexpr int kCaretRingColorGreen = 51;
+constexpr int kCaretRingColorBlue = 255;
 
 // Highlight constants.
-const float kHighlightOpacity = 0.3f;
+constexpr float kHighlightOpacity = 0.3f;
 
 // A Region is an unordered collection of Rects that maintains its
 // bounding box. Used in the middle of an algorithm that groups
@@ -60,13 +65,8 @@ struct Region {
 
 }  // namespace
 
-// static
-AccessibilityFocusRingController*
-AccessibilityFocusRingController::GetInstance() {
-  return base::Singleton<AccessibilityFocusRingController>::get();
-}
-
-AccessibilityFocusRingController::AccessibilityFocusRingController() {
+AccessibilityFocusRingController::AccessibilityFocusRingController()
+    : binding_(this) {
   focus_animation_info_.fade_in_time =
       base::TimeDelta::FromMilliseconds(kFocusFadeInTimeMilliseconds);
   focus_animation_info_.fade_out_time =
@@ -83,6 +83,11 @@ AccessibilityFocusRingController::AccessibilityFocusRingController() {
 
 AccessibilityFocusRingController::~AccessibilityFocusRingController() = default;
 
+void AccessibilityFocusRingController::BindRequest(
+    mojom::AccessibilityFocusRingControllerRequest request) {
+  binding_.Bind(std::move(request));
+}
+
 void AccessibilityFocusRingController::SetFocusRingColor(SkColor color) {
   focus_ring_color_ = color;
   UpdateFocusRingsFromFocusRects();
@@ -95,16 +100,40 @@ void AccessibilityFocusRingController::ResetFocusRingColor() {
 
 void AccessibilityFocusRingController::SetFocusRing(
     const std::vector<gfx::Rect>& rects,
-    AccessibilityFocusRingController::FocusRingBehavior focus_ring_behavior) {
+    mojom::FocusRingBehavior focus_ring_behavior) {
+  std::vector<gfx::Rect> clean_rects(rects);
+  // Remove duplicates
+  if (rects.size() > 1) {
+    std::set<gfx::Rect> rects_set(rects.begin(), rects.end());
+    clean_rects.assign(rects_set.begin(), rects_set.end());
+  }
+  // If there is no change, don't do any work.
+  if (focus_ring_behavior_ == focus_ring_behavior &&
+      clean_rects == focus_rects_)
+    return;
   focus_ring_behavior_ = focus_ring_behavior;
   OnLayerChange(&focus_animation_info_);
-  focus_rects_ = rects;
+  focus_rects_ = clean_rects;
   UpdateFocusRingsFromFocusRects();
 }
 
 void AccessibilityFocusRingController::HideFocusRing() {
   focus_rects_.clear();
   UpdateFocusRingsFromFocusRects();
+}
+
+void AccessibilityFocusRingController::SetHighlights(
+    const std::vector<gfx::Rect>& rects,
+    SkColor color) {
+  highlight_rects_ = rects;
+  GetColorAndOpacityFromColor(color, kHighlightOpacity, &highlight_color_,
+                              &highlight_opacity_);
+  UpdateHighlightFromHighlightRects();
+}
+
+void AccessibilityFocusRingController::HideHighlights() {
+  highlight_rects_.clear();
+  UpdateHighlightFromHighlightRects();
 }
 
 void AccessibilityFocusRingController::UpdateFocusRingsFromFocusRects() {
@@ -120,7 +149,7 @@ void AccessibilityFocusRingController::UpdateFocusRingsFromFocusRects() {
       focus_layers_[i] = std::make_unique<AccessibilityFocusRingLayer>(this);
   }
 
-  if (focus_ring_behavior_ == PERSIST_FOCUS_RING &&
+  if (focus_ring_behavior_ == mojom::FocusRingBehavior::PERSIST_FOCUS_RING &&
       focus_layers_[0]->CanAnimate()) {
     // In PERSIST mode, animate the first ring to its destination
     // location, then set the rest of the rings directly.
@@ -185,20 +214,6 @@ void AccessibilityFocusRingController::SetCaretRing(
 
 void AccessibilityFocusRingController::HideCaretRing() {
   caret_layer_.reset();
-}
-
-void AccessibilityFocusRingController::SetHighlights(
-    const std::vector<gfx::Rect>& rects,
-    SkColor color) {
-  highlight_rects_ = rects;
-  GetColorAndOpacityFromColor(color, kHighlightOpacity, &highlight_color_,
-                              &highlight_opacity_);
-  UpdateHighlightFromHighlightRects();
-}
-
-void AccessibilityFocusRingController::HideHighlights() {
-  highlight_rects_.clear();
-  UpdateHighlightFromHighlightRects();
 }
 
 void AccessibilityFocusRingController::SetNoFadeForTesting() {
@@ -439,7 +454,7 @@ void AccessibilityFocusRingController::AnimateFocusRings(
   if (timestamp < focus_animation_info_.change_time)
     timestamp = focus_animation_info_.change_time;
 
-  if (focus_ring_behavior_ == PERSIST_FOCUS_RING) {
+  if (focus_ring_behavior_ == mojom::FocusRingBehavior::PERSIST_FOCUS_RING) {
     base::TimeDelta delta = timestamp - focus_animation_info_.change_time;
     base::TimeDelta transition_time =
         base::TimeDelta::FromMilliseconds(kTransitionTimeMilliseconds);

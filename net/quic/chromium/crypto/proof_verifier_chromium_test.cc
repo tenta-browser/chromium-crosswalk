@@ -15,6 +15,7 @@
 #include "net/cert/ct_serialization.h"
 #include "net/cert/mock_cert_verifier.h"
 #include "net/cert/multi_log_ct_verifier.h"
+#include "net/cert/x509_util.h"
 #include "net/http/transport_security_state.h"
 #include "net/quic/chromium/crypto/proof_source_chromium.h"
 #include "net/quic/core/crypto/proof_verifier.h"
@@ -61,8 +62,10 @@ class MockCTPolicyEnforcer : public CTPolicyEnforcer {
 
 class MockRequireCTDelegate : public TransportSecurityState::RequireCTDelegate {
  public:
-  MOCK_METHOD1(IsCTRequiredForHost,
-               CTRequirementLevel(const std::string& host));
+  MOCK_METHOD3(IsCTRequiredForHost,
+               CTRequirementLevel(const std::string& host,
+                                  const X509Certificate* chain,
+                                  const HashValueVector& hashes));
 };
 
 // Proof source callback which saves the signature into |signature|.
@@ -113,9 +116,8 @@ class ProofVerifierChromiumTest : public ::testing::Test {
         .WillRepeatedly(
             Return(ct::CTPolicyCompliance::CT_POLICY_NOT_ENOUGH_SCTS));
 
-    scoped_refptr<const CTLogVerifier> log(
-        CTLogVerifier::Create(ct::GetTestPublicKey(), kLogDescription,
-                              "https://test.example.com", "dns.example.com"));
+    scoped_refptr<const CTLogVerifier> log(CTLogVerifier::Create(
+        ct::GetTestPublicKey(), kLogDescription, "dns.example.com"));
     ASSERT_TRUE(log);
     log_verifiers_.push_back(log);
 
@@ -126,7 +128,7 @@ class ProofVerifierChromiumTest : public ::testing::Test {
   }
 
   scoped_refptr<X509Certificate> GetTestServerCertificate() {
-    static const char kTestCert[] = "quic_test.example.com.crt";
+    static const char kTestCert[] = "quic-chain.pem";
     return ImportCertFromFile(GetTestCertsDirectory(), kTestCert);
   }
 
@@ -134,20 +136,17 @@ class ProofVerifierChromiumTest : public ::testing::Test {
     scoped_refptr<X509Certificate> cert = GetTestServerCertificate();
     ASSERT_TRUE(cert);
 
-    std::string der_bytes;
-    ASSERT_TRUE(
-        X509Certificate::GetDEREncoded(cert->os_cert_handle(), &der_bytes));
-
     certs->clear();
-    certs->push_back(der_bytes);
+    certs->emplace_back(
+        x509_util::CryptoBufferAsStringPiece(cert->cert_buffer()));
   }
 
   std::string GetTestSignature() {
     ProofSourceChromium source;
     source.Initialize(
-        GetTestCertsDirectory().AppendASCII("quic_test.example.com.crt"),
-        GetTestCertsDirectory().AppendASCII("quic_test.example.com.key.pkcs8"),
-        GetTestCertsDirectory().AppendASCII("quic_test.example.com.key.sct"));
+        GetTestCertsDirectory().AppendASCII("quic-chain.pem"),
+        GetTestCertsDirectory().AppendASCII("quic-leaf-cert.key"),
+        base::FilePath());
     std::string signature;
     source.GetProof(QuicSocketAddress(), kTestHostname, kTestConfig,
                     QUIC_VERSION_35, kTestChloHash,
@@ -161,12 +160,9 @@ class ProofVerifierChromiumTest : public ::testing::Test {
         der_test_cert.data(), der_test_cert.length());
     ASSERT_TRUE(test_cert.get());
 
-    std::string der_bytes;
-    ASSERT_TRUE(X509Certificate::GetDEREncoded(test_cert->os_cert_handle(),
-                                               &der_bytes));
-
     certs->clear();
-    certs->push_back(der_bytes);
+    certs->emplace_back(
+        x509_util::CryptoBufferAsStringPiece(test_cert->cert_buffer()));
   }
 
   void CheckSCT(bool sct_expected_ok) {
@@ -445,6 +441,67 @@ HashValueVector MakeHashValueVector(uint8_t tag) {
   return hashes;
 }
 
+TEST_F(ProofVerifierChromiumTest, IsFatalErrorNotSetForNonFatalError) {
+  scoped_refptr<X509Certificate> test_cert = GetTestServerCertificate();
+  ASSERT_TRUE(test_cert);
+
+  CertVerifyResult dummy_result;
+  dummy_result.cert_status = MapNetErrorToCertStatus(ERR_CERT_DATE_INVALID);
+  dummy_result.verified_cert = test_cert;
+
+  MockCertVerifier dummy_verifier;
+  dummy_verifier.AddResultForCert(test_cert.get(), dummy_result,
+                                  ERR_CERT_DATE_INVALID);
+
+  ProofVerifierChromium proof_verifier(&dummy_verifier, &ct_policy_enforcer_,
+                                       &transport_security_state_,
+                                       ct_verifier_.get());
+
+  std::unique_ptr<DummyProofVerifierCallback> callback(
+      new DummyProofVerifierCallback);
+  QuicAsyncStatus status = proof_verifier.VerifyProof(
+      kTestHostname, kTestPort, kTestConfig, QUIC_VERSION_35, kTestChloHash,
+      certs_, kTestEmptySCT, GetTestSignature(), verify_context_.get(),
+      &error_details_, &details_, std::move(callback));
+  ASSERT_EQ(QUIC_FAILURE, status);
+
+  ProofVerifyDetailsChromium* verify_details =
+      static_cast<ProofVerifyDetailsChromium*>(details_.get());
+  EXPECT_FALSE(verify_details->is_fatal_cert_error);
+}
+
+TEST_F(ProofVerifierChromiumTest, IsFatalErrorSetForFatalError) {
+  scoped_refptr<X509Certificate> test_cert = GetTestServerCertificate();
+  ASSERT_TRUE(test_cert);
+
+  CertVerifyResult dummy_result;
+  dummy_result.cert_status = MapNetErrorToCertStatus(ERR_CERT_DATE_INVALID);
+  dummy_result.verified_cert = test_cert;
+
+  MockCertVerifier dummy_verifier;
+  dummy_verifier.AddResultForCert(test_cert.get(), dummy_result,
+                                  ERR_CERT_DATE_INVALID);
+
+  const base::Time expiry =
+      base::Time::Now() + base::TimeDelta::FromSeconds(1000);
+  transport_security_state_.AddHSTS(kTestHostname, expiry, true);
+
+  ProofVerifierChromium proof_verifier(&dummy_verifier, &ct_policy_enforcer_,
+                                       &transport_security_state_,
+                                       ct_verifier_.get());
+
+  std::unique_ptr<DummyProofVerifierCallback> callback(
+      new DummyProofVerifierCallback);
+  QuicAsyncStatus status = proof_verifier.VerifyProof(
+      kTestHostname, kTestPort, kTestConfig, QUIC_VERSION_35, kTestChloHash,
+      certs_, kTestEmptySCT, GetTestSignature(), verify_context_.get(),
+      &error_details_, &details_, std::move(callback));
+  ASSERT_EQ(QUIC_FAILURE, status);
+  ProofVerifyDetailsChromium* verify_details =
+      static_cast<ProofVerifyDetailsChromium*>(details_.get());
+  EXPECT_TRUE(verify_details->is_fatal_cert_error);
+}
+
 // Test that PKP is enforced for certificates that chain up to known roots.
 TEST_F(ProofVerifierChromiumTest, PKPEnforced) {
   scoped_refptr<X509Certificate> test_cert = GetTestServerCertificate();
@@ -541,10 +598,10 @@ TEST_F(ProofVerifierChromiumTest, CTIsRequired) {
   // Set up CT.
   MockRequireCTDelegate require_ct_delegate;
   transport_security_state_.SetRequireCTDelegate(&require_ct_delegate);
-  EXPECT_CALL(require_ct_delegate, IsCTRequiredForHost(_))
+  EXPECT_CALL(require_ct_delegate, IsCTRequiredForHost(_, _, _))
       .WillRepeatedly(Return(TransportSecurityState::RequireCTDelegate::
                                  CTRequirementLevel::NOT_REQUIRED));
-  EXPECT_CALL(require_ct_delegate, IsCTRequiredForHost(kTestHostname))
+  EXPECT_CALL(require_ct_delegate, IsCTRequiredForHost(kTestHostname, _, _))
       .WillRepeatedly(Return(TransportSecurityState::RequireCTDelegate::
                                  CTRequirementLevel::REQUIRED));
   EXPECT_CALL(ct_policy_enforcer_, CheckCompliance(_, _, _))
@@ -593,10 +650,10 @@ TEST_F(ProofVerifierChromiumTest, CTIsRequiredHistogramNonCompliant) {
   // Set up CT.
   MockRequireCTDelegate require_ct_delegate;
   transport_security_state_.SetRequireCTDelegate(&require_ct_delegate);
-  EXPECT_CALL(require_ct_delegate, IsCTRequiredForHost(_))
+  EXPECT_CALL(require_ct_delegate, IsCTRequiredForHost(_, _, _))
       .WillRepeatedly(Return(TransportSecurityState::RequireCTDelegate::
                                  CTRequirementLevel::NOT_REQUIRED));
-  EXPECT_CALL(require_ct_delegate, IsCTRequiredForHost(kTestHostname))
+  EXPECT_CALL(require_ct_delegate, IsCTRequiredForHost(kTestHostname, _, _))
       .WillRepeatedly(Return(TransportSecurityState::RequireCTDelegate::
                                  CTRequirementLevel::REQUIRED));
   EXPECT_CALL(ct_policy_enforcer_, CheckCompliance(_, _, _))
@@ -640,10 +697,10 @@ TEST_F(ProofVerifierChromiumTest, CTIsRequiredHistogramCompliant) {
   // Set up CT.
   MockRequireCTDelegate require_ct_delegate;
   transport_security_state_.SetRequireCTDelegate(&require_ct_delegate);
-  EXPECT_CALL(require_ct_delegate, IsCTRequiredForHost(_))
+  EXPECT_CALL(require_ct_delegate, IsCTRequiredForHost(_, _, _))
       .WillRepeatedly(Return(TransportSecurityState::RequireCTDelegate::
                                  CTRequirementLevel::NOT_REQUIRED));
-  EXPECT_CALL(require_ct_delegate, IsCTRequiredForHost(kTestHostname))
+  EXPECT_CALL(require_ct_delegate, IsCTRequiredForHost(kTestHostname, _, _))
       .WillRepeatedly(Return(TransportSecurityState::RequireCTDelegate::
                                  CTRequirementLevel::REQUIRED));
   EXPECT_CALL(ct_policy_enforcer_, CheckCompliance(_, _, _))
@@ -749,10 +806,10 @@ TEST_F(ProofVerifierChromiumTest, PKPAndCTBothTested) {
   // Set up CT.
   MockRequireCTDelegate require_ct_delegate;
   transport_security_state_.SetRequireCTDelegate(&require_ct_delegate);
-  EXPECT_CALL(require_ct_delegate, IsCTRequiredForHost(_))
+  EXPECT_CALL(require_ct_delegate, IsCTRequiredForHost(_, _, _))
       .WillRepeatedly(Return(TransportSecurityState::RequireCTDelegate::
                                  CTRequirementLevel::NOT_REQUIRED));
-  EXPECT_CALL(require_ct_delegate, IsCTRequiredForHost(kTestHostname))
+  EXPECT_CALL(require_ct_delegate, IsCTRequiredForHost(kTestHostname, _, _))
       .WillRepeatedly(Return(TransportSecurityState::RequireCTDelegate::
                                  CTRequirementLevel::REQUIRED));
   EXPECT_CALL(ct_policy_enforcer_, CheckCompliance(_, _, _))
@@ -861,7 +918,7 @@ TEST_F(ProofVerifierChromiumTest, CTRequirementsFlagNotMet) {
   // Set up CT.
   MockRequireCTDelegate require_ct_delegate;
   transport_security_state_.SetRequireCTDelegate(&require_ct_delegate);
-  EXPECT_CALL(require_ct_delegate, IsCTRequiredForHost(_))
+  EXPECT_CALL(require_ct_delegate, IsCTRequiredForHost(_, _, _))
       .WillRepeatedly(Return(TransportSecurityState::RequireCTDelegate::
                                  CTRequirementLevel::REQUIRED));
   EXPECT_CALL(ct_policy_enforcer_, CheckCompliance(_, _, _))
@@ -903,7 +960,7 @@ TEST_F(ProofVerifierChromiumTest, CTRequirementsFlagMet) {
   // Set up CT.
   MockRequireCTDelegate require_ct_delegate;
   transport_security_state_.SetRequireCTDelegate(&require_ct_delegate);
-  EXPECT_CALL(require_ct_delegate, IsCTRequiredForHost(_))
+  EXPECT_CALL(require_ct_delegate, IsCTRequiredForHost(_, _, _))
       .WillRepeatedly(Return(TransportSecurityState::RequireCTDelegate::
                                  CTRequirementLevel::REQUIRED));
   EXPECT_CALL(ct_policy_enforcer_, CheckCompliance(_, _, _))

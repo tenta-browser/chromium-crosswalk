@@ -10,7 +10,6 @@
 #include <utility>
 
 #include "base/files/scoped_temp_dir.h"
-#include "base/memory/ptr_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "chrome/browser/sync_file_system/drive_backend/drive_backend_constants.h"
 #include "chrome/browser/sync_file_system/drive_backend/drive_backend_test_util.h"
@@ -124,7 +123,7 @@ class MetadataDatabaseIndexOnDiskTest : public testing::Test {
     leveldb::Status status = leveldb_env::OpenDB(
         options, database_dir_.GetPath().AsUTF8Unsafe(), &db);
     EXPECT_TRUE(status.ok());
-    return base::MakeUnique<LevelDBWrapper>(std::move(db));
+    return std::make_unique<LevelDBWrapper>(std::move(db));
   }
 
  private:

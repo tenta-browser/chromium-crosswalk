@@ -14,6 +14,30 @@ print_preview.ticket_items.CustomMarginsOrientation = {
   LEFT: 'left'
 };
 
+/**
+ * Must be kept in sync with the C++ MarginType enum in
+ * printing/print_job_constants.h.
+ * @enum {number}
+ */
+print_preview.ticket_items.MarginsTypeValue = {
+  DEFAULT: 0,
+  NO_MARGINS: 1,
+  MINIMUM: 2,
+  CUSTOM: 3
+};
+
+/**
+ * Keep in sync with the C++ kSettingMargin... values in
+ * printing/print_job_constants.h.
+ * @typedef {{
+ *   marginTop: number,
+ *   marginRight: number,
+ *   marginBottom: number,
+ *   marginLeft: number,
+ * }}
+ */
+print_preview.MarginsSetting;
+
 cr.define('print_preview', function() {
   'use strict';
 

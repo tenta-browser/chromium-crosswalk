@@ -46,7 +46,7 @@ HistoryMenuBridge::HistoryItem::HistoryItem()
     : icon_requested(false),
       icon_task_id(base::CancelableTaskTracker::kBadTaskId),
       menu_item(nil),
-      session_id(0) {}
+      session_id(SessionID::InvalidValue()) {}
 
 HistoryMenuBridge::HistoryItem::HistoryItem(const HistoryItem& copy)
     : title(copy.title),
@@ -295,11 +295,10 @@ NSMenuItem* HistoryMenuBridge::AddItemToMenu(HistoryItem* item,
   // Elide the title of the history item, or use the URL if there is none.
   std::string url = item->url.possibly_invalid_spec();
   base::string16 full_title = item->title;
-  base::string16 title =
-      gfx::ElideText(full_title.empty() ? base::UTF8ToUTF16(url) : full_title,
-                     gfx::FontList(gfx::Font([NSFont menuFontOfSize:0])),
-                     kTitlePixelWidth,
-                     gfx::ELIDE_MIDDLE);
+  base::string16 title = gfx::ElideText(
+      full_title.empty() ? base::UTF8ToUTF16(url) : full_title,
+      gfx::FontList(gfx::Font([NSFont menuFontOfSize:0])), kTitlePixelWidth,
+      gfx::ELIDE_MIDDLE, gfx::Typesetter::NATIVE);
 
   item->menu_item.reset(
       [[NSMenuItem alloc] initWithTitle:base::SysUTF16ToNSString(title)

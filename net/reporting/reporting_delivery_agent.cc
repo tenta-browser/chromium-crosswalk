@@ -6,6 +6,7 @@
 
 #include <map>
 #include <string>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -70,21 +71,22 @@ class ReportingDeliveryAgentImpl : public ReportingDeliveryAgent,
 
   // ReportingObserver implementation:
   void OnCacheUpdated() override {
-    if (CacheHasReports())
+    if (CacheHasReports() && !timer_->IsRunning()) {
+      SendReports();
       StartTimer();
+    }
   }
 
  private:
   class Delivery {
    public:
-    Delivery(const GURL& endpoint,
-             const std::vector<const ReportingReport*>& reports)
-        : endpoint(endpoint), reports(reports) {}
+    Delivery(const GURL& endpoint, std::vector<const ReportingReport*> reports)
+        : endpoint(endpoint), reports(std::move(reports)) {}
 
-    ~Delivery() {}
+    ~Delivery() = default;
 
     const GURL endpoint;
-    const std::vector<const ReportingReport*> reports;
+    std::vector<const ReportingReport*> reports;
   };
 
   using OriginGroup = std::pair<url::Origin, std::string>;
@@ -97,8 +99,8 @@ class ReportingDeliveryAgentImpl : public ReportingDeliveryAgent,
 
   void StartTimer() {
     timer_->Start(FROM_HERE, policy().delivery_interval,
-                  base::Bind(&ReportingDeliveryAgentImpl::OnTimerFired,
-                             base::Unretained(this)));
+                  base::BindRepeating(&ReportingDeliveryAgentImpl::OnTimerFired,
+                                      base::Unretained(this)));
   }
 
   void OnTimerFired() {
@@ -110,16 +112,34 @@ class ReportingDeliveryAgentImpl : public ReportingDeliveryAgent,
 
   void SendReports() {
     std::vector<const ReportingReport*> reports;
-    cache()->GetReports(&reports);
+    cache()->GetNonpendingReports(&reports);
 
+    // Mark all of these reports as pending, so that they're not deleted out
+    // from under us while we're checking permissions (possibly on another
+    // thread).
+    cache()->SetReportsPending(reports);
+
+    // First determine which origins we're allowed to upload reports about.
+    std::set<url::Origin> origins;
+    for (const ReportingReport* report : reports) {
+      origins.insert(url::Origin::Create(report->url));
+    }
+    delegate()->CanSendReports(
+        std::move(origins),
+        base::BindOnce(&ReportingDeliveryAgentImpl::OnSendPermissionsChecked,
+                       weak_factory_.GetWeakPtr(), std::move(reports)));
+  }
+
+  void OnSendPermissionsChecked(std::vector<const ReportingReport*> reports,
+                                std::set<url::Origin> allowed_origins) {
     // Sort reports into (origin, group) buckets.
     std::map<OriginGroup, std::vector<const ReportingReport*>>
         origin_group_reports;
     for (const ReportingReport* report : reports) {
       url::Origin origin = url::Origin::Create(report->url);
-      if (!delegate()->CanSendReport(origin))
+      if (allowed_origins.find(origin) == allowed_origins.end())
         continue;
-      OriginGroup origin_group(url::Origin::Create(report->url), report->group);
+      OriginGroup origin_group(origin, report->group);
       origin_group_reports[origin_group].push_back(report);
     }
 
@@ -147,27 +167,47 @@ class ReportingDeliveryAgentImpl : public ReportingDeliveryAgent,
       pending_origin_groups_.insert(origin_group);
     }
 
+    // Keep track of which of these reports we don't queue for delivery; we'll
+    // need to mark them as not-pending.
+    std::unordered_set<const ReportingReport*> undelivered_reports(
+        reports.begin(), reports.end());
+
     // Start a delivery to each endpoint.
     for (auto& it : endpoint_reports) {
       const GURL& endpoint = it.first;
       const std::vector<const ReportingReport*>& reports = it.second;
 
       endpoint_manager()->SetEndpointPending(endpoint);
-      cache()->SetReportsPending(reports);
 
       std::string json;
       SerializeReports(reports, tick_clock()->NowTicks(), &json);
 
+      int max_depth = 0;
+      for (const ReportingReport* report : reports) {
+        undelivered_reports.erase(report);
+        if (report->depth > max_depth)
+          max_depth = report->depth;
+      }
+
+      // TODO: Calculate actual max depth.
       uploader()->StartUpload(
-          endpoint, json,
-          base::Bind(&ReportingDeliveryAgentImpl::OnUploadComplete,
-                     weak_factory_.GetWeakPtr(),
-                     std::make_unique<Delivery>(endpoint, reports)));
+          endpoint, json, max_depth,
+          base::BindOnce(
+              &ReportingDeliveryAgentImpl::OnUploadComplete,
+              weak_factory_.GetWeakPtr(),
+              std::make_unique<Delivery>(endpoint, std::move(reports))));
     }
+
+    cache()->ClearReportsPending(
+        {undelivered_reports.begin(), undelivered_reports.end()});
   }
 
   void OnUploadComplete(const std::unique_ptr<Delivery>& delivery,
                         ReportingUploader::Outcome outcome) {
+    cache()->IncrementEndpointDeliveries(
+        delivery->endpoint, delivery->reports,
+        outcome == ReportingUploader::Outcome::SUCCESS);
+
     if (outcome == ReportingUploader::Outcome::SUCCESS) {
       cache()->RemoveReports(delivery->reports,
                              ReportingReport::Outcome::DELIVERED);
@@ -190,7 +230,7 @@ class ReportingDeliveryAgentImpl : public ReportingDeliveryAgent,
   }
 
   const ReportingPolicy& policy() { return context_->policy(); }
-  base::TickClock* tick_clock() { return context_->tick_clock(); }
+  const base::TickClock* tick_clock() { return context_->tick_clock(); }
   ReportingDelegate* delegate() { return context_->delegate(); }
   ReportingCache* cache() { return context_->cache(); }
   ReportingUploader* uploader() { return context_->uploader(); }
@@ -219,6 +259,6 @@ std::unique_ptr<ReportingDeliveryAgent> ReportingDeliveryAgent::Create(
   return std::make_unique<ReportingDeliveryAgentImpl>(context);
 }
 
-ReportingDeliveryAgent::~ReportingDeliveryAgent() {}
+ReportingDeliveryAgent::~ReportingDeliveryAgent() = default;
 
 }  // namespace net

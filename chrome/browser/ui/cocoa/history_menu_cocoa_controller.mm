@@ -45,7 +45,7 @@ using content::Referrer;
   // just load the URL.
   sessions::TabRestoreService* service =
       TabRestoreServiceFactory::GetForProfile(bridge_->profile());
-  if (node->session_id && service) {
+  if (node->session_id.is_valid() && service) {
     Browser* browser = chrome::FindTabbedBrowser(bridge_->profile(), false);
     BrowserLiveTabContext* context =
         browser ? browser->live_tab_context() : NULL;
@@ -55,10 +55,10 @@ using content::Referrer;
     DCHECK(node->url.is_valid());
     WindowOpenDisposition disposition =
         ui::WindowOpenDispositionFromNSEvent([NSApp currentEvent]);
-    chrome::NavigateParams params(bridge_->profile(), node->url,
-        ui::PAGE_TRANSITION_AUTO_BOOKMARK);
+    NavigateParams params(bridge_->profile(), node->url,
+                          ui::PAGE_TRANSITION_AUTO_BOOKMARK);
     params.disposition = disposition;
-    chrome::Navigate(&params);
+    Navigate(&params);
   }
 }
 

@@ -3,6 +3,17 @@
     {
       "name": "LayoutView #document",
       "bounds": [800, 600],
+      "drawsContent": false,
+      "backgroundColor": "#FFFFFF"
+    },
+    {
+      "name": "Scrolling Layer",
+      "bounds": [800, 600],
+      "drawsContent": false
+    },
+    {
+      "name": "Scrolling Contents Layer",
+      "bounds": [800, 600],
       "contentsOpaque": true,
       "backgroundColor": "#FFFFFF",
       "paintInvalidations": [
@@ -12,12 +23,12 @@
           "reason": "geometry"
         },
         {
-          "object": "LayoutBlockFlow DIV id='div'",
-          "rect": [8, 84, 784, 20],
-          "reason": "appeared"
+          "object": "Caret",
+          "rect": [8, 84, 1, 19],
+          "reason": "caret"
         },
         {
-          "object": "LayoutBlockFlow DIV id='div'",
+          "object": "Caret",
           "rect": [8, 64, 1, 19],
           "reason": "caret"
         }

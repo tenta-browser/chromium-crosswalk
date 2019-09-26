@@ -4,6 +4,8 @@
 
 #include "chrome/browser/ui/extensions/hosted_app_browser_controller.h"
 
+#include "base/metrics/histogram_macros.h"
+#include "chrome/browser/engagement/site_engagement_service.h"
 #include "chrome/browser/extensions/tab_helper.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ssl/security_state_tab_helper.h"
@@ -13,14 +15,20 @@
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/browser/web_applications/web_app.h"
 #include "chrome/common/chrome_features.h"
+#include "chrome/common/extensions/api/url_handlers/url_handlers_parser.h"
 #include "chrome/common/extensions/manifest_handlers/app_launch_info.h"
 #include "chrome/common/extensions/manifest_handlers/app_theme_color_info.h"
 #include "components/security_state/core/security_state.h"
+#include "components/url_formatter/url_formatter.h"
+#include "content/public/browser/browser_context.h"
 #include "content/public/browser/navigation_entry.h"
+#include "content/public/browser/render_view_host.h"
 #include "content/public/browser/web_contents.h"
+#include "content/public/common/renderer_preferences.h"
+#include "content/public/common/web_preferences.h"
 #include "extensions/browser/extension_registry.h"
+#include "extensions/common/constants.h"
 #include "extensions/common/extension.h"
-#include "net/base/registry_controlled_domains/registry_controlled_domain.h"
 #include "ui/gfx/favicon_size.h"
 #include "ui/gfx/image/image_skia.h"
 #include "url/gurl.h"
@@ -29,12 +37,53 @@ namespace extensions {
 
 namespace {
 
-bool IsSameOriginOrMoreSecure(const GURL& app_url, const GURL& page_url) {
-  const std::string www("www.");
-  return (app_url.scheme_piece() == page_url.scheme_piece() ||
-          page_url.scheme_piece() == url::kHttpsScheme) &&
+// Returns the scheme that page URLs should be, in order to be considered
+// "secure", for an app URL of scheme |scheme|.
+//
+// All pages (even if the app was created with scheme "http") are expected to
+// have scheme "https", since "http" is not secure. As a special exception,
+// pages for "chrome-extension" apps are expected to have the same scheme (since
+// that scheme is secure).
+base::StringPiece ExpectedSchemeForApp(base::StringPiece scheme) {
+  if (scheme == kExtensionScheme)
+    return scheme;
+
+  return url::kHttpsScheme;
+}
+
+bool IsSiteSecure(const content::WebContents* web_contents) {
+  const SecurityStateTabHelper* helper =
+      SecurityStateTabHelper::FromWebContents(web_contents);
+  if (helper) {
+    security_state::SecurityInfo security_info;
+    helper->GetSecurityInfo(&security_info);
+    switch (security_info.security_level) {
+      case security_state::SECURITY_LEVEL_COUNT:
+        NOTREACHED();
+        return false;
+      case security_state::EV_SECURE:
+      case security_state::SECURE:
+      case security_state::SECURE_WITH_POLICY_INSTALLED_CERT:
+        return true;
+      case security_state::NONE:
+      case security_state::HTTP_SHOW_WARNING:
+      case security_state::DANGEROUS:
+        return false;
+    }
+  }
+  return false;
+}
+
+// Returns true if |page_url| is both secure (not http) and on the same origin
+// as |app_url|. Note that even if |app_url| is http, this still returns true as
+// long as |page_url| is https. To avoid breaking Hosted Apps and Bookmark Apps
+// that might redirect to sites in the same domain but with "www.", this returns
+// true if |page_url| is secure and in the same origin as |app_url| with "www.".
+bool IsSameOriginAndSecure(const GURL& app_url, const GURL& page_url) {
+  return ExpectedSchemeForApp(app_url.scheme_piece()) ==
+             page_url.scheme_piece() &&
          (app_url.host_piece() == page_url.host_piece() ||
-          www + app_url.host() == page_url.host_piece()) &&
+          std::string("www.") + app_url.host() == page_url.host_piece()) &&
          app_url.port() == page_url.port();
 }
 
@@ -54,8 +103,14 @@ gfx::ImageSkia GetFallbackAppIcon(Browser* browser) {
 
 }  // namespace
 
+const char kPwaWindowEngagementTypeHistogram[] =
+    "Webapp.Engagement.EngagementType";
+
 // static
 bool HostedAppBrowserController::IsForHostedApp(const Browser* browser) {
+  if (!browser)
+    return false;
+
   const std::string extension_id =
       web_app::GetExtensionIdFromApplicationName(browser->app_name());
   const Extension* extension =
@@ -71,12 +126,54 @@ bool HostedAppBrowserController::IsForExperimentalHostedAppBrowser(
          IsForHostedApp(browser);
 }
 
-HostedAppBrowserController::HostedAppBrowserController(Browser* browser)
-    : browser_(browser),
-      extension_id_(
-          web_app::GetExtensionIdFromApplicationName(browser->app_name())) {}
+// static
+void HostedAppBrowserController::SetAppPrefsForWebContents(
+    HostedAppBrowserController* controller,
+    content::WebContents* web_contents) {
+  auto* rvh = web_contents->GetRenderViewHost();
 
-HostedAppBrowserController::~HostedAppBrowserController() {}
+  web_contents->GetMutableRendererPrefs()->can_accept_load_drops = false;
+  rvh->SyncRendererPrefs();
+
+  // This function could be called for non Hosted Apps.
+  if (!controller)
+    return;
+
+  if (controller->created_for_installed_pwa()) {
+    content::WebPreferences prefs = rvh->GetWebkitPreferences();
+    prefs.strict_mixed_content_checking = true;
+    rvh->UpdateWebkitPreferences(prefs);
+  }
+}
+
+base::string16 HostedAppBrowserController::FormatUrlOrigin(const GURL& url) {
+  return url_formatter::FormatUrl(
+      url.GetOrigin(),
+      url_formatter::kFormatUrlOmitUsernamePassword |
+          url_formatter::kFormatUrlOmitHTTPS |
+          url_formatter::kFormatUrlOmitHTTP |
+          url_formatter::kFormatUrlOmitTrailingSlashOnBareHostname |
+          url_formatter::kFormatUrlOmitTrivialSubdomains,
+      net::UnescapeRule::SPACES, nullptr, nullptr, nullptr);
+}
+
+HostedAppBrowserController::HostedAppBrowserController(Browser* browser)
+    : SiteEngagementObserver(SiteEngagementService::Get(browser->profile())),
+      browser_(browser),
+      extension_id_(
+          web_app::GetExtensionIdFromApplicationName(browser->app_name())),
+      // If a bookmark app has a URL handler, then it is a PWA.
+      // TODO(https://crbug.com/774918): Replace once there is a more explicit
+      // indicator of a Bookmark App for an installable website.
+      created_for_installed_pwa_(
+          base::FeatureList::IsEnabled(features::kDesktopPWAWindowing) &&
+          UrlHandlers::GetUrlHandlers(GetExtension())) {
+  browser_->tab_strip_model()->AddObserver(this);
+}
+
+HostedAppBrowserController::~HostedAppBrowserController() {
+  browser_->tab_strip_model()->RemoveObserver(this);
+}
 
 bool HostedAppBrowserController::ShouldShowLocationBar() const {
   const Extension* extension = GetExtension();
@@ -96,20 +193,24 @@ bool HostedAppBrowserController::ShouldShowLocationBar() const {
   if (web_contents->GetLastCommittedURL().is_empty())
     return false;
 
-  const SecurityStateTabHelper* helper =
-      SecurityStateTabHelper::FromWebContents(web_contents);
-  if (helper) {
-    security_state::SecurityInfo security_info;
-    helper->GetSecurityInfo(&security_info);
-    if (security_info.security_level == security_state::DANGEROUS)
-      return true;
+  GURL launch_url = AppLaunchInfo::GetLaunchWebURL(extension);
+  if (!IsSameOriginAndSecure(launch_url, web_contents->GetLastCommittedURL()))
+    return true;
+
+  // Check the visible URL, because we would like to indicate to the user that
+  // they are navigating to a different origin than that of the app as soon as
+  // the navigation starts, even if the navigation hasn't committed yet.
+  if (!IsSameOriginAndSecure(launch_url, web_contents->GetVisibleURL()))
+    return true;
+
+  // We consider URLs with kExtensionScheme secure.
+  if (!(IsSiteSecure(web_contents) ||
+        web_contents->GetLastCommittedURL().scheme_piece() ==
+            kExtensionScheme)) {
+    return true;
   }
 
-  GURL launch_url = AppLaunchInfo::GetLaunchWebURL(extension);
-  return !(IsSameOriginOrMoreSecure(launch_url,
-                                    web_contents->GetVisibleURL()) &&
-           IsSameOriginOrMoreSecure(launch_url,
-                                    web_contents->GetLastCommittedURL()));
+  return false;
 }
 
 void HostedAppBrowserController::UpdateLocationBarVisibility(
@@ -172,10 +273,47 @@ std::string HostedAppBrowserController::GetAppShortName() const {
   return GetExtension()->short_name();
 }
 
-std::string HostedAppBrowserController::GetDomainAndRegistry() const {
-  return net::registry_controlled_domains::GetDomainAndRegistry(
-      AppLaunchInfo::GetLaunchWebURL(GetExtension()),
-      net::registry_controlled_domains::INCLUDE_PRIVATE_REGISTRIES);
+base::string16 HostedAppBrowserController::GetFormattedUrlOrigin() const {
+  return FormatUrlOrigin(AppLaunchInfo::GetLaunchWebURL(GetExtension()));
+}
+
+void HostedAppBrowserController::OnEngagementEvent(
+    content::WebContents* web_contents,
+    const GURL& /*url*/,
+    double /*score*/,
+    SiteEngagementService::EngagementType type) {
+  if (!created_for_installed_pwa_)
+    return;
+
+  // Check the event belongs to the controller's associated browser window.
+  if (!web_contents ||
+      web_contents != browser_->tab_strip_model()->GetActiveWebContents()) {
+    return;
+  }
+
+  UMA_HISTOGRAM_ENUMERATION(kPwaWindowEngagementTypeHistogram, type,
+                            SiteEngagementService::ENGAGEMENT_LAST);
+}
+
+void HostedAppBrowserController::TabInsertedAt(TabStripModel* tab_strip_model,
+                                               content::WebContents* contents,
+                                               int index,
+                                               bool foreground) {
+  HostedAppBrowserController::SetAppPrefsForWebContents(this, contents);
+}
+
+void HostedAppBrowserController::TabDetachedAt(content::WebContents* contents,
+                                               int index) {
+  auto* rvh = contents->GetRenderViewHost();
+
+  contents->GetMutableRendererPrefs()->can_accept_load_drops = true;
+  rvh->SyncRendererPrefs();
+
+  if (created_for_installed_pwa_) {
+    content::WebPreferences prefs = rvh->GetWebkitPreferences();
+    prefs.strict_mixed_content_checking = false;
+    rvh->UpdateWebkitPreferences(prefs);
+  }
 }
 
 }  // namespace extensions

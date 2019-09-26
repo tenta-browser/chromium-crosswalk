@@ -6,13 +6,10 @@ package org.chromium.chrome.browser.widget.bottomsheet;
 
 import android.support.annotation.IntDef;
 
-import org.chromium.base.metrics.RecordHistogram;
+import org.chromium.base.metrics.CachedMetrics;
 import org.chromium.base.metrics.RecordUserAction;
-import org.chromium.chrome.browser.feature_engagement.TrackerFactory;
-import org.chromium.chrome.browser.profiles.Profile;
 import org.chromium.chrome.browser.widget.bottomsheet.BottomSheet.BottomSheetContent;
 import org.chromium.chrome.browser.widget.bottomsheet.BottomSheet.StateChangeReason;
-import org.chromium.components.feature_engagement.EventConstants;
 
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
@@ -26,16 +23,50 @@ public class BottomSheetMetrics extends EmptyBottomSheetObserver {
      * The different ways that the bottom sheet can be opened. This is used to back a UMA
      * histogram and should therefore be treated as append-only.
      */
-    @IntDef({OPENED_BY_SWIPE, OPENED_BY_OMNIBOX_FOCUS, OPENED_BY_NEW_TAB_CREATION,
-            OPENED_BY_EXPAND_BUTTON, OPENED_BY_STARTUP})
+    @IntDef({OPENED_BY_SWIPE, OPENED_BY_BOUNDARY})
     @Retention(RetentionPolicy.SOURCE)
     private @interface SheetOpenReason {}
     private static final int OPENED_BY_SWIPE = 0;
-    private static final int OPENED_BY_OMNIBOX_FOCUS = 1;
-    private static final int OPENED_BY_NEW_TAB_CREATION = 2;
-    private static final int OPENED_BY_EXPAND_BUTTON = 3;
-    private static final int OPENED_BY_STARTUP = 4;
+    // Obsolete: private static final int OPENED_BY_OMNIBOX_FOCUS = 1;
+    // Obsolete: private static final int OPENED_BY_NEW_TAB_CREATION = 2;
+    // Obsolete: private static final int OPENED_BY_EXPAND_BUTTON = 3;
+    // Obsolete: private static final int OPENED_BY_STARTUP = 4;
     private static final int OPENED_BY_BOUNDARY = 5;
+
+    private static final CachedMetrics.TimesHistogramSample TIMES_FIRST_OPEN =
+            new CachedMetrics.TimesHistogramSample(
+                    "Android.ChromeHome.TimeToFirstOpen", TimeUnit.MILLISECONDS);
+
+    private static final CachedMetrics.TimesHistogramSample TIMES_BETWEEN_CLOSE_AND_NEXT_OPEN =
+            new CachedMetrics.TimesHistogramSample(
+                    "Android.ChromeHome.TimeBetweenCloseAndNextOpen", TimeUnit.MILLISECONDS);
+
+    private static final CachedMetrics.TimesHistogramSample TIMES_DURATION_OPEN =
+            new CachedMetrics.TimesHistogramSample(
+                    "Android.ChromeHome.DurationOpen", TimeUnit.MILLISECONDS);
+
+    private static final CachedMetrics.EnumeratedHistogramSample ENUMERATED_OPEN_REASON =
+            new CachedMetrics.EnumeratedHistogramSample(
+                    "Android.ChromeHome.OpenReason", OPENED_BY_BOUNDARY);
+
+    private static final CachedMetrics.ActionEvent ACTION_HALF_STATE =
+            new CachedMetrics.ActionEvent("Android.ChromeHome.HalfState");
+    private static final CachedMetrics.ActionEvent ACTION_FULL_STATE =
+            new CachedMetrics.ActionEvent("Android.ChromeHome.FullState");
+
+    private static final CachedMetrics.ActionEvent ACTION_OPENED_BY_SWIPE =
+            new CachedMetrics.ActionEvent("Android.ChromeHome.OpenedBySwipe");
+
+    private static final CachedMetrics.ActionEvent ACTION_CLOSED_BY_SWIPE =
+            new CachedMetrics.ActionEvent("Android.ChromeHome.ClosedBySwipe");
+    private static final CachedMetrics.ActionEvent ACTION_CLOSED_BY_BACK_PRESS =
+            new CachedMetrics.ActionEvent("Android.ChromeHome.ClosedByBackPress");
+    private static final CachedMetrics.ActionEvent ACTION_CLOSED_BY_TAP_SCRIM =
+            new CachedMetrics.ActionEvent("Android.ChromeHome.ClosedByTapScrim");
+    private static final CachedMetrics.ActionEvent ACTION_CLOSED_BY_NAVIGATION =
+            new CachedMetrics.ActionEvent("Android.ChromeHome.ClosedByNavigation");
+    private static final CachedMetrics.ActionEvent ACTION_CLOSED =
+            new CachedMetrics.ActionEvent("Android.ChromeHome.Closed");
 
     /** Whether the sheet is currently open. */
     private boolean mIsSheetOpen;
@@ -64,12 +95,9 @@ public class BottomSheetMetrics extends EmptyBottomSheetObserver {
         mLastOpenTime = System.currentTimeMillis();
 
         if (isFirstOpen) {
-            RecordHistogram.recordMediumTimesHistogram("Android.ChromeHome.TimeToFirstOpen",
-                    mLastOpenTime - mCreationTime, TimeUnit.MILLISECONDS);
+            TIMES_FIRST_OPEN.record(mLastOpenTime - mCreationTime);
         } else {
-            RecordHistogram.recordMediumTimesHistogram(
-                    "Android.ChromeHome.TimeBetweenCloseAndNextOpen",
-                    mLastOpenTime - mLastCloseTime, TimeUnit.MILLISECONDS);
+            TIMES_BETWEEN_CLOSE_AND_NEXT_OPEN.record(mLastOpenTime - mLastCloseTime);
         }
 
         recordSheetOpenReason(reason);
@@ -78,54 +106,20 @@ public class BottomSheetMetrics extends EmptyBottomSheetObserver {
     @Override
     public void onSheetClosed(@StateChangeReason int reason) {
         mIsSheetOpen = false;
+
         recordSheetCloseReason(reason);
 
         mLastCloseTime = System.currentTimeMillis();
-        RecordHistogram.recordMediumTimesHistogram("Android.ChromeHome.DurationOpen",
-                mLastCloseTime - mLastOpenTime, TimeUnit.MILLISECONDS);
+        TIMES_DURATION_OPEN.record(mLastCloseTime - mLastOpenTime);
     }
 
     @Override
     public void onSheetStateChanged(int newState) {
         if (newState == BottomSheet.SHEET_STATE_HALF) {
-            RecordUserAction.record("Android.ChromeHome.HalfState");
+            ACTION_HALF_STATE.record();
         } else if (newState == BottomSheet.SHEET_STATE_FULL) {
-            RecordUserAction.record("Android.ChromeHome.FullState");
+            ACTION_FULL_STATE.record();
         }
-    }
-
-    @Override
-    public void onSheetContentChanged(BottomSheetContent newContent) {
-        // Return early if the sheet content is being set during initialization (previous content
-        // is null) or while the sheet is closed (sheet content being reset), so that we only
-        // record actions when the user explicitly takes an action.
-        if (mLastContent == null || !mIsSheetOpen || newContent == null) {
-            mLastContent = newContent;
-            return;
-        }
-
-        int contentType = newContent.getType();
-
-        if (contentType == BottomSheetContentController.TYPE_SUGGESTIONS) {
-            RecordUserAction.record("Android.ChromeHome.ShowSuggestions");
-        } else if (contentType == BottomSheetContentController.TYPE_DOWNLOADS) {
-            RecordUserAction.record("Android.ChromeHome.ShowDownloads");
-        } else if (contentType == BottomSheetContentController.TYPE_BOOKMARKS) {
-            RecordUserAction.record("Android.ChromeHome.ShowBookmarks");
-        } else if (contentType == BottomSheetContentController.TYPE_HISTORY) {
-            RecordUserAction.record("Android.ChromeHome.ShowHistory");
-        } else if (contentType == BottomSheetContentController.TYPE_INCOGNITO_HOME) {
-            RecordUserAction.record("Android.ChromeHome.ShowIncognitoHome");
-        }
-
-        if (contentType == BottomSheetContentController.TYPE_DOWNLOADS
-                || contentType == BottomSheetContentController.TYPE_BOOKMARKS
-                || contentType == BottomSheetContentController.TYPE_HISTORY) {
-            TrackerFactory.getTrackerForProfile(Profile.getLastUsedProfile())
-                    .notifyEvent(EventConstants.CHROME_HOME_NON_HOME_CONTENT_SHOWN);
-        }
-
-        mLastContent = newContent;
     }
 
     /**
@@ -138,23 +132,7 @@ public class BottomSheetMetrics extends EmptyBottomSheetObserver {
         switch (reason) {
             case StateChangeReason.SWIPE:
                 metricsReason = OPENED_BY_SWIPE;
-                RecordUserAction.record("Android.ChromeHome.OpenedBySwipe");
-                break;
-            case StateChangeReason.OMNIBOX_FOCUS:
-                metricsReason = OPENED_BY_OMNIBOX_FOCUS;
-                RecordUserAction.record("Android.ChromeHome.OpenedByOmnibox");
-                break;
-            case StateChangeReason.NEW_TAB:
-                metricsReason = OPENED_BY_NEW_TAB_CREATION;
-                RecordUserAction.record("Android.ChromeHome.OpenedByNTP");
-                break;
-            case StateChangeReason.EXPAND_BUTTON:
-                metricsReason = OPENED_BY_EXPAND_BUTTON;
-                RecordUserAction.record("Android.ChromeHome.OpenedByExpandButton");
-                break;
-            case StateChangeReason.STARTUP:
-                metricsReason = OPENED_BY_STARTUP;
-                RecordUserAction.record("Android.ChromeHome.OpenedByStartup");
+                ACTION_OPENED_BY_SWIPE.record();
                 break;
             case StateChangeReason.NONE:
                 // Intentionally empty.
@@ -163,8 +141,7 @@ public class BottomSheetMetrics extends EmptyBottomSheetObserver {
                 assert false;
         }
 
-        RecordHistogram.recordEnumeratedHistogram(
-                "Android.ChromeHome.OpenReason", metricsReason, OPENED_BY_BOUNDARY);
+        ENUMERATED_OPEN_REASON.record(metricsReason);
     }
 
     /**
@@ -174,19 +151,19 @@ public class BottomSheetMetrics extends EmptyBottomSheetObserver {
     private void recordSheetCloseReason(@StateChangeReason int reason) {
         switch (reason) {
             case StateChangeReason.SWIPE:
-                RecordUserAction.record("Android.ChromeHome.ClosedBySwipe");
+                ACTION_CLOSED_BY_SWIPE.record();
                 break;
             case StateChangeReason.BACK_PRESS:
-                RecordUserAction.record("Android.ChromeHome.ClosedByBackPress");
+                ACTION_CLOSED_BY_BACK_PRESS.record();
                 break;
             case StateChangeReason.TAP_SCRIM:
-                RecordUserAction.record("Android.ChromeHome.ClosedByTapScrim");
+                ACTION_CLOSED_BY_TAP_SCRIM.record();
                 break;
             case StateChangeReason.NAVIGATION:
-                RecordUserAction.record("Android.ChromeHome.ClosedByNavigation");
+                ACTION_CLOSED_BY_NAVIGATION.record();
                 break;
             case StateChangeReason.NONE:
-                RecordUserAction.record("Android.ChromeHome.Closed");
+                ACTION_CLOSED.record();
                 break;
             default:
                 assert false;

@@ -138,9 +138,9 @@ const OncFieldSignature openvpn_fields[] = {
     {::onc::openvpn::kStaticChallenge, &kStringSignature},
     {::onc::openvpn::kTLSAuthContents, &kStringSignature},
     {::onc::openvpn::kTLSRemote, &kStringSignature},
+    {::onc::openvpn::kTLSVersionMin, &kStringSignature},
     {::onc::openvpn::kUserAuthenticationType, &kStringSignature},
     {::onc::vpn::kUsername, &kStringSignature},
-    // Not supported, yet.
     {::onc::openvpn::kVerb, &kStringSignature},
     {::onc::openvpn::kVerifyHash, &kStringSignature},
     {::onc::openvpn::kVerifyX509, &kVerifyX509Signature},
@@ -225,6 +225,7 @@ const OncFieldSignature wifi_fields[] = {
     {::onc::wifi::kAllowGatewayARPPolling, &kBoolSignature},
     {::onc::wifi::kAutoConnect, &kBoolSignature},
     {::onc::wifi::kEAP, &kEAPSignature},
+    {::onc::wifi::kFTEnabled, &kBoolSignature},
     {::onc::wifi::kHexSSID, &kStringSignature},
     {::onc::wifi::kHiddenSSID, &kBoolSignature},
     {::onc::wifi::kPassphrase, &kStringSignature},

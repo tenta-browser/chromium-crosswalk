@@ -13,7 +13,7 @@ namespace content {
 
 class ShellContentUtilityClient : public ContentUtilityClient {
  public:
-  ShellContentUtilityClient();
+  explicit ShellContentUtilityClient(bool is_browsertest = false);
   ~ShellContentUtilityClient() override;
 
   // ContentUtilityClient:
@@ -23,7 +23,7 @@ class ShellContentUtilityClient : public ContentUtilityClient {
       service_manager::BinderRegistry* registry) override;
 
  private:
-  NetworkServiceTestHelper network_service_test_helper_;
+  std::unique_ptr<NetworkServiceTestHelper> network_service_test_helper_;
 
   DISALLOW_COPY_AND_ASSIGN(ShellContentUtilityClient);
 };

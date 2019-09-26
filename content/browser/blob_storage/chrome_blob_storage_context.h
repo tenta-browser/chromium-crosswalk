@@ -15,12 +15,18 @@
 #include "base/memory/ref_counted.h"
 #include "base/sequenced_task_runner_helpers.h"
 #include "content/common/content_export.h"
+#include "services/network/public/cpp/shared_url_loader_factory.h"
 #include "storage/browser/blob/blob_data_handle.h"
+#include "third_party/blink/public/mojom/blob/blob_url_store.mojom.h"
 
 namespace base {
 class FilePath;
 class TaskRunner;
 class Time;
+}
+
+namespace network {
+class ResourceRequestBody;
 }
 
 namespace storage {
@@ -31,7 +37,6 @@ namespace content {
 class BlobHandle;
 class BrowserContext;
 struct ChromeBlobStorageContextDeleter;
-class ResourceRequestBody;
 class ResourceContext;
 
 // A context class that keeps track of BlobStorageController used by the chrome.
@@ -69,6 +74,11 @@ class CONTENT_EXPORT ChromeBlobStorageContext
       int64_t size,
       const base::Time& expected_modification_time);
 
+  // Must be called on the UI thread.
+  static scoped_refptr<network::SharedURLLoaderFactory>
+  URLLoaderFactoryForToken(BrowserContext* browser_context,
+                           blink::mojom::BlobURLTokenPtr token);
+
  protected:
   virtual ~ChromeBlobStorageContext();
 
@@ -99,7 +109,7 @@ using BlobHandles = std::vector<std::unique_ptr<storage::BlobDataHandle>>;
 // Attempts to create a vector of BlobDataHandles that ensure any blob data
 // associated with |body| isn't cleaned up until the handles are destroyed.
 // Returns false on failure. This is used for POST and PUT requests.
-bool GetBodyBlobDataHandles(ResourceRequestBody* body,
+bool GetBodyBlobDataHandles(network::ResourceRequestBody* body,
                             ResourceContext* resource_context,
                             BlobHandles* blob_handles);
 

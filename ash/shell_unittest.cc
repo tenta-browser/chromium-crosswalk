@@ -99,6 +99,8 @@ void ExpectAllContainers() {
       Shell::GetContainer(root_window, kShellWindowId_OverlayContainer));
   EXPECT_TRUE(Shell::GetContainer(root_window,
                                   kShellWindowId_ImeWindowParentContainer));
+  EXPECT_TRUE(Shell::GetContainer(root_window,
+                                  kShellWindowId_VirtualKeyboardContainer));
   EXPECT_TRUE(
       Shell::GetContainer(root_window, kShellWindowId_MouseCursorContainer));
 
@@ -158,9 +160,9 @@ class TestShellObserver : public ShellObserver {
 
 class ShellTest : public AshTestBase {
  public:
+  // TODO(jamescook): Convert to AshTestBase::CreateTestWidget().
   views::Widget* CreateTestWindow(views::Widget::InitParams params) {
     views::Widget* widget = new views::Widget;
-    params.context = CurrentContext();
     widget->Init(params);
     return widget;
   }
@@ -381,7 +383,7 @@ TEST_F(ShellTest, LockScreenClosesActiveMenu) {
   menu_model->AddItem(0, base::ASCIIToUTF16("Menu item"));
   views::Widget* widget = Shell::GetPrimaryRootWindowController()
                               ->wallpaper_widget_controller()
-                              ->widget();
+                              ->GetWidget();
   std::unique_ptr<views::MenuRunner> menu_runner(
       new views::MenuRunner(menu_model.get(), views::MenuRunner::CONTEXT_MENU));
 
@@ -485,15 +487,11 @@ TEST_F(ShellTest, ToggleAutoHide) {
 // Tests that the cursor-filter is ahead of the drag-drop controller in the
 // pre-target list.
 TEST_F(ShellTest, TestPreTargetHandlerOrder) {
-  // TODO: investigate failure in mash, http://crbug.com/695758.
-  if (Shell::GetAshConfig() == Config::MASH)
-    return;
-
   Shell* shell = Shell::Get();
   ui::EventTargetTestApi test_api(shell);
   ShellTestApi shell_test_api(shell);
 
-  const ui::EventHandlerList& handlers = test_api.pre_target_handlers();
+  ui::EventHandlerList handlers = test_api.GetPreTargetHandlers();
   ui::EventHandlerList::const_iterator cursor_filter =
       std::find(handlers.begin(), handlers.end(), shell->mouse_cursor_filter());
   ui::EventHandlerList::const_iterator drag_drop = std::find(
@@ -515,8 +513,6 @@ TEST_F(ShellTest, EnvPreTargetHandler) {
 
 // Verifies keyboard is re-created on proper timing.
 TEST_F(ShellTest, KeyboardCreation) {
-  if (Shell::GetAshConfig() == Config::MASH)
-    return;
   base::CommandLine::ForCurrentProcess()->AppendSwitch(
       keyboard::switches::kEnableVirtualKeyboard);
 
@@ -571,7 +567,7 @@ TEST_F(ShellLocalStateTest, LocalState) {
   TestingPrefServiceSimple* local_state_ptr = local_state.get();
   ShellTestApi().OnLocalStatePrefServiceInitialized(std::move(local_state));
   EXPECT_EQ(local_state_ptr, observer.last_local_state_);
-  EXPECT_EQ(local_state_ptr, Shell::Get()->GetLocalStatePrefService());
+  EXPECT_EQ(local_state_ptr, ash_test_helper()->GetLocalStatePrefService());
 
   Shell::Get()->RemoveShellObserver(&observer);
 }

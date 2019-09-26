@@ -17,7 +17,9 @@
 namespace net {
 
 class WebSocketStreamRequest;
+class SpdySession;
 class WebSocketBasicHandshakeStream;
+class WebSocketEndpointLockManager;
 
 // Implementation of WebSocketHandshakeStreamBase::CreateHelper. This class is
 // used in the implementation of WebSocketStream::CreateAndConnectStream() and
@@ -37,10 +39,15 @@ class NET_EXPORT_PRIVATE WebSocketHandshakeStreamCreateHelper
 
   // WebSocketHandshakeStreamBase::CreateHelper methods
 
-  // Creates a WebSocketBasicHandshakeStream.
+  // Creates a WebSocketBasicHandshakeStream over a TCP/IP or TLS socket.
   std::unique_ptr<WebSocketHandshakeStreamBase> CreateBasicStream(
       std::unique_ptr<ClientSocketHandle> connection,
-      bool using_proxy) override;
+      bool using_proxy,
+      WebSocketEndpointLockManager* websocket_endpoint_lock_manager) override;
+
+  // Creates a WebSocketHttp2HandshakeStream over an HTTP/2 connection.
+  std::unique_ptr<WebSocketHandshakeStreamBase> CreateHttp2Stream(
+      base::WeakPtr<SpdySession> session) override;
 
   // WebSocketHandshakeStreamCreateHelper methods
 
@@ -51,7 +58,7 @@ class NET_EXPORT_PRIVATE WebSocketHandshakeStreamCreateHelper
   }
 
  protected:
-  // This is used by DeterministicKeyWebSocketHandshakeStreamCreateHelper.
+  // This is used by TestWebSocketHandshakeStreamCreateHelper.
   // The default implementation does nothing.
   virtual void OnBasicStreamCreated(WebSocketBasicHandshakeStream* stream);
 

@@ -13,7 +13,6 @@
 #include "base/files/file_util.h"
 #include "base/location.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/single_thread_task_runner.h"
 #include "base/stl_util.h"
@@ -1608,7 +1607,7 @@ std::unique_ptr<base::ListValue> MetadataDatabase::DumpFiles(
                       FileKindToString(tracker.synced_details().file_kind()));
     }
 
-    auto details = base::MakeUnique<base::DictionaryValue>();
+    auto details = std::make_unique<base::DictionaryValue>();
     details->SetString("file_id", tracker.file_id());
     if (tracker.has_synced_details() &&
         tracker.synced_details().file_kind() == FILE_KIND_FILE)
@@ -1652,7 +1651,7 @@ std::unique_ptr<base::ListValue> MetadataDatabase::DumpTrackers() {
   };
   std::vector<std::string> key_strings(
       trackerKeys, trackerKeys + arraysize(trackerKeys));
-  auto keys = base::MakeUnique<base::ListValue>();
+  auto keys = std::make_unique<base::ListValue>();
   keys->AppendStrings(key_strings);
   metadata->SetString("title", "Trackers");
   metadata->Set("keys", std::move(keys));
@@ -1714,7 +1713,7 @@ std::unique_ptr<base::ListValue> MetadataDatabase::DumpMetadata() {
   };
   std::vector<std::string> key_strings(
       fileKeys, fileKeys + arraysize(fileKeys));
-  auto keys = base::MakeUnique<base::ListValue>();
+  auto keys = std::make_unique<base::ListValue>();
   keys->AppendStrings(key_strings);
   metadata->SetString("title", "Metadata");
   metadata->Set("keys", std::move(keys));

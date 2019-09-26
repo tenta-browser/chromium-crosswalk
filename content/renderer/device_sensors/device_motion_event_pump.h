@@ -12,16 +12,8 @@
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/macros.h"
-#include "base/time/time.h"
-#include "base/timer/timer.h"
-#include "content/public/renderer/platform_event_observer.h"
-#include "content/renderer/render_thread_impl.h"
-#include "device/sensors/public/cpp/motion_data.h"
-#include "mojo/public/cpp/bindings/binding.h"
-#include "services/device/public/cpp/generic_sensor/sensor_reading.h"
-#include "services/device/public/interfaces/sensor.mojom.h"
-#include "services/device/public/interfaces/sensor_provider.mojom.h"
-#include "third_party/WebKit/public/platform/modules/device_orientation/WebDeviceMotionListener.h"
+#include "content/renderer/device_sensors/device_sensor_event_pump.h"
+#include "third_party/blink/public/platform/modules/device_orientation/web_device_motion_listener.h"
 
 namespace device {
 class SensorReadingSharedBufferReader;
@@ -89,23 +81,17 @@ class CONTENT_EXPORT DeviceMotionEventPump
 
   void DidStartIfPossible();
 
+  void SendStartMessageImpl();
+
   SensorEntry accelerometer_;
   SensorEntry linear_acceleration_sensor_;
   SensorEntry gyroscope_;
 
  private:
-  FRIEND_TEST_ALL_PREFIXES(DeviceMotionEventPumpTest,
-                           SensorInitializedButItsSharedBufferIsNot);
+  friend class DeviceMotionEventPumpTest;
 
-  // TODO(juncai): refactor DeviceMotionEventPump to use DeviceSensorEventPump
-  // when refactoring DeviceOrientation.
-  //
-  // The pump is a tri-state automaton with allowed transitions as follows:
-  // STOPPED -> PENDING_START
-  // PENDING_START -> RUNNING
-  // PENDING_START -> STOPPED
-  // RUNNING -> STOPPED
-  enum class PumpState { STOPPED, RUNNING, PENDING_START };
+  // DeviceSensorEventPump:
+  bool SensorsReadyOrErrored() const override;
 
   RenderFrame* GetRenderFrame() const;
   bool SensorSharedBuffersReady() const;
@@ -116,6 +102,8 @@ class CONTENT_EXPORT DeviceMotionEventPump
   device::mojom::SensorProviderPtr sensor_provider_;
   PumpState state_;
   base::RepeatingTimer timer_;
+
+  bool ShouldFireEvent(const device::MotionData& data) const;
 
   DISALLOW_COPY_AND_ASSIGN(DeviceMotionEventPump);
 };

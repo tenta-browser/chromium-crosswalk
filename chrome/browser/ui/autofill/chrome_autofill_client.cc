@@ -10,8 +10,6 @@
 #include "base/command_line.h"
 #include "base/feature_list.h"
 #include "base/logging.h"
-#include "base/memory/ptr_util.h"
-#include "build/build_config.h"
 #include "chrome/browser/autofill/address_normalizer_factory.h"
 #include "chrome/browser/autofill/personal_data_manager_factory.h"
 #include "chrome/browser/autofill/risk_util.h"
@@ -19,8 +17,7 @@
 #include "chrome/browser/password_manager/chrome_password_manager_client.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_manager.h"
-#include "chrome/browser/signin/profile_oauth2_token_service_factory.h"
-#include "chrome/browser/signin/signin_manager_factory.h"
+#include "chrome/browser/signin/identity_manager_factory.h"
 #include "chrome/browser/signin/signin_promo_util.h"
 #include "chrome/browser/ssl/insecure_sensitive_input_driver_factory.h"
 #include "chrome/browser/sync/profile_sync_service_factory.h"
@@ -45,7 +42,6 @@
 #include "components/password_manager/content/browser/content_password_manager_driver.h"
 #include "components/password_manager/core/browser/password_manager_metrics_util.h"
 #include "components/prefs/pref_service.h"
-#include "components/signin/core/browser/profile_identity_provider.h"
 #include "components/signin/core/browser/signin_header_helper.h"
 #include "components/signin/core/browser/signin_metrics.h"
 #include "components/user_prefs/user_prefs.h"
@@ -55,6 +51,7 @@
 #include "ui/gfx/geometry/rect.h"
 
 #if defined(OS_ANDROID)
+#include "chrome/browser/android/chrome_feature_list.h"
 #include "chrome/browser/android/preferences/preferences_launcher.h"
 #include "chrome/browser/android/signin/signin_promo_util_android.h"
 #include "chrome/browser/infobars/infobar_service.h"
@@ -130,23 +127,10 @@ syncer::SyncService* ChromeAutofillClient::GetSyncService() {
   return ProfileSyncServiceFactory::GetInstance()->GetForProfile(profile);
 }
 
-IdentityProvider* ChromeAutofillClient::GetIdentityProvider() {
-  if (!identity_provider_) {
-    Profile* profile =
-        Profile::FromBrowserContext(web_contents()->GetBrowserContext())
-            ->GetOriginalProfile();
-    base::Closure login_callback;
-#if !defined(OS_ANDROID)
-    login_callback =
-        LoginUIServiceFactory::GetShowLoginPopupCallbackForProfile(profile);
-#endif
-    identity_provider_.reset(new ProfileIdentityProvider(
-        SigninManagerFactory::GetForProfile(profile),
-        ProfileOAuth2TokenServiceFactory::GetForProfile(profile),
-        login_callback));
-  }
-
-  return identity_provider_.get();
+identity::IdentityManager* ChromeAutofillClient::GetIdentityManager() {
+  Profile* profile =
+      Profile::FromBrowserContext(web_contents()->GetBrowserContext());
+  return IdentityManagerFactory::GetForProfile(profile->GetOriginalProfile());
 }
 
 ukm::UkmRecorder* ChromeAutofillClient::GetUkmRecorder() {
@@ -197,7 +181,7 @@ void ChromeAutofillClient::ConfirmSaveCreditCardLocally(
 #if defined(OS_ANDROID)
   InfoBarService::FromWebContents(web_contents())
       ->AddInfoBar(CreateSaveCardInfoBarMobile(
-          base::MakeUnique<AutofillSaveCardInfoBarDelegateMobile>(
+          std::make_unique<AutofillSaveCardInfoBarDelegateMobile>(
               false, card, std::unique_ptr<base::DictionaryValue>(nullptr),
               callback, GetPrefs())));
 #else
@@ -218,7 +202,7 @@ void ChromeAutofillClient::ConfirmSaveCreditCardToCloud(
 #if defined(OS_ANDROID)
   std::unique_ptr<AutofillSaveCardInfoBarDelegateMobile>
       save_card_info_bar_delegate_mobile =
-          base::MakeUnique<AutofillSaveCardInfoBarDelegateMobile>(
+          std::make_unique<AutofillSaveCardInfoBarDelegateMobile>(
               true, card, std::move(legal_message), callback, GetPrefs());
   if (save_card_info_bar_delegate_mobile->LegalMessagesParsedSuccessfully()) {
     InfoBarService::FromWebContents(web_contents())
@@ -240,11 +224,11 @@ void ChromeAutofillClient::ConfirmCreditCardFillAssist(
     const base::Closure& callback) {
 #if defined(OS_ANDROID)
   auto infobar_delegate =
-      base::MakeUnique<AutofillCreditCardFillingInfoBarDelegateMobile>(
+      std::make_unique<AutofillCreditCardFillingInfoBarDelegateMobile>(
           card, callback);
   auto* raw_delegate = infobar_delegate.get();
-  if (InfoBarService::FromWebContents(web_contents())->AddInfoBar(
-          base::MakeUnique<AutofillCreditCardFillingInfoBar>(
+  if (InfoBarService::FromWebContents(web_contents())
+          ->AddInfoBar(std::make_unique<AutofillCreditCardFillingInfoBar>(
               std::move(infobar_delegate)))) {
     raw_delegate->set_was_shown();
   }
@@ -270,6 +254,11 @@ void ChromeAutofillClient::ShowAutofillPopup(
     base::i18n::TextDirection text_direction,
     const std::vector<autofill::Suggestion>& suggestions,
     base::WeakPtr<AutofillPopupDelegate> delegate) {
+  // TODO(https://crbug.com/779126): We currently don't support rendering popups
+  // while in VR, so we just don't show it.
+  if (!IsAutofillSupported())
+    return;
+
   // Convert element_bounds to be in screen space.
   gfx::Rect client_area = web_contents()->GetContainerBounds();
   gfx::RectF element_bounds_in_screen_space =
@@ -309,6 +298,11 @@ void ChromeAutofillClient::HideAutofillPopup() {
 bool ChromeAutofillClient::IsAutocompleteEnabled() {
   // For browser, Autocomplete is always enabled as part of Autofill.
   return GetPrefs()->GetBoolean(prefs::kAutofillEnabled);
+}
+
+bool ChromeAutofillClient::AreServerCardsSupported() {
+  // When in VR, server side cards are not supported.
+  return !vr::VrTabHelper::IsInVr(web_contents());
 }
 
 void ChromeAutofillClient::MainFrameWasResized(bool width_changed) {
@@ -439,9 +433,10 @@ void ChromeAutofillClient::ShowHttpNotSecureExplanation() {
 }
 
 bool ChromeAutofillClient::IsAutofillSupported() {
-  // VR browsing does not support popups at the moment.
-  if (vr::VrTabHelper::IsInVr(web_contents())) {
-    vr::VrTabHelper::UISuppressed(vr::UiSuppressedElement::kAutofill);
+  // VR browsing supports the autofill behind a flag. When the flag is removed
+  // we can remove this condition.
+  if (vr::VrTabHelper::IsUiSuppressedInVr(web_contents(),
+                                          vr::UiSuppressedElement::kAutofill)) {
     return false;
   }
 

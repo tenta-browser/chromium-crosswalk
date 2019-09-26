@@ -114,8 +114,12 @@ struct AutocompleteMatch {
   // Converts |type| to a string representation.  Used in logging and debugging.
   AutocompleteMatch& operator=(const AutocompleteMatch& match);
 
-  // Gets the vector icon identifier for the icon to be shown for |type|.
-  static const gfx::VectorIcon& TypeToVectorIcon(Type type);
+  // Gets the vector icon identifier for the icon to be shown for |type|. If
+  // |is_bookmark| is true, returns a bookmark icon rather than what the type
+  // would determine.
+  static const gfx::VectorIcon& TypeToVectorIcon(Type type,
+                                                 bool is_bookmark,
+                                                 bool is_tab_match);
 
   // Comparison function for determining when one match is better than another.
   static bool MoreRelevant(const AutocompleteMatch& elem1,
@@ -192,6 +196,10 @@ struct AutocompleteMatch {
       TemplateURLService* template_url_service,
       const base::string16& keyword,
       const std::string& host);
+  static const TemplateURL* GetTemplateURLWithKeyword(
+      const TemplateURLService* template_url_service,
+      const base::string16& keyword,
+      const std::string& host);
 
   // Returns |url| altered by stripping off "www.", converting https protocol
   // to http, and stripping excess query parameters.  These conversions are
@@ -210,7 +218,7 @@ struct AutocompleteMatch {
   // seems to matter to the user.
   static GURL GURLToStrippedGURL(const GURL& url,
                                  const AutocompleteInput& input,
-                                 TemplateURLService* template_url_service,
+                                 const TemplateURLService* template_url_service,
                                  const base::string16& keyword);
 
   // Sets the |match_in_scheme|, |match_in_subdomain|, and |match_after_host|
@@ -310,19 +318,25 @@ struct AutocompleteMatch {
   // This is used to decide whether we should call DeleteMatch().
   bool SupportsDeletion() const;
 
-  // Swaps the contents and description fields, and their associated
-  // classifications, if this is a match for which we should emphasize the
-  // title (stored in the description field) over the URL (in the contents
-  // field).  Intended to only be used at the UI level before displaying, lest
-  // other omnibox systems get confused about which is which.  See the code
-  // that sets |swap_contents_and_description| for conditions under which
-  // it is true.
-  void PossiblySwapContentsAndDescriptionForDisplay();
+  // Returns a copy of this match with the contents and description fields, and
+  // their associated classifications, possibly swapped.  We swap these if this
+  // is a match for which we should emphasize the title (stored in the
+  // description field) over the URL (in the contents field).
+  //
+  // We specifically return a copy to prevent the UI code from accidentally
+  // mucking with the matches stored in the model, lest other omnibox systems
+  // get confused about which is which.  See the code that sets
+  // |swap_contents_and_description| for conditions they are swapped.
+  AutocompleteMatch GetMatchWithContentsAndDescriptionPossiblySwapped() const;
 
   // If this match is a tail suggestion, prepends the passed |common_prefix|.
   // If not, but the prefix matches the beginning of the suggestion, dims that
   // portion in the classification.
   void InlineTailPrefix(const base::string16& common_prefix);
+
+  // Estimates dynamic memory usage.
+  // See base/trace_event/memory_usage_estimator.h for more info.
+  size_t EstimateMemoryUsage() const;
 
   // The provider of this match, used to remember which provider the user had
   // selected when the input changes. This may be NULL, in which case there is
@@ -404,6 +418,9 @@ struct AutocompleteMatch {
   // Type of this match.
   Type type;
 
+  // True if we saw a tab that matched this suggestion.
+  bool has_tab_match;
+
   // Used to identify the specific source / type for suggestions by the
   // suggest server. See |result_subtype_identifier| in omnibox.proto for more
   // details.
@@ -453,7 +470,7 @@ struct AutocompleteMatch {
   // ensure if a match is deleted, the duplicates are deleted as well.
   std::vector<AutocompleteMatch> duplicate_matches;
 
-#ifndef NDEBUG
+#if DCHECK_IS_ON()
   // Does a data integrity check on this match.
   void Validate() const;
 
@@ -461,7 +478,7 @@ struct AutocompleteMatch {
   void ValidateClassifications(
       const base::string16& text,
       const ACMatchClassifications& classifications) const;
-#endif
+#endif  // DCHECK_IS_ON()
 };
 
 typedef AutocompleteMatch::ACMatchClassification ACMatchClassification;

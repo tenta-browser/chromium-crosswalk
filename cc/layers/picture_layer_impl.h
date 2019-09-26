@@ -78,7 +78,6 @@ class CC_EXPORT PictureLayerImpl
   bool UpdateTiles();
   // Returns true if the LCD state changed.
   bool UpdateCanUseLCDTextAfterCommit();
-  WhichTree GetTree() const;
 
   // Mask-related functions.
   void GetContentsResourceId(viz::ResourceId* resource_id,
@@ -108,7 +107,18 @@ class CC_EXPORT PictureLayerImpl
     is_directly_composited_image_ = is_directly_composited_image;
   }
 
-  void InvalidateRegionForImages(
+  // This enum is the return value of the InvalidateRegionForImages() call. The
+  // possible values represent the fact that there are no images on this layer
+  // (kNoImages), the fact that the invalidation images don't cause an
+  // invalidation on this layer (kNoInvalidation), or the fact that the layer
+  // was invalidated (kInvalidated).
+  enum class ImageInvalidationResult {
+    kNoImages,
+    kNoInvalidation,
+    kInvalidated,
+  };
+
+  ImageInvalidationResult InvalidateRegionForImages(
       const PaintImageIdFlatSet& images_to_invalidate);
 
   bool RasterSourceUsesLCDTextForTesting() const { return can_use_lcd_text_; }

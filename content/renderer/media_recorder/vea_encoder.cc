@@ -7,6 +7,7 @@
 #include <string>
 
 #include "base/containers/queue.h"
+#include "base/metrics/histogram_macros.h"
 #include "content/renderer/media/gpu/gpu_video_accelerator_factories_impl.h"
 #include "content/renderer/render_thread_impl.h"
 #include "media/base/bind_to_current_loop.h"
@@ -36,10 +37,12 @@ VEAEncoder::VEAEncoder(
     const VideoTrackRecorder::OnErrorCB& on_error_callback,
     int32_t bits_per_second,
     media::VideoCodecProfile codec,
-    const gfx::Size& size)
+    const gfx::Size& size,
+    scoped_refptr<base::SingleThreadTaskRunner> task_runner)
     : Encoder(on_encoded_video_callback,
               bits_per_second > 0 ? bits_per_second
                                   : size.GetArea() * kVEADefaultBitratePerPixel,
+              std::move(task_runner),
               RenderThreadImpl::current()->GetGpuFactories()->GetTaskRunner()),
       gpu_factories_(RenderThreadImpl::current()->GetGpuFactories()),
       codec_(codec),
@@ -111,7 +114,7 @@ void VEAEncoder::BitstreamBufferReady(int32_t bitstream_buffer_id,
   origin_task_runner_->PostTask(
       FROM_HERE,
       base::BindOnce(OnFrameEncodeCompleted, on_encoded_video_callback_,
-                     front_frame.first, base::Passed(&data), nullptr,
+                     front_frame.first, std::move(data), nullptr,
                      front_frame.second, keyframe));
   UseOutputBitstreamBufferId(bitstream_buffer_id);
 }
@@ -119,6 +122,8 @@ void VEAEncoder::BitstreamBufferReady(int32_t bitstream_buffer_id,
 void VEAEncoder::NotifyError(media::VideoEncodeAccelerator::Error error) {
   DVLOG(3) << __func__;
   DCHECK(encoding_task_runner_->BelongsToCurrentThread());
+  UMA_HISTOGRAM_ENUMERATION("Media.MediaRecorder.VEAError", error,
+                            media::VideoEncodeAccelerator::kErrorMax + 1);
   on_error_callback_.Run();
   error_notified_ = true;
 }

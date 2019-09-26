@@ -5,8 +5,9 @@
 #include "ash/system/ime_menu/ime_menu_tray.h"
 
 #include "ash/accelerators/accelerator_controller.h"
-#include "ash/accessibility/accessibility_delegate.h"
+#include "ash/accessibility/accessibility_controller.h"
 #include "ash/ime/ime_controller.h"
+#include "ash/ime/test_ime_controller_client.h"
 #include "ash/public/interfaces/ime_info.mojom.h"
 #include "ash/shell.h"
 #include "ash/system/ime_menu/ime_list_view.h"
@@ -16,16 +17,12 @@
 #include "base/run_loop.h"
 #include "base/strings/utf_string_conversions.h"
 #include "ui/accessibility/ax_node_data.h"
-#include "ui/base/ime/chromeos/input_method_manager.h"
-#include "ui/base/ime/chromeos/mock_input_method_manager.h"
 #include "ui/base/ime/ime_bridge.h"
 #include "ui/base/ime/text_input_flags.h"
 #include "ui/events/event.h"
 #include "ui/views/controls/label.h"
 
 using base::UTF8ToUTF16;
-using chromeos::input_method::InputMethodManager;
-using chromeos::input_method::MockInputMethodManager;
 
 namespace ash {
 namespace {
@@ -52,18 +49,6 @@ class ImeMenuTrayTest : public AshTestBase {
  public:
   ImeMenuTrayTest() = default;
   ~ImeMenuTrayTest() override = default;
-
-  void SetUp() override {
-    AshTestBase::SetUp();
-    // MockInputMethodManager enables emoji, handwriting and voice input by
-    // default.
-    InputMethodManager::Initialize(new MockInputMethodManager);
-  }
-
-  void TearDown() override {
-    InputMethodManager::Shutdown();
-    AshTestBase::TearDown();
-  }
 
  protected:
   // Returns true if the IME menu tray is visible.
@@ -110,9 +95,9 @@ class ImeMenuTrayTest : public AshTestBase {
       // Tests that the checked IME is the current IME.
       ui::AXNodeData node_data;
       ime.first->GetAccessibleNodeData(&node_data);
-      const auto checked_state = static_cast<ui::AXCheckedState>(
-          node_data.GetIntAttribute(ui::AX_ATTR_CHECKED_STATE));
-      if (checked_state == ui::AX_CHECKED_STATE_TRUE)
+      const auto checked_state = static_cast<ax::mojom::CheckedState>(
+          node_data.GetIntAttribute(ax::mojom::IntAttribute::kCheckedState));
+      if (checked_state == ax::mojom::CheckedState::kTrue)
         EXPECT_EQ(expected_current_ime.id, ime.second);
     }
   }
@@ -294,39 +279,46 @@ TEST_F(ImeMenuTrayTest, ShowEmojiKeyset) {
   EXPECT_TRUE(IsTrayBackgroundActive());
   EXPECT_TRUE(IsBubbleShown());
 
-  AccessibilityDelegate* accessibility_delegate =
-      Shell::Get()->accessibility_delegate();
+  AccessibilityController* accessibility_controller =
+      Shell::Get()->accessibility_controller();
 
-  accessibility_delegate->SetVirtualKeyboardEnabled(true);
-  EXPECT_TRUE(accessibility_delegate->IsVirtualKeyboardEnabled());
+  accessibility_controller->SetVirtualKeyboardEnabled(true);
+  EXPECT_TRUE(accessibility_controller->IsVirtualKeyboardEnabled());
 
-  GetTray()->ShowKeyboardWithKeyset("emoji");
+  GetTray()->ShowKeyboardWithKeyset(
+      chromeos::input_method::mojom::ImeKeyset::kEmoji);
   // The menu should be hidden.
   EXPECT_FALSE(IsBubbleShown());
   // The virtual keyboard should be enabled.
-  EXPECT_TRUE(accessibility_delegate->IsVirtualKeyboardEnabled());
+  EXPECT_TRUE(accessibility_controller->IsVirtualKeyboardEnabled());
 
   // Hides the keyboard.
   GetTray()->OnKeyboardHidden();
   // The keyboard should still be enabled.
-  EXPECT_TRUE(accessibility_delegate->IsVirtualKeyboardEnabled());
+  EXPECT_TRUE(accessibility_controller->IsVirtualKeyboardEnabled());
 }
 
 TEST_F(ImeMenuTrayTest, ForceToShowEmojiKeyset) {
-  AccessibilityDelegate* accessibility_delegate =
-      Shell::Get()->accessibility_delegate();
-  accessibility_delegate->SetVirtualKeyboardEnabled(false);
-  ASSERT_FALSE(accessibility_delegate->IsVirtualKeyboardEnabled());
+  ImeController* ime_controller = Shell::Get()->ime_controller();
+  AccessibilityController* accessibility_controller =
+      Shell::Get()->accessibility_controller();
+  accessibility_controller->SetVirtualKeyboardEnabled(false);
+  ASSERT_FALSE(accessibility_controller->IsVirtualKeyboardEnabled());
 
-  GetTray()->ShowKeyboardWithKeyset("emoji");
+  TestImeControllerClient client;
+  ime_controller->SetClient(client.CreateInterfacePtr());
+  GetTray()->ShowKeyboardWithKeyset(
+      chromeos::input_method::mojom::ImeKeyset::kEmoji);
+  // Keyboard is shown asynchronously through Mojo
+  ime_controller->FlushMojoForTesting();
   // The virtual keyboard should be enabled.
-  EXPECT_TRUE(accessibility_delegate->IsVirtualKeyboardEnabled());
+  EXPECT_TRUE(accessibility_controller->IsVirtualKeyboardEnabled());
 
   // Hides the keyboard.
   GetTray()->OnKeyboardHidden();
   // The keyboard should still be disabled, which is a posted task.
   base::RunLoop().RunUntilIdle();
-  EXPECT_FALSE(accessibility_delegate->IsVirtualKeyboardEnabled());
+  EXPECT_FALSE(accessibility_controller->IsVirtualKeyboardEnabled());
 }
 
 // Tests that tapping the emoji button does not crash. http://crbug.com/739630

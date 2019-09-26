@@ -6,7 +6,6 @@
 #define COMPONENTS_OMNIBOX_BROWSER_OMNIBOX_EDIT_CONTROLLER_H_
 
 #include "base/macros.h"
-#include "base/strings/string16.h"
 #include "components/omnibox/browser/autocomplete_match_type.h"
 #include "ui/base/page_transition_types.h"
 #include "ui/base/window_open_disposition.h"
@@ -21,20 +20,18 @@ class OmniboxEditController {
                                     ui::PageTransition transition,
                                     AutocompleteMatchType::Type match_type);
 
-  virtual void OnInputInProgress(bool in_progress) = 0;
+  virtual void OnInputInProgress(bool in_progress);
 
   // Called when anything has changed that might affect the layout or contents
   // of the views around the edit, including the text of the edit and the
   // status of any keyword- or hint-related state.
-  virtual void OnChanged() = 0;
+  virtual void OnChanged();
+
+  // Called when the omnibox popup is shown or hidden.
+  virtual void OnPopupVisibilityChanged();
 
   virtual ToolbarModel* GetToolbarModel() = 0;
   virtual const ToolbarModel* GetToolbarModel() const = 0;
-
-  // Called to search for a tab with given URL within the profile.  If found,
-  // the tab is switched to if it is not the current tab, the current tab is
-  // closed if requested, and true is returned; returns false if not found.
-  virtual bool SwitchToTabWithURL(const std::string& url, bool close_this);
 
  protected:
   OmniboxEditController();

@@ -13,7 +13,9 @@
 
   var testData = [
     {
-      'args': {'sessionId': sessionId},
+      'args': {'data': {'sessionId': sessionId, 'frames': [
+        {'frame': 'frame1', 'url': 'frameurl', 'name': 'frame-name'}
+      ]}},
       'cat': 'disabled-by-default-devtools.timeline',
       'name': 'TracingStartedInPage',
       'ph': 'I',
@@ -95,7 +97,7 @@
 
   var model = PerformanceTestRunner.createPerformanceModelWithEvents(testData);
   var view = new Timeline.EventsTimelineTreeView(UI.panels.timeline._filters, null);
-  view.setModel(model);
+  view.setModel(model, PerformanceTestRunner.mainTrack());
   view.updateContents(Timeline.TimelineSelection.fromRange(
       model.timelineModel().minimumRecordTime(), model.timelineModel().maximumRecordTime()));
   var filtersControl = view._filtersControl;

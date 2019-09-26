@@ -20,10 +20,10 @@
 #import "ui/base/cocoa/window_size_constants.h"
 #include "ui/base/ime/input_method.h"
 #include "ui/base/material_design/material_design_controller.h"
+#import "ui/base/test/cocoa_helper.h"
 #include "ui/base/test/material_design_controller_test_api.h"
 #include "ui/events/test/cocoa_test_event_utils.h"
 #import "ui/gfx/mac/coordinate_conversion.h"
-#import "ui/gfx/test/ui_cocoa_test_helper.h"
 #import "ui/views/cocoa/bridged_content_view.h"
 #import "ui/views/cocoa/native_widget_mac_nswindow.h"
 #import "ui/views/cocoa/views_nswindow_delegate.h"
@@ -213,6 +213,18 @@ bool IsRTLSelectBuggy(SEL sel) {
 @implementation BridgedNativeWidgetTestFullScreenWindow
 
 @synthesize ignoredToggleFullScreenCount = ignoredToggleFullScreenCount_;
+
+- (void)performSelector:(SEL)aSelector
+             withObject:(id)anArgument
+             afterDelay:(NSTimeInterval)delay {
+  // This is used in simulations without a message loop. Don't start a message
+  // loop since that would expose the tests to system notifications and
+  // potential flakes. Instead, just pretend the message loop is flushed here.
+  if (aSelector == @selector(toggleFullScreen:))
+    [self toggleFullScreen:anArgument];
+  else
+    [super performSelector:aSelector withObject:anArgument afterDelay:delay];
+}
 
 - (void)toggleFullScreen:(id)sender {
   ++ignoredToggleFullScreenCount_;

@@ -30,10 +30,12 @@ import org.chromium.chrome.browser.download.DownloadManagerService;
 import org.chromium.chrome.browser.metrics.StartupMetrics;
 import org.chromium.chrome.browser.ntp.NewTabPageView.NewTabPageManager;
 import org.chromium.chrome.browser.ntp.snippets.SuggestionsSource;
+import org.chromium.chrome.browser.omnibox.LocationBarVoiceRecognitionHandler;
 import org.chromium.chrome.browser.profiles.Profile;
 import org.chromium.chrome.browser.search_engines.TemplateUrlService;
 import org.chromium.chrome.browser.search_engines.TemplateUrlService.TemplateUrlServiceObserver;
 import org.chromium.chrome.browser.snackbar.SnackbarManager;
+import org.chromium.chrome.browser.suggestions.SuggestionsConfig;
 import org.chromium.chrome.browser.suggestions.SuggestionsDependencyFactory;
 import org.chromium.chrome.browser.suggestions.SuggestionsEventReporter;
 import org.chromium.chrome.browser.suggestions.SuggestionsMetrics;
@@ -43,18 +45,17 @@ import org.chromium.chrome.browser.suggestions.SuggestionsUiDelegateImpl;
 import org.chromium.chrome.browser.suggestions.Tile;
 import org.chromium.chrome.browser.suggestions.TileGroup;
 import org.chromium.chrome.browser.suggestions.TileGroupDelegateImpl;
-import org.chromium.chrome.browser.sync.SyncSessionsMetrics;
 import org.chromium.chrome.browser.tab.EmptyTabObserver;
 import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.chrome.browser.tab.TabObserver;
 import org.chromium.chrome.browser.tabmodel.TabModelSelector;
+import org.chromium.chrome.browser.util.ColorUtils;
 import org.chromium.chrome.browser.util.FeatureUtilities;
 import org.chromium.chrome.browser.util.UrlUtilities;
 import org.chromium.chrome.browser.vr_shell.VrShellDelegate;
 import org.chromium.content_public.browser.NavigationController;
 import org.chromium.content_public.browser.NavigationEntry;
 import org.chromium.net.NetworkChangeNotifier;
-import org.chromium.ui.base.DeviceFormFactor;
 import org.chromium.ui.mojom.WindowOpenDisposition;
 
 import java.net.URI;
@@ -80,11 +81,13 @@ public class NewTabPage
     private final NewTabPageView mNewTabPageView;
     private final NewTabPageManagerImpl mNewTabPageManager;
     private final TileGroup.Delegate mTileGroupDelegate;
+    private final boolean mIsTablet;
 
     private TabObserver mTabObserver;
     private boolean mSearchProviderHasLogo;
 
     private FakeboxDelegate mFakeboxDelegate;
+    private LocationBarVoiceRecognitionHandler mVoiceRecognitionHandler;
 
     // The timestamp at which the constructor was called.
     private final long mConstructedTimeNs;
@@ -117,16 +120,6 @@ public class NewTabPage
      * Handles user interaction with the fakebox (the URL bar in the NTP).
      */
     public interface FakeboxDelegate {
-        /**
-         * Shows the voice recognition dialog. Called when the user taps the microphone icon.
-         */
-        void startVoiceRecognition();
-
-        /**
-         * @return Whether voice search is currently enabled.
-         */
-        boolean isVoiceSearchEnabled();
-
         /**
          * @return Whether the URL bar is currently focused.
          */
@@ -192,19 +185,19 @@ public class NewTabPage
 
         @Override
         public boolean isVoiceSearchEnabled() {
-            return mFakeboxDelegate != null && mFakeboxDelegate.isVoiceSearchEnabled();
+            return mVoiceRecognitionHandler != null
+                    && mVoiceRecognitionHandler.isVoiceSearchEnabled();
         }
 
         @Override
         public void focusSearchBox(boolean beginVoiceSearch, String pastedText) {
             if (mIsDestroyed) return;
             if (VrShellDelegate.isInVr()) return;
-            if (mFakeboxDelegate != null) {
-                if (beginVoiceSearch) {
-                    mFakeboxDelegate.startVoiceRecognition();
-                } else {
-                    mFakeboxDelegate.requestUrlFocusFromFakebox(pastedText);
-                }
+            if (mVoiceRecognitionHandler != null && beginVoiceSearch) {
+                mVoiceRecognitionHandler.startVoiceRecognition(
+                        LocationBarVoiceRecognitionHandler.VoiceInteractionSource.NTP);
+            } else if (mFakeboxDelegate != null) {
+                mFakeboxDelegate.requestUrlFocusFromFakebox(pastedText);
             }
         }
 
@@ -227,8 +220,6 @@ public class NewTabPage
             NewTabPageUma.recordNTPImpression(NewTabPageUma.NTP_IMPRESSION_REGULAR);
             // If not visible when loading completes, wait until onShown is received.
             if (!mTab.isHidden()) recordNTPShown();
-
-            SyncSessionsMetrics.recordYoungestForeignTabAgeOnNTP();
         }
     }
 
@@ -258,7 +249,8 @@ public class NewTabPage
 
             if (windowDisposition != WindowOpenDisposition.NEW_WINDOW) {
                 RecordHistogram.recordMediumTimesHistogram("NewTabPage.MostVisitedTime",
-                        System.nanoTime() - mLastShownTimeNs, TimeUnit.NANOSECONDS);
+                        TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - mLastShownTimeNs),
+                        TimeUnit.MILLISECONDS);
             }
         }
     }
@@ -290,9 +282,12 @@ public class NewTabPage
         mTileGroupDelegate = new NewTabPageTileGroupDelegate(activity, profile, navigationDelegate);
 
         mTitle = activity.getResources().getString(R.string.button_new_tab);
-        mBackgroundColor = ApiCompatibilityUtils.getColor(activity.getResources(), R.color.ntp_bg);
-        mThemeColor = ApiCompatibilityUtils.getColor(
-                activity.getResources(), R.color.default_primary_color);
+        mBackgroundColor = ApiCompatibilityUtils.getColor(activity.getResources(),
+                SuggestionsConfig.useModernLayout() ? R.color.modern_primary_color
+                                                    : R.color.ntp_bg);
+        mThemeColor = ColorUtils.getDefaultThemeColor(
+                activity.getResources(), FeatureUtilities.isChromeModernDesignEnabled(), false);
+        mIsTablet = activity.isTablet();
         TemplateUrlService.getInstance().addObserver(this);
 
         mTabObserver = new EmptyTabObserver() {
@@ -368,9 +363,7 @@ public class NewTabPage
     }
 
     private boolean isInSingleUrlBarMode() {
-        if (DeviceFormFactor.isTablet()) return false;
-        if (FeatureUtilities.isChromeHomeEnabled()) return false;
-        return mSearchProviderHasLogo;
+        return !mIsTablet && !FeatureUtilities.isChromeHomeEnabled() && mSearchProviderHasLogo;
     }
 
     private void updateSearchProviderHasLogo() {
@@ -444,14 +437,24 @@ public class NewTabPage
      */
     public void setFakeboxDelegate(FakeboxDelegate fakeboxDelegate) {
         mFakeboxDelegate = fakeboxDelegate;
+        mNewTabPageView.setFakeboxDelegate(fakeboxDelegate);
         if (mFakeboxDelegate != null) {
-            mNewTabPageView.updateVoiceSearchButtonVisibility();
-
             // The toolbar can't get the reference to the native page until its initialization is
             // finished, so we can't cache it here and transfer it to the view later. We pull that
             // state from the location bar when we get a reference to it as a workaround.
             mNewTabPageView.setUrlFocusChangeAnimationPercent(
                     fakeboxDelegate.isUrlBarFocused() ? 1f : 0f);
+        }
+    }
+
+    /**
+     * Sets the {@link LocationBarVoiceRecognitionHandler} this page interacts with.
+     */
+    public void setVoiceRecognitionHandler(
+            LocationBarVoiceRecognitionHandler voiceRecognitionHandler) {
+        mVoiceRecognitionHandler = voiceRecognitionHandler;
+        if (mVoiceRecognitionHandler != null) {
+            mNewTabPageView.updateVoiceSearchButtonVisibility();
         }
     }
 
@@ -467,8 +470,9 @@ public class NewTabPage
 
     /** Records UMA for the NTP being hidden and the time spent on it. */
     private void recordNTPHidden() {
-        RecordHistogram.recordMediumTimesHistogram(
-                "NewTabPage.TimeSpent", System.nanoTime() - mLastShownTimeNs, TimeUnit.NANOSECONDS);
+        RecordHistogram.recordMediumTimesHistogram("NewTabPage.TimeSpent",
+                TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - mLastShownTimeNs),
+                TimeUnit.MILLISECONDS);
         SuggestionsMetrics.recordSurfaceHidden();
     }
 

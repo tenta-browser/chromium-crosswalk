@@ -7,13 +7,14 @@ import("//build/config/chromecast_build.gni")
 import("//build/config/compiler/compiler.gni")
 import("//build/config/features.gni")
 import("//build/config/linux/gtk/gtk.gni")
-import("//device/vr/features/features.gni")
-import("//extensions/features/features.gni")
+import("//device/vr/buildflags/buildflags.gni")
+import("//extensions/buildflags/buildflags.gni")
 import("//media/media_options.gni")
 import("//net/features.gni")
-import("//ppapi/features/features.gni")
-import("//printing/features/features.gni")
+import("//ppapi/buildflags/buildflags.gni")
+import("//printing/buildflags/buildflags.gni")
 import("//ui/base/ui_features.gni")
+import("//ui/webui/webui_features.gni")
 
 assert(!is_ios, "Chromium/iOS shouldn't use anything in //chrome")
 
@@ -22,7 +23,8 @@ declare_args() {
   enable_app_list = is_chromeos
 
   # Enables support for background apps.
-  enable_background = !is_android && !is_chromecast
+  enable_background_contents = !is_android && !is_chromecast
+  enable_background_mode = !is_android && !is_chromecast && !is_chromeos
 
   # Enable the printing system dialog for platforms that support printing
   # and have a system dialog.
@@ -59,14 +61,7 @@ declare_args() {
   # Indicates if the build is using PGO.
   pgo_build = chrome_pgo_phase > 0
 
-  # Optimize parts of Chrome's UI written with web technologies (HTML/CSS/JS)
-  # for runtime performance purposes. This does more work at compile time for
-  # speed benefits at runtime (so we skip in debug builds).
-  optimize_webui = !is_debug
-
-  # Enable donwloadable language PAK files to reduce the size of the main
-  # Chrome APK. TODO(digit): Restrict this to official builds.
-  enable_downloadable_strings = is_android
+  # optimize_webui was moved to ui/base/ui_features.gni
 }
 
 # Use brlapi from brltty for braille display support.
@@ -78,7 +73,8 @@ _enable_printing = enable_basic_printing || enable_print_preview
 # proper build flags can be set.
 chrome_grit_defines = [
   "enable_app_list=$enable_app_list",
-  "enable_background=$enable_background",
+  "enable_background_mode=$enable_background_mode",
+  "enable_background_contents=$enable_background_contents",
   "enable_extensions=$enable_extensions",
   "enable_google_now=$enable_google_now",
   "enable_hangout_services_extension=$enable_hangout_services_extension",

@@ -29,6 +29,10 @@ namespace base {
 class FilePath;
 }
 
+namespace network {
+class ResourceRequestBody;
+}
+
 namespace storage {
 class FileSystemContext;
 class FileSystemURL;
@@ -37,7 +41,6 @@ class FileSystemURL;
 namespace content {
 
 class SiteInstance;
-class ResourceRequestBody;
 
 class CONTENT_EXPORT ChildProcessSecurityPolicyImpl
     : public ChildProcessSecurityPolicy {
@@ -100,15 +103,17 @@ class CONTENT_EXPORT ChildProcessSecurityPolicyImpl
 
   // Validate that |child_id| in |file_system_context| is allowed to access
   // data in the POST body specified by |body|.  Can be called on any thread.
-  bool CanReadRequestBody(int child_id,
-                          const storage::FileSystemContext* file_system_context,
-                          const scoped_refptr<ResourceRequestBody>& body);
+  bool CanReadRequestBody(
+      int child_id,
+      const storage::FileSystemContext* file_system_context,
+      const scoped_refptr<network::ResourceRequestBody>& body);
 
   // Validate that the renderer process for |site_instance| is allowed to access
   // data in the POST body specified by |body|.  Has to be called on the UI
   // thread.
-  bool CanReadRequestBody(SiteInstance* site_instance,
-                          const scoped_refptr<ResourceRequestBody>& body);
+  bool CanReadRequestBody(
+      SiteInstance* site_instance,
+      const scoped_refptr<network::ResourceRequestBody>& body);
 
   // Pseudo schemes are treated differently than other schemes because they
   // cannot be requested like normal URLs.  There is no mechanism for revoking
@@ -156,7 +161,7 @@ class CONTENT_EXPORT ChildProcessSecurityPolicyImpl
   void RevokeReadRawCookies(int child_id);
 
   // Whether the given origin is valid for an origin header. Valid origin
-  // headers are commitable URLs plus suborigin URLs.
+  // headers are commitable URLs.
   bool CanSetAsOriginHeader(int child_id, const GURL& url);
 
   // Explicit permissions checks for FileSystemURL specified files.
@@ -222,15 +227,14 @@ class CONTENT_EXPORT ChildProcessSecurityPolicyImpl
   // of the site for https://isolated.foo.com.
   //
   // Note that origins from |origins| must not be unique - URLs that render with
-  // unique origins, such as data: URLs, are not supported.  Suborigins (see
-  // https://w3c.github.io/webappsec-suborigins/ -- not to be confused with
-  // subdomains) and non-standard schemes are also not supported.  Sandboxed
-  // frames (e.g., <iframe sandbox>) *are* supported, since process placement
-  // decisions will be based on the URLs such frames navigate to, and not the
-  // origin of committed documents (which might be unique).  If an isolated
-  // origin opens an about:blank popup, it will stay in the isolated origin's
-  // process. Nested URLs (filesystem: and blob:) retain process isolation
-  // behavior of their inner origin.
+  // unique origins, such as data: URLs, are not supported. Non-standard
+  // schemes are also not supported.  Sandboxed frames (e.g., <iframe sandbox>)
+  // *are* supported, since process placement decisions will be based on the
+  // URLs such frames navigate to, and not the origin of committed documents
+  // (which might be unique).  If an isolated origin opens an about:blank
+  // popup, it will stay in the isolated origin's process. Nested URLs
+  // (filesystem: and blob:) retain process isolation behavior of their inner
+  // origin.
   //
   // Note that it is okay if |origins| contains duplicates - the set of origins
   // will be deduplicated inside the method.

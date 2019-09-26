@@ -15,6 +15,7 @@ config("libwebp_config_internal") {
   defines = [
     "WEBP_NEAR_LOSSLESS=0",
     "WEBP_DISABLE_STATS",
+    "WEBP_REDUCE_SIZE",
   ]
   if (!is_ios) {
     defines += [ "WEBP_REDUCE_CSP" ]
@@ -22,7 +23,8 @@ config("libwebp_config_internal") {
 }
 
 set_opt_level =
-    !is_debug && is_posix && (current_cpu == "arm" || current_cpu == "arm64")
+    !is_debug && (is_posix || is_fuchsia) &&
+    (current_cpu == "arm" || current_cpu == "arm64")
 
 # webp's dsp code can be built for all configurations. Skipping it when both
 # arm_use_neon and arm_optionally_use_neon are false will result in link errors
@@ -178,9 +180,6 @@ static_library("libwebp_dsp") {
   ]
   if (is_android) {
     deps += [ "//third_party/android_tools:cpu_features" ]
-
-    configs -= [ "//build/config/android:default_cygprofile_instrumentation" ]
-    configs += [ "//build/config/android:no_cygprofile_instrumentation" ]
   }
   if (current_cpu == "x86" || current_cpu == "x64") {
     defines = [
@@ -274,11 +273,6 @@ if (use_dsp_neon) {
     } else if (current_cpu == "arm64" && !is_clang) {
       # avoid an ICE with gcc-4.9: b/15574841
       cflags = [ "-frename-registers" ]
-    }
-
-    if (is_android) {
-      configs -= [ "//build/config/android:default_cygprofile_instrumentation" ]
-      configs += [ "//build/config/android:no_cygprofile_instrumentation" ]
     }
   }
 }  # use_dsp_neon
@@ -469,6 +463,7 @@ if (current_toolchain == host_toolchain) {
     }
 
     deps = [
+      ":imageio_util",
       ":libwebp_webp",
       "//third_party/libpng",
       "//third_party/zlib",
@@ -491,6 +486,7 @@ if (current_toolchain == host_toolchain) {
     }
 
     deps = [
+      ":imageio_util",
       ":libwebp_webp",
     ]
     configs += [ ":libwebp_config" ]
@@ -508,6 +504,7 @@ if (current_toolchain == host_toolchain) {
       ":imagedec",
       ":imageio_util",
       ":libwebp",
+      ":libwebp_webp",
       "//base",
       "//build/config:exe_and_shlib_deps",
       "//build/win:default_exe_manifest",
@@ -533,6 +530,7 @@ if (current_toolchain == host_toolchain) {
       ":imageenc",
       ":imageio_util",
       ":libwebp",
+      ":libwebp_webp",
       "//base",
       "//build/config:exe_and_shlib_deps",
       "//build/win:default_exe_manifest",

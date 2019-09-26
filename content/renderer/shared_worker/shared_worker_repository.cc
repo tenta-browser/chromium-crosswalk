@@ -7,7 +7,7 @@
 #include "content/common/view_messages.h"
 #include "content/renderer/render_frame_impl.h"
 #include "services/service_manager/public/cpp/interface_provider.h"
-#include "third_party/WebKit/public/web/WebSharedWorkerConnectListener.h"
+#include "third_party/blink/public/web/web_shared_worker_connect_listener.h"
 
 namespace content {
 
@@ -23,7 +23,7 @@ void SharedWorkerRepository::Connect(
     DocumentID document_id,
     const blink::WebString& content_security_policy,
     blink::WebContentSecurityPolicyType content_security_policy_type,
-    blink::WebAddressSpace creation_address_space,
+    blink::mojom::IPAddressSpace creation_address_space,
     blink::mojom::SharedWorkerCreationContextType creation_context_type,
     blink::MessagePortChannel channel,
     std::unique_ptr<blink::WebSharedWorkerConnectListener> listener) {

@@ -125,6 +125,11 @@ public class SingleTabModel implements TabModel {
     }
 
     @Override
+    public boolean isCurrentModel() {
+        return true;
+    }
+
+    @Override
     public void moveTab(int id, int newIndex) {
         assert false;
     }
@@ -187,12 +192,4 @@ public class SingleTabModel implements TabModel {
 
     @Override
     public void openMostRecentlyClosedTab() {}
-
-    @Override
-    public void setIsPendingTabAdd(boolean isPendingTabAdd) {}
-
-    @Override
-    public boolean isPendingTabAdd() {
-        return false;
-    }
 }

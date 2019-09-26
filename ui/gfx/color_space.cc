@@ -8,6 +8,8 @@
 #include <map>
 #include <sstream>
 
+#include "base/atomic_sequence_num.h"
+#include "base/containers/mru_cache.h"
 #include "base/lazy_instance.h"
 #include "base/synchronization/lock.h"
 #include "third_party/skia/include/core/SkColorSpace.h"
@@ -17,6 +19,30 @@
 #include "ui/gfx/skia_color_space_util.h"
 
 namespace gfx {
+
+namespace {
+
+base::AtomicSequenceNumber g_color_space_id;
+
+// See comments in ToSkColorSpace about this cache. This cache may only be
+// accessed while holding g_sk_color_space_cache_lock.
+static const size_t kMaxCachedSkColorSpaces = 16;
+using SkColorSpaceCacheBase =
+    base::MRUCache<gfx::ColorSpace, sk_sp<SkColorSpace>>;
+class SkColorSpaceCache : public SkColorSpaceCacheBase {
+ public:
+  SkColorSpaceCache() : SkColorSpaceCacheBase(kMaxCachedSkColorSpaces) {}
+};
+base::LazyInstance<SkColorSpaceCache>::Leaky g_sk_color_space_cache =
+    LAZY_INSTANCE_INITIALIZER;
+base::LazyInstance<base::Lock>::Leaky g_sk_color_space_cache_lock =
+    LAZY_INSTANCE_INITIALIZER;
+
+static bool IsAlmostZero(float value) {
+  return std::abs(value) < std::numeric_limits<float>::epsilon();
+}
+
+}  // namespace
 
 ColorSpace::ColorSpace() {}
 
@@ -164,6 +190,11 @@ ColorSpace ColorSpace::CreateREC709() {
                     RangeID::LIMITED);
 }
 
+// static
+int ColorSpace::GetNextId() {
+  return g_color_space_id.GetNext();
+}
+
 bool ColorSpace::operator==(const ColorSpace& other) const {
   if (primaries_ != other.primaries_ || transfer_ != other.transfer_ ||
       matrix_ != other.matrix_ || range_ != other.range_ ||
@@ -279,7 +310,8 @@ size_t ColorSpace::GetHash() const {
 std::string ColorSpace::ToString() const {
   std::stringstream ss;
   ss << std::fixed << std::setprecision(4);
-  ss << "{primaries:";
+  if (primaries_ != PrimaryID::CUSTOM)
+    ss << "{primaries:";
   switch (primaries_) {
     PRINT_ENUM_CASE(PrimaryID, INVALID)
     PRINT_ENUM_CASE(PrimaryID, BT709)
@@ -297,20 +329,29 @@ std::string ColorSpace::ToString() const {
     PRINT_ENUM_CASE(PrimaryID, APPLE_GENERIC_RGB)
     PRINT_ENUM_CASE(PrimaryID, WIDE_GAMUT_COLOR_SPIN)
     case PrimaryID::CUSTOM:
-      ss << "[";
-      for (size_t i = 0; i < 3; ++i) {
-        ss << "[";
-        for (size_t j = 0; j < 3; ++j)
-          ss << custom_primary_matrix_[3 * i + j] << ",";
-        ss << "],";
-      }
-      ss << "]";
+      // |custom_primary_matrix_| is in column-major order.
+      const float sum_X = custom_primary_matrix_[0] +
+                          custom_primary_matrix_[3] + custom_primary_matrix_[6];
+      const float sum_Y = custom_primary_matrix_[1] +
+                          custom_primary_matrix_[4] + custom_primary_matrix_[7];
+      const float sum_Z = custom_primary_matrix_[2] +
+                          custom_primary_matrix_[5] + custom_primary_matrix_[8];
+      if (IsAlmostZero(sum_X) || IsAlmostZero(sum_Y) || IsAlmostZero(sum_Z))
+        break;
+
+      ss << "{primaries_d50_referred: [[" << (custom_primary_matrix_[0] / sum_X)
+         << ", " << (custom_primary_matrix_[3] / sum_X) << "], "
+         << " [" << (custom_primary_matrix_[1] / sum_Y) << ", "
+         << (custom_primary_matrix_[4] / sum_Y) << "], "
+         << " [" << (custom_primary_matrix_[2] / sum_Z) << ", "
+         << (custom_primary_matrix_[5] / sum_Z) << "]]";
       break;
   }
   ss << ", transfer:";
   switch (transfer_) {
     PRINT_ENUM_CASE(TransferID, INVALID)
     PRINT_ENUM_CASE(TransferID, BT709)
+    PRINT_ENUM_CASE(TransferID, BT709_APPLE)
     PRINT_ENUM_CASE(TransferID, GAMMA18)
     PRINT_ENUM_CASE(TransferID, GAMMA22)
     PRINT_ENUM_CASE(TransferID, GAMMA24)
@@ -429,6 +470,8 @@ sk_sp<SkColorSpace> ColorSpace::ToSkColorSpace() const {
   }
 
   // Use the named SRGB and linear-SRGB instead of the generic constructors.
+  // These do not need to be cached because skia will always return the same
+  // pointer.
   if (primaries_ == PrimaryID::BT709) {
     if (transfer_ == TransferID::IEC61966_2_1)
       return SkColorSpace::MakeSRGB();
@@ -440,6 +483,7 @@ sk_sp<SkColorSpace> ColorSpace::ToSkColorSpace() const {
   bool has_named_gamma = true;
   SkColorSpace::RenderTargetGamma named_gamma =
       SkColorSpace::kSRGB_RenderTargetGamma;
+  SkColorSpaceTransferFn custom_gamma;
   switch (transfer_) {
     case TransferID::IEC61966_2_1:
       break;
@@ -449,10 +493,15 @@ sk_sp<SkColorSpace> ColorSpace::ToSkColorSpace() const {
       break;
     default:
       has_named_gamma = false;
+      if (!GetTransferFunction(&custom_gamma)) {
+        DLOG(ERROR) << "Failed to transfer function for SkColorSpace";
+        return nullptr;
+      }
       break;
   }
   bool has_named_gamut = true;
   SkColorSpace::Gamut named_gamut = SkColorSpace::kSRGB_Gamut;
+  SkMatrix44 custom_gamut;
   switch (primaries_) {
     case PrimaryID::BT709:
       break;
@@ -467,27 +516,36 @@ sk_sp<SkColorSpace> ColorSpace::ToSkColorSpace() const {
       break;
     default:
       has_named_gamut = false;
+      GetPrimaryMatrix(&custom_gamut);
       break;
   }
-  if (has_named_gamut && has_named_gamma)
-    return SkColorSpace::MakeRGB(named_gamma, named_gamut);
 
-  // Use named gamma with custom primaries, if possible.
-  SkMatrix44 to_xyz_d50;
-  GetPrimaryMatrix(&to_xyz_d50);
-  if (has_named_gamma)
-    return SkColorSpace::MakeRGB(named_gamma, to_xyz_d50);
+  // Maintain a gfx::ColorSpace to SkColorSpace map, so that pointer-based
+  // comparisons of SkColorSpaces will be more likely to be accurate.
+  // https://crbug.com/793116
+  base::AutoLock lock(g_sk_color_space_cache_lock.Get());
 
-  // Use the parametric transfer function if there is no named transfer
-  // function.
-  SkColorSpaceTransferFn fn;
-  if (!GetTransferFunction(&fn)) {
-    DLOG(ERROR) << "Failed to parameterize transfer function for SkColorSpace";
-    return nullptr;
+  auto found = g_sk_color_space_cache.Get().Get(*this);
+  if (found != g_sk_color_space_cache.Get().end())
+    return found->second;
+
+  sk_sp<SkColorSpace> sk_color_space;
+  if (has_named_gamma) {
+    if (has_named_gamut)
+      sk_color_space = SkColorSpace::MakeRGB(named_gamma, named_gamut);
+    else
+      sk_color_space = SkColorSpace::MakeRGB(named_gamma, custom_gamut);
+  } else {
+    if (has_named_gamut)
+      sk_color_space = SkColorSpace::MakeRGB(custom_gamma, named_gamut);
+    else
+      sk_color_space = SkColorSpace::MakeRGB(custom_gamma, custom_gamut);
   }
-  if (has_named_gamut)
-    return SkColorSpace::MakeRGB(fn, named_gamut);
-  return SkColorSpace::MakeRGB(fn, to_xyz_d50);
+  if (!sk_color_space)
+    DLOG(ERROR) << "SkColorSpace::MakeRGB failed.";
+
+  g_sk_color_space_cache.Get().Put(*this, sk_color_space);
+  return sk_color_space;
 }
 
 void ColorSpace::GetPrimaryMatrix(SkMatrix44* to_XYZD50) const {
@@ -715,6 +773,9 @@ bool ColorSpace::GetTransferFunction(SkColorSpaceTransferFn* fn) const {
       fn->fD = 0.040449937172f;
       fn->fG = 2.400000000000f;
       return true;
+    case ColorSpace::TransferID::BT709_APPLE:
+      fn->fG = 1.961000000000f;
+      return true;
     case ColorSpace::TransferID::SMPTEST428_1:
       fn->fA = 0.225615407568f;
       fn->fE = -1.091041666667f;
@@ -791,18 +852,16 @@ void ColorSpace::GetTransferMatrix(SkMatrix44* matrix) const {
     }
 
     // BT2020_CL is a special case.
-    // Basically we return a matrix that transforms RGB values
-    // to RYB values. (We replace the green component with the
-    // the luminance.) Later steps will compute the Cb & Cr values.
+    // Basically we return a matrix that transforms RYB values
+    // to YUV values. (Note that the green component have been replaced
+    // with the luminance.)
     case ColorSpace::MatrixID::BT2020_CL: {
       Kr = 0.2627f;
       Kb = 0.0593f;
-      float data[16] = {
-          1.0f,           0.0f, 0.0f, 0.0f,  // R
-            Kr, 1.0f - Kr - Kb,   Kb, 0.0f,  // Y
-          0.0f,           0.0f, 1.0f, 0.0f,  // B
-          0.0f,           0.0f, 0.0f, 1.0f
-      };
+      float data[16] = {1.0f, 0.0f,           0.0f, 0.0f,  // R
+                        Kr,   1.0f - Kr - Kb, Kb,   0.0f,  // Y
+                        0.0f, 0.0f,           1.0f, 0.0f,  // B
+                        0.0f, 0.0f,           0.0f, 1.0f};
       matrix->setRowMajorf(data);
       return;
     }
@@ -866,6 +925,28 @@ void ColorSpace::GetRangeAdjustMatrix(SkMatrix44* matrix) const {
       matrix->postTranslate(-16.0f/219.0f, -15.5f/224.0f, -15.5f/224.0f);
       break;
   }
+}
+
+bool ColorSpace::ToSkYUVColorSpace(SkYUVColorSpace* out) {
+  if (range_ == RangeID::FULL) {
+    *out = kJPEG_SkYUVColorSpace;
+    return true;
+  }
+  switch (matrix_) {
+    case MatrixID::BT709:
+      *out = kRec709_SkYUVColorSpace;
+      return true;
+
+    case MatrixID::BT470BG:
+    case MatrixID::SMPTE170M:
+    case MatrixID::SMPTE240M:
+      *out = kRec601_SkYUVColorSpace;
+      return true;
+
+    default:
+      break;
+  }
+  return false;
 }
 
 std::ostream& operator<<(std::ostream& out, const ColorSpace& color_space) {

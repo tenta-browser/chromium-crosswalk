@@ -4,6 +4,9 @@
 
 #include "components/signin/core/browser/account_reconcilor_delegate.h"
 
+#include "base/time/time.h"
+#include "google_apis/gaia/google_service_auth_error.h"
+
 namespace signin {
 
 bool AccountReconcilorDelegate::IsReconcileEnabled() const {
@@ -26,9 +29,17 @@ std::string AccountReconcilorDelegate::GetFirstGaiaAccountForReconcile(
   return std::string();
 }
 
-bool AccountReconcilorDelegate::ShouldRevokeAllSecondaryTokensBeforeReconcile(
+AccountReconcilorDelegate::RevokeTokenOption
+AccountReconcilorDelegate::ShouldRevokeSecondaryTokensBeforeReconcile(
     const std::vector<gaia::ListedAccount>& gaia_accounts) {
-  return false;
+  return RevokeTokenOption::kDoNotRevoke;
 }
+
+base::TimeDelta AccountReconcilorDelegate::GetReconcileTimeout() const {
+  return base::TimeDelta::Max();
+}
+
+void AccountReconcilorDelegate::OnReconcileError(
+    const GoogleServiceAuthError& error) {}
 
 }  // namespace signin

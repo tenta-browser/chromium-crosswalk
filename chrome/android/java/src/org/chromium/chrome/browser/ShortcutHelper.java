@@ -26,11 +26,11 @@ import android.graphics.drawable.Icon;
 import android.net.Uri;
 import android.os.AsyncTask;
 import android.os.Build;
-import android.support.annotation.NonNull;
 import android.text.TextUtils;
 import android.util.Base64;
 
 import org.chromium.base.ApiCompatibilityUtils;
+import org.chromium.base.CollectionUtil;
 import org.chromium.base.ContextUtils;
 import org.chromium.base.Log;
 import org.chromium.base.ThreadUtils;
@@ -231,7 +231,13 @@ public class ShortcutHelper {
                                             .setIcon(Icon.createWithBitmap(icon))
                                             .setIntent(shortcutIntent)
                                             .build();
-        sShortcutManager.requestPinShortcut(shortcutInfo, null);
+        try {
+            sShortcutManager.requestPinShortcut(shortcutInfo, null);
+        } catch (IllegalStateException e) {
+            Log.d(TAG,
+                    "Could not create pinned shortcut: device is locked, or "
+                            + "activity is backgrounded.");
+        }
     }
 
     /**
@@ -716,6 +722,8 @@ public class ShortcutHelper {
         List<Integer> orientations = new ArrayList<>();
         List<Long> themeColors = new ArrayList<>();
         List<Long> backgroundColors = new ArrayList<>();
+        List<Long> lastUpdateCheckTimesMs = new ArrayList<>();
+        List<Boolean> relaxUpdates = new ArrayList<>();
 
         Context context = ContextUtils.getApplicationContext();
         PackageManager packageManager = context.getPackageManager();
@@ -739,37 +747,39 @@ public class ShortcutHelper {
                     orientations.add(webApkInfo.orientation());
                     themeColors.add(webApkInfo.themeColor());
                     backgroundColors.add(webApkInfo.backgroundColor());
+
+                    WebappDataStorage storage =
+                            WebappRegistry.getInstance().getWebappDataStorage(webApkInfo.id());
+                    long lastUpdateCheckTimeMsForStorage = 0;
+                    boolean relaxUpdatesForStorage = false;
+                    if (storage != null) {
+                        lastUpdateCheckTimeMsForStorage =
+                                storage.getLastCheckForWebManifestUpdateTimeMs();
+                        relaxUpdatesForStorage = storage.shouldRelaxUpdates();
+                    }
+                    lastUpdateCheckTimesMs.add(lastUpdateCheckTimeMsForStorage);
+                    relaxUpdates.add(relaxUpdatesForStorage);
                 }
             }
         }
         nativeOnWebApksRetrieved(callbackPointer, names.toArray(new String[0]),
                 shortNames.toArray(new String[0]), packageNames.toArray(new String[0]),
-                integerListToIntArray(shellApkVersions), integerListToIntArray(versionCodes),
-                uris.toArray(new String[0]), scopes.toArray(new String[0]),
-                manifestUrls.toArray(new String[0]), manifestStartUrls.toArray(new String[0]),
-                integerListToIntArray(displayModes), integerListToIntArray(orientations),
-                longListToLongArray(themeColors), longListToLongArray(backgroundColors));
-    }
-
-    private static int[] integerListToIntArray(@NonNull List<Integer> list) {
-        int[] array = new int[list.size()];
-        for (int i = 0; i < list.size(); i++) {
-            array[i] = list.get(i);
-        }
-        return array;
-    }
-
-    private static long[] longListToLongArray(@NonNull List<Long> list) {
-        long[] array = new long[list.size()];
-        for (int i = 0; i < list.size(); i++) {
-            array[i] = list.get(i);
-        }
-        return array;
+                CollectionUtil.integerListToIntArray(shellApkVersions),
+                CollectionUtil.integerListToIntArray(versionCodes), uris.toArray(new String[0]),
+                scopes.toArray(new String[0]), manifestUrls.toArray(new String[0]),
+                manifestStartUrls.toArray(new String[0]),
+                CollectionUtil.integerListToIntArray(displayModes),
+                CollectionUtil.integerListToIntArray(orientations),
+                CollectionUtil.longListToLongArray(themeColors),
+                CollectionUtil.longListToLongArray(backgroundColors),
+                CollectionUtil.longListToLongArray(lastUpdateCheckTimesMs),
+                CollectionUtil.booleanListToBooleanArray(relaxUpdates));
     }
 
     private static native void nativeOnWebappDataStored(long callbackPointer);
     private static native void nativeOnWebApksRetrieved(long callbackPointer, String[] names,
             String[] shortNames, String[] packageName, int[] shellApkVersions, int[] versionCodes,
             String[] uris, String[] scopes, String[] manifestUrls, String[] manifestStartUrls,
-            int[] displayModes, int[] orientations, long[] themeColors, long[] backgroundColors);
+            int[] displayModes, int[] orientations, long[] themeColors, long[] backgroundColors,
+            long[] lastUpdateCheckTimesMs, boolean[] relaxUpdates);
 }

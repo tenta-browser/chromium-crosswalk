@@ -15,14 +15,14 @@ namespace ash {
 
 namespace {
 
-// The number of non-Search-based accelerators as of 2017-10-26.
-constexpr int kNonSearchAcceleratorsNum = 93;
-// The hash of non-Search-based accelerators as of 2017-10-26.
+// The number of non-Search-based accelerators as of 2017-11-30.
+constexpr int kNonSearchAcceleratorsNum = 92;
+// The hash of non-Search-based accelerators as of 2017-11-30.
 // See HashAcceleratorData().
 // TODO: adding Search-based accelerators should not update this hash
 // (crbug.com/778432).
 constexpr char kNonSearchAcceleratorsHash[] =
-    "ccfca1c73d60f4837cef74800374a1c9";
+    "a6b59ab9473365f40ad50724412bb134";
 
 struct Cmp {
   bool operator()(const AcceleratorData& lhs, const AcceleratorData& rhs) {
@@ -87,6 +87,14 @@ TEST(AcceleratorTableTest, CheckDuplicatedActionsAllowedAtLoginOrLockScreen) {
   for (size_t i = 0; i < kActionsAllowedAtLockScreenLength; ++i) {
     EXPECT_TRUE(actions.insert(kActionsAllowedAtLockScreen[i]).second)
         << "Duplicated action: " << kActionsAllowedAtLockScreen[i];
+  }
+}
+
+TEST(AcceleratorTableTest, CheckDuplicatedActionsAllowedAtPowerMenu) {
+  std::set<AcceleratorAction> actions;
+  for (size_t i = 0; i < kActionsAllowedAtPowerMenuLength; ++i) {
+    EXPECT_TRUE(actions.insert(kActionsAllowedAtPowerMenu[i]).second)
+        << "Duplicated action: " << kActionsAllowedAtPowerMenu[i];
   }
 }
 

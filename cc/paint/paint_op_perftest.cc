@@ -9,8 +9,9 @@
 #include "cc/base/lap_timer.h"
 #include "cc/paint/paint_op_buffer.h"
 #include "cc/paint/paint_op_buffer_serializer.h"
+#include "cc/test/transfer_cache_test_helper.h"
 #include "testing/perf/perf_test.h"
-#include "third_party/skia/include/effects/SkBlurMaskFilter.h"
+#include "third_party/skia/include/core/SkMaskFilter.h"
 #include "third_party/skia/include/effects/SkColorMatrixFilter.h"
 #include "third_party/skia/include/effects/SkDashPathEffect.h"
 #include "third_party/skia/include/effects/SkLayerDrawLooper.h"
@@ -39,17 +40,20 @@ class PaintOpPerfTest : public testing::Test {
                                PaintOpBuffer::PaintOpAlign))) {}
 
   void RunTest(const std::string& name, const PaintOpBuffer& buffer) {
+    TransferCacheTestHelper helper;
     PaintOp::SerializeOptions serialize_options;
+    serialize_options.transfer_cache = &helper;
     PaintOp::DeserializeOptions deserialize_options;
+    deserialize_options.transfer_cache = &helper;
 
     size_t bytes_written = 0u;
     PaintOpBufferSerializer::Preamble preamble;
 
     timer_.Reset();
     do {
-      SimpleBufferSerializer serializer(serialized_data_.get(),
-                                        kMaxSerializedBufferBytes,
-                                        serialize_options.image_provider);
+      SimpleBufferSerializer serializer(
+          serialized_data_.get(), kMaxSerializedBufferBytes,
+          serialize_options.image_provider, serialize_options.transfer_cache);
       serializer.Serialize(&buffer, nullptr, preamble);
       bytes_written = serializer.written();
       timer_.NextLap();
@@ -119,9 +123,8 @@ TEST_F(PaintOpPerfTest, ManyFlagsOps) {
   PaintFlags flags;
   SkScalar intervals[] = {1.f, 1.f};
   flags.setPathEffect(SkDashPathEffect::Make(intervals, 2, 0));
-  flags.setMaskFilter(SkBlurMaskFilter::Make(SkBlurStyle::kOuter_SkBlurStyle,
-                                             4.3f, SkRect::MakeXYWH(1, 1, 1, 1),
-                                             kHigh_SkBlurQuality));
+  flags.setMaskFilter(SkMaskFilter::MakeBlur(
+      SkBlurStyle::kOuter_SkBlurStyle, 4.3f, SkRect::MakeXYWH(1, 1, 1, 1)));
   flags.setColorFilter(
       SkColorMatrixFilter::MakeLightingFilter(SK_ColorYELLOW, SK_ColorGREEN));
 

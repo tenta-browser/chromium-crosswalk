@@ -13,7 +13,6 @@
 #include "base/files/scoped_temp_dir.h"
 #include "base/location.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/task_scheduler/post_task.h"
 #include "base/test/histogram_tester.h"
 #include "base/threading/sequenced_task_runner_handle.h"
@@ -162,7 +161,7 @@ class PasswordStoreWinTest : public testing::Test {
 
   PasswordStoreWin* CreatePasswordStore() {
     return new PasswordStoreWin(
-        base::MakeUnique<LoginDatabase>(test_login_db_file_path()), wds_.get());
+        std::make_unique<LoginDatabase>(test_login_db_file_path()), wds_.get());
   }
 
   content::TestBrowserThreadBundle test_browser_thread_bundle_;

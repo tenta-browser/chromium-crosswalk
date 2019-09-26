@@ -21,8 +21,7 @@ import org.chromium.base.test.util.CommandLineFlags;
 import org.chromium.base.test.util.Feature;
 import org.chromium.base.test.util.RetryOnFailure;
 import org.chromium.base.test.util.UrlUtils;
-import org.chromium.chrome.browser.download.DownloadUtils;
-import org.chromium.chrome.test.ChromeActivityTestRule;
+import org.chromium.chrome.browser.media.MediaViewerUtils;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
 import org.chromium.chrome.test.ChromeTabbedActivityTestRule;
 import org.chromium.content.browser.test.util.Criteria;
@@ -31,7 +30,6 @@ import org.chromium.content.browser.test.util.DOMUtils;
 import org.chromium.content.browser.test.util.JavaScriptUtils;
 import org.chromium.content_public.browser.WebContents;
 import org.chromium.media.MediaSwitches;
-import org.chromium.ui.base.DeviceFormFactor;
 
 import java.util.concurrent.TimeoutException;
 
@@ -41,8 +39,7 @@ import java.util.concurrent.TimeoutException;
  */
 @RunWith(ChromeJUnit4ClassRunner.class)
 @CommandLineFlags.Add({ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE,
-        ChromeActivityTestRule.DISABLE_NETWORK_PREDICTION_FLAG,
-        MediaSwitches.IGNORE_AUTOPLAY_RESTRICTIONS_FOR_TESTS,
+        MediaSwitches.AUTOPLAY_NO_GESTURE_REQUIRED_POLICY,
         "enable-features=VideoFullscreenOrientationLock",
         "disable-features=" + ChromeFeatureList.FULLSCREEN_ACTIVITY})
 public class VideoFullscreenOrientationLockChromeTest {
@@ -112,7 +109,7 @@ public class VideoFullscreenOrientationLockChromeTest {
     @Feature({"VideoFullscreenOrientationLock"})
     @RetryOnFailure // The final waitForContentsFullscreenState(false) is flaky - crbug.com/711005.
     public void testUnlockWithDownloadViewerActivity() throws Exception {
-        if (DeviceFormFactor.isTablet()) {
+        if (mActivityTestRule.getActivity().isTablet()) {
             return;
         }
 
@@ -132,8 +129,8 @@ public class VideoFullscreenOrientationLockChromeTest {
         // Orientation lock should be disabled when download viewer activity is started.
         Uri fileUri = Uri.parse(UrlUtils.getIsolatedTestFileUrl(VIDEO_URL));
         String mimeType = "video/mp4";
-        Intent intent =
-                DownloadUtils.getMediaViewerIntentForDownloadItem(fileUri, fileUri, mimeType);
+        Intent intent = MediaViewerUtils.getMediaViewerIntent(
+                fileUri, fileUri, mimeType, true /* allowExternalAppHandlers */);
         IntentHandler.startActivityForTrustedIntent(intent);
         waitUntilUnlocked();
 

@@ -8,9 +8,11 @@
 
 #include "base/macros.h"
 #include "base/strings/utf_string_conversions.h"
+#include "build/build_config.h"
 #include "chrome/browser/ui/browser_dialogs.h"
 #include "chrome/browser/ui/views/extensions/media_gallery_checkbox_view.h"
 #include "chrome/browser/ui/views/harmony/chrome_layout_provider.h"
+#include "chrome/browser/ui/views_mode_controller.h"
 #include "chrome/grit/generated_resources.h"
 #include "chrome/grit/locale_settings.h"
 #include "components/constrained_window/constrained_window_views.h"
@@ -103,7 +105,8 @@ void MediaGalleriesDialogViews::InitChildViews() {
 
   const int dialog_content_width = views::Widget::GetLocalizedContentsWidth(
       IDS_MEDIA_GALLERIES_DIALOG_CONTENT_WIDTH_CHARS);
-  views::GridLayout* layout = views::GridLayout::CreateAndInstall(contents_);
+  views::GridLayout* layout = contents_->SetLayoutManager(
+      std::make_unique<views::GridLayout>(contents_));
 
   int column_set_id = 0;
   views::ColumnSet* columns = layout->AddColumnSet(column_set_id);
@@ -131,7 +134,7 @@ void MediaGalleriesDialogViews::InitChildViews() {
   const int small_vertical_padding =
       provider->GetDistanceMetric(DISTANCE_RELATED_CONTROL_VERTICAL_SMALL);
   ScrollableView* scroll_container = new ScrollableView();
-  scroll_container->SetLayoutManager(new views::BoxLayout(
+  scroll_container->SetLayoutManager(std::make_unique<views::BoxLayout>(
       views::BoxLayout::kVertical, gfx::Insets(), small_vertical_padding));
   scroll_container->SetBorder(
       views::CreateEmptyBorder(vertical_padding, 0, vertical_padding, 0));
@@ -213,6 +216,10 @@ bool MediaGalleriesDialogViews::AddOrUpdateGallery(
 
 base::string16 MediaGalleriesDialogViews::GetWindowTitle() const {
   return controller_->GetHeader();
+}
+
+bool MediaGalleriesDialogViews::ShouldShowCloseButton() const {
+  return false;
 }
 
 void MediaGalleriesDialogViews::DeleteDelegate() {
@@ -328,5 +335,9 @@ void MediaGalleriesDialogViews::OnMenuClosed() {
 // static
 MediaGalleriesDialog* MediaGalleriesDialog::Create(
     MediaGalleriesDialogController* controller) {
+#if defined(OS_MACOSX)
+  if (views_mode_controller::IsViewsBrowserCocoa())
+    return MediaGalleriesDialog::CreateCocoa(controller);
+#endif
   return new MediaGalleriesDialogViews(controller);
 }

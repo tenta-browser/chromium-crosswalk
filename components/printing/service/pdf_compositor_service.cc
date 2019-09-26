@@ -6,9 +6,10 @@
 
 #include <utility>
 
+#include <memory>
+
 #include "base/lazy_instance.h"
 #include "base/memory/discardable_memory.h"
-#include "base/memory/ptr_util.h"
 #include "build/build_config.h"
 #include "components/printing/service/pdf_compositor_impl.h"
 #include "components/printing/service/public/interfaces/pdf_compositor.mojom.h"
@@ -20,6 +21,11 @@
 
 #if defined(OS_WIN)
 #include "content/public/child/dwrite_font_proxy_init_win.h"
+#elif defined(OS_MACOSX)
+#include "third_party/blink/public/platform/platform.h"
+#include "third_party/skia/include/ports/SkFontMgr.h"
+#elif defined(OS_POSIX) && !defined(OS_ANDROID)
+#include "third_party/blink/public/platform/platform.h"
 #endif
 
 namespace {
@@ -28,7 +34,7 @@ void OnPdfCompositorRequest(
     const std::string& creator,
     service_manager::ServiceContextRefFactory* ref_factory,
     printing::mojom::PdfCompositorRequest request) {
-  mojo::MakeStrongBinding(base::MakeUnique<printing::PdfCompositorImpl>(
+  mojo::MakeStrongBinding(std::make_unique<printing::PdfCompositorImpl>(
                               creator, ref_factory->CreateRef()),
                           std::move(request));
 }
@@ -52,7 +58,7 @@ std::unique_ptr<service_manager::Service> PdfCompositorService::Create(
   // Initialize direct write font proxy so skia can use it.
   content::InitializeDWriteFontProxy();
 #endif
-  return base::MakeUnique<printing::PdfCompositorService>(creator);
+  return std::make_unique<printing::PdfCompositorService>(creator);
 }
 
 void PdfCompositorService::PrepareToStart() {
@@ -60,20 +66,37 @@ void PdfCompositorService::PrepareToStart() {
   discardable_memory::mojom::DiscardableSharedMemoryManagerPtr manager_ptr;
   context()->connector()->BindInterface(content::mojom::kBrowserServiceName,
                                         &manager_ptr);
-  discardable_shared_memory_manager_ = base::MakeUnique<
+  discardable_shared_memory_manager_ = std::make_unique<
       discardable_memory::ClientDiscardableSharedMemoryManager>(
       std::move(manager_ptr), content::UtilityThread::Get()->GetIOTaskRunner());
   DCHECK(discardable_shared_memory_manager_);
   base::DiscardableMemoryAllocator::SetInstance(
       discardable_shared_memory_manager_.get());
+
+#if defined(OS_POSIX) && !defined(OS_ANDROID)
+  // Check that we have sandbox support on this platform.
+  DCHECK(blink::Platform::Current()->GetSandboxSupport());
+#endif
+
+#if defined(OS_MACOSX)
+  // Check that font access is granted.
+  // This doesn't do comprehensive tests to make sure fonts can work properly.
+  // It is just a quick and simple check to catch things like improper sandbox
+  // policy setup.
+  DCHECK(SkFontMgr::RefDefault()->countFamilies());
+
+  // Initialize a connection to FontLoaderMac service so blink platform's web
+  // sandbox support can communicate with it to load font.
+  content::UtilityThread::Get()->InitializeFontLoaderMac(
+      context()->connector());
+#endif
 }
 
 void PdfCompositorService::OnStart() {
   PrepareToStart();
 
-  ref_factory_ = base::MakeUnique<service_manager::ServiceContextRefFactory>(
-      base::Bind(&service_manager::ServiceContext::RequestQuit,
-                 base::Unretained(context())));
+  ref_factory_ = std::make_unique<service_manager::ServiceContextRefFactory>(
+      context()->CreateQuitClosure());
   registry_.AddInterface(
       base::Bind(&OnPdfCompositorRequest, creator_, ref_factory_.get()));
 }

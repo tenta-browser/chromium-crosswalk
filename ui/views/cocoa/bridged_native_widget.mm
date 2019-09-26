@@ -12,9 +12,10 @@
 #import "base/mac/foundation_util.h"
 #include "base/mac/mac_util.h"
 #import "base/mac/sdk_forward_declarations.h"
-#include "base/memory/ptr_util.h"
 #include "base/single_thread_task_runner.h"
 #include "base/threading/thread_task_runner_handle.h"
+#include "components/viz/common/features.h"
+#include "components/viz/common/surfaces/local_surface_id.h"
 #include "ui/accelerated_widget_mac/window_resize_helper_mac.h"
 #import "ui/base/cocoa/constrained_window/constrained_window_animation.h"
 #include "ui/base/hit_test.h"
@@ -124,15 +125,6 @@ using NSViewComparatorValue = id;
 using NSViewComparatorValue = __kindof NSView*;
 #endif
 
-const CGFloat kMavericksMenuOpacity = 251.0 / 255.0;
-const CGFloat kYosemiteMenuOpacity = 177.0 / 255.0;
-const int kYosemiteMenuBlur = 80;
-
-// Margin at edge and corners of the window that trigger resizing. These match
-// actual Cocoa resize margins.
-const int kResizeAreaEdgeSize = 3;
-const int kResizeAreaCornerSize = 12;
-
 int kWindowPropertiesKey;
 
 float GetDeviceScaleFactorFromView(NSView* view) {
@@ -174,141 +166,6 @@ gfx::Size GetClientSizeForWindowSize(NSWindow* window,
   // be zero at this point, because Widget::GetMinimumSize() may later increase
   // the size.
   return gfx::Size([window contentRectForFrameRect:frame_rect].size);
-}
-
-// Determine whether a point is within the resize area at the edges and corners
-// of a window. This is used to ensure that mouse downs which would resize the
-// window are not reposted. As there's no way to determine this from Cocoa APIs,
-// this should aim to match Cocoa behavior as closely as possible.
-bool IsPointInResizeArea(NSPoint point, NSWindow* window) {
-  if (!([window styleMask] & NSResizableWindowMask))
-    return false;
-
-  bool can_resize_x = [window maxSize].width > [window minSize].width;
-  bool can_resize_y = [window maxSize].height > [window minSize].height;
-  NSSize window_size = [window frame].size;
-
-  if (can_resize_x && (point.x < kResizeAreaEdgeSize ||
-                       point.x >= window_size.width - kResizeAreaEdgeSize))
-    return true;
-
-  if (can_resize_y && (point.y < kResizeAreaEdgeSize ||
-                       point.y >= window_size.height - kResizeAreaEdgeSize))
-    return true;
-
-  if (can_resize_x && can_resize_y &&
-      (point.x < kResizeAreaCornerSize ||
-       point.x >= window_size.width - kResizeAreaCornerSize) &&
-      (point.y < kResizeAreaCornerSize ||
-       point.y >= window_size.height - kResizeAreaCornerSize))
-    return true;
-
-  return false;
-}
-
-// Routes the |ns_event| to the corresponding BridgedNativeWidget and queries
-// whether the event should be reposted.
-BOOL WindowWantsMouseDownReposted(NSEvent* ns_event) {
-  DCHECK(views::BridgedNativeWidget::ShouldUseDragEventMonitor());
-
-  views::BridgedNativeWidget* bridge =
-      views::NativeWidgetMac::GetBridgeForNativeWindow([ns_event window]);
-  return bridge && bridge->ShouldRepostPendingLeftMouseDown(ns_event);
-}
-
-// Check if a mouse-down event should drag the window. If so, repost the event.
-NSEvent* RepostEventIfHandledByWindow(NSEvent* ns_event) {
-  DCHECK(views::BridgedNativeWidget::ShouldUseDragEventMonitor());
-
-  enum RepostState {
-    // Nothing reposted: hit-test new mouse-downs to see if they need to be
-    // ignored and reposted after changing draggability.
-    NONE,
-    // Expecting the next event to be the reposted event: let it go through.
-    EXPECTING_REPOST,
-    // If, while reposting, another mousedown was received: when the reposted
-    // event is seen, ignore it.
-    REPOST_CANCELLED,
-  };
-
-  // Which repost we're expecting to receive.
-  static RepostState repost_state = NONE;
-  // The event number of the reposted event. This let's us track whether an
-  // event is actually the repost since user-generated events have increasing
-  // event numbers. This is only valid while |repost_state != NONE|.
-  static NSInteger reposted_event_number;
-
-  NSInteger event_number = [ns_event eventNumber];
-
-  // The logic here is a bit convoluted because we want to mitigate race
-  // conditions if somehow a different mouse-down occurs between reposts.
-  // Specifically, we want to avoid:
-  // - BridgedNativeWidget's draggability getting out of sync (e.g. if it is
-  //   draggable outside of a repost cycle),
-  // - any repost loop.
-
-  if (repost_state == NONE) {
-    if (WindowWantsMouseDownReposted(ns_event)) {
-      repost_state = EXPECTING_REPOST;
-      reposted_event_number = event_number;
-      CGEventPost(kCGSessionEventTap, [ns_event CGEvent]);
-      return nil;
-    }
-
-    return ns_event;
-  }
-
-  if (repost_state == EXPECTING_REPOST) {
-    // Call through so that the window is made non-draggable again.
-    WindowWantsMouseDownReposted(ns_event);
-
-    if (reposted_event_number == event_number) {
-      // Reposted event received.
-      repost_state = NONE;
-      return nil;
-    }
-
-    // We were expecting a repost, but since this is a new mouse-down, cancel
-    // reposting and allow event to continue as usual.
-    repost_state = REPOST_CANCELLED;
-    return ns_event;
-  }
-
-  DCHECK_EQ(REPOST_CANCELLED, repost_state);
-  if (reposted_event_number == event_number) {
-    // Reposting was cancelled, now that we've received the event, we don't
-    // expect to see it again.
-    repost_state = NONE;
-    return nil;
-  }
-
-  return ns_event;
-}
-
-// Support window caption/draggable regions.
-// In AppKit, non-client regions are set by overriding
-// -[NSView mouseDownCanMoveWindow]. NSApplication caches this area as views are
-// installed and performs window moving when mouse-downs land in the area.
-// In Views, non-client regions are determined via hit-tests when the event
-// occurs.
-// To bridge the two models, we monitor mouse-downs with
-// +[NSEvent addLocalMonitorForEventsMatchingMask:handler:]. This receives
-// events after window dragging is handled, so for mouse-downs that land on a
-// draggable point, we cancel the event, make the window draggable and repost it
-// at the CGSessionEventTap level so that window dragging will be handled again.
-// On Mac OS > 10.10, we don't use an event monitor. Instead, we use [NSWindow
-// performWindowDragWithEvent:]. See [NativeWidgetMacNSWindow sendEvent:].
-void SetupDragEventMonitor() {
-  DCHECK(views::BridgedNativeWidget::ShouldUseDragEventMonitor());
-  static id monitor = nil;
-  if (monitor)
-    return;
-
-  monitor = [NSEvent
-      addLocalMonitorForEventsMatchingMask:NSLeftMouseDownMask
-      handler:^NSEvent*(NSEvent* ns_event) {
-        return RepostEventIfHandledByWindow(ns_event);
-      }];
 }
 
 // Returns a task runner for creating a ui::Compositor. This allows compositor
@@ -382,13 +239,6 @@ gfx::Size BridgedNativeWidget::GetWindowSizeForClientSize(
   return gfx::Size(NSWidth(frame_rect), NSHeight(frame_rect));
 }
 
-// static
-// TODO(karandeepb): Remove usage of drag event monitor once we stop supporting
-// Mac OS 10.10.
-bool BridgedNativeWidget::ShouldUseDragEventMonitor() {
-  return base::mac::IsAtMostOS10_10();
-}
-
 BridgedNativeWidget::BridgedNativeWidget(NativeWidgetMac* parent)
     : native_widget_mac_(parent),
       focus_manager_(nullptr),
@@ -397,11 +247,7 @@ BridgedNativeWidget::BridgedNativeWidget(NativeWidgetMac* parent)
       target_fullscreen_state_(false),
       in_fullscreen_transition_(false),
       window_visible_(false),
-      wants_to_be_visible_(false),
-      mouse_down_monitor_(nullptr) {
-  if (BridgedNativeWidget::ShouldUseDragEventMonitor())
-    SetupDragEventMonitor();
-
+      wants_to_be_visible_(false) {
   DCHECK(parent);
   window_delegate_.reset(
       [[ViewsNSWindowDelegate alloc] initWithBridgedNativeWidget:this]);
@@ -445,17 +291,6 @@ void BridgedNativeWidget::Init(base::scoped_nsobject<NSWindow> window,
          selector:@selector(onSystemControlTintChanged:)
              name:NSControlTintDidChangeNotification
            object:nil];
-
-  // Right-clicks outside a bubble should dismiss them, but that doesn't cause
-  // loss of focus on Mac, so add an event monitor to detect.
-  if (params.type == Widget::InitParams::TYPE_BUBBLE) {
-    mouse_down_monitor_ = [NSEvent
-        addLocalMonitorForEventsMatchingMask:NSRightMouseDownMask
-        handler:^NSEvent* (NSEvent* event) {
-          OnRightMouseDownWithBubble(event);
-          return event;
-        }];
-  }
 
   // Validate the window's initial state, otherwise the bridge's initial
   // tracking state will be incorrect.
@@ -796,10 +631,6 @@ void BridgedNativeWidget::OnWindowWillClose() {
     parent_ = nullptr;
   }
   [[NSNotificationCenter defaultCenter] removeObserver:window_delegate_];
-  if (mouse_down_monitor_) {
-    [NSEvent removeMonitor:mouse_down_monitor_];
-    mouse_down_monitor_ = nullptr;
-  }
 
   [show_animation_ stopAnimation];  // If set, calls OnShowAnimationComplete().
   DCHECK(!show_animation_);
@@ -834,21 +665,15 @@ void BridgedNativeWidget::OnFullscreenTransitionComplete(
     return;
   }
 
+  // The transition completed, but into the wrong state. This can happen when
+  // there are calls to change the fullscreen state whilst mid-transition.
   // First update to reflect reality so that OnTargetFullscreenStateChanged()
   // expects the change.
   target_fullscreen_state_ = actual_fullscreen_state;
-  ToggleDesiredFullscreenState();
-
-  // Usually ToggleDesiredFullscreenState() sets |in_fullscreen_transition_| via
-  // OnFullscreenTransitionStart(). When it does not, it means Cocoa ignored the
-  // toggleFullScreen: request. This can occur when the fullscreen transition
-  // fails and Cocoa is *about* to send windowDidFailToEnterFullScreen:.
-  // Annoyingly, for this case, Cocoa first sends windowDidExitFullScreen:.
-  if (in_fullscreen_transition_)
-    DCHECK_NE(target_fullscreen_state_, actual_fullscreen_state);
+  ToggleDesiredFullscreenState(true /* async */);
 }
 
-void BridgedNativeWidget::ToggleDesiredFullscreenState() {
+void BridgedNativeWidget::ToggleDesiredFullscreenState(bool async) {
   // If there is currently an animation into or out of fullscreen, then AppKit
   // emits the string "not in fullscreen state" to stdio and does nothing. For
   // this case, schedule a transition back into the desired state when the
@@ -876,7 +701,18 @@ void BridgedNativeWidget::ToggleDesiredFullscreenState() {
   // This will be reset when a transition out of fullscreen completes.
   gfx::SetNSWindowCanFullscreen(window_, true);
 
-  [window_ toggleFullScreen:nil];
+  // Until 10.13, AppKit would obey a call to -toggleFullScreen: made inside
+  // OnFullscreenTransitionComplete(). Starting in 10.13, it behaves as though
+  // the transition is still in progress and just emits "not in a fullscreen
+  // state" when trying to exit fullscreen in the same runloop that entered it.
+  // To handle this case, invoke -toggleFullScreen: asynchronously.
+  if (async) {
+    [window_ performSelector:@selector(toggleFullScreen:)
+                  withObject:nil
+                  afterDelay:0];
+  } else {
+    [window_ toggleFullScreen:nil];
+  }
 }
 
 void BridgedNativeWidget::OnSizeChanged() {
@@ -969,7 +805,8 @@ void BridgedNativeWidget::OnBackingPropertiesChanged() {
 
 void BridgedNativeWidget::OnWindowKeyStatusChangedTo(bool is_key) {
   Widget* widget = native_widget_mac()->GetWidget();
-  widget->OnNativeWidgetActivationChanged(is_key);
+  if (!widget->OnNativeWidgetActivationChanged(is_key))
+    return;
   // The contentView is the BridgedContentView hosting the views::RootView. The
   // focus manager will already know if a native subview has focus.
   if ([window_ contentView] == [window_ firstResponder]) {
@@ -984,56 +821,6 @@ void BridgedNativeWidget::OnWindowKeyStatusChangedTo(bool is_key) {
       widget->GetFocusManager()->StoreFocusedView(true);
     }
   }
-}
-
-bool BridgedNativeWidget::ShouldDragWindow(NSEvent* event) {
-  if (!bridged_view_ || [event type] != NSLeftMouseDown)
-    return false;
-
-  NSPoint location_in_window = [event locationInWindow];
-  if (IsPointInResizeArea(location_in_window, window_))
-    return false;
-
-  gfx::Point point(location_in_window.x,
-                   NSHeight([window_ frame]) - location_in_window.y);
-
-  if (native_widget_mac()->GetWidget()->GetNonClientComponent(point) !=
-      HTCAPTION)
-    return false;
-
-  // Check that the point is not obscured by non-content NSViews.
-  for (NSView* subview : [[bridged_view_ superview] subviews]) {
-    if (subview == bridged_view_.get())
-      continue;
-
-    if (![subview mouseDownCanMoveWindow] &&
-        NSPointInRect(location_in_window, [subview frame]))
-      return false;
-  }
-
-  return true;
-}
-
-bool BridgedNativeWidget::ShouldRepostPendingLeftMouseDown(NSEvent* event) {
-  DCHECK(BridgedNativeWidget::ShouldUseDragEventMonitor());
-  DCHECK_EQ(NSLeftMouseDown, [event type]);
-
-  if (!bridged_view_)
-    return false;
-
-  if ([bridged_view_ mouseDownCanMoveWindow]) {
-    // This is a re-post, the movement has already started, so we can make the
-    // window non-draggable again.
-    SetDraggable(false);
-    return false;
-  }
-
-  if (!ShouldDragWindow(event))
-    return false;
-
-  // Make the window draggable, then return true to repost the event.
-  SetDraggable(true);
-  return true;
 }
 
 void BridgedNativeWidget::OnSizeConstraintsChanged() {
@@ -1063,7 +850,7 @@ void BridgedNativeWidget::OnShowAnimationComplete() {
 
 ui::InputMethod* BridgedNativeWidget::GetInputMethod() {
   if (!input_method_) {
-    input_method_ = ui::CreateInputMethod(this, nil);
+    input_method_ = ui::CreateInputMethod(this, gfx::kNullAcceleratedWidget);
     // For now, use always-focused mode on Mac for the input method.
     // TODO(tapted): Move this to OnWindowKeyStatusChangedTo() and balance.
     input_method_->OnFocus();
@@ -1402,7 +1189,7 @@ void BridgedNativeWidget::CreateCompositor() {
   compositor_.reset(new ui::Compositor(
       context_factory_private->AllocateFrameSinkId(), context_factory,
       context_factory_private, GetCompositorTaskRunner(),
-      false /* enable_surface_synchronization */,
+      features::IsSurfaceSynchronizationEnabled(),
       ui::IsPixelCanvasRecordingEnabled()));
   compositor_->SetAcceleratedWidget(compositor_widget_->accelerated_widget());
   compositor_widget_->SetNSView(this);
@@ -1413,7 +1200,8 @@ void BridgedNativeWidget::InitCompositor() {
   float scale_factor = GetDeviceScaleFactorFromView(compositor_superview_);
   gfx::Size size_in_dip = GetClientAreaSize();
   compositor_->SetScaleAndSize(scale_factor,
-                               ConvertSizeToPixel(scale_factor, size_in_dip));
+                               ConvertSizeToPixel(scale_factor, size_in_dip),
+                               parent_local_surface_id_allocator_.GenerateId());
   compositor_->SetRootLayer(layer());
 }
 
@@ -1457,22 +1245,6 @@ void BridgedNativeWidget::AddCompositorSuperview() {
   [background_layer
       setAutoresizingMask:kCALayerWidthSizable | kCALayerHeightSizable];
 
-  if (widget_type_ == Widget::InitParams::TYPE_MENU) {
-    // Giving the canvas opacity messes up subpixel font rendering, so use a
-    // solid background, but make the CALayer transparent.
-    if (base::mac::IsAtLeastOS10_10()) {
-      [background_layer setOpacity:kYosemiteMenuOpacity];
-      CGSSetWindowBackgroundBlurRadius(
-          _CGSDefaultConnection(), [window_ windowNumber], kYosemiteMenuBlur);
-      // The blur effect does not occur with a fully transparent (or fully
-      // layer-backed) window. Setting a window background will use square
-      // corners, so ask the contentView to draw one instead.
-      [bridged_view_ setDrawMenuBackgroundForBlur:YES];
-    } else {
-      [background_layer setOpacity:kMavericksMenuOpacity];
-    }
-  }
-
   // Set the layer first to create a layer-hosting view (not layer-backed).
   [compositor_superview_ setLayer:background_layer];
   [compositor_superview_ setWantsLayer:YES];
@@ -1486,12 +1258,18 @@ void BridgedNativeWidget::AddCompositorSuperview() {
 void BridgedNativeWidget::UpdateLayerProperties() {
   DCHECK(layer());
   DCHECK(compositor_superview_);
+  float scale_factor = GetDeviceScaleFactorFromView(compositor_superview_);
   gfx::Size size_in_dip = GetClientAreaSize();
+  gfx::Size size_in_pixel = ConvertSizeToPixel(scale_factor, size_in_dip);
+
   layer()->SetBounds(gfx::Rect(size_in_dip));
 
-  float scale_factor = GetDeviceScaleFactorFromView(compositor_superview_);
-  compositor_->SetScaleAndSize(scale_factor,
-                               ConvertSizeToPixel(scale_factor, size_in_dip));
+  if (compositor_->size() != size_in_pixel ||
+      compositor_->device_scale_factor() != scale_factor) {
+    compositor_->SetScaleAndSize(
+        scale_factor, size_in_pixel,
+        parent_local_surface_id_allocator_.GenerateId());
+  }
 
   // For a translucent window, the shadow calculation needs to be carried out
   // after the frame from the compositor arrives.
@@ -1549,40 +1327,6 @@ NSMutableDictionary* BridgedNativeWidget::GetWindowProperties() const {
                              properties, OBJC_ASSOCIATION_RETAIN);
   }
   return properties;
-}
-
-void BridgedNativeWidget::SetDraggable(bool draggable) {
-  DCHECK(BridgedNativeWidget::ShouldUseDragEventMonitor());
-
-  [bridged_view_ setMouseDownCanMoveWindow:draggable];
-  // AppKit will not update its cache of mouseDownCanMoveWindow unless something
-  // changes. Previously we tried adding an NSView and removing it, but for some
-  // reason it required reposting the mouse-down event, and didn't always work.
-  // Calling the below seems to be an effective solution.
-  [window_ setMovableByWindowBackground:NO];
-  [window_ setMovableByWindowBackground:YES];
-}
-
-void BridgedNativeWidget::OnRightMouseDownWithBubble(NSEvent* event) {
-  NSWindow* target = [event window];
-  if ([target isSheet])
-    return;
-
-  // Do not close the bubble if the event happened on a window with a higher
-  // level.  For example, the content of a browser action bubble opens a
-  // calendar picker window with NSPopUpMenuWindowLevel, and a date selection
-  // closes the picker window, but it should not close the bubble.
-  if ([target level] > [window_ level])
-    return;
-
-  // If the event is in |window_|'s hierarchy, do not close the bubble.
-  while (target) {
-    if (target == window_.get())
-      return;
-    target = [target parentWindow];
-  }
-
-  OnWindowKeyStatusChangedTo(false);
 }
 
 }  // namespace views

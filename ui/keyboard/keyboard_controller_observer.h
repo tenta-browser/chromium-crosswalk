@@ -14,33 +14,43 @@ class Rect;
 
 namespace keyboard {
 
+// Describes the various attributes of the keyboard's appearance and usability.
+struct KeyboardStateDescriptor {
+  bool is_available;
+  bool is_locked;
+  gfx::Rect visual_bounds;
+  gfx::Rect occluded_bounds;
+  gfx::Rect displaced_bounds;
+};
+
 // Observers to the KeyboardController are notified of significant events that
 // occur with the keyboard, such as the bounds or visiility changing.
 class KEYBOARD_EXPORT KeyboardControllerObserver {
  public:
   virtual ~KeyboardControllerObserver() {}
 
-  // Called when the keyboard bounds or visibility are about to change.
-  // DEPRECATED - please use one of the other more specific methods below. Once
-  // all callers of this method have been migrated, it will be removed.
-  virtual void OnKeyboardBoundsChanging(const gfx::Rect& new_bounds) {}
-
   // Called when the keyboard is shown or closed.
-  virtual void OnKeyboardAvailabilityChanging(const bool is_available) {}
+  virtual void OnKeyboardAvailabilityChanged(const bool is_available) {}
 
   // Called when the keyboard bounds are changing.
-  virtual void OnKeyboardVisibleBoundsChanging(const gfx::Rect& new_bounds) {}
+  virtual void OnKeyboardVisibleBoundsChanged(const gfx::Rect& new_bounds) {}
 
   // Called when the keyboard bounds have changed in a way that should affect
   // the usable region of the workspace.
-  virtual void OnKeyboardWorkspaceOccludedBoundsChanging(
+  virtual void OnKeyboardWorkspaceOccludedBoundsChanged(
       const gfx::Rect& new_bounds) {}
 
   // Called when the keyboard bounds have changed in a way that affects how the
   // workspace should change to not take up the screen space occupied by the
   // keyboard.
-  virtual void OnKeyboardWorkspaceDisplacingBoundsChanging(
+  virtual void OnKeyboardWorkspaceDisplacingBoundsChanged(
       const gfx::Rect& new_bounds){};
+
+  // Redundant with other various notification methods. Use this if the state of
+  // multiple properties need to be conveyed simultaneously to observer
+  // implementations without the need to track multiple stateful properties.
+  virtual void OnKeyboardAppearanceChanged(
+      const KeyboardStateDescriptor& state){};
 
   // Called when the keyboard was closed.
   virtual void OnKeyboardClosed(){};

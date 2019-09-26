@@ -22,12 +22,13 @@
 #include "content/public/browser/android/compositor.h"
 #include "gpu/command_buffer/common/capabilities.h"
 #include "gpu/ipc/common/surface_handle.h"
-#include "gpu/vulkan/features.h"
+#include "gpu/vulkan/buildflags.h"
 #include "services/ui/public/cpp/gpu/context_provider_command_buffer.h"
 #include "third_party/khronos/GLES2/gl2.h"
 #include "ui/android/resources/resource_manager_impl.h"
 #include "ui/android/resources/ui_resource_provider.h"
 #include "ui/android/window_android_compositor.h"
+#include "ui/compositor/compositor_lock.h"
 #include "ui/display/display_observer.h"
 
 struct ANativeWindow;
@@ -44,7 +45,6 @@ class FrameSinkId;
 class FrameSinkManagerImpl;
 class HostFrameSinkManager;
 class OutputSurface;
-class VulkanContextProvider;
 }
 
 namespace content {
@@ -57,6 +57,7 @@ class CONTENT_EXPORT CompositorImpl
     : public Compositor,
       public cc::LayerTreeHostClient,
       public cc::LayerTreeHostSingleThreadClient,
+      public ui::CompositorLockManagerClient,
       public ui::UIResourceProvider,
       public ui::WindowAndroidCompositor,
       public viz::HostFrameSinkClient,
@@ -76,13 +77,17 @@ class CONTENT_EXPORT CompositorImpl
   void DeleteUIResource(cc::UIResourceId resource_id) override;
   bool SupportsETC1NonPowerOfTwo() const override;
 
+  // Test functions:
+  bool IsLockedForTesting() const { return lock_manager_.IsLocked(); }
+  void SetVisibleForTesting(bool visible) { SetVisible(visible); }
+
  private:
   // Compositor implementation.
+  void SetRootWindow(gfx::NativeWindow root_window) override;
   void SetRootLayer(scoped_refptr<cc::Layer> root) override;
   void SetSurface(jobject surface) override;
   void SetBackgroundColor(int color) override;
   void SetWindowBounds(const gfx::Size& size) override;
-  void SetDeferCommits(bool defer_commits) override;
   void SetRequiresAlphaChannel(bool flag) override;
   void SetNeedsComposite() override;
   ui::UIResourceProvider& GetUIResourceProvider() override;
@@ -94,7 +99,7 @@ class CONTENT_EXPORT CompositorImpl
   void BeginMainFrame(const viz::BeginFrameArgs& args) override {}
   void BeginMainFrameNotExpectedSoon() override {}
   void BeginMainFrameNotExpectedUntil(base::TimeTicks time) override {}
-  void UpdateLayerTreeHost() override;
+  void UpdateLayerTreeHost(VisualStateUpdate requested_update) override;
   void ApplyViewportDeltas(const gfx::Vector2dF& inner_delta,
                            const gfx::Vector2dF& outer_delta,
                            const gfx::Vector2dF& elastic_overscroll_delta,
@@ -124,6 +129,10 @@ class CONTENT_EXPORT CompositorImpl
   viz::FrameSinkId GetFrameSinkId() override;
   void AddChildFrameSink(const viz::FrameSinkId& frame_sink_id) override;
   void RemoveChildFrameSink(const viz::FrameSinkId& frame_sink_id) override;
+  std::unique_ptr<ui::CompositorLock> GetCompositorLock(
+      ui::CompositorLockClient* client,
+      base::TimeDelta timeout) override;
+  bool IsDrawingFirstVisibleFrame() const override;
 
   // viz::HostFrameSinkClient implementation.
   void OnFirstSurfaceActivation(const viz::SurfaceInfo& surface_info) override;
@@ -132,6 +141,9 @@ class CONTENT_EXPORT CompositorImpl
   // display::DisplayObserver implementation.
   void OnDisplayMetricsChanged(const display::Display& display,
                                uint32_t changed_metrics) override;
+
+  // ui::CompositorLockManagerClient implementation.
+  void OnCompositorLockStateChanged(bool locked) override;
 
   void SetVisible(bool visible);
   void CreateLayerTreeHost();
@@ -145,11 +157,17 @@ class CONTENT_EXPORT CompositorImpl
       scoped_refptr<gpu::GpuChannelHost> gpu_channel_host);
   void InitializeDisplay(
       std::unique_ptr<viz::OutputSurface> display_output_surface,
-      scoped_refptr<viz::VulkanContextProvider> vulkan_context_provider,
       scoped_refptr<viz::ContextProvider> context_provider);
   void DidSwapBuffers();
 
   bool HavePendingReadbacks();
+
+  void DetachRootWindow();
+
+  // Helper functions to perform delayed cleanup after the compositor is no
+  // longer visible on low-end devices.
+  void EnqueueLowEndBackgroundCleanup();
+  void DoLowEndBackgroundCleanup();
 
   viz::FrameSinkId frame_sink_id_;
 
@@ -176,7 +194,7 @@ class CONTENT_EXPORT CompositorImpl
 
   CompositorClient* client_;
 
-  gfx::NativeWindow root_window_;
+  gfx::NativeWindow root_window_ = nullptr;
 
   // Whether we need to update animations on the next composite.
   bool needs_animate_;
@@ -195,6 +213,13 @@ class CONTENT_EXPORT CompositorImpl
   bool has_layer_tree_frame_sink_ = false;
   std::unordered_set<viz::FrameSinkId, viz::FrameSinkIdHash>
       pending_child_frame_sink_ids_;
+  ui::CompositorLockManager lock_manager_;
+  bool has_submitted_frame_since_became_visible_ = false;
+
+  // A task which runs cleanup tasks on low-end Android after a delay. Enqueued
+  // when we hide, canceled when we're shown.
+  base::CancelableOnceClosure low_end_background_cleanup_task_;
+
   base::WeakPtrFactory<CompositorImpl> weak_factory_;
 
   DISALLOW_COPY_AND_ASSIGN(CompositorImpl);

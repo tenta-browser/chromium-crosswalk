@@ -4,7 +4,6 @@
 
 #include "ui/views/bubble/tooltip_icon.h"
 
-#include "base/memory/ptr_util.h"
 #include "base/timer/timer.h"
 #include "components/vector_icons/vector_icons.h"
 #include "ui/accessibility/ax_node_data.h"
@@ -55,7 +54,7 @@ void TooltipIcon::OnGestureEvent(ui::GestureEvent* event) {
 }
 
 void TooltipIcon::GetAccessibleNodeData(ui::AXNodeData* node_data) {
-  node_data->role = ui::AX_ROLE_TOOLTIP;
+  node_data->role = ax::mojom::Role::kTooltip;
   node_data->SetName(tooltip_);
 }
 

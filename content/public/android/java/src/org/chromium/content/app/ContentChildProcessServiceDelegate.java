@@ -16,6 +16,7 @@ import android.view.Surface;
 import org.chromium.base.CommandLine;
 import org.chromium.base.JNIUtils;
 import org.chromium.base.Log;
+import org.chromium.base.ThreadUtils;
 import org.chromium.base.UnguessableToken;
 import org.chromium.base.annotations.CalledByNative;
 import org.chromium.base.annotations.JNINamespace;
@@ -23,6 +24,7 @@ import org.chromium.base.annotations.MainDex;
 import org.chromium.base.library_loader.LibraryLoader;
 import org.chromium.base.library_loader.Linker;
 import org.chromium.base.library_loader.ProcessInitException;
+import org.chromium.base.memory.MemoryPressureUma;
 import org.chromium.base.process_launcher.ChildProcessServiceDelegate;
 import org.chromium.content.browser.ChildProcessCreationParams;
 import org.chromium.content.browser.ContentChildProcessConstants;
@@ -176,6 +178,7 @@ public class ContentChildProcessServiceDelegate implements ChildProcessServiceDe
     @Override
     public void onBeforeMain() {
         nativeInitChildProcess(mCpuCount, mCpuFeatures);
+        ThreadUtils.postOnUiThread(() -> MemoryPressureUma.initializeForChildService());
     }
 
     @Override
@@ -196,8 +199,7 @@ public class ContentChildProcessServiceDelegate implements ChildProcessServiceDe
             // For testing, set the Linker implementation and the test runner
             // class name to match those used by the parent.
             assert mLinkerParams != null;
-            Linker.setupForTesting(mLinkerParams.mLinkerImplementationForTesting,
-                    mLinkerParams.mTestRunnerClassNameForTesting);
+            Linker.setupForTesting(mLinkerParams.mTestRunnerClassNameForTesting);
         }
         return Linker.getInstance();
     }
@@ -253,7 +255,7 @@ public class ContentChildProcessServiceDelegate implements ChildProcessServiceDe
     /**
      * Initializes the native parts of the service.
      *
-     * @param serviceImpl This ChildProcessServiceImpl object.
+     * @param serviceImpl This ChildProcessService object.
      * @param cpuCount The number of CPUs.
      * @param cpuFeatures The CPU features.
      */

@@ -6,9 +6,9 @@
 
 #import <WebKit/WebKit.h>
 
+#include <memory>
 #include <utility>
 
-#include "base/ios/ios_util.h"
 #include "base/mac/foundation_util.h"
 #include "base/path_service.h"
 #include "base/scoped_observer.h"
@@ -118,6 +118,9 @@ void WaitForZoomRendering(CRWWebController* webController,
 // Test fixture for testing CRWWebController. Stubs out web view.
 class CRWWebControllerTest : public WebTestWithWebController {
  protected:
+  CRWWebControllerTest()
+      : WebTestWithWebController(std::make_unique<TestWebClient>()) {}
+
   void SetUp() override {
     WebTestWithWebController::SetUp();
     mock_web_view_ = CreateMockWebView();
@@ -137,6 +140,11 @@ class CRWWebControllerTest : public WebTestWithWebController {
     WebTestWithWebController::TearDown();
   }
 
+  TestWebClient* GetWebClient() override {
+    return static_cast<TestWebClient*>(
+        WebTestWithWebController::GetWebClient());
+  }
+
   // The value for web view OCMock objects to expect for |-setFrame:|.
   CGRect GetExpectedWebViewFrame() const {
     CGSize container_view_size = [UIScreen mainScreen].bounds.size;
@@ -152,15 +160,7 @@ class CRWWebControllerTest : public WebTestWithWebController {
   // Creates WebView mock.
   UIView* CreateMockWebView() {
     id result = [OCMockObject mockForClass:[WKWebView class]];
-
-    if (@available(iOS 10, *)) {
-      [[result stub] serverTrust];
-    }
-#if !defined(__IPHONE_10_0) || __IPHONE_OS_VERSION_MIN_REQUIRED < __IPHONE_10_0
-    else {
-      [[result stub] certificateChain];
-    }
-#endif
+    [[result stub] serverTrust];
 
     mock_wk_list_ = [[CRWFakeBackForwardList alloc] init];
     OCMStub([result backForwardList]).andReturn(mock_wk_list_);
@@ -502,19 +502,20 @@ TEST_F(CRWWebControllerInvalidUrlTest, IFrameWithInvalidURL) {
   EXPECT_EQ(url, web_state()->GetLastCommittedURL());
 }
 
-// Real WKWebView is required for CRWWebControllerFormActivityTest.
-typedef WebTestWithWebState CRWWebControllerFormActivityTest;
+// Real WKWebView is required for CRWWebControllerMessageFromIFrame.
+typedef WebTestWithWebState CRWWebControllerMessageFromIFrame;
 
-// Tests that keyup event correctly delivered to WebStateObserver.
-TEST_F(CRWWebControllerFormActivityTest, KeyUpEvent) {
-  TestWebStateObserver observer(web_state());
-  LoadHtml(@"<p></p>");
-  ASSERT_FALSE(observer.form_activity_info());
-  ExecuteJavaScript(@"document.dispatchEvent(new KeyboardEvent('keyup'));");
-  TestFormActivityInfo* info = observer.form_activity_info();
-  ASSERT_TRUE(info);
-  EXPECT_EQ("keyup", info->form_activity.type);
-  EXPECT_FALSE(info->form_activity.input_missing);
+// Tests that invalid message from iframe does not cause a crash.
+TEST_F(CRWWebControllerMessageFromIFrame, InvalidMessage) {
+  static NSString* const kHTMLIFrameSendsInvalidMessage =
+      @"<body><iframe name='f'></iframe></body>";
+
+  LoadHtml(kHTMLIFrameSendsInvalidMessage);
+
+  // Sending unknown command from iframe should not cause a crash.
+  ExecuteJavaScript(
+      @"var bad_message = {'command' : 'unknown.command'};"
+       "frames['f'].__gCrWeb.message.invokeOnHost(bad_message);");
 }
 
 // Real WKWebView is required for CRWWebControllerJSExecutionTest.
@@ -552,13 +553,20 @@ class CRWWebControllerDownloadTest : public CRWWebControllerTest {
   // and waits for decision handler call. Returns false if decision handler call
   // times out.
   bool CallDecidePolicyForNavigationResponseWithResponse(
-      NSURLResponse* response) WARN_UNUSED_RESULT {
+      NSURLResponse* response,
+      BOOL for_main_frame) WARN_UNUSED_RESULT {
     CRWFakeWKNavigationResponse* navigation_response =
         [[CRWFakeWKNavigationResponse alloc] init];
     navigation_response.response = response;
+    navigation_response.forMainFrame = for_main_frame;
 
     // Wait for decidePolicyForNavigationResponse: callback.
     __block bool callback_called = false;
+    if (for_main_frame) {
+      // webView:didStartProvisionalNavigation: is not called for iframes.
+      [navigation_delegate_ webView:mock_web_view_
+          didStartProvisionalNavigation:nil];
+    }
     [navigation_delegate_ webView:mock_web_view_
         decidePolicyForNavigationResponse:navigation_response
                           decisionHandler:^(WKNavigationResponsePolicy policy) {
@@ -586,7 +594,8 @@ TEST_F(CRWWebControllerDownloadTest, CreationWithNSURLResponse) {
                                 MIMEType:@(kTestMimeType)
                    expectedContentLength:content_length
                         textEncodingName:nil];
-  ASSERT_TRUE(CallDecidePolicyForNavigationResponseWithResponse(response));
+  ASSERT_TRUE(CallDecidePolicyForNavigationResponseWithResponse(
+      response, /*for_main_frame=*/YES));
 
   // Verify that download task was created.
   ASSERT_EQ(1U, delegate_.alive_download_tasks().size());
@@ -597,6 +606,9 @@ TEST_F(CRWWebControllerDownloadTest, CreationWithNSURLResponse) {
   EXPECT_EQ(content_length, task->GetTotalBytes());
   EXPECT_EQ("", task->GetContentDisposition());
   EXPECT_EQ(kTestMimeType, task->GetMimeType());
+  EXPECT_TRUE(ui::PageTransitionTypeIncludingQualifiersIs(
+      task->GetTransitionType(),
+      ui::PageTransition::PAGE_TRANSITION_CLIENT_REDIRECT));
 }
 
 // Tests that webView:decidePolicyForNavigationResponse:decisionHandler: creates
@@ -611,7 +623,8 @@ TEST_F(CRWWebControllerDownloadTest, CreationWithNSHTTPURLResponse) {
       headerFields:@{
         @"content-disposition" : @(kContentDisposition),
       }];
-  ASSERT_TRUE(CallDecidePolicyForNavigationResponseWithResponse(response));
+  ASSERT_TRUE(CallDecidePolicyForNavigationResponseWithResponse(
+      response, /*for_main_frame=*/YES));
 
   // Verify that download task was created.
   ASSERT_EQ(1U, delegate_.alive_download_tasks().size());
@@ -622,6 +635,54 @@ TEST_F(CRWWebControllerDownloadTest, CreationWithNSHTTPURLResponse) {
   EXPECT_EQ(-1, task->GetTotalBytes());
   EXPECT_EQ(kContentDisposition, task->GetContentDisposition());
   EXPECT_EQ("", task->GetMimeType());
+  EXPECT_TRUE(ui::PageTransitionTypeIncludingQualifiersIs(
+      task->GetTransitionType(),
+      ui::PageTransition::PAGE_TRANSITION_CLIENT_REDIRECT));
+}
+
+// Tests that webView:decidePolicyForNavigationResponse:decisionHandler: creates
+// the DownloadTask for NSHTTPURLResponse and iframes.
+TEST_F(CRWWebControllerDownloadTest, IFrameCreationWithNSHTTPURLResponse) {
+  // Simulate download response.
+  const char kContentDisposition[] = "attachment; filename=download.test";
+  NSURLResponse* response = [[NSHTTPURLResponse alloc]
+       initWithURL:[NSURL URLWithString:@(kTestURLString)]
+        statusCode:200
+       HTTPVersion:nil
+      headerFields:@{
+        @"content-disposition" : @(kContentDisposition),
+      }];
+  ASSERT_TRUE(CallDecidePolicyForNavigationResponseWithResponse(
+      response, /*for_main_frame=*/NO));
+
+  // Verify that download task was created.
+  ASSERT_EQ(1U, delegate_.alive_download_tasks().size());
+  DownloadTask* task = delegate_.alive_download_tasks()[0].second.get();
+  ASSERT_TRUE(task);
+  EXPECT_TRUE(task->GetIndentifier());
+  EXPECT_EQ(kTestURLString, task->GetOriginalUrl());
+  EXPECT_EQ(-1, task->GetTotalBytes());
+  EXPECT_EQ(kContentDisposition, task->GetContentDisposition());
+  EXPECT_EQ("", task->GetMimeType());
+  EXPECT_TRUE(ui::PageTransitionTypeIncludingQualifiersIs(
+      task->GetTransitionType(),
+      ui::PageTransition::PAGE_TRANSITION_AUTO_SUBFRAME));
+}
+
+// Tests that webView:decidePolicyForNavigationResponse:decisionHandler: does
+// not create the DownloadTask for unsupported data:// URLs.
+TEST_F(CRWWebControllerDownloadTest, DataUrlResponse) {
+  // Simulate download response.
+  NSURLResponse* response =
+      [[NSHTTPURLResponse alloc] initWithURL:[NSURL URLWithString:@"data:data"]
+                                  statusCode:200
+                                 HTTPVersion:nil
+                                headerFields:nil];
+  ASSERT_TRUE(CallDecidePolicyForNavigationResponseWithResponse(
+      response, /*for_main_frame=*/YES));
+
+  // Verify that download task was not created.
+  EXPECT_TRUE(delegate_.alive_download_tasks().empty());
 }
 
 // Tests |currentURLWithTrustLevel:| method.
@@ -1021,7 +1082,7 @@ class LoadIfNecessaryTest : public WebTest {
  protected:
   void SetUp() override {
     WebTest::SetUp();
-    web_state_ = base::MakeUnique<WebStateImpl>(
+    web_state_ = std::make_unique<WebStateImpl>(
         WebState::CreateParams(GetBrowserState()), GetTestSessionStorage());
   }
 

@@ -60,8 +60,8 @@ struct BASE_EXPORT LaunchOptions {
   // pre_exec_delegate below)
   class BASE_EXPORT PreExecDelegate {
    public:
-    PreExecDelegate() {}
-    virtual ~PreExecDelegate() {}
+    PreExecDelegate() = default;
+    virtual ~PreExecDelegate() = default;
 
     // Since this is to be run between fork and exec, and fork may have happened
     // while multiple threads were running, this function needs to be async
@@ -165,16 +165,6 @@ struct BASE_EXPORT LaunchOptions {
   // propagate FDs into the child process.
   FileHandleMappingVector fds_to_remap;
 
-  // Each element is an RLIMIT_* constant that should be raised to its
-  // rlim_max.  This pointer is owned by the caller and must live through
-  // the call to LaunchProcess().
-  const std::vector<int>* maximize_rlimits = nullptr;
-
-  // If true, start the process in a new process group, instead of
-  // inheriting the parent's process group.  The pgid of the child process
-  // will be the same as its pid.
-  bool new_process_group = false;
-
 #if defined(OS_LINUX)
   // If non-zero, start the process using clone(), using flags as provided.
   // Unlike in clone, clone_flags may not contain a custom termination signal
@@ -208,9 +198,19 @@ struct BASE_EXPORT LaunchOptions {
   // from the parent process.
   uint32_t clone_flags =
       LP_CLONE_FDIO_NAMESPACE | LP_CLONE_DEFAULT_JOB | LP_CLONE_FDIO_STDIO;
+
+  // Specifies the namespace paths which are to be cloned in the child process'
+  // namespace. If left unset, the child process will be launched with an empty
+  // namespace.
+  // This flag allows the parent to pass only the bare minimum OS capabilities
+  // to the child process, so that the potential attack surface is reduced in
+  // case child process is compromised.
+  // Cannot be combined with the clone flag LP_CLONE_FDIO_NAMESPACE, which is
+  // equivalent to cloning every path.
+  std::vector<std::string> paths_to_map;
 #endif  // defined(OS_FUCHSIA)
 
-#if defined(OS_POSIX)
+#if defined(OS_POSIX) && !defined(OS_FUCHSIA)
   // If not empty, launch the specified executable instead of
   // cmdline.GetProgram(). This is useful when it is necessary to pass a custom
   // argv[0].
@@ -223,7 +223,17 @@ struct BASE_EXPORT LaunchOptions {
   // code running in this delegate essentially needs to be async-signal safe
   // (see man 7 signal for a list of allowed functions).
   PreExecDelegate* pre_exec_delegate = nullptr;
-#endif  // defined(OS_POSIX)
+
+  // Each element is an RLIMIT_* constant that should be raised to its
+  // rlim_max.  This pointer is owned by the caller and must live through
+  // the call to LaunchProcess().
+  const std::vector<int>* maximize_rlimits = nullptr;
+
+  // If true, start the process in a new process group, instead of
+  // inheriting the parent's process group.  The pgid of the child process
+  // will be the same as its pid.
+  bool new_process_group = false;
+#endif  // defined(OS_POSIX) && !defined(OS_FUCHSIA)
 
 #if defined(OS_CHROMEOS)
   // If non-negative, the specified file descriptor will be set as the launched
@@ -364,9 +374,7 @@ BASE_EXPORT LaunchOptions LaunchOptionsForTest();
 //
 // This function uses the libc clone wrapper (which updates libc's pid cache)
 // internally, so callers may expect things like getpid() to work correctly
-// after in both the child and parent. An exception is when this code is run
-// under Valgrind. Valgrind does not support the libc clone wrapper, so the libc
-// pid cache may be incorrect after this function is called under Valgrind.
+// after in both the child and parent.
 //
 // As with fork(), callers should be extremely careful when calling this while
 // multiple threads are running, since at the time the fork happened, the

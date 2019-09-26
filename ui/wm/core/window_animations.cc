@@ -14,7 +14,6 @@
 #include "base/lazy_instance.h"
 #include "base/logging.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/message_loop/message_loop.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/stl_util.h"
@@ -41,9 +40,9 @@
 #include "ui/wm/core/wm_core_switches.h"
 #include "ui/wm/public/animation_host.h"
 
-DECLARE_UI_CLASS_PROPERTY_TYPE(::wm::WindowVisibilityAnimationType)
-DECLARE_UI_CLASS_PROPERTY_TYPE(::wm::WindowVisibilityAnimationTransition)
-DECLARE_UI_CLASS_PROPERTY_TYPE(float)
+DEFINE_UI_CLASS_PROPERTY_TYPE(::wm::WindowVisibilityAnimationType)
+DEFINE_UI_CLASS_PROPERTY_TYPE(::wm::WindowVisibilityAnimationTransition)
+DEFINE_UI_CLASS_PROPERTY_TYPE(float)
 
 namespace wm {
 namespace {

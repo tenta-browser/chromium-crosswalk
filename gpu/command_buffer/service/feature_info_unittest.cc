@@ -43,15 +43,18 @@ enum MockedGLVersionKind {
   ES2_on_Version3_0,
   ES2_on_Version3_2Compatibility,
   ES3_on_Version3_0,
-  ES3_on_Version3_2Compatibility
+  ES3_on_Version3_2Compatibility,
+
+  // Currently, nothing cares about both ES version and passthrough, so just
+  // create one representative passthrough case.
+  ES2_on_Version3_0_Passthrough
 };
 
 class FeatureInfoTest
     : public GpuServiceTest,
       public ::testing::WithParamInterface<MockedGLVersionKind> {
  public:
-  FeatureInfoTest() {
-  }
+  FeatureInfoTest() = default;
 
   void SetupInitExpectations(const char* extensions) {
     std::string extensions_str = extensions;
@@ -59,6 +62,7 @@ class FeatureInfoTest
     // OpenGL compatibility profile.
     switch (GetParam()) {
       case ES2_on_Version3_0:
+      case ES2_on_Version3_0_Passthrough:
       case ES3_on_Version3_0:
         SetupInitExpectationsWithGLVersion(extensions_str.c_str(), "", "3.0");
         break;
@@ -78,6 +82,7 @@ class FeatureInfoTest
   ContextType GetContextType() {
     switch (GetParam()) {
       case ES2_on_Version3_0:
+      case ES2_on_Version3_0_Passthrough:
       case ES2_on_Version3_2Compatibility:
         return CONTEXT_TYPE_OPENGLES2;
       case ES3_on_Version3_0:
@@ -89,13 +94,29 @@ class FeatureInfoTest
     }
   }
 
+  bool IsPassthroughCmdDecoder() {
+    switch (GetParam()) {
+      case ES2_on_Version3_0_Passthrough:
+        return true;
+      case ES2_on_Version3_0:
+      case ES2_on_Version3_2Compatibility:
+      case ES3_on_Version3_0:
+      case ES3_on_Version3_2Compatibility:
+        return false;
+      default:
+        NOTREACHED();
+        return false;
+    }
+  }
+
   void SetupInitExpectationsWithGLVersion(
       const char* extensions, const char* renderer, const char* version) {
     GpuServiceTest::SetUpWithGLVersion(version, extensions);
     TestHelper::SetupFeatureInfoInitExpectationsWithGLVersion(
         gl_.get(), extensions, renderer, version, GetContextType());
     info_ = new FeatureInfo();
-    info_->Initialize(GetContextType(), DisallowedFeatures());
+    info_->Initialize(GetContextType(), IsPassthroughCmdDecoder(),
+                      DisallowedFeatures());
   }
 
   void SetupInitExpectationsWithGLVersionAndDisallowedFeatures(
@@ -107,7 +128,8 @@ class FeatureInfoTest
     TestHelper::SetupFeatureInfoInitExpectationsWithGLVersion(
         gl_.get(), extensions, renderer, version, GetContextType());
     info_ = new FeatureInfo();
-    info_->Initialize(GetContextType(), disallowed_features);
+    info_->Initialize(GetContextType(), IsPassthroughCmdDecoder(),
+                      disallowed_features);
   }
 
   void SetupWithWorkarounds(const gpu::GpuDriverBugWorkarounds& workarounds) {
@@ -122,7 +144,8 @@ class FeatureInfoTest
     TestHelper::SetupFeatureInfoInitExpectationsWithGLVersion(
         gl_.get(), extensions, "", "", GetContextType());
     info_ = new FeatureInfo(workarounds);
-    info_->Initialize(GetContextType(), DisallowedFeatures());
+    info_->Initialize(GetContextType(), IsPassthroughCmdDecoder(),
+                      DisallowedFeatures());
   }
 
   void SetupWithoutInit() {
@@ -1404,8 +1427,16 @@ TEST_P(FeatureInfoTest, InitializeVAOsWithClientSideArrays) {
   workarounds.use_client_side_arrays_for_stream_buffers = true;
   SetupInitExpectationsWithWorkarounds("GL_OES_vertex_array_object",
                                        workarounds);
-  EXPECT_TRUE(info_->workarounds().use_client_side_arrays_for_stream_buffers);
-  EXPECT_FALSE(info_->feature_flags().native_vertex_array_object);
+  if (GetContextType() == CONTEXT_TYPE_OPENGLES2) {
+    EXPECT_TRUE(info_->workarounds().use_client_side_arrays_for_stream_buffers);
+    EXPECT_FALSE(info_->feature_flags().native_vertex_array_object);
+  } else {  // CONTEXT_TYPE_OPENGLES3
+    // We only turn on use_client_side_arrays_for_stream_buffers on ES2
+    // contexts. See https://crbug.com/826509.
+    EXPECT_FALSE(
+        info_->workarounds().use_client_side_arrays_for_stream_buffers);
+    EXPECT_TRUE(info_->feature_flags().native_vertex_array_object);
+  }
 }
 
 TEST_P(FeatureInfoTest, InitializeEXT_blend_minmax) {
@@ -1678,11 +1709,32 @@ TEST_P(FeatureInfoTest, InitializeEXT_texture_norm16) {
   EXPECT_TRUE(info_->validators()->texture_format.IsValid(GL_RED_EXT));
   EXPECT_TRUE(info_->validators()->texture_internal_format.IsValid(GL_R16_EXT));
   EXPECT_TRUE(info_->validators()->texture_internal_format.IsValid(GL_RED_EXT));
+  EXPECT_TRUE(
+      info_->validators()->texture_internal_format_storage.IsValid(GL_R16_EXT));
 }
 
 TEST_P(FeatureInfoTest, InitializeCHROMIUM_ycbcr_422_imageTrue) {
   SetupInitExpectations("GL_APPLE_ycbcr_422");
   EXPECT_TRUE(info_->feature_flags().chromium_image_ycbcr_422);
+}
+
+TEST_P(FeatureInfoTest, InitializeCHROMIUM_unpremultiply_and_dither_copy) {
+  SetupInitExpectations("");
+  switch (GetParam()) {
+    case ES2_on_Version3_0_Passthrough:
+      EXPECT_FALSE(info_->feature_flags().unpremultiply_and_dither_copy);
+      EXPECT_FALSE(gl::HasExtension(
+          info_->extensions(), "GL_CHROMIUM_unpremultiply_and_dither_copy"));
+      break;
+    case ES2_on_Version3_0:
+    case ES2_on_Version3_2Compatibility:
+    case ES3_on_Version3_0:
+    case ES3_on_Version3_2Compatibility:
+      EXPECT_TRUE(info_->feature_flags().unpremultiply_and_dither_copy);
+      EXPECT_TRUE(gl::HasExtension(
+          info_->extensions(), "GL_CHROMIUM_unpremultiply_and_dither_copy"));
+      break;
+  }
 }
 
 }  // namespace gles2

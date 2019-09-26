@@ -56,6 +56,12 @@ Polymer({
      */
     name: String,
 
+    /**
+     * Set to true to show the 'connect' button instead of 'save'.
+     * @private
+     */
+    showConnect: Boolean,
+
     /** @private */
     enableConnect_: Boolean,
 
@@ -69,10 +75,19 @@ Polymer({
      * @private {!chrome.networkingPrivate.NetworkProperties}
      */
     networkProperties_: Object,
+
+    /**
+     * Set by network-config when a configuration error occurs.
+     * @private
+     */
+    error_: {
+      type: String,
+      value: '',
+    },
   },
 
   open: function() {
-    var dialog = /** @type {!CrDialogElement} */ (this.$.dialog);
+    const dialog = /** @type {!CrDialogElement} */ (this.$.dialog);
     if (!dialog.open)
       dialog.showModal();
 
@@ -88,9 +103,19 @@ Polymer({
   },
 
   close: function() {
-    var dialog = /** @type {!CrDialogElement} */ (this.$.dialog);
+    const dialog = /** @type {!CrDialogElement} */ (this.$.dialog);
     if (dialog.open)
       dialog.close();
+  },
+
+  /**
+   * @param {!Event} event
+   * @private
+   */
+  onClose_: function(event) {
+    this.close();
+    this.fire('networks-changed');
+    event.stopPropagation();
   },
 
   /**
@@ -98,36 +123,21 @@ Polymer({
    * @private
    */
   getDialogTitle_: function() {
-    var name = this.networkProperties_.Name;
+    const name = this.networkProperties_.Name;
     if (name)
-      return this.i18n('internetConfigName', name);
-    var type = this.i18n('OncType' + this.networkProperties_.Type);
+      return this.i18n('internetConfigName', HTMLEscape(name));
+    const type = this.i18n('OncType' + this.networkProperties_.Type);
     return this.i18n('internetJoinType', type);
-  },
-
-  /**
-   * @return {boolean}
-   * @private
-   */
-  isConfigured_: function() {
-    var source = this.networkProperties_.Source;
-    return !!this.guid && !!source && source != CrOnc.Source.NONE;
   },
 
   /**
    * @return {string}
    * @private
    */
-  getSaveOrConnectLabel_: function() {
-    return this.i18n(this.isConfigured_() ? 'save' : 'networkButtonConnect');
-  },
-
-  /**
-   * @return {boolean}
-   * @private
-   */
-  getSaveOrConnectEnabled_: function() {
-    return this.isConfigured_() ? this.enableSave_ : this.enableConnect_;
+  getError_: function() {
+    if (this.i18nExists(this.error_))
+      return this.i18n(this.error_);
+    return this.i18n('networkErrorUnknown');
   },
 
   /** @private */
@@ -136,7 +146,12 @@ Polymer({
   },
 
   /** @private */
-  onSaveOrConnectTap_: function() {
-    this.$.networkConfig.saveOrConnect();
+  onSaveTap_: function() {
+    this.$.networkConfig.save();
+  },
+
+  /** @private */
+  onConnectTap_: function() {
+    this.$.networkConfig.connect();
   },
 });

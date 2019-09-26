@@ -97,6 +97,7 @@ class CONTENT_EXPORT InterstitialPageImpl : public InterstitialPage,
   // NavigatorDelegate implementation.
   WebContents* OpenURL(const OpenURLParams& params) override;
   const std::string& GetUserAgentOverride() const override;
+  bool ShouldOverrideUserAgentInNewTabs() override;
   bool ShowingInterstitialPage() const override;
 
  protected:
@@ -167,8 +168,10 @@ class CONTENT_EXPORT InterstitialPageImpl : public InterstitialPage,
       const NativeWebKeyboardEvent& event) override;
   void HandleKeyboardEvent(const NativeWebKeyboardEvent& event) override;
   TextInputManager* GetTextInputManager() override;
-  void GetScreenInfo(content::ScreenInfo* screen_info) override;
   RenderWidgetHostInputEventRouter* GetInputEventRouter() override;
+  BrowserAccessibilityManager* GetRootBrowserAccessibilityManager() override;
+  BrowserAccessibilityManager* GetOrCreateRootBrowserAccessibilityManager()
+      override;
 
   bool enabled() const { return enabled_; }
   WebContents* web_contents() const;

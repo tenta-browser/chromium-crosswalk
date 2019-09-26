@@ -13,15 +13,16 @@
 #include "base/threading/thread_restrictions.h"
 #include "build/build_config.h"
 #include "chrome/browser/bookmarks/bookmark_model_factory.h"
-#include "chrome/browser/extensions/browser_action_test_util.h"
 #include "chrome/browser/extensions/extension_action_test_util.h"
 #include "chrome/browser/extensions/extension_apitest.h"
 #include "chrome/browser/extensions/lazy_background_page_test_util.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_window.h"
+#include "chrome/browser/ui/extensions/browser_action_test_util.h"
 #include "chrome/browser/ui/location_bar/location_bar.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
+#include "chrome/common/chrome_features.h"
 #include "chrome/common/chrome_paths.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/common/extensions/api/tabs.h"
@@ -31,7 +32,7 @@
 #include "components/bookmarks/browser/bookmark_model.h"
 #include "components/bookmarks/browser/bookmark_utils.h"
 #include "components/bookmarks/test/bookmark_test_helpers.h"
-#include "components/nacl/common/features.h"
+#include "components/nacl/common/buildflags.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/test/browser_test_utils.h"
 #include "content/public/test/test_utils.h"
@@ -151,7 +152,7 @@ IN_PROC_BROWSER_TEST_F(LazyBackgroundPageApiTest, BrowserActionCreateTab) {
   // Observe background page being created and closed after
   // the browser action is clicked.
   LazyBackgroundObserver page_complete;
-  BrowserActionTestUtil(browser()).Press(0);
+  BrowserActionTestUtil::Create(browser())->Press(0);
   page_complete.Wait();
 
   // Background page created a new tab before it closed.
@@ -173,7 +174,7 @@ IN_PROC_BROWSER_TEST_F(LazyBackgroundPageApiTest,
   // Observe background page being created and closed after
   // the browser action is clicked.
   LazyBackgroundObserver page_complete;
-  BrowserActionTestUtil(browser()).Press(0);
+  BrowserActionTestUtil::Create(browser())->Press(0);
   page_complete.Wait();
 
   // Background page is closed after creating a new tab.
@@ -339,8 +340,8 @@ IN_PROC_BROWSER_TEST_F(LazyBackgroundPageApiTest, NaClInBackgroundPage) {
   {
     ExtensionTestMessageListener nacl_module_loaded("nacl_module_loaded",
                                                     false);
-    BrowserActionTestUtil(browser()).Press(0);
-    nacl_module_loaded.WaitUntilSatisfied();
+    BrowserActionTestUtil::Create(browser())->Press(0);
+    EXPECT_TRUE(nacl_module_loaded.WaitUntilSatisfied());
     content::RunAllTasksUntilIdle();
     EXPECT_TRUE(IsBackgroundPageAlive(last_loaded_extension_id()));
   }
@@ -349,7 +350,7 @@ IN_PROC_BROWSER_TEST_F(LazyBackgroundPageApiTest, NaClInBackgroundPage) {
   // down.
   {
     LazyBackgroundObserver page_complete;
-    BrowserActionTestUtil(browser()).Press(0);
+    BrowserActionTestUtil::Create(browser())->Press(0);
     page_complete.WaitUntilClosed();
   }
 
@@ -455,7 +456,7 @@ IN_PROC_BROWSER_TEST_F(LazyBackgroundPageApiTest, DISABLED_IncognitoSplitMode) {
     ExtensionTestMessageListener listener_incognito("waiting_incognito", false);
 
     LazyBackgroundObserver page_complete(browser()->profile());
-    BrowserActionTestUtil(browser()).Press(0);
+    BrowserActionTestUtil::Create(browser())->Press(0);
     page_complete.Wait();
 
     // Only the original event page received the message.
@@ -531,9 +532,9 @@ IN_PROC_BROWSER_TEST_F(LazyBackgroundPageApiTest, OnUnload) {
   EXPECT_FALSE(IsBackgroundPageAlive(last_loaded_extension_id()));
 
   // The browser action has a new title.
-  BrowserActionTestUtil browser_action(browser());
-  ASSERT_EQ(1, browser_action.NumberOfBrowserActions());
-  EXPECT_EQ("Success", browser_action.GetTooltip(0));
+  auto browser_action = BrowserActionTestUtil::Create(browser());
+  ASSERT_EQ(1, browser_action->NumberOfBrowserActions());
+  EXPECT_EQ("Success", browser_action->GetTooltip(0));
 }
 
 // Tests that both a regular page and an event page will receive events when
@@ -573,6 +574,10 @@ IN_PROC_BROWSER_TEST_F(LazyBackgroundPageApiTest, EventDispatchToTab) {
 // Tests that the lazy background page updates the chrome://extensions page
 // when it is destroyed.
 IN_PROC_BROWSER_TEST_F(LazyBackgroundPageApiTest, UpdateExtensionsPage) {
+  base::test::ScopedFeatureList scoped_feature_list;
+  scoped_feature_list.InitWithFeatures(
+      {} /* enabled */, {features::kMaterialDesignExtensions} /* disabled */);
+
   ui_test_utils::NavigateToURL(browser(), GURL(chrome::kChromeUIExtensionsURL));
   auto* extensions_page = browser()->tab_strip_model()->GetActiveWebContents();
 

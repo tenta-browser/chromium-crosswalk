@@ -56,11 +56,11 @@ source_set("clients") {
   public_deps = [
     "//base",
     "//media",
-    "//media/mojo:features",
+    "//media/mojo:buildflags",
     "//media/mojo/interfaces",
     "//mojo/public/cpp/bindings",
     "//mojo/public/cpp/system",
-    "//services/service_manager/public/interfaces",
+    "//services/service_manager/public/mojom",
   ]
 
   deps = [
@@ -120,6 +120,7 @@ source_set("unit_tests") {
     deps += [
       "//media/mojo/interfaces:test_interfaces",
       "//ui/gfx:test_support",
+      "//ui/gl",
     ]
   }
 }

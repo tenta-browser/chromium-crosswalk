@@ -13,6 +13,7 @@
 #include "base/memory/ptr_util.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
+#include "base/test/bind_test_util.h"
 #include "base/test/gtest_util.h"
 #include "build/build_config.h"
 #include "testing/gmock/include/gmock/gmock.h"
@@ -1228,17 +1229,17 @@ TEST_F(BindTest, ArgumentCopiesAndMoves) {
 }
 
 TEST_F(BindTest, CapturelessLambda) {
-  EXPECT_FALSE(internal::IsConvertibleToRunType<void>::value);
-  EXPECT_FALSE(internal::IsConvertibleToRunType<int>::value);
-  EXPECT_FALSE(internal::IsConvertibleToRunType<void(*)()>::value);
-  EXPECT_FALSE(internal::IsConvertibleToRunType<void(NoRef::*)()>::value);
+  EXPECT_FALSE(internal::IsCallableObject<void>::value);
+  EXPECT_FALSE(internal::IsCallableObject<int>::value);
+  EXPECT_FALSE(internal::IsCallableObject<void (*)()>::value);
+  EXPECT_FALSE(internal::IsCallableObject<void (NoRef::*)()>::value);
 
   auto f = []() {};
-  EXPECT_TRUE(internal::IsConvertibleToRunType<decltype(f)>::value);
+  EXPECT_TRUE(internal::IsCallableObject<decltype(f)>::value);
 
   int i = 0;
   auto g = [i]() { (void)i; };
-  EXPECT_FALSE(internal::IsConvertibleToRunType<decltype(g)>::value);
+  EXPECT_TRUE(internal::IsCallableObject<decltype(g)>::value);
 
   auto h = [](int, double) { return 'k'; };
   EXPECT_TRUE((std::is_same<
@@ -1255,6 +1256,36 @@ TEST_F(BindTest, CapturelessLambda) {
   EXPECT_EQ(6, x);
   cb.Run(7);
   EXPECT_EQ(42, x);
+}
+
+TEST_F(BindTest, EmptyFunctor) {
+  struct NonEmptyFunctor {
+    int operator()() const { return x; }
+    int x = 42;
+  };
+
+  struct EmptyFunctor {
+    int operator()() { return 42; }
+  };
+
+  struct EmptyFunctorConst {
+    int operator()() const { return 42; }
+  };
+
+  EXPECT_TRUE(internal::IsCallableObject<NonEmptyFunctor>::value);
+  EXPECT_TRUE(internal::IsCallableObject<EmptyFunctor>::value);
+  EXPECT_TRUE(internal::IsCallableObject<EmptyFunctorConst>::value);
+  EXPECT_EQ(42, BindOnce(EmptyFunctor()).Run());
+  EXPECT_EQ(42, BindOnce(EmptyFunctorConst()).Run());
+  EXPECT_EQ(42, BindRepeating(EmptyFunctorConst()).Run());
+}
+
+TEST_F(BindTest, CapturingLambdaForTesting) {
+  int x = 6;
+  EXPECT_EQ(42, BindLambdaForTesting([=](int y) { return x * y; }).Run(7));
+
+  auto f = [x](std::unique_ptr<int> y) { return x * *y; };
+  EXPECT_EQ(42, BindLambdaForTesting(f).Run(std::make_unique<int>(7)));
 }
 
 TEST_F(BindTest, Cancellation) {
@@ -1398,6 +1429,45 @@ TEST_F(BindTest, WindowsCallingConventions) {
   EXPECT_EQ(2, stdcall_cb.Run());
 }
 #endif
+
+// Test unwrapping the various wrapping functions.
+
+TEST_F(BindTest, UnwrapUnretained) {
+  int i = 0;
+  auto unretained = Unretained(&i);
+  EXPECT_EQ(&i, internal::Unwrap(unretained));
+  EXPECT_EQ(&i, internal::Unwrap(std::move(unretained)));
+}
+
+TEST_F(BindTest, UnwrapConstRef) {
+  int p = 0;
+  auto const_ref = ConstRef(p);
+  EXPECT_EQ(&p, &internal::Unwrap(const_ref));
+  EXPECT_EQ(&p, &internal::Unwrap(std::move(const_ref)));
+}
+
+TEST_F(BindTest, UnwrapRetainedRef) {
+  auto p = MakeRefCounted<RefCountedData<int>>();
+  auto retained_ref = RetainedRef(p);
+  EXPECT_EQ(p.get(), internal::Unwrap(retained_ref));
+  EXPECT_EQ(p.get(), internal::Unwrap(std::move(retained_ref)));
+}
+
+TEST_F(BindTest, UnwrapOwned) {
+  int* p = new int;
+  auto owned = Owned(p);
+  EXPECT_EQ(p, internal::Unwrap(owned));
+  EXPECT_EQ(p, internal::Unwrap(std::move(owned)));
+}
+
+TEST_F(BindTest, UnwrapPassed) {
+  int* p = new int;
+  auto passed = Passed(WrapUnique(p));
+  EXPECT_EQ(p, internal::Unwrap(passed).get());
+
+  p = new int;
+  EXPECT_EQ(p, internal::Unwrap(Passed(WrapUnique(p))).get());
+}
 
 // Test null callbacks cause a DCHECK.
 TEST(BindDeathTest, NullCallback) {

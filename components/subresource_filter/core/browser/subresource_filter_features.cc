@@ -12,14 +12,13 @@
 #include <utility>
 
 #include "base/lazy_instance.h"
-#include "base/memory/ptr_util.h"
 #include "base/metrics/field_trial_params.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
 #include "base/synchronization/lock.h"
 #include "base/trace_event/trace_event_argument.h"
-#include "components/variations/variations_associated_data.h"
+#include "components/subresource_filter/core/common/common_features.h"
 
 namespace subresource_filter {
 
@@ -116,16 +115,18 @@ int ParseInt(const base::StringPiece value) {
 
 std::vector<Configuration> FillEnabledPresetConfigurations(
     std::map<std::string, std::string>* params) {
+  // If ad tagging is enabled, turn on the dryrun automatically.
+  bool ad_tagging_enabled = base::FeatureList::IsEnabled(kAdTagging);
   const struct {
     const char* name;
     bool enabled_by_default;
     Configuration (*factory_method)();
   } kAvailablePresetConfigurations[] = {
-      {kPresetLiveRunOnPhishingSites, false,
+      {kPresetLiveRunOnPhishingSites, true,
        &Configuration::MakePresetForLiveRunOnPhishingSites},
-      {kPresetPerformanceTestingDryRunOnAllSites, false,
+      {kPresetPerformanceTestingDryRunOnAllSites, ad_tagging_enabled,
        &Configuration::MakePresetForPerformanceTestingDryRunOnAllSites},
-      {kPresetLiveRunForBetterAds, false,
+      {kPresetLiveRunForBetterAds, true,
        &Configuration::MakePresetForLiveRunForBetterAds}};
 
   CommaSeparatedStrings enabled_presets(
@@ -187,7 +188,9 @@ std::vector<Configuration> ParseEnabledConfigurations() {
   std::map<std::string, std::string> params;
   base::GetFieldTrialParamsByFeature(kSafeBrowsingSubresourceFilter, &params);
 
-  std::vector<Configuration> configs = FillEnabledPresetConfigurations(&params);
+  std::vector<Configuration> configs;
+  if (base::FeatureList::IsEnabled(kSafeBrowsingSubresourceFilter))
+    configs = FillEnabledPresetConfigurations(&params);
 
   Configuration experimental_config = ParseExperimentalConfiguration(&params);
   configs.push_back(std::move(experimental_config));
@@ -235,10 +238,10 @@ base::LazyInstance<scoped_refptr<ConfigurationList>>::Leaky
 // Constant definitions -------------------------------------------------------
 
 const base::Feature kSafeBrowsingSubresourceFilter{
-    "SubresourceFilter", base::FEATURE_DISABLED_BY_DEFAULT};
+    "SubresourceFilter", base::FEATURE_ENABLED_BY_DEFAULT};
 
 const base::Feature kSafeBrowsingSubresourceFilterExperimentalUI{
-    "SubresourceFilterExperimentalUI", base::FEATURE_DISABLED_BY_DEFAULT};
+    "SubresourceFilterExperimentalUI", base::FEATURE_ENABLED_BY_DEFAULT};
 
 // Legacy name `activation_state` is used in variation parameters.
 const char kActivationLevelParameterName[] = "activation_state";
@@ -347,7 +350,7 @@ bool Configuration::operator!=(const Configuration& rhs) const {
 
 std::unique_ptr<base::trace_event::TracedValue>
 Configuration::ActivationConditions::ToTracedValue() const {
-  auto value = base::MakeUnique<base::trace_event::TracedValue>();
+  auto value = std::make_unique<base::trace_event::TracedValue>();
   value->SetString("activation_scope", StreamToString(activation_scope));
   value->SetString("activation_list", StreamToString(activation_list));
   value->SetInteger("priority", priority);
@@ -357,7 +360,7 @@ Configuration::ActivationConditions::ToTracedValue() const {
 
 std::unique_ptr<base::trace_event::TracedValue> Configuration::ToTracedValue()
     const {
-  auto value = base::MakeUnique<base::trace_event::TracedValue>();
+  auto value = std::make_unique<base::trace_event::TracedValue>();
   auto traced_conditions = activation_conditions.ToTracedValue();
   value->SetValue("activation_conditions", *traced_conditions);
   value->SetString("activation_level",

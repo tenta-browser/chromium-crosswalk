@@ -5,10 +5,10 @@
 #import <EarlGrey/EarlGrey.h>
 #import <XCTest/XCTest.h>
 
+#include <memory>
 #include <vector>
 
 #include "base/mac/foundation_util.h"
-#include "base/memory/ptr_util.h"
 #include "base/strings/sys_string_conversions.h"
 #include "base/strings/utf_string_conversions.h"
 #import "base/test/ios/wait_util.h"
@@ -26,10 +26,10 @@
 #include "ios/chrome/browser/ntp_snippets/ios_chrome_content_suggestions_service_factory_util.h"
 #include "ios/chrome/browser/reading_list/reading_list_model_factory.h"
 #import "ios/chrome/browser/ui/content_suggestions/cells/content_suggestions_learn_more_item.h"
+#include "ios/chrome/browser/ui/content_suggestions/content_suggestions_collection_utils.h"
 #import "ios/chrome/browser/ui/content_suggestions/ntp_home_constant.h"
 #import "ios/chrome/browser/ui/content_suggestions/ntp_home_provider_test_singleton.h"
 #import "ios/chrome/browser/ui/content_suggestions/ntp_home_test_utils.h"
-#import "ios/chrome/browser/ui/ntp/modal_ntp.h"
 #include "ios/chrome/browser/ui/ui_util.h"
 #include "ios/chrome/grit/ios_strings.h"
 #import "ios/chrome/test/app/chrome_test_util.h"
@@ -77,7 +77,7 @@ std::unique_ptr<net::test_server::HttpResponse> StandardResponse(
     return nullptr;
   }
   std::unique_ptr<net::test_server::BasicHttpResponse> http_response =
-      base::MakeUnique<net::test_server::BasicHttpResponse>();
+      std::make_unique<net::test_server::BasicHttpResponse>();
   http_response->set_code(net::HTTP_OK);
   http_response->set_content("<html><head><title>" + std::string(kPageTitle) +
                              "</title></head><body>" +
@@ -97,13 +97,13 @@ ContentSuggestion Suggestion(Category category,
 }
 
 // Select the cell with the |matcher| by scrolling the collection.
-// 150 is a reasonable scroll displacement that works for all UI elements, while
+// 200 is a reasonable scroll displacement that works for all UI elements, while
 // not being too slow.
 GREYElementInteraction* CellWithMatcher(id<GREYMatcher> matcher) {
   return [[EarlGrey
       selectElementWithMatcher:grey_allOf(matcher, grey_sufficientlyVisible(),
                                           nil)]
-         usingSearchAction:grey_scrollInDirection(kGREYDirectionDown, 150)
+         usingSearchAction:grey_scrollInDirection(kGREYDirectionDown, 200)
       onElementWithMatcher:chrome_test_util::ContentSuggestionCollectionView()];
 }
 
@@ -129,14 +129,6 @@ GREYElementInteraction* CellWithMatcher(id<GREYMatcher> matcher) {
 
 + (void)setUp {
   [super setUp];
-  // TODO(crbug.com/753599): When old bookmark is removed, NTP panel will always
-  // be shown modally.  Clean up the non-modal code below.
-  if (!PresentNTPPanelModally()) {
-    // Make sure we are on the Home panel on iPad when NTP is shown modally.
-    chrome_test_util::OpenNewTab();
-    [[EarlGrey selectElementWithMatcher:chrome_test_util::Omnibox()]
-        performAction:grey_typeText(@"chrome://newtab/#most_visited\n")];
-  }
 
   [self closeAllTabs];
   ios::ChromeBrowserState* browserState =
@@ -177,19 +169,13 @@ GREYElementInteraction* CellWithMatcher(id<GREYMatcher> matcher) {
       ReadingListModelFactory::GetForBrowserState(self.browserState);
   readingListModel->DeleteAllEntries();
   [super setUp];
-  // TODO(crbug.com/753599): When old bookmark is removed, NTP panel will always
-  // be shown modally.  Clean up the non-modal code below.
-  if (!PresentNTPPanelModally()) {
-    [[EarlGrey selectElementWithMatcher:
-                   chrome_test_util::ButtonWithAccessibilityLabelId(
-                       IDS_IOS_NEW_TAB_HOME)] performAction:grey_tap()];
-  }
 }
 
 - (void)tearDown {
   self.provider->FireCategoryStatusChanged(
       self.category, CategoryStatus::ALL_SUGGESTIONS_EXPLICITLY_DISABLED);
-  chrome_test_util::ClearBrowsingHistory();
+  GREYAssertTrue(chrome_test_util::ClearBrowsingHistory(),
+                 @"Clearing Browsing History timed out");
   [[GREYUIThreadExecutor sharedInstance] drainUntilIdle];
   [super tearDown];
 }
@@ -244,6 +230,12 @@ GREYElementInteraction* CellWithMatcher(id<GREYMatcher> matcher) {
 // Tests that after dismissing a ReadingList item, it is not displayed on the
 // NTP. But it is still unread in the Reading List surface.
 - (void)testSwipeToDismissReadingListItem {
+  // TODO(crbug.com/807330): The collection view reading list section is not
+  // used in ui refresh.
+  if (IsUIRefreshPhase1Enabled()) {
+    EARL_GREY_TEST_SKIPPED(@"ReadingList section does not exist in UI Refresh");
+  }
+
   // Add two items to Reading List.
   std::string stdTitle1{"test title1"};
   std::string stdTitle2{"test title2"};
@@ -325,6 +317,12 @@ GREYElementInteraction* CellWithMatcher(id<GREYMatcher> matcher) {
 
 // Tests that only the 3 most recent Reading List items are displayed.
 - (void)testReadingListItem {
+  // TODO(crbug.com/807330): The collection view reading list section is not
+  // used in ui refresh.
+  if (IsUIRefreshPhase1Enabled()) {
+    EARL_GREY_TEST_SKIPPED(@"ReadingList section does not exist in UI Refresh");
+  }
+
   // Create entry titles for 4 unread entries and 1 read entry.
   std::string stdTitle1{"test unread title1"};
   std::string stdTitle2{"test unread title2"};
@@ -369,6 +367,11 @@ GREYElementInteraction* CellWithMatcher(id<GREYMatcher> matcher) {
 // Tests that tapping "More" on the Reading List section opens the Reading List
 // surface.
 - (void)testMoreReadingListSection {
+  // TODO(crbug.com/807330): The collection view reading list section is not
+  // used in ui refresh.
+  if (IsUIRefreshPhase1Enabled()) {
+    EARL_GREY_TEST_SKIPPED(@"ReadingList section does not exist in UI Refresh");
+  }
   // Add an entry to make sure the Reading List section is displayed.
   ReadingListModel* readingListModel =
       ReadingListModelFactory::GetForBrowserState(self.browserState);
@@ -407,6 +410,12 @@ GREYElementInteraction* CellWithMatcher(id<GREYMatcher> matcher) {
 
 // Tests that the section titles are displayed only if there are two sections.
 - (void)testSectionTitle {
+  // TODO(crbug.com/807330): The collection view reading list section is not
+  // used in ui refresh.
+  if (IsUIRefreshPhase1Enabled()) {
+    EARL_GREY_TEST_SKIPPED(@"ReadingList section does not exist in UI Refresh");
+  }
+
   ReadingListModel* readingListModel =
       ReadingListModelFactory::GetForBrowserState(self.browserState);
   readingListModel->AddEntry(GURL("http://chromium.org"), "test title",
@@ -478,7 +487,7 @@ GREYElementInteraction* CellWithMatcher(id<GREYMatcher> matcher) {
 
   // Test that the omnibox is visible and taking full width, before any scroll
   // happen on iPhone.
-  if (!IsIPadIdiom()) {
+  if (!content_suggestions::IsRegularXRegularSizeClass()) {
     CGFloat collectionWidth = ntp_home::CollectionView().bounds.size.width;
     [[EarlGrey
         selectElementWithMatcher:grey_accessibilityID(
@@ -519,6 +528,12 @@ GREYElementInteraction* CellWithMatcher(id<GREYMatcher> matcher) {
 
 // Tests that when long pressing a Reading List entry, a context menu is shown.
 - (void)testReadingListLongPress {
+  // TODO(crbug.com/807330): The collection view reading list section is not
+  // used in ui refresh.
+  if (IsUIRefreshPhase1Enabled()) {
+    EARL_GREY_TEST_SKIPPED(@"ReadingList section does not exist in UI Refresh");
+  }
+
   NSString* title = @"ReadingList test title";
   std::string sTitle{"ReadingList test title"};
   ReadingListModel* readingListModel =
@@ -528,7 +543,7 @@ GREYElementInteraction* CellWithMatcher(id<GREYMatcher> matcher) {
 
   [CellWithMatcher(grey_accessibilityID(title)) performAction:grey_longPress()];
 
-  if (!IsIPadIdiom()) {
+  if (!content_suggestions::IsRegularXRegularSizeClass()) {
     [[EarlGrey selectElementWithMatcher:
                    chrome_test_util::ButtonWithAccessibilityLabelId(
                        IDS_APP_CANCEL)] assertWithMatcher:grey_interactable()];
@@ -543,6 +558,12 @@ GREYElementInteraction* CellWithMatcher(id<GREYMatcher> matcher) {
 
 // Tests that "Open in New Tab" in context menu opens in a new tab.
 - (void)testReadingListOpenNewTab {
+  // TODO(crbug.com/807330): The collection view reading list section is not
+  // used in ui refresh.
+  if (IsUIRefreshPhase1Enabled()) {
+    EARL_GREY_TEST_SKIPPED(@"ReadingList section does not exist in UI Refresh");
+  }
+
   // Setup.
   [self setupReadingListContextMenu];
   const GURL pageURL = self.testServer->GetURL(kPageURL);
@@ -586,6 +607,12 @@ GREYElementInteraction* CellWithMatcher(id<GREYMatcher> matcher) {
 // Tests that "Open in New Incognito Tab" in context menu opens in a new
 // incognito tab.
 - (void)testReadingListOpenNewIncognitoTab {
+  // TODO(crbug.com/807330): The collection view reading list section is not
+  // used in ui refresh.
+  if (IsUIRefreshPhase1Enabled()) {
+    EARL_GREY_TEST_SKIPPED(@"ReadingList section does not exist in UI Refresh");
+  }
+
   // Setup.
   [self setupReadingListContextMenu];
   const GURL pageURL = self.testServer->GetURL(kPageURL);
@@ -612,6 +639,12 @@ GREYElementInteraction* CellWithMatcher(id<GREYMatcher> matcher) {
 
 // Tests that "Remove" in context menu removes the entry.
 - (void)testReadingListRemove {
+  // TODO(crbug.com/807330): The collection view reading list section is not
+  // used in ui refresh.
+  if (IsUIRefreshPhase1Enabled()) {
+    EARL_GREY_TEST_SKIPPED(@"ReadingList section does not exist in UI Refresh");
+  }
+
   // Setup.
   NSString* title = @"ReadingList test title";
   [self setupReadingListContextMenu];
@@ -740,7 +773,7 @@ GREYElementInteraction* CellWithMatcher(id<GREYMatcher> matcher) {
 - (void)testMostVisitedLongPress {
   [self setupMostVisitedTileLongPress];
 
-  if (!IsIPadIdiom()) {
+  if (!content_suggestions::IsRegularXRegularSizeClass()) {
     [[EarlGrey selectElementWithMatcher:
                    chrome_test_util::ButtonWithAccessibilityLabelId(
                        IDS_APP_CANCEL)] assertWithMatcher:grey_interactable()];
@@ -795,7 +828,8 @@ GREYElementInteraction* CellWithMatcher(id<GREYMatcher> matcher) {
   NSString* pageTitle = base::SysUTF8ToNSString(kPageTitle);
 
   // Clear history and verify that the tile does not exist.
-  chrome_test_util::ClearBrowsingHistory();
+  GREYAssertTrue(chrome_test_util::ClearBrowsingHistory(),
+                 @"Clearing Browsing History timed out");
   [[GREYUIThreadExecutor sharedInstance] drainUntilIdle];
   [ChromeEarlGrey loadURL:pageURL];
   [ChromeEarlGrey waitForWebViewContainingText:kPageLoadedString];

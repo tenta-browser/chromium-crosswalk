@@ -10,7 +10,6 @@
 #include <utility>
 
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "chrome/browser/chromeos/input_method/input_method_engine.h"
 #include "chrome/browser/chromeos/login/lock/screen_locker.h"
 #include "chrome/browser/chromeos/login/session/user_session_manager.h"
@@ -26,7 +25,6 @@
 #include "ui/base/ime/chromeos/input_method_manager.h"
 #include "ui/base/ime/ime_engine_handler_interface.h"
 #include "ui/keyboard/keyboard_controller.h"
-#include "ui/keyboard/keyboard_util.h"
 
 namespace input_ime = extensions::api::input_ime;
 namespace DeleteSurroundingText =
@@ -164,9 +162,9 @@ class ImeObserverChromeOS : public ui::ImeObserver {
       return;
 
     // Note: this is a private API event.
-    auto bounds_list = base::MakeUnique<base::ListValue>();
+    auto bounds_list = std::make_unique<base::ListValue>();
     for (size_t i = 0; i < bounds.size(); ++i) {
-      auto bounds_value = base::MakeUnique<base::DictionaryValue>();
+      auto bounds_value = std::make_unique<base::DictionaryValue>();
       bounds_value->SetInteger("x", bounds[i].x());
       bounds_value->SetInteger("y", bounds[i].y());
       bounds_value->SetInteger("w", bounds[i].width());
@@ -198,7 +196,7 @@ class ImeObserverChromeOS : public ui::ImeObserver {
       std::unique_ptr<base::ListValue> args) override {
     if (event_name == input_ime::OnActivate::kEventName) {
       // Send onActivate event regardless of it's listened by the IME.
-      auto event = base::MakeUnique<extensions::Event>(
+      auto event = std::make_unique<extensions::Event>(
           histogram_value, event_name, std::move(args), profile_);
       extensions::EventRouter::Get(profile_)->DispatchEventWithLazyListener(
           extension_id_, std::move(event));
@@ -226,7 +224,7 @@ class ImeObserverChromeOS : public ui::ImeObserver {
       }
     }
 
-    auto event = base::MakeUnique<extensions::Event>(
+    auto event = std::make_unique<extensions::Event>(
         histogram_value, event_name, std::move(args), profile_);
     extensions::EventRouter::Get(profile_)
         ->DispatchEventToExtension(extension_id_, std::move(event));
@@ -371,7 +369,7 @@ ExtensionFunction::ResponseAction InputImeClearCompositionFunction::Run() {
   InputMethodEngine* engine = GetActiveEngine(
       Profile::FromBrowserContext(browser_context()), extension_id());
   if (!engine) {
-    return RespondNow(OneArgument(base::MakeUnique<base::Value>(false)));
+    return RespondNow(OneArgument(std::make_unique<base::Value>(false)));
   }
 
   std::unique_ptr<ClearComposition::Params> parent_params(
@@ -382,20 +380,19 @@ ExtensionFunction::ResponseAction InputImeClearCompositionFunction::Run() {
   std::string error;
   bool success = engine->ClearComposition(params.context_id, &error);
   std::unique_ptr<base::ListValue> results =
-      base::MakeUnique<base::ListValue>();
-  results->Append(base::MakeUnique<base::Value>(success));
+      std::make_unique<base::ListValue>();
+  results->Append(std::make_unique<base::Value>(success));
   return RespondNow(success ? ArgumentList(std::move(results))
                             : ErrorWithArguments(std::move(results), error));
 }
 
-bool InputImeHideInputViewFunction::RunAsync() {
+ExtensionFunction::ResponseAction InputImeHideInputViewFunction::Run() {
   InputMethodEngine* engine = GetActiveEngine(
       Profile::FromBrowserContext(browser_context()), extension_id());
-  if (!engine) {
-    return true;
-  }
+  if (!engine)
+    return RespondNow(NoArguments());
   engine->HideInputView();
-  return true;
+  return RespondNow(NoArguments());
 }
 
 ExtensionFunction::ResponseAction
@@ -411,7 +408,7 @@ InputImeSetCandidateWindowPropertiesFunction::Run() {
       event_router ? event_router->GetEngine(extension_id(), params.engine_id)
                    : nullptr;
   if (!engine) {
-    return RespondNow(OneArgument(base::MakeUnique<base::Value>(false)));
+    return RespondNow(OneArgument(std::make_unique<base::Value>(false)));
   }
 
   const SetCandidateWindowProperties::Params::Parameters::Properties&
@@ -421,8 +418,8 @@ InputImeSetCandidateWindowPropertiesFunction::Run() {
   if (properties.visible &&
       !engine->SetCandidateWindowVisible(*properties.visible, &error)) {
     std::unique_ptr<base::ListValue> results =
-        base::MakeUnique<base::ListValue>();
-    results->Append(base::MakeUnique<base::Value>(false));
+        std::make_unique<base::ListValue>();
+    results->Append(std::make_unique<base::Value>(false));
     return RespondNow(ErrorWithArguments(std::move(results), error));
   }
 
@@ -468,14 +465,14 @@ InputImeSetCandidateWindowPropertiesFunction::Run() {
     engine->SetCandidateWindowProperty(properties_out);
   }
 
-  return RespondNow(OneArgument(base::MakeUnique<base::Value>(true)));
+  return RespondNow(OneArgument(std::make_unique<base::Value>(true)));
 }
 
 ExtensionFunction::ResponseAction InputImeSetCandidatesFunction::Run() {
   InputMethodEngine* engine = GetActiveEngine(
       Profile::FromBrowserContext(browser_context()), extension_id());
   if (!engine) {
-    return RespondNow(OneArgument(base::MakeUnique<base::Value>(true)));
+    return RespondNow(OneArgument(std::make_unique<base::Value>(true)));
   }
 
   std::unique_ptr<SetCandidates::Params> parent_params(
@@ -502,8 +499,8 @@ ExtensionFunction::ResponseAction InputImeSetCandidatesFunction::Run() {
   bool success =
       engine->SetCandidates(params.context_id, candidates_out, &error);
   std::unique_ptr<base::ListValue> results =
-      base::MakeUnique<base::ListValue>();
-  results->Append(base::MakeUnique<base::Value>(success));
+      std::make_unique<base::ListValue>();
+  results->Append(std::make_unique<base::Value>(success));
   return RespondNow(success ? ArgumentList(std::move(results))
                             : ErrorWithArguments(std::move(results), error));
 }
@@ -512,7 +509,7 @@ ExtensionFunction::ResponseAction InputImeSetCursorPositionFunction::Run() {
   InputMethodEngine* engine = GetActiveEngine(
       Profile::FromBrowserContext(browser_context()), extension_id());
   if (!engine) {
-    return RespondNow(OneArgument(base::MakeUnique<base::Value>(false)));
+    return RespondNow(OneArgument(std::make_unique<base::Value>(false)));
   }
 
   std::unique_ptr<SetCursorPosition::Params> parent_params(
@@ -524,8 +521,8 @@ ExtensionFunction::ResponseAction InputImeSetCursorPositionFunction::Run() {
   bool success =
       engine->SetCursorPosition(params.context_id, params.candidate_id, &error);
   std::unique_ptr<base::ListValue> results =
-      base::MakeUnique<base::ListValue>();
-  results->Append(base::MakeUnique<base::Value>(success));
+      std::make_unique<base::ListValue>();
+  results->Append(std::make_unique<base::Value>(success));
   return RespondNow(success ? ArgumentList(std::move(results))
                             : ErrorWithArguments(std::move(results), error));
 }
@@ -681,7 +678,7 @@ void InputImeAPI::OnExtensionUnloaded(content::BrowserContext* browser_context,
       // Empties the content url and reload the controller to unload the
       // current page.
       // TODO(wuyingbing): Should add a new method to unload the document.
-      keyboard::SetOverrideContentUrl(GURL());
+      manager->GetActiveIMEState()->DisableInputView();
       keyboard_controller->Reload();
     }
     event_router->SetUnloadedExtensionId(extension->id());

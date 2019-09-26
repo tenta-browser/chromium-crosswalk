@@ -4,7 +4,8 @@
 
 #include "chrome/browser/vr/elements/vector_icon.h"
 
-#include "base/memory/ptr_util.h"
+#include <memory>
+
 #include "base/test/gtest_util.h"
 #include "cc/test/test_skcanvas.h"
 #include "chrome/browser/vr/elements/ui_texture.h"
@@ -38,19 +39,15 @@ class TestVectorIcon : public VectorIcon {
 
 TEST(VectorIcon, SmokeTest) {
   UiScene scene;
-  auto icon = base::MakeUnique<TestVectorIcon>(kMaximumWidth);
-  icon->SetInitializedForTesting();
+  auto icon = std::make_unique<TestVectorIcon>(kMaximumWidth);
   icon->SetIcon(vector_icons::kClose16Icon);
   UiTexture* texture = icon->GetTexture();
   scene.AddUiElement(kRoot, std::move(icon));
   base::TimeTicks start_time = MsToTicks(1);
-  scene.OnBeginFrame(start_time, kForwardVector);
+  scene.OnBeginFrame(start_time, kStartHeadPose);
 
   InSequence scope;
   cc::MockCanvas canvas;
-
-  // This is the clearing of the canvas.
-  EXPECT_CALL(canvas, OnDrawPaintWithColor(0));
 
   // The drawing of vector icons is bookended with a scoped save layer.
   EXPECT_CALL(canvas, willSave());
@@ -64,8 +61,7 @@ TEST(VectorIcon, SmokeTest) {
   // The drawing of vector icons is bookended with a scoped save layer.
   EXPECT_CALL(canvas, willRestore());
 
-  texture->DrawAndLayout(&canvas,
-                         texture->GetPreferredTextureSize(kMaximumWidth));
+  texture->Draw(&canvas, gfx::Size(kMaximumWidth, kMaximumWidth));
 }
 
 }  // namespace vr

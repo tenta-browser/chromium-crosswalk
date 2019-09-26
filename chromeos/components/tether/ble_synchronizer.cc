@@ -4,11 +4,12 @@
 
 #include "chromeos/components/tether/ble_synchronizer.h"
 
-#include "base/memory/ptr_util.h"
+#include <memory>
+
 #include "base/metrics/histogram_macros.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "base/time/default_clock.h"
-#include "components/proximity_auth/logging/logging.h"
+#include "chromeos/components/proximity_auth/logging/logging.h"
 
 namespace chromeos {
 
@@ -23,8 +24,8 @@ const int64_t kTimeBetweenEachCommandMs = 200;
 BleSynchronizer::BleSynchronizer(
     scoped_refptr<device::BluetoothAdapter> bluetooth_adapter)
     : bluetooth_adapter_(bluetooth_adapter),
-      timer_(base::MakeUnique<base::OneShotTimer>()),
-      clock_(base::MakeUnique<base::DefaultClock>()),
+      timer_(std::make_unique<base::OneShotTimer>()),
+      clock_(base::DefaultClock::GetInstance()),
       task_runner_(base::ThreadTaskRunnerHandle::Get()),
       weak_ptr_factory_(this) {}
 
@@ -86,13 +87,9 @@ void BleSynchronizer::ProcessQueue() {
           current_command_->start_discovery_args.get();
       DCHECK(start_discovery_args);
 
-      // Note: Ideally, we would use a filter for only LE devices here. However,
-      // using a filter here triggers a bug in some kernel implementations which
-      // causes LE scanning to toggle rapidly on and off. This can cause race
-      // conditions which result in Bluetooth bugs. See crbug.com/759090.
-      // TODO(mcchou): Once these issues have been resolved, add the filter
-      // back. See crbug.com/759091.
-      bluetooth_adapter_->StartDiscoverySession(
+      bluetooth_adapter_->StartDiscoverySessionWithFilter(
+          std::make_unique<device::BluetoothDiscoveryFilter>(
+              device::BLUETOOTH_TRANSPORT_LE),
           base::Bind(&BleSynchronizer::OnDiscoverySessionStarted,
                      weak_ptr_factory_.GetWeakPtr()),
           base::Bind(&BleSynchronizer::OnErrorStartingDiscoverySession,
@@ -129,10 +126,10 @@ void BleSynchronizer::ProcessQueue() {
 
 void BleSynchronizer::SetTestDoubles(
     std::unique_ptr<base::Timer> test_timer,
-    std::unique_ptr<base::Clock> test_clock,
+    base::Clock* test_clock,
     scoped_refptr<base::TaskRunner> test_task_runner) {
   timer_ = std::move(test_timer);
-  clock_ = std::move(test_clock);
+  clock_ = test_clock;
   task_runner_ = test_task_runner;
 }
 
@@ -172,7 +169,16 @@ void BleSynchronizer::OnErrorUnregisteringAdvertisement(
   ScheduleCommandCompletion();
   UnregisterArgs* unregister_args = current_command_->unregister_args.get();
   DCHECK(unregister_args);
-  unregister_args->error_callback.Run(error_code);
+  if (error_code == device::BluetoothAdvertisement::ErrorCode::
+                        ERROR_ADVERTISEMENT_DOES_NOT_EXIST) {
+    // The error code indicates that the advertisement no longer exists, which
+    // should never happen since unregistration has not succeeded. Work around
+    // this situation by simply invoking the success callback. See
+    // https://crbug.com/738222 for details.
+    unregister_args->callback.Run();
+  } else {
+    unregister_args->error_callback.Run(error_code);
+  }
 }
 
 void BleSynchronizer::OnDiscoverySessionStarted(
@@ -219,9 +225,9 @@ void BleSynchronizer::ScheduleCommandCompletion() {
   // instance variables in this class after the object has been deleted.
   // Completing the current command as part of the next task ensures that this
   // cannot occur. See crbug.com/770863.
-  task_runner_->PostTask(FROM_HERE,
-                         base::Bind(&BleSynchronizer::CompleteCurrentCommand,
-                                    weak_ptr_factory_.GetWeakPtr()));
+  task_runner_->PostTask(
+      FROM_HERE, base::BindOnce(&BleSynchronizer::CompleteCurrentCommand,
+                                weak_ptr_factory_.GetWeakPtr()));
 }
 
 void BleSynchronizer::CompleteCurrentCommand() {

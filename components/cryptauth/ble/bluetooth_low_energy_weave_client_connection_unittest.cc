@@ -17,12 +17,12 @@
 #include "base/test/test_simple_task_runner.h"
 #include "base/timer/mock_timer.h"
 #include "base/timer/timer.h"
+#include "chromeos/components/proximity_auth/logging/logging.h"
 #include "components/cryptauth/connection_finder.h"
 #include "components/cryptauth/connection_observer.h"
 #include "components/cryptauth/cryptauth_test_util.h"
 #include "components/cryptauth/remote_device.h"
 #include "components/cryptauth/wire_message.h"
-#include "components/proximity_auth/logging/logging.h"
 #include "device/bluetooth/bluetooth_adapter_factory.h"
 #include "device/bluetooth/test/mock_bluetooth_adapter.h"
 #include "device/bluetooth/test/mock_bluetooth_device.h"
@@ -352,18 +352,18 @@ class CryptAuthBluetoothLowEnergyWeaveClientConnectionTest
     task_runner_ = base::MakeRefCounted<base::TestSimpleTaskRunner>();
 
     mock_bluetooth_device_ =
-        base::MakeUnique<NiceMock<device::MockBluetoothDevice>>(
+        std::make_unique<NiceMock<device::MockBluetoothDevice>>(
             adapter_.get(), 0, kTestRemoteDeviceName,
             kTestRemoteDeviceBluetoothAddress, false, false);
-    service_ = base::MakeUnique<NiceMock<device::MockBluetoothGattService>>(
+    service_ = std::make_unique<NiceMock<device::MockBluetoothGattService>>(
         mock_bluetooth_device_.get(), kServiceID, service_uuid_, true, false);
     tx_characteristic_ =
-        base::MakeUnique<NiceMock<device::MockBluetoothGattCharacteristic>>(
+        std::make_unique<NiceMock<device::MockBluetoothGattCharacteristic>>(
             service_.get(), kTXCharacteristicID, tx_characteristic_uuid_, false,
             kCharacteristicProperties,
             device::BluetoothRemoteGattCharacteristic::PERMISSION_NONE);
     rx_characteristic_ =
-        base::MakeUnique<NiceMock<device::MockBluetoothGattCharacteristic>>(
+        std::make_unique<NiceMock<device::MockBluetoothGattCharacteristic>>(
             service_.get(), kRXCharacteristicID, rx_characteristic_uuid_, false,
             kCharacteristicProperties,
             device::BluetoothRemoteGattCharacteristic::PERMISSION_NONE);
@@ -464,7 +464,7 @@ class CryptAuthBluetoothLowEnergyWeaveClientConnectionTest
             Return(new NiceMock<MockBluetoothLowEnergyCharacteristicsFinder>)));
 
     create_gatt_connection_success_callback_.Run(
-        base::MakeUnique<NiceMock<device::MockBluetoothGattConnection>>(
+        std::make_unique<NiceMock<device::MockBluetoothGattConnection>>(
             adapter_, kTestRemoteDeviceBluetoothAddress));
 
     EXPECT_EQ(connection->sub_status(), SubStatus::WAITING_CHARACTERISTICS);
@@ -546,14 +546,14 @@ class CryptAuthBluetoothLowEnergyWeaveClientConnectionTest
       NOTREACHED();
     }
 
-    EXPECT_EQ(connection->sub_status(), SubStatus::CONNECTED);
+    EXPECT_EQ(connection->sub_status(), SubStatus::CONNECTED_AND_IDLE);
     EXPECT_EQ(connection->status(), Connection::CONNECTED);
   }
 
   // Transitions |connection| to a DISCONNECTED state regardless of its initial
   // state.
   void Disconnect(TestBluetoothLowEnergyWeaveClientConnection* connection) {
-    if (connection->sub_status() == SubStatus::CONNECTED) {
+    if (connection->IsConnected()) {
       EXPECT_CALL(*tx_characteristic_, WriteRemoteCharacteristic(_, _, _))
           .WillOnce(
               DoAll(SaveArg<0>(&last_value_written_on_tx_characteristic_),
@@ -563,10 +563,7 @@ class CryptAuthBluetoothLowEnergyWeaveClientConnectionTest
 
     connection->Disconnect();
 
-    if (connection->sub_status() == SubStatus::CONNECTED) {
-      connection->DestroyConnection(
-          BluetoothLowEnergyWeaveClientConnection::BleWeaveConnectionResult::
-              BLE_WEAVE_CONNECTION_RESULT_CLOSED_NORMALLY);
+    if (connection->IsConnected()) {
       EXPECT_EQ(last_value_written_on_tx_characteristic_,
                 kConnectionCloseSuccess);
       RunWriteCharacteristicSuccessCallback();
@@ -574,6 +571,21 @@ class CryptAuthBluetoothLowEnergyWeaveClientConnectionTest
 
     EXPECT_EQ(connection->sub_status(), SubStatus::DISCONNECTED);
     EXPECT_EQ(connection->status(), Connection::DISCONNECTED);
+  }
+
+  void DeleteConnectionWithoutCallingDisconnect(
+      std::unique_ptr<TestBluetoothLowEnergyWeaveClientConnection>*
+          connection) {
+    bool was_connected = (*connection)->IsConnected();
+    if (was_connected) {
+      EXPECT_CALL(*tx_characteristic_, WriteRemoteCharacteristic(_, _, _))
+          .WillOnce(
+              DoAll(SaveArg<0>(&last_value_written_on_tx_characteristic_),
+                    SaveArg<1>(&write_remote_characteristic_success_callback_),
+                    SaveArg<2>(&write_remote_characteristic_error_callback_)));
+    }
+
+    connection->reset();
   }
 
   void InitializeConnection(
@@ -691,7 +703,7 @@ class CryptAuthBluetoothLowEnergyWeaveClientConnectionTest
 TEST_F(CryptAuthBluetoothLowEnergyWeaveClientConnectionTest,
        CreateAndDestroyWithoutConnectCallDoesntCrash) {
   std::unique_ptr<BluetoothLowEnergyWeaveClientConnection> connection =
-      base::MakeUnique<BluetoothLowEnergyWeaveClientConnection>(
+      std::make_unique<BluetoothLowEnergyWeaveClientConnection>(
           remote_device_, adapter_, service_uuid_, mock_bluetooth_device_.get(),
           true /* should_set_low_connection_latency */);
 
@@ -707,7 +719,7 @@ TEST_F(CryptAuthBluetoothLowEnergyWeaveClientConnectionTest,
       CreateConnection(true /* should_set_low_connection_latency */));
   Disconnect(connection.get());
 
-  connection.reset();
+  DeleteConnectionWithoutCallingDisconnect(&connection);
   VerifyBleWeaveConnectionResult(
       BluetoothLowEnergyWeaveClientConnection::BleWeaveConnectionResult::
           BLE_WEAVE_CONNECTION_RESULT_CLOSED_NORMALLY);
@@ -722,7 +734,7 @@ TEST_F(CryptAuthBluetoothLowEnergyWeaveClientConnectionTest,
   NotifySessionStarted(connection.get());
   ConnectionResponseReceived(connection.get(), kDefaultMaxPacketSize);
 
-  connection.reset();
+  DeleteConnectionWithoutCallingDisconnect(&connection);
   VerifyBleWeaveConnectionResult(
       BluetoothLowEnergyWeaveClientConnection::BleWeaveConnectionResult::
           BLE_WEAVE_CONNECTION_RESULT_CLOSED_NORMALLY);
@@ -733,9 +745,37 @@ TEST_F(CryptAuthBluetoothLowEnergyWeaveClientConnectionTest,
   std::unique_ptr<TestBluetoothLowEnergyWeaveClientConnection> connection(
       CreateConnection(true /* should_set_low_connection_latency */));
   InitializeConnection(connection.get(), kDefaultMaxPacketSize);
-  EXPECT_EQ(connection->sub_status(), SubStatus::CONNECTED);
+  EXPECT_EQ(connection->sub_status(), SubStatus::CONNECTED_AND_IDLE);
   Disconnect(connection.get());
 
+  VerifyBleWeaveConnectionResult(
+      BluetoothLowEnergyWeaveClientConnection::BleWeaveConnectionResult::
+          BLE_WEAVE_CONNECTION_RESULT_CLOSED_NORMALLY);
+}
+
+TEST_F(CryptAuthBluetoothLowEnergyWeaveClientConnectionTest,
+       DisconnectCalledTwice) {
+  std::unique_ptr<TestBluetoothLowEnergyWeaveClientConnection> connection(
+      CreateConnection(true /* should_set_low_connection_latency */));
+  InitializeConnection(connection.get(), kDefaultMaxPacketSize);
+  EXPECT_EQ(connection->sub_status(), SubStatus::CONNECTED_AND_IDLE);
+
+  EXPECT_CALL(*tx_characteristic_, WriteRemoteCharacteristic(_, _, _))
+      .WillOnce(
+          DoAll(SaveArg<0>(&last_value_written_on_tx_characteristic_),
+                SaveArg<1>(&write_remote_characteristic_success_callback_),
+                SaveArg<2>(&write_remote_characteristic_error_callback_)));
+
+  // Call Disconnect() twice; this should only result in one "close connection"
+  // message (verified via WillOnce() above).
+  connection->Disconnect();
+  connection->Disconnect();
+
+  EXPECT_EQ(last_value_written_on_tx_characteristic_, kConnectionCloseSuccess);
+  RunWriteCharacteristicSuccessCallback();
+
+  EXPECT_EQ(connection->sub_status(), SubStatus::DISCONNECTED);
+  EXPECT_EQ(connection->status(), Connection::DISCONNECTED);
   VerifyBleWeaveConnectionResult(
       BluetoothLowEnergyWeaveClientConnection::BleWeaveConnectionResult::
           BLE_WEAVE_CONNECTION_RESULT_CLOSED_NORMALLY);
@@ -746,7 +786,7 @@ TEST_F(CryptAuthBluetoothLowEnergyWeaveClientConnectionTest,
   std::unique_ptr<TestBluetoothLowEnergyWeaveClientConnection> connection(
       CreateConnection(false /* should_set_low_connection_latency */));
   InitializeConnection(connection.get(), kDefaultMaxPacketSize);
-  EXPECT_EQ(connection->sub_status(), SubStatus::CONNECTED);
+  EXPECT_EQ(connection->sub_status(), SubStatus::CONNECTED_AND_IDLE);
   Disconnect(connection.get());
 
   VerifyBleWeaveConnectionResult(
@@ -774,7 +814,7 @@ TEST_F(CryptAuthBluetoothLowEnergyWeaveClientConnectionTest,
   CharacteristicsFound(connection.get());
   Disconnect(connection.get());
 
-  connection.reset();
+  DeleteConnectionWithoutCallingDisconnect(&connection);
   VerifyBleWeaveConnectionResult(
       BluetoothLowEnergyWeaveClientConnection::BleWeaveConnectionResult::
           BLE_WEAVE_CONNECTION_RESULT_CLOSED_NORMALLY);
@@ -922,7 +962,7 @@ TEST_F(CryptAuthBluetoothLowEnergyWeaveClientConnectionTest,
 
   EXPECT_EQ(received_bytes, kSmallMessage);
 
-  connection.reset();
+  DeleteConnectionWithoutCallingDisconnect(&connection);
   VerifyBleWeaveConnectionResult(
       BluetoothLowEnergyWeaveClientConnection::BleWeaveConnectionResult::
           BLE_WEAVE_CONNECTION_RESULT_CLOSED_NORMALLY);
@@ -947,7 +987,7 @@ TEST_F(CryptAuthBluetoothLowEnergyWeaveClientConnectionTest,
   }
   EXPECT_EQ(received_bytes, kLargeMessage);
 
-  connection.reset();
+  DeleteConnectionWithoutCallingDisconnect(&connection);
   VerifyBleWeaveConnectionResult(
       BluetoothLowEnergyWeaveClientConnection::BleWeaveConnectionResult::
           BLE_WEAVE_CONNECTION_RESULT_CLOSED_NORMALLY);
@@ -968,7 +1008,7 @@ TEST_F(CryptAuthBluetoothLowEnergyWeaveClientConnectionTest,
                 SaveArg<2>(&write_remote_characteristic_error_callback_)));
 
   connection->SendMessage(
-      base::MakeUnique<FakeWireMessage>(kSmallMessage, kTestFeature));
+      std::make_unique<FakeWireMessage>(kSmallMessage, kTestFeature));
 
   EXPECT_EQ(last_value_written_on_tx_characteristic_, kSmallPackets0);
 
@@ -979,7 +1019,7 @@ TEST_F(CryptAuthBluetoothLowEnergyWeaveClientConnectionTest,
   EXPECT_EQ(kSmallMessage, connection_observer_->GetLastDeserializedMessage());
   EXPECT_TRUE(connection_observer_->last_send_success());
 
-  connection.reset();
+  DeleteConnectionWithoutCallingDisconnect(&connection);
   VerifyBleWeaveConnectionResult(
       BluetoothLowEnergyWeaveClientConnection::BleWeaveConnectionResult::
           BLE_WEAVE_CONNECTION_RESULT_CLOSED_NORMALLY);
@@ -1001,7 +1041,7 @@ TEST_F(CryptAuthBluetoothLowEnergyWeaveClientConnectionTest,
                 SaveArg<2>(&write_remote_characteristic_error_callback_)));
 
   connection->SendMessage(
-      base::MakeUnique<FakeWireMessage>(kLargeMessage, kTestFeature));
+      std::make_unique<FakeWireMessage>(kLargeMessage, kTestFeature));
 
   EXPECT_EQ(last_value_written_on_tx_characteristic_, kLargePackets0);
   std::vector<uint8_t> bytes_received(
@@ -1030,7 +1070,7 @@ TEST_F(CryptAuthBluetoothLowEnergyWeaveClientConnectionTest,
   EXPECT_EQ(kLargeMessage, connection_observer_->GetLastDeserializedMessage());
   EXPECT_TRUE(connection_observer_->last_send_success());
 
-  connection.reset();
+  DeleteConnectionWithoutCallingDisconnect(&connection);
   VerifyBleWeaveConnectionResult(
       BluetoothLowEnergyWeaveClientConnection::BleWeaveConnectionResult::
           BLE_WEAVE_CONNECTION_RESULT_CLOSED_NORMALLY);
@@ -1050,7 +1090,7 @@ TEST_F(CryptAuthBluetoothLowEnergyWeaveClientConnectionTest,
                 SaveArg<2>(&write_remote_characteristic_error_callback_)));
 
   connection->SendMessage(
-      base::MakeUnique<FakeWireMessage>(kSmallMessage, kTestFeature));
+      std::make_unique<FakeWireMessage>(kSmallMessage, kTestFeature));
 
   for (int i = 0; i < kMaxNumberOfTries; i++) {
     EXPECT_EQ(last_value_written_on_tx_characteristic_, kSmallPackets0);
@@ -1141,7 +1181,7 @@ TEST_F(CryptAuthBluetoothLowEnergyWeaveClientConnectionTest,
                 SaveArg<2>(&write_remote_characteristic_error_callback_)));
 
   connection->SendMessage(
-      base::MakeUnique<FakeWireMessage>(kLargeMessage, kTestFeature));
+      std::make_unique<FakeWireMessage>(kLargeMessage, kTestFeature));
 
   connection->GattCharacteristicValueChanged(
       adapter_.get(), rx_characteristic_.get(), kErroneousPacket);
@@ -1214,13 +1254,14 @@ TEST_F(CryptAuthBluetoothLowEnergyWeaveClientConnectionTest,
   InitializeConnection(connection, kDefaultMaxPacketSize);
 
   EXPECT_CALL(*tx_characteristic_, WriteRemoteCharacteristic(_, _, _))
-      .WillOnce(
+      .Times(2)
+      .WillRepeatedly(
           DoAll(SaveArg<0>(&last_value_written_on_tx_characteristic_),
                 SaveArg<1>(&write_remote_characteristic_success_callback_),
                 SaveArg<2>(&write_remote_characteristic_error_callback_)));
 
   connection->SendMessage(
-      base::MakeUnique<FakeWireMessage>(kSmallMessage, kTestFeature));
+      std::make_unique<FakeWireMessage>(kSmallMessage, kTestFeature));
   EXPECT_EQ(last_value_written_on_tx_characteristic_, kSmallPackets0);
 
   RunWriteCharacteristicSuccessCallback();
@@ -1229,6 +1270,9 @@ TEST_F(CryptAuthBluetoothLowEnergyWeaveClientConnectionTest,
   EXPECT_EQ(1, connection_observer_->num_send_completed());
   EXPECT_EQ(kSmallMessage, connection_observer_->GetLastDeserializedMessage());
   EXPECT_TRUE(connection_observer_->last_send_success());
+
+  // Connection close packet should have been sent when the object was deleted.
+  EXPECT_EQ(last_value_written_on_tx_characteristic_, kConnectionCloseSuccess);
 
   // We cannot check if connection's status and sub_status are DISCONNECTED
   // because it has been deleted.
@@ -1244,7 +1288,7 @@ TEST_F(CryptAuthBluetoothLowEnergyWeaveClientConnectionTest,
       CreateConnection(true /* should_set_low_connection_latency */));
 
   InitializeConnection(connection.get(), kDefaultMaxPacketSize);
-  EXPECT_EQ(connection->sub_status(), SubStatus::CONNECTED);
+  EXPECT_EQ(connection->sub_status(), SubStatus::CONNECTED_AND_IDLE);
 
   EXPECT_CALL(*tx_characteristic_, WriteRemoteCharacteristic(_, _, _))
       .WillOnce(
@@ -1252,7 +1296,7 @@ TEST_F(CryptAuthBluetoothLowEnergyWeaveClientConnectionTest,
                 SaveArg<1>(&write_remote_characteristic_success_callback_),
                 SaveArg<2>(&write_remote_characteristic_error_callback_)));
   connection->Disconnect();
-  EXPECT_EQ(connection->sub_status(), SubStatus::CONNECTED);
+  EXPECT_EQ(connection->sub_status(), SubStatus::CONNECTED_AND_SENDING_MESSAGE);
 
   for (int i = 0; i < kMaxNumberOfTries; i++) {
     EXPECT_EQ(last_value_written_on_tx_characteristic_,
@@ -1321,7 +1365,7 @@ TEST_F(CryptAuthBluetoothLowEnergyWeaveClientConnectionTest,
           Return(new NiceMock<MockBluetoothLowEnergyCharacteristicsFinder>)));
 
   create_gatt_connection_success_callback_.Run(
-      base::MakeUnique<NiceMock<device::MockBluetoothGattConnection>>(
+      std::make_unique<NiceMock<device::MockBluetoothGattConnection>>(
           adapter_, kTestRemoteDeviceBluetoothAddress));
 
   CharacteristicsFound(connection.get());
@@ -1330,7 +1374,7 @@ TEST_F(CryptAuthBluetoothLowEnergyWeaveClientConnectionTest,
 
   VerifyGattConnectionResultSuccess();
 
-  connection.reset();
+  DeleteConnectionWithoutCallingDisconnect(&connection);
   VerifyBleWeaveConnectionResult(
       BluetoothLowEnergyWeaveClientConnection::BleWeaveConnectionResult::
           BLE_WEAVE_CONNECTION_RESULT_CLOSED_NORMALLY);
@@ -1366,7 +1410,7 @@ TEST_F(CryptAuthBluetoothLowEnergyWeaveClientConnectionTest,
           Return(new NiceMock<MockBluetoothLowEnergyCharacteristicsFinder>)));
 
   create_gatt_connection_success_callback_.Run(
-      base::MakeUnique<NiceMock<device::MockBluetoothGattConnection>>(
+      std::make_unique<NiceMock<device::MockBluetoothGattConnection>>(
           adapter_, kTestRemoteDeviceBluetoothAddress));
 
   CharacteristicsFound(connection.get());
@@ -1375,7 +1419,7 @@ TEST_F(CryptAuthBluetoothLowEnergyWeaveClientConnectionTest,
 
   VerifyGattConnectionResultSuccess();
 
-  connection.reset();
+  DeleteConnectionWithoutCallingDisconnect(&connection);
   VerifyBleWeaveConnectionResult(
       BluetoothLowEnergyWeaveClientConnection::BleWeaveConnectionResult::
           BLE_WEAVE_CONNECTION_RESULT_CLOSED_NORMALLY);
@@ -1506,6 +1550,30 @@ TEST_F(CryptAuthBluetoothLowEnergyWeaveClientConnectionTest,
   VerifyBleWeaveConnectionResult(
       BluetoothLowEnergyWeaveClientConnection::BleWeaveConnectionResult::
           BLE_WEAVE_CONNECTION_RESULT_TIMEOUT_WAITING_FOR_CONNECTION_RESPONSE);
+}
+
+TEST_F(CryptAuthBluetoothLowEnergyWeaveClientConnectionTest,
+       Timeout_SendingMessage) {
+  std::unique_ptr<TestBluetoothLowEnergyWeaveClientConnection> connection(
+      CreateConnection(true /* should_set_low_connection_latency */));
+
+  InitializeConnection(connection.get(), kDefaultMaxPacketSize);
+  EXPECT_EQ(connection->sub_status(), SubStatus::CONNECTED_AND_IDLE);
+  EXPECT_CALL(*tx_characteristic_, WriteRemoteCharacteristic(_, _, _));
+
+  connection->SendMessage(
+      std::make_unique<FakeWireMessage>(kSmallMessage, kTestFeature));
+  EXPECT_EQ(connection->sub_status(), SubStatus::CONNECTED_AND_SENDING_MESSAGE);
+
+  // Simulate a timeout.
+  test_timer_->Fire();
+
+  EXPECT_EQ(connection->sub_status(), SubStatus::DISCONNECTED);
+  EXPECT_EQ(connection->status(), Connection::DISCONNECTED);
+
+  VerifyBleWeaveConnectionResult(
+      BluetoothLowEnergyWeaveClientConnection::BleWeaveConnectionResult::
+          BLE_WEAVE_CONNECTION_RESULT_TIMEOUT_WAITING_FOR_MESSAGE_TO_SEND);
 }
 
 }  // namespace weave

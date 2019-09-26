@@ -8,9 +8,9 @@ Loaded modules:
     formatter
     har_importer
     network
-    network_priorities
     object_ui
     perf_ui
+    search
     source_frame
     text_editor
     workspace_diff

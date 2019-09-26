@@ -6,9 +6,9 @@ layer at (0,0) size 800x600
       LayoutBlockFlow {P} at (0,0) size 784x20
         LayoutText {#text} at (0,0) size 52x19
           text run at (0,0) width 52: "Test for "
-        LayoutInline {A} at (0,0) size 69x19 [color=#0000EE]
-          LayoutText {#text} at (51,0) size 69x19
-            text run at (51,0) width 69: "bug 11575"
+        LayoutInline {A} at (0,0) size 67x19 [color=#0000EE]
+          LayoutText {#text} at (52,0) size 67x19
+            text run at (52,0) width 67: "bug 11575"
         LayoutText {#text} at (119,0) size 417x19
           text run at (119,0) width 417: ": REGRESSION: WebCore crash in CSSParser/HTMLTokenizer."
       LayoutBlockFlow {P} at (0,36) size 784x40

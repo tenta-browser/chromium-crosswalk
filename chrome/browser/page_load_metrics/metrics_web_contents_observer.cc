@@ -67,7 +67,8 @@ MetricsWebContentsObserver::MetricsWebContentsObserver(
     content::WebContents* web_contents,
     std::unique_ptr<PageLoadMetricsEmbedderInterface> embedder_interface)
     : content::WebContentsObserver(web_contents),
-      in_foreground_(web_contents->IsVisible()),
+      in_foreground_(web_contents->GetVisibility() !=
+                     content::Visibility::HIDDEN),
       embedder_interface_(std::move(embedder_interface)),
       has_navigated_(false),
       page_load_metrics_binding_(web_contents, this) {
@@ -200,7 +201,7 @@ void MetricsWebContentsObserver::WillStartNavigationRequest(
   // committed_load_ or navigation_handle beyond the scope of the constructor.
   auto insertion_result = provisional_loads_.insert(std::make_pair(
       navigation_handle,
-      base::MakeUnique<PageLoadTracker>(
+      std::make_unique<PageLoadTracker>(
           in_foreground_, embedder_interface_.get(), currently_committed_url,
           navigation_handle, user_initiated_info, chain_size,
           chain_size_same_url)));
@@ -303,16 +304,6 @@ void MetricsWebContentsObserver::OnRequestComplete(
         std::move(load_timing_info));
     tracker->OnLoadedResource(extra_request_complete_info);
   }
-}
-
-void MetricsWebContentsObserver::OnNavigationDelayComplete(
-    content::NavigationHandle* navigation_handle,
-    base::TimeDelta scheduled_delay,
-    base::TimeDelta actual_delay) {
-  auto it = provisional_loads_.find(navigation_handle);
-  if (it == provisional_loads_.end())
-    return;
-  it->second->OnNavigationDelayComplete(scheduled_delay, actual_delay);
 }
 
 const PageLoadExtraInfo
@@ -480,25 +471,26 @@ void MetricsWebContentsObserver::DidRedirectNavigation(
   it->second->Redirect(navigation_handle);
 }
 
-void MetricsWebContentsObserver::WasShown() {
-  if (in_foreground_)
+void MetricsWebContentsObserver::OnVisibilityChanged(
+    content::Visibility visibility) {
+  // TODO(bmcquade): Consider handling an OCCLUDED tab as not in foreground.
+  bool was_in_foreground = in_foreground_;
+  in_foreground_ = visibility != content::Visibility::HIDDEN;
+  if (in_foreground_ == was_in_foreground)
     return;
-  in_foreground_ = true;
-  if (committed_load_)
-    committed_load_->WebContentsShown();
-  for (const auto& kv : provisional_loads_) {
-    kv.second->WebContentsShown();
-  }
-}
 
-void MetricsWebContentsObserver::WasHidden() {
-  if (!in_foreground_)
-    return;
-  in_foreground_ = false;
-  if (committed_load_)
-    committed_load_->WebContentsHidden();
-  for (const auto& kv : provisional_loads_) {
-    kv.second->WebContentsHidden();
+  if (in_foreground_) {
+    if (committed_load_)
+      committed_load_->WebContentsShown();
+    for (const auto& kv : provisional_loads_) {
+      kv.second->WebContentsShown();
+    }
+  } else {
+    if (committed_load_)
+      committed_load_->WebContentsHidden();
+    for (const auto& kv : provisional_loads_) {
+      kv.second->WebContentsHidden();
+    }
   }
 }
 
@@ -643,8 +635,8 @@ bool MetricsWebContentsObserver::ShouldTrackNavigation(
   DCHECK(!navigation_handle->HasCommitted() ||
          !navigation_handle->IsSameDocument());
 
-  return BrowserPageTrackDecider(embedder_interface_.get(), web_contents(),
-                                 navigation_handle).ShouldTrack();
+  return BrowserPageTrackDecider(embedder_interface_.get(), navigation_handle)
+      .ShouldTrack();
 }
 
 void MetricsWebContentsObserver::AddTestingObserver(TestingObserver* observer) {

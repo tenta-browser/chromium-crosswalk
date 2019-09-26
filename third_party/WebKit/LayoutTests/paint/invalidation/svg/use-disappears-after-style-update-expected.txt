@@ -3,6 +3,17 @@
     {
       "name": "LayoutView #document",
       "bounds": [800, 600],
+      "drawsContent": false,
+      "backgroundColor": "#FFFFFF"
+    },
+    {
+      "name": "Scrolling Layer",
+      "bounds": [800, 600],
+      "drawsContent": false
+    },
+    {
+      "name": "Scrolling Contents Layer",
+      "bounds": [800, 600],
       "contentsOpaque": true,
       "backgroundColor": "#FFFFFF",
       "paintInvalidations": [
@@ -10,16 +21,6 @@
           "object": "LayoutSVGContainer use",
           "rect": [50, 10, 36, 36],
           "reason": "SVG resource change"
-        },
-        {
-          "object": "LayoutSVGRect rect id='rect'",
-          "rect": [50, 10, 30, 30],
-          "reason": "appeared"
-        },
-        {
-          "object": "LayoutSVGRect rect id='rect'",
-          "rect": [50, 10, 30, 30],
-          "reason": "disappeared"
         },
         {
           "object": "LayoutSVGRect rect id='rect'",
@@ -35,14 +36,6 @@
     }
   ],
   "objectPaintInvalidations": [
-    {
-      "object": "LayoutSVGRect rect id='rect'",
-      "reason": "disappeared"
-    },
-    {
-      "object": "LayoutSVGRect rect id='rect'",
-      "reason": "disappeared"
-    },
     {
       "object": "LayoutSVGRect rect id='rect'",
       "reason": "appeared"

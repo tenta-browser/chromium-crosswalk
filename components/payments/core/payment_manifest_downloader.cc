@@ -8,7 +8,6 @@
 #include <utility>
 
 #include "base/logging.h"
-#include "base/memory/ptr_util.h"
 #include "base/optional.h"
 #include "base/stl_util.h"
 #include "base/strings/string_split.h"
@@ -128,7 +127,10 @@ void PaymentManifestDownloader::OnURLFetchComplete(
       InitiateDownload(url, net::URLFetcher::GET,
                        std::move(download->callback));
     } else {
-      LOG(ERROR) << url << " is not a valid payment method manifest URL.";
+      // If the URL is empty, then ParseResponseHeader() has already printed an
+      // explanation.
+      if (!url.is_empty())
+        LOG(ERROR) << url << " is not a valid payment method manifest URL.";
       std::move(download->callback).Run(std::string());
     }
   } else {
@@ -172,7 +174,7 @@ void PaymentManifestDownloader::InitiateDownload(
   fetcher->SetRequestContext(context_.get());
   fetcher->Start();
 
-  auto download = base::MakeUnique<Download>();
+  auto download = std::make_unique<Download>();
   download->request_type = request_type;
   download->fetcher = std::move(fetcher);
   download->callback = std::move(callback);
@@ -184,9 +186,9 @@ void PaymentManifestDownloader::InitiateDownload(
 }
 
 bool PaymentManifestDownloader::IsValidManifestUrl(const GURL& url) {
-  return url.is_valid() && (url.SchemeIs(url::kHttpsScheme) ||
-                            (url.SchemeIs(url::kHttpScheme) &&
-                             net::IsLocalhost(url.HostNoBracketsPiece())));
+  return url.is_valid() &&
+         (url.SchemeIs(url::kHttpsScheme) ||
+          (url.SchemeIs(url::kHttpScheme) && net::IsLocalhost(url)));
 }
 
 }  // namespace payments

@@ -23,9 +23,6 @@ import org.chromium.base.test.util.ScalableTimeout;
 import org.chromium.chrome.browser.ChromeSwitches;
 import org.chromium.chrome.browser.DeferredStartupHandler;
 import org.chromium.chrome.browser.ShortcutHelper;
-import org.chromium.chrome.browser.customtabs.CustomTabActivity;
-import org.chromium.chrome.browser.customtabs.CustomTabIntentDataProvider;
-import org.chromium.chrome.browser.util.IntentUtils;
 import org.chromium.chrome.test.ChromeActivityTestRule;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
 import org.chromium.chrome.test.util.ChromeTabUtils;
@@ -34,12 +31,12 @@ import org.chromium.content.browser.test.util.Criteria;
 import org.chromium.content.browser.test.util.CriteriaHelper;
 import org.chromium.content.common.ContentSwitches;
 import org.chromium.net.test.EmbeddedTestServerRule;
+import org.chromium.webapk.lib.client.WebApkValidator;
 import org.chromium.webapk.lib.common.WebApkConstants;
 
 /** Integration tests for WebAPK feature. */
 @RunWith(ChromeJUnit4ClassRunner.class)
 @CommandLineFlags.Add({ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE,
-        ChromeActivityTestRule.DISABLE_NETWORK_PREDICTION_FLAG,
         ContentSwitches.HOST_RESOLVER_RULES + "=MAP * 127.0.0.1"})
 public class WebApkIntegrationTest {
     @Rule
@@ -103,6 +100,27 @@ public class WebApkIntegrationTest {
     }
 
     /**
+     * Tests that WebApkActivities are started properly by WebappLauncherActivity.
+     */
+    @Test
+    @LargeTest
+    @Feature({"Webapps"})
+    public void testWebApkLaunchesByLauncherActivity() {
+        Intent intent = new Intent();
+        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+        intent.setPackage(InstrumentationRegistry.getTargetContext().getPackageName());
+        intent.setAction(WebappLauncherActivity.ACTION_START_WEBAPP);
+        intent.putExtra(WebApkConstants.EXTRA_URL, "https://pwa.rocks/")
+                .putExtra(WebApkConstants.EXTRA_WEBAPK_PACKAGE_NAME, "org.chromium.webapk");
+
+        WebApkValidator.disableValidationForTesting();
+        mActivityTestRule.startActivityCompletely(intent);
+
+        WebApkActivity lastActivity = (WebApkActivity) mActivityTestRule.getActivity();
+        Assert.assertEquals("https://pwa.rocks/", lastActivity.getWebappInfo().uri().toString());
+    }
+
+    /**
      * Test launching a WebAPK. Test that loading the start page works and that the splashscreen
      * eventually hides.
      */
@@ -113,7 +131,7 @@ public class WebApkIntegrationTest {
         startWebApkActivity("org.chromium.webapk", "https://pwa.rocks/");
         waitUntilSplashscreenHides();
 
-        // We navigate outside origin and expect Custom Tab to open on top of WebApkActivity.
+        // We navigate outside origin and expect CCT toolbar to show on top of WebApkActivity.
         mActivityTestRule.runJavaScriptCodeInCurrentTab(
                 "window.top.location = 'https://www.google.com/'");
 
@@ -121,22 +139,16 @@ public class WebApkIntegrationTest {
             @Override
             public boolean isSatisfied() {
                 Activity activity = ApplicationStatus.getLastTrackedFocusedActivity();
-                if (!(activity instanceof CustomTabActivity)) {
-                    return false;
-                }
-                CustomTabActivity customTab = (CustomTabActivity) activity;
-                return customTab.getActivityTab() != null
+                WebappActivity webAppActivity = (WebappActivity) activity;
+                return webAppActivity.getActivityTab() != null
                         // Dropping the TLD as Google can redirect to a local site.
-                        && customTab.getActivityTab().getUrl().startsWith("https://www.google.");
+                        && webAppActivity.getActivityTab().getUrl().startsWith(
+                                   "https://www.google.");
             }
         });
 
-        CustomTabActivity customTab =
-                (CustomTabActivity) ApplicationStatus.getLastTrackedFocusedActivity();
-        Assert.assertTrue(
-                "Sending to external handlers needs to be enabled for redirect back (e.g. OAuth).",
-                IntentUtils.safeGetBooleanExtra(customTab.getIntent(),
-                        CustomTabIntentDataProvider.EXTRA_SEND_TO_EXTERNAL_DEFAULT_HANDLER, false));
+        WebappActivityTestRule.assertToolbarShowState(
+                (WebappActivity) ApplicationStatus.getLastTrackedFocusedActivity(), true);
     }
 
     /**
@@ -162,7 +174,7 @@ public class WebApkIntegrationTest {
         Assert.assertEquals(0, RecordHistogram.getHistogramTotalCountForTesting(histogramName));
         WebappDataStorage storage = WebappRegistry.getInstance().getWebappDataStorage(
                 WebApkConstants.WEBAPK_ID_PREFIX + packageName);
-        Assert.assertNotEquals(WebappDataStorage.TIMESTAMP_INVALID, storage.getLastUsedTime());
+        Assert.assertNotEquals(WebappDataStorage.TIMESTAMP_INVALID, storage.getLastUsedTimeMs());
     }
 
     /** Test that the "WebApk.LaunchInterval" histogram is recorded on susbequent launches. */
@@ -172,7 +184,7 @@ public class WebApkIntegrationTest {
     public void testLaunchIntervalHistogramRecordedOnSecondLaunch() throws Exception {
         mNativeLibraryTestRule.loadNativeLibraryNoBrowserProcess();
 
-        final String histogramName = "WebApk.LaunchInterval";
+        final String histogramName = "WebApk.LaunchInterval2";
         final String packageName = "org.chromium.webapk";
 
         WebappDataStorage storage =

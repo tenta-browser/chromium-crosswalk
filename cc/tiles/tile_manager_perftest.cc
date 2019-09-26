@@ -7,7 +7,6 @@
 
 #include "base/lazy_instance.h"
 #include "base/location.h"
-#include "base/memory/ptr_util.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
 #include "cc/base/lap_timer.h"
@@ -295,7 +294,8 @@ class TileManagerPerfTest : public TestLayerTreeHostBase {
   LapTimer timer_;
 };
 
-TEST_F(TileManagerPerfTest, PrepareTiles) {
+// Failing.  https://crbug.com/792995
+TEST_F(TileManagerPerfTest, DISABLED_PrepareTiles) {
   RunPrepareTilesTest("2_100", 2, 100);
   RunPrepareTilesTest("2_500", 2, 500);
   RunPrepareTilesTest("2_1000", 2, 1000);

@@ -36,6 +36,7 @@ if (window.internals && internals.dictionaryTest) {
     shouldBeUndefined('dict.doubleOrStringMember');
     shouldBeUndefined('dict.doubleOrStringSequenceMember');
     shouldBeNull('dict.eventTargetOrNullMember');
+    shouldBeUndefined('dict.anyMember');
     debug('');
 
     debug('Test for setting undefined');
@@ -60,6 +61,7 @@ if (window.internals && internals.dictionaryTest) {
     shouldBeUndefined('dict.objectMember');
     shouldBeNull('dict.objectOrNullMemberWithDefault');
     shouldBeNull('dict.eventTargetOrNullMember');
+    shouldBeUndefined('dict.anyMember');
     debug('');
 
     var element1 = document.createElement('div');
@@ -90,6 +92,8 @@ if (window.internals && internals.dictionaryTest) {
         doubleOrStringMember: 3.14,
         doubleOrStringSequenceMember: [3.14, 'Hello'],
         eventTargetOrNullMember: element1,
+        internalEnumOrInternalEnumSequenceMember: 'foo',
+        anyMember: 42
     });
     dict = dictionaryTest.get();
     shouldBe('dict.longMember', '1');
@@ -117,6 +121,8 @@ if (window.internals && internals.dictionaryTest) {
     shouldBe('dict.doubleOrStringMember', '3.14');
     shouldBe('dict.doubleOrStringSequenceMember', '[3.14, "Hello"]');
     shouldBe('dict.eventTargetOrNullMember', 'element1');
+    shouldBeEqualToString('dict.internalEnumOrInternalEnumSequenceMember', 'foo');
+    shouldBe('dict.anyMember', '42');
     debug('');
 
     debug('Additional test for union type members');
@@ -145,17 +151,24 @@ if (window.internals && internals.dictionaryTest) {
     });
     dict = dictionaryTest.get();
     shouldBeUndefined('dict.doubleOrStringMember');
+    dictionaryTest.set({
+        internalEnumOrInternalEnumSequenceMember: ['foo', 'bar'],
+    });
+    dict = dictionaryTest.get();
+    shouldBe('dict.internalEnumOrInternalEnumSequenceMember', '["foo", "bar"]');
 
     debug('');
 
     debug('Test for explicit undefined or null, and missing members');
     dictionaryTest.set({
+        enumOrNullMember: null,
         longMember: undefined,
         longMemberWithDefault: null,
         longOrNullMember: undefined,
         longOrNullMemberWithDefault: null,
     });
     dict = dictionaryTest.get();
+    shouldBeNull('dict.enumOrNullMember');
     shouldBeUndefined('dict.longMember');
     // ToNumber(null) results in 0.
     shouldBe('dict.longMemberWithDefault', '0');
@@ -163,6 +176,36 @@ if (window.internals && internals.dictionaryTest) {
     shouldBeNull('dict.longOrNullMember');
     // Nullable and its default value is null
     shouldBeNull('dict.longOrNullMemberWithDefault');
+    // A non-nullable enum must throw when passed null.
+    shouldThrow('dictionaryTest.set({enumMember: null})');
+    debug('');
+
+    debug('Test for different values for the any type');
+    dictionaryTest.set({
+        anyMember: '',
+    });
+    dict = dictionaryTest.get();
+    shouldBeEmptyString('dict.anyMember');
+    dictionaryTest.set({
+        anyMember: 0,
+    });
+    dict = dictionaryTest.get();
+    shouldBeZero('dict.anyMember');
+    dictionaryTest.set({
+        anyMember: undefined,
+    });
+    dict = dictionaryTest.get();
+    shouldBeUndefined('dict.anyMember');
+    dictionaryTest.set({
+        anyMember: false,
+    });
+    dict = dictionaryTest.get();
+    shouldBeFalse('dict.anyMember');
+    dictionaryTest.set({
+        anyMember: null,
+    });
+    dict = dictionaryTest.get();
+    shouldBeNull('dict.anyMember');
     debug('');
 
     debug('Test for setting invalid member');
@@ -190,6 +233,10 @@ if (window.internals && internals.dictionaryTest) {
     debug('Test for setting invalid enum value');
     shouldThrow("dictionaryTest.set({enumMember: 'invalid'})");
     debug('');
+
+    debug('Test for setting invalid enum value in union sequence');
+    shouldThrow("dictionaryTest.set({internalEnumOrInternalEnumSequenceMember: 'invalid'})");
+    shouldThrow("dictionaryTest.set({internalEnumOrInternalEnumSequenceMember: ['invalid']})");
 
     debug('Test for setting invalid object value');
     shouldThrow("dictionaryTest.set({objectMember: 42})");

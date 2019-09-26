@@ -12,8 +12,10 @@
 
 #include "ash/accelerators/accelerator_handler.h"
 #include "ash/accelerators/accelerator_ids.h"
+#include "ash/display/window_tree_host_manager.h"
 #include "ash/drag_drop/drag_image_view.h"
 #include "ash/event_matcher_util.h"
+#include "ash/host/ash_window_tree_host.h"
 #include "ash/public/cpp/config.h"
 #include "ash/public/cpp/shelf_types.h"
 #include "ash/public/cpp/window_pin_type.h"
@@ -31,7 +33,6 @@
 #include "ash/shell_init_params.h"
 #include "ash/shell_port_mash.h"
 #include "ash/shell_port_mus.h"
-#include "ash/wayland/wayland_server_controller.h"
 #include "ash/wm/ash_focus_rules.h"
 #include "ash/wm/move_event_handler.h"
 #include "ash/wm/non_client_frame_controller.h"
@@ -40,6 +41,7 @@
 #include "ash/wm/top_level_window_factory.h"
 #include "ash/wm/window_properties.h"
 #include "ash/wm/window_state.h"
+#include "components/exo/file_helper.h"
 #include "services/service_manager/public/cpp/connector.h"
 #include "services/ui/common/accelerator_util.h"
 #include "services/ui/common/types.h"
@@ -106,7 +108,7 @@ WindowManager::WindowManager(service_manager::Connector* connector,
   property_converter_->RegisterPrimitiveProperty(
       ::wm::kShadowElevationKey,
       ui::mojom::WindowManager::kShadowElevation_Property,
-      base::Bind(&::wm::IsValidShadowElevation));
+      aura::PropertyConverter::CreateAcceptAnyValueCallback());
   property_converter_->RegisterPrimitiveProperty(
       kWindowStateTypeKey, mojom::kWindowStateType_Property,
       base::Bind(&ash::IsValidWindowStateType));
@@ -119,6 +121,13 @@ WindowManager::WindowManager(service_manager::Connector* connector,
       aura::PropertyConverter::CreateAcceptAnyValueCallback());
   property_converter_->RegisterStringProperty(
       kShelfIDKey, ui::mojom::WindowManager::kShelfID_Property);
+  property_converter_->RegisterPrimitiveProperty(
+      kRestoreBoundsOverrideKey, ash::mojom::kRestoreBoundsOverride_Property,
+      aura::PropertyConverter::CreateAcceptAnyValueCallback());
+  property_converter_->RegisterPrimitiveProperty(
+      kRestoreWindowStateTypeOverrideKey,
+      ash::mojom::kRestoreWindowStateTypeOverride_Property,
+      base::BindRepeating(&ash::IsValidWindowStateType));
 }
 
 WindowManager::~WindowManager() {
@@ -330,17 +339,24 @@ void WindowManager::OnWmConnected() {
     Shell::GetPrimaryRootWindow()->GetHost()->Show();
 
   // We only create controller in the ash process for mash.
-  if (Shell::GetAshConfig() == Config::MASH)
-    wayland_server_controller_ = WaylandServerController::CreateIfNecessary();
+  if (Shell::GetAshConfig() == Config::MASH) {
+    // TODO(penghuang): wire up notification surface manager.
+    // https://crbug.com/768439
+    // TODO(hirono): wire up the file helper. http://crbug.com/768395
+    Shell::Get()->InitWaylandServer(nullptr, nullptr);
+  }
 }
 
 void WindowManager::OnWmAcceleratedWidgetAvailableForDisplay(
     int64_t display_id,
     gfx::AcceleratedWidget widget) {
-  auto* window = Shell::GetRootWindowForDisplayId(display_id);
-  if (window) {
-    auto* host = static_cast<aura::WindowTreeHostMus*>(window->GetHost());
-    host->OverrideAcceleratedWidget(widget);
+  WindowTreeHostManager* manager = Shell::Get()->window_tree_host_manager();
+  AshWindowTreeHost* host =
+      manager->GetAshWindowTreeHostForDisplayId(display_id);
+  // The display may have been destroyed before getting this async callback.
+  if (host && host->AsWindowTreeHost()) {
+    static_cast<aura::WindowTreeHostMus*>(host->AsWindowTreeHost())
+        ->OverrideAcceleratedWidget(widget);
   }
 }
 

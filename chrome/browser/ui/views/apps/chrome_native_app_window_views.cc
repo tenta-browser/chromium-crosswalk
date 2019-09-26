@@ -9,7 +9,6 @@
 
 #include "apps/ui/views/app_window_frame_view.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "build/build_config.h"
 #include "chrome/app/chrome_command_ids.h"
 #include "chrome/browser/app_mode/app_mode_utils.h"
@@ -17,6 +16,7 @@
 #include "chrome/browser/extensions/chrome_app_icon_service.h"
 #include "chrome/browser/extensions/extension_util.h"
 #include "chrome/browser/profiles/profile.h"
+#include "chrome/browser/ui/views/accelerator_table.h"
 #include "chrome/browser/ui/views/extensions/extension_keybinding_registry_views.h"
 #include "components/favicon/content/content_favicon_driver.h"
 #include "components/zoom/page_zoom.h"
@@ -35,12 +35,6 @@ const int kMinPanelWidth = 100;
 const int kMinPanelHeight = 100;
 const int kDefaultPanelWidth = 200;
 const int kDefaultPanelHeight = 300;
-
-struct AcceleratorMapping {
-  ui::KeyboardCode keycode;
-  int modifiers;
-  int command_id;
-};
 
 const AcceleratorMapping kAppWindowAcceleratorMap[] = {
   { ui::VKEY_W, ui::EF_CONTROL_DOWN, IDC_CLOSE_WINDOW },
@@ -365,12 +359,12 @@ void ChromeNativeAppWindowViews::UpdateShape(
   // Build a region from the list of rects when it is supplied.
   std::unique_ptr<SkRegion> region;
   if (shape_rects_) {
-    region = base::MakeUnique<SkRegion>();
+    region = std::make_unique<SkRegion>();
     for (const gfx::Rect& input_rect : *shape_rects_.get())
       region->op(gfx::RectToSkIRect(input_rect), SkRegion::kUnion_Op);
   }
   shape_ = std::move(region);
-  widget()->SetShape(shape() ? base::MakeUnique<ShapeRects>(*shape_rects_)
+  widget()->SetShape(shape() ? std::make_unique<ShapeRects>(*shape_rects_)
                              : nullptr);
   widget()->OnSizeConstraintsChanged();
 }

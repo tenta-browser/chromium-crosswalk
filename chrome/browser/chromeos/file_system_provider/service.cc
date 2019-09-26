@@ -9,7 +9,6 @@
 #include <utility>
 
 #include "base/files/file_path.h"
-#include "base/memory/ptr_util.h"
 #include "base/values.h"
 #include "chrome/browser/chromeos/file_system_provider/mount_path_util.h"
 #include "chrome/browser/chromeos/file_system_provider/observer.h"
@@ -21,9 +20,9 @@
 #include "chrome/browser/chromeos/file_system_provider/throttled_file_system.h"
 #include "components/prefs/pref_service.h"
 #include "components/prefs/scoped_user_pref_update.h"
-#include "extensions/browser/event_router.h"
 #include "extensions/browser/extension_registry.h"
 #include "extensions/browser/extension_system.h"
+#include "extensions/common/extension_id.h"
 #include "extensions/common/permissions/api_permission.h"
 #include "extensions/common/permissions/permissions_data.h"
 #include "storage/browser/fileapi/external_mount_points.h"
@@ -38,19 +37,11 @@ const size_t kMaxFileSystems = 16;
 
 }  // namespace
 
-ProvidingExtensionInfo::ProvidingExtensionInfo() {
-}
-
-ProvidingExtensionInfo::~ProvidingExtensionInfo() {
-}
-
 Service::Service(Profile* profile,
                  extensions::ExtensionRegistry* extension_registry)
     : profile_(profile),
       extension_registry_(extension_registry),
       registry_(new Registry(profile)),
-      extension_provider_(
-          std::make_unique<ExtensionProvider>(ExtensionProvider())),
       weak_ptr_factory_(this) {
   extension_registry_->AddObserver(this);
 }
@@ -94,12 +85,6 @@ void Service::RemoveObserver(Observer* observer) {
   observers_.RemoveObserver(observer);
 }
 
-void Service::SetExtensionProviderForTesting(
-    std::unique_ptr<ProviderInterface> provider) {
-  DCHECK(provider);
-  extension_provider_ = std::move(provider);
-}
-
 void Service::SetRegistryForTesting(
     std::unique_ptr<RegistryInterface> registry) {
   DCHECK(registry);
@@ -117,17 +102,23 @@ base::File::Error Service::MountFileSystemInternal(
     MountContext context) {
   DCHECK(thread_checker_.CalledOnValidThread());
 
+  ProviderInterface* const provider = GetProvider(provider_id);
+  if (!provider) {
+    for (auto& observer : observers_) {
+      observer.OnProvidedFileSystemMount(
+          ProvidedFileSystemInfo(), context,
+          base::File::FILE_ERROR_INVALID_OPERATION);
+    }
+    return base::File::FILE_ERROR_INVALID_OPERATION;
+  }
+
   // The mount point path and name are unique per system, since they are system
   // wide. This is necessary for copying between profiles.
   const base::FilePath& mount_path =
       util::GetMountPath(profile_, provider_id, options.file_system_id);
   const std::string mount_point_name = mount_path.BaseName().AsUTF8Unsafe();
 
-  ProvidingExtensionInfo provider_info;
-  // TODO(mtomasz): Set up a testing extension in unit tests.
-  ProviderInterface* provider = GetProvider(provider_id);
-  Capabilities capabilities;
-  provider->GetCapabilities(profile_, provider_id, capabilities);
+  Capabilities capabilities = provider->GetCapabilities();
   // Store the file system descriptor. Use the mount point name as the file
   // system provider file system id.
   // Examples:
@@ -141,7 +132,7 @@ base::File::Error Service::MountFileSystemInternal(
   //   source = SOURCE_FILE
   ProvidedFileSystemInfo file_system_info(
       provider_id, options, mount_path, capabilities.configurable,
-      capabilities.watchable, capabilities.source);
+      capabilities.watchable, capabilities.source, provider->GetIconSet());
 
   // If already exists a file system provided by the same extension with this
   // id, then abort.
@@ -189,8 +180,10 @@ base::File::Error Service::MountFileSystemInternal(
   mount_point_name_to_key_map_[mount_point_name] =
       FileSystemKey(provider_id.ToString(), options.file_system_id);
   if (options.persistent) {
-    registry_->RememberFileSystem(file_system_info,
-                                  *file_system_ptr->GetWatchers());
+    const Watchers& watchers = file_system_info.watchable()
+                                   ? *file_system_ptr->GetWatchers()
+                                   : Watchers();
+    registry_->RememberFileSystem(file_system_info, watchers);
   }
 
   for (auto& observer : observers_) {
@@ -268,24 +261,8 @@ bool Service::RequestUnmount(const ProviderId& provider_id,
 bool Service::RequestMount(const ProviderId& provider_id) {
   DCHECK(thread_checker_.CalledOnValidThread());
 
-  extensions::EventRouter* const event_router =
-      extensions::EventRouter::Get(profile_);
-  DCHECK(event_router);
-
-  if (!event_router->ExtensionHasEventListener(
-          provider_id.GetExtensionId(), extensions::api::file_system_provider::
-                                            OnMountRequested::kEventName)) {
-    return false;
-  }
-
-  event_router->DispatchEventToExtension(
-      provider_id.GetExtensionId(),
-      base::MakeUnique<extensions::Event>(
-          extensions::events::FILE_SYSTEM_PROVIDER_ON_MOUNT_REQUESTED,
-          extensions::api::file_system_provider::OnMountRequested::kEventName,
-          std::unique_ptr<base::ListValue>(new base::ListValue())));
-
-  return true;
+  ProviderInterface* const provider = GetProvider(provider_id);
+  return provider->RequestMount(profile_);
 }
 
 std::vector<ProvidedFileSystemInfo> Service::GetProvidedFileSystemInfoList() {
@@ -296,6 +273,23 @@ std::vector<ProvidedFileSystemInfo> Service::GetProvidedFileSystemInfoList() {
     result.push_back(it->second->GetFileSystemInfo());
   }
   return result;
+}
+
+std::vector<ProvidedFileSystemInfo> Service::GetProvidedFileSystemInfoList(
+    const ProviderId& provider_id) {
+  DCHECK(thread_checker_.CalledOnValidThread());
+
+  const std::vector<ProvidedFileSystemInfo> full_list =
+      GetProvidedFileSystemInfoList();
+  std::vector<ProvidedFileSystemInfo> filtered_list;
+
+  for (const auto& file_system : full_list) {
+    if (file_system.provider_id() == provider_id) {
+      filtered_list.push_back(file_system);
+    }
+  }
+
+  return filtered_list;
 }
 
 ProvidedFileSystemInterface* Service::GetProvidedFileSystem(
@@ -311,53 +305,24 @@ ProvidedFileSystemInterface* Service::GetProvidedFileSystem(
   return file_system_it->second.get();
 }
 
-std::vector<ProvidingExtensionInfo> Service::GetProvidingExtensionInfoList()
-    const {
-  extensions::ExtensionRegistry* const registry =
-      extensions::ExtensionRegistry::Get(profile_);
-  DCHECK(registry);
-
-  std::vector<ProvidingExtensionInfo> result;
-  for (const auto& extension : registry->enabled_extensions()) {
-    ProvidingExtensionInfo info;
-    if (GetProvidingExtensionInfo(extension->id(), &info))
-      result.push_back(info);
-  }
-
-  return result;
-}
-
-// TODO(mtomasz): Refactor providers into per-filesystem, enabling this code
-// duplication to be removed.
-bool Service::GetProvidingExtensionInfo(const std::string& extension_id,
-                                        ProvidingExtensionInfo* result) const {
-  DCHECK(result);
-  extensions::ExtensionRegistry* const registry =
-      extensions::ExtensionRegistry::Get(profile_);
-  DCHECK(registry);
-
-  const extensions::Extension* const extension = registry->GetExtensionById(
-      extension_id, extensions::ExtensionRegistry::ENABLED);
-  if (!extension ||
-      !extension->permissions_data()->HasAPIPermission(
-          extensions::APIPermission::kFileSystemProvider)) {
-    return false;
-  }
-
-  result->extension_id = extension->id();
-  result->name = extension->name();
-  const extensions::FileSystemProviderCapabilities* const capabilities =
-      extensions::FileSystemProviderCapabilities::Get(extension);
-  DCHECK(capabilities);
-  result->capabilities = *capabilities;
-
-  return true;
+const Service::ProviderMap& Service::GetProviders() const {
+  return provider_map_;
 }
 
 void Service::OnExtensionUnloaded(content::BrowserContext* browser_context,
                                   const extensions::Extension* extension,
                                   extensions::UnloadedExtensionReason reason) {
-  // Unmount all of the provided file systems associated with this extension.
+  ProviderId provider_id = ProviderId::CreateFromExtensionId(extension->id());
+  UnregisterProvider(
+      provider_id,
+      reason == extensions::UnloadedExtensionReason::PROFILE_SHUTDOWN
+          ? UNMOUNT_REASON_SHUTDOWN
+          : UNMOUNT_REASON_USER);
+}
+
+void Service::UnmountFileSystems(const ProviderId& provider_id,
+                                 UnmountReason reason) {
+  // Unmount all of the provided file systems associated with this provider.
   auto it = file_system_map_.begin();
   while (it != file_system_map_.end()) {
     const ProvidedFileSystemInfo& file_system_info =
@@ -365,20 +330,31 @@ void Service::OnExtensionUnloaded(content::BrowserContext* browser_context,
     // Advance the iterator beforehand, otherwise it will become invalidated
     // by the UnmountFileSystem() call.
     ++it;
-    if (file_system_info.provider_id().GetExtensionId() == extension->id()) {
-      const base::File::Error unmount_result = UnmountFileSystem(
-          file_system_info.provider_id(), file_system_info.file_system_id(),
-          reason == extensions::UnloadedExtensionReason::PROFILE_SHUTDOWN
-              ? UNMOUNT_REASON_SHUTDOWN
-              : UNMOUNT_REASON_USER);
+    if (file_system_info.provider_id() == provider_id) {
+      const base::File::Error unmount_result =
+          UnmountFileSystem(file_system_info.provider_id(),
+                            file_system_info.file_system_id(), reason);
       DCHECK_EQ(base::File::FILE_OK, unmount_result);
     }
   }
 }
 
+void Service::UnregisterProvider(const ProviderId& provider_id,
+                                 UnmountReason reason) {
+  UnmountFileSystems(provider_id, reason);
+  provider_map_.erase(provider_id);
+}
+
 void Service::OnExtensionLoaded(content::BrowserContext* browser_context,
                                 const extensions::Extension* extension) {
-  ProviderId provider_id = ProviderId::CreateFromExtensionId(extension->id());
+  // If the extension is a provider, then register it.
+  std::unique_ptr<ProviderInterface> provider =
+      ExtensionProvider::Create(extension_registry_, extension->id());
+  if (provider)
+    RegisterProvider(std::move(provider));
+}
+
+void Service::RestoreFileSystems(const ProviderId& provider_id) {
   std::unique_ptr<RegistryInterface::RestoredFileSystems>
       restored_file_systems = registry_->RestoreFileSystems(provider_id);
 
@@ -402,8 +378,11 @@ void Service::OnExtensionLoaded(content::BrowserContext* browser_context,
         GetProvidedFileSystem(restored_file_system.provider_id,
                               restored_file_system.options.file_system_id);
     DCHECK(file_system);
-    file_system->GetWatchers()->insert(restored_file_system.watchers.begin(),
-                                       restored_file_system.watchers.end());
+
+    if (file_system->GetFileSystemInfo().watchable()) {
+      file_system->GetWatchers()->insert(restored_file_system.watchers.begin(),
+                                         restored_file_system.watchers.end());
+    }
   }
 }
 
@@ -457,21 +436,17 @@ void Service::OnWatcherListChanged(
   registry_->RememberFileSystem(file_system_info, watchers);
 }
 
-void Service::RegisterNativeProvider(
-    const ProviderId& provider_id,
-    std::unique_ptr<ProviderInterface> provider) {
-  DCHECK_EQ(ProviderId::NATIVE, provider_id.GetType());
-  native_provider_map_[provider_id.GetNativeId()] = std::move(provider);
+void Service::RegisterProvider(std::unique_ptr<ProviderInterface> provider) {
+  ProviderId provider_id = provider->GetId();
+  provider_map_[provider_id] = std::move(provider);
+  RestoreFileSystems(provider_id);
 }
 
 ProviderInterface* Service::GetProvider(const ProviderId& provider_id) {
   DCHECK_NE(ProviderId::INVALID, provider_id.GetType());
-
-  if (provider_id.GetType() == ProviderId::EXTENSION)
-    return extension_provider_.get();
-
-  auto it = native_provider_map_.find(provider_id.GetNativeId());
-  DCHECK(it != native_provider_map_.end());
+  auto it = provider_map_.find(provider_id);
+  if (it == provider_map_.end())
+    return nullptr;
 
   return it->second.get();
 }

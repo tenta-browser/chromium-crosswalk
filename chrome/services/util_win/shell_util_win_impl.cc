@@ -10,7 +10,6 @@
 
 #include "base/files/file_enumerator.h"
 #include "base/files/file_path.h"
-#include "base/memory/ptr_util.h"
 #include "base/path_service.h"
 #include "base/scoped_native_library.h"
 #include "base/strings/string16.h"
@@ -22,8 +21,6 @@
 #include "chrome/installer/util/install_util.h"
 #include "mojo/public/cpp/bindings/strong_binding.h"
 #include "ui/base/win/open_file_name_win.h"
-
-namespace chrome {
 
 namespace {
 
@@ -284,5 +281,3 @@ void ShellUtilWinImpl::CallGetSaveFileName(
 
   std::move(callback).Run(base::FilePath(), 0);
 }
-
-}  // namespace chrome

@@ -66,6 +66,7 @@
 #include "net/test/cert_test_util.h"
 #include "net/test/gtest_util.h"
 #include "net/test/test_data_directory.h"
+#include "net/traffic_annotation/network_traffic_annotation_test_helper.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "testing/platform_test.h"
@@ -119,7 +120,10 @@ class FakeDataChannel {
     return PropagateData(buf, buf_len);
   }
 
-  int Write(IOBuffer* buf, int buf_len, const CompletionCallback& callback) {
+  int Write(IOBuffer* buf,
+            int buf_len,
+            const CompletionCallback& callback,
+            const NetworkTrafficAnnotationTag& traffic_annotation) {
     DCHECK(write_callback_.is_null());
     if (closed_) {
       if (write_called_after_close_)
@@ -168,20 +172,16 @@ class FakeDataChannel {
       return;
 
     int copied = PropagateData(read_buf_, read_buf_len_);
-    CompletionCallback callback = read_callback_;
-    read_callback_.Reset();
     read_buf_ = NULL;
     read_buf_len_ = 0;
-    callback.Run(copied);
+    base::ResetAndReturn(&read_callback_).Run(copied);
   }
 
   void DoWriteCallback() {
     if (write_callback_.is_null())
       return;
 
-    CompletionCallback callback = write_callback_;
-    write_callback_.Reset();
-    callback.Run(ERR_CONNECTION_RESET);
+    base::ResetAndReturn(&write_callback_).Run(ERR_CONNECTION_RESET);
   }
 
   int PropagateData(scoped_refptr<IOBuffer> read_buf, int read_buf_len) {
@@ -234,10 +234,12 @@ class FakeSocket : public StreamSocket {
 
   int Write(IOBuffer* buf,
             int buf_len,
-            const CompletionCallback& callback) override {
+            const CompletionCallback& callback,
+            const NetworkTrafficAnnotationTag& traffic_annotation) override {
     // Write random number of bytes.
     buf_len = rand() % buf_len + 1;
-    return outgoing_->Write(buf, buf_len, callback);
+    return outgoing_->Write(buf, buf_len, callback,
+                            TRAFFIC_ANNOTATION_FOR_TESTS);
   }
 
   int SetReceiveBufferSize(int32_t size) override { return OK; }
@@ -291,6 +293,8 @@ class FakeSocket : public StreamSocket {
     return 0;
   }
 
+  void ApplySocketTag(const SocketTag& tag) override {}
+
  private:
   NetLogWithSource net_log_;
   FakeDataChannel* incoming_;
@@ -317,7 +321,8 @@ TEST(FakeSocketTest, DataTransfer) {
 
   // Write then read.
   int written =
-      server.Write(write_buf.get(), kTestDataSize, CompletionCallback());
+      server.Write(write_buf.get(), kTestDataSize, CompletionCallback(),
+                   TRAFFIC_ANNOTATION_FOR_TESTS);
   EXPECT_GT(written, 0);
   EXPECT_LE(written, kTestDataSize);
 
@@ -331,7 +336,8 @@ TEST(FakeSocketTest, DataTransfer) {
   EXPECT_EQ(ERR_IO_PENDING,
             server.Read(read_buf.get(), kReadBufSize, callback.callback()));
 
-  written = client.Write(write_buf.get(), kTestDataSize, CompletionCallback());
+  written = client.Write(write_buf.get(), kTestDataSize, CompletionCallback(),
+                         TRAFFIC_ANNOTATION_FOR_TESTS);
   EXPECT_GT(written, 0);
   EXPECT_LE(written, kTestDataSize);
 
@@ -363,6 +369,13 @@ class SSLServerSocketTest : public PlatformTest {
     server_private_key_ = ReadTestKey("unittest.key.bin");
     ASSERT_TRUE(server_private_key_);
 
+    std::unique_ptr<crypto::RSAPrivateKey> key =
+        ReadTestKey("unittest.key.bin");
+    ASSERT_TRUE(key);
+    EVP_PKEY_up_ref(key->key());
+    server_ssl_private_key_ =
+        WrapOpenSSLPrivateKey(bssl::UniquePtr<EVP_PKEY>(key->key()));
+
     client_ssl_config_.false_start_enabled = false;
     client_ssl_config_.channel_id_enabled = false;
 
@@ -380,6 +393,16 @@ class SSLServerSocketTest : public PlatformTest {
     server_context_.reset();
     server_context_ = CreateSSLServerContext(
         server_cert_.get(), *server_private_key_, server_ssl_config_);
+  }
+
+  void CreateContextSSLPrivateKey() {
+    client_socket_.reset();
+    server_socket_.reset();
+    channel_1_.reset();
+    channel_2_.reset();
+    server_context_.reset();
+    server_context_ = CreateSSLServerContext(
+        server_cert_.get(), server_ssl_private_key_, server_ssl_config_);
   }
 
   void CreateSockets() {
@@ -479,6 +502,7 @@ class SSLServerSocketTest : public PlatformTest {
   std::unique_ptr<MockCTPolicyEnforcer> ct_policy_enforcer_;
   std::unique_ptr<SSLServerContext> server_context_;
   std::unique_ptr<crypto::RSAPrivateKey> server_private_key_;
+  scoped_refptr<SSLPrivateKey> server_ssl_private_key_;
   scoped_refptr<X509Certificate> server_cert_;
 };
 
@@ -903,7 +927,8 @@ TEST_F(SSLServerSocketTest, DataTransfer) {
   TestCompletionCallback write_callback;
   TestCompletionCallback read_callback;
   server_ret = server_socket_->Write(write_buf.get(), write_buf->size(),
-                                     write_callback.callback());
+                                     write_callback.callback(),
+                                     TRAFFIC_ANNOTATION_FOR_TESTS);
   EXPECT_TRUE(server_ret > 0 || server_ret == ERR_IO_PENDING);
   client_ret = client_socket_->Read(
       read_buf.get(), read_buf->BytesRemaining(), read_callback.callback());
@@ -933,7 +958,8 @@ TEST_F(SSLServerSocketTest, DataTransfer) {
       read_buf.get(), read_buf->BytesRemaining(), read_callback.callback());
   EXPECT_TRUE(server_ret > 0 || server_ret == ERR_IO_PENDING);
   client_ret = client_socket_->Write(write_buf.get(), write_buf->size(),
-                                     write_callback.callback());
+                                     write_callback.callback(),
+                                     TRAFFIC_ANNOTATION_FOR_TESTS);
   EXPECT_TRUE(client_ret > 0 || client_ret == ERR_IO_PENDING);
 
   server_ret = read_callback.GetResult(server_ret);
@@ -985,7 +1011,8 @@ TEST_F(SSLServerSocketTest, ClientWriteAfterServerClose) {
   // will call Read() on the transport socket again.
   TestCompletionCallback write_callback;
   server_ret = server_socket_->Write(write_buf.get(), write_buf->size(),
-                                     write_callback.callback());
+                                     write_callback.callback(),
+                                     TRAFFIC_ANNOTATION_FOR_TESTS);
   EXPECT_TRUE(server_ret > 0 || server_ret == ERR_IO_PENDING);
 
   server_ret = write_callback.GetResult(server_ret);
@@ -995,7 +1022,8 @@ TEST_F(SSLServerSocketTest, ClientWriteAfterServerClose) {
 
   // The client writes some data. This should not cause an infinite loop.
   client_ret = client_socket_->Write(write_buf.get(), write_buf->size(),
-                                     write_callback.callback());
+                                     write_callback.callback(),
+                                     TRAFFIC_ANNOTATION_FOR_TESTS);
   EXPECT_TRUE(client_ret > 0 || client_ret == ERR_IO_PENDING);
 
   client_ret = write_callback.GetResult(client_ret);
@@ -1073,6 +1101,82 @@ TEST_F(SSLServerSocketTest, RequireEcdheFlag) {
   server_ssl_config_.require_ecdhe = true;
 
   ASSERT_NO_FATAL_FAILURE(CreateContext());
+  ASSERT_NO_FATAL_FAILURE(CreateSockets());
+
+  TestCompletionCallback connect_callback;
+  int client_ret = client_socket_->Connect(connect_callback.callback());
+
+  TestCompletionCallback handshake_callback;
+  int server_ret = server_socket_->Handshake(handshake_callback.callback());
+
+  client_ret = connect_callback.GetResult(client_ret);
+  server_ret = handshake_callback.GetResult(server_ret);
+
+  ASSERT_THAT(client_ret, IsError(ERR_SSL_VERSION_OR_CIPHER_MISMATCH));
+  ASSERT_THAT(server_ret, IsError(ERR_SSL_VERSION_OR_CIPHER_MISMATCH));
+}
+
+// This test executes Connect() on SSLClientSocket and Handshake() on
+// SSLServerSocket to make sure handshaking between the two sockets is
+// completed successfully. The server key is represented by SSLPrivateKey.
+TEST_F(SSLServerSocketTest, HandshakeServerSSLPrivateKey) {
+  ASSERT_NO_FATAL_FAILURE(CreateContextSSLPrivateKey());
+  ASSERT_NO_FATAL_FAILURE(CreateSockets());
+
+  TestCompletionCallback handshake_callback;
+  int server_ret = server_socket_->Handshake(handshake_callback.callback());
+
+  TestCompletionCallback connect_callback;
+  int client_ret = client_socket_->Connect(connect_callback.callback());
+
+  client_ret = connect_callback.GetResult(client_ret);
+  server_ret = handshake_callback.GetResult(server_ret);
+
+  ASSERT_THAT(client_ret, IsOk());
+  ASSERT_THAT(server_ret, IsOk());
+
+  // Make sure the cert status is expected.
+  SSLInfo ssl_info;
+  ASSERT_TRUE(client_socket_->GetSSLInfo(&ssl_info));
+  EXPECT_EQ(CERT_STATUS_AUTHORITY_INVALID, ssl_info.cert_status);
+
+  // The default cipher suite should be ECDHE and an AEAD.
+  uint16_t cipher_suite =
+      SSLConnectionStatusToCipherSuite(ssl_info.connection_status);
+  const char* key_exchange;
+  const char* cipher;
+  const char* mac;
+  bool is_aead;
+  bool is_tls13;
+  SSLCipherSuiteToStrings(&key_exchange, &cipher, &mac, &is_aead, &is_tls13,
+                          cipher_suite);
+  EXPECT_TRUE(is_aead);
+  ASSERT_FALSE(is_tls13);
+  EXPECT_STREQ("ECDHE_RSA", key_exchange);
+}
+
+// Verifies that non-ECDHE ciphers are disabled when using SSLPrivateKey as the
+// server key.
+TEST_F(SSLServerSocketTest, HandshakeServerSSLPrivateKeyRequireEcdhe) {
+  // Disable all ECDHE suites on the client side.
+  uint16_t kEcdheCiphers[] = {
+      0xc007,  // ECDHE_ECDSA_WITH_RC4_128_SHA
+      0xc009,  // ECDHE_ECDSA_WITH_AES_128_CBC_SHA
+      0xc00a,  // ECDHE_ECDSA_WITH_AES_256_CBC_SHA
+      0xc011,  // ECDHE_RSA_WITH_RC4_128_SHA
+      0xc013,  // ECDHE_RSA_WITH_AES_128_CBC_SHA
+      0xc014,  // ECDHE_RSA_WITH_AES_256_CBC_SHA
+      0xc02b,  // ECDHE_ECDSA_WITH_AES_128_GCM_SHA256
+      0xc02f,  // ECDHE_RSA_WITH_AES_128_GCM_SHA256
+      0xcca8,  // ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256
+      0xcca9,  // ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256
+  };
+  client_ssl_config_.disabled_cipher_suites.assign(
+      kEcdheCiphers, kEcdheCiphers + arraysize(kEcdheCiphers));
+  // TLS 1.3 always works with SSLPrivateKey.
+  client_ssl_config_.version_max = SSL_PROTOCOL_VERSION_TLS1_2;
+
+  ASSERT_NO_FATAL_FAILURE(CreateContextSSLPrivateKey());
   ASSERT_NO_FATAL_FAILURE(CreateSockets());
 
   TestCompletionCallback connect_callback;

@@ -6,7 +6,7 @@
 
 #include <memory>
 
-#include "ash/fast_ink/fast_ink_points.h"
+#include "ash/components/fast_ink/fast_ink_points.h"
 #include "ash/highlighter/highlighter_controller_test_api.h"
 #include "ash/public/cpp/config.h"
 #include "ash/shell.h"
@@ -231,7 +231,6 @@ TEST_F(HighlighterControllerTest, HighlighterGestures) {
   EXPECT_EQ("0,50 200x200", controller_test_api_->selection().ToString());
 }
 
-// Test that stylus gesture recognition correctly handles display scaling
 TEST_F(HighlighterControllerTest, HighlighterGesturesScaled) {
   controller_test_api_->SetEnabled(true);
   GetEventGenerator().EnterPenPointerMode();

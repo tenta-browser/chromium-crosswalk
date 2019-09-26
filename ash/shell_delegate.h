@@ -18,10 +18,6 @@ namespace aura {
 class Window;
 }
 
-namespace gfx {
-class Image;
-}
-
 namespace keyboard {
 class KeyboardUI;
 }
@@ -39,7 +35,6 @@ namespace ash {
 class AccessibilityDelegate;
 class NetworkingConfigDelegate;
 class ScreenshotDelegate;
-class WallpaperDelegate;
 
 // Delegate of the Shell.
 class ASH_EXPORT ShellDelegate {
@@ -56,11 +51,6 @@ class ASH_EXPORT ShellDelegate {
   // Returns true if |window| can be shown for the delegate's concept of current
   // user.
   virtual bool CanShowWindowForUser(aura::Window* window) const = 0;
-
-  // Returns true if the first window shown on first run should be
-  // unconditionally maximized, overriding the heuristic that normally chooses
-  // the window size.
-  virtual bool IsForceMaximizeOnFirstRun() const = 0;
 
   // Called before processing |Shell::Init()| so that the delegate
   // can perform tasks necessary before the shell is initialized.
@@ -82,18 +72,10 @@ class ASH_EXPORT ShellDelegate {
   // TODO(jamescook): Replace with a mojo-compatible interface.
   virtual std::unique_ptr<ScreenshotDelegate> CreateScreenshotDelegate() = 0;
 
-  // Creates a wallpaper delegate. Shell takes ownership of the delegate.
-  virtual std::unique_ptr<WallpaperDelegate> CreateWallpaperDelegate() = 0;
-
   // Creates a accessibility delegate. Shell takes ownership of the delegate.
   virtual AccessibilityDelegate* CreateAccessibilityDelegate() = 0;
 
-  // Get the product name.
-  virtual base::string16 GetProductName() const = 0;
-
   virtual void OpenKeyboardShortcutHelpPage() const {}
-
-  virtual gfx::Image GetDeprecatedAcceleratorImage() const = 0;
 
   // Creator of Shell owns this; it's assumed this outlives Shell.
   virtual ui::InputDeviceControllerClient* GetInputDeviceControllerClient() = 0;

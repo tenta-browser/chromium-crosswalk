@@ -10,7 +10,6 @@
 #include <utility>
 
 #include "base/command_line.h"
-#include "base/memory/ptr_util.h"
 #include "base/metrics/field_trial.h"
 #include "base/strings/string_util.h"
 #include "base/time/clock.h"
@@ -21,6 +20,7 @@
 #include "chrome/browser/content_settings/host_content_settings_map_factory.h"
 #include "chrome/browser/engagement/site_engagement_helper.h"
 #include "chrome/browser/engagement/site_engagement_metrics.h"
+#include "chrome/browser/engagement/site_engagement_observer.h"
 #include "chrome/browser/engagement/site_engagement_score.h"
 #include "chrome/browser/engagement/site_engagement_service_factory.h"
 #include "chrome/browser/history/history_service_factory.h"
@@ -34,7 +34,7 @@
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/web_contents.h"
-#include "third_party/WebKit/common/associated_interfaces/associated_interface_provider.h"
+#include "third_party/blink/public/common/associated_interfaces/associated_interface_provider.h"
 #include "url/gurl.h"
 
 #if defined(OS_ANDROID)
@@ -69,14 +69,6 @@ std::set<GURL> GetEngagementOriginsFromContentSettings(Profile* profile) {
   // Fetch URLs of sites with engagement details stored.
   for (const auto& site : GetContentSettingsFromProfile(
            profile, CONTENT_SETTINGS_TYPE_SITE_ENGAGEMENT)) {
-    urls.insert(GURL(site.primary_pattern.ToString()));
-  }
-
-  // Fetch URLs of sites for which notifications are allowed.
-  for (const auto& site : GetContentSettingsFromProfile(
-           profile, CONTENT_SETTINGS_TYPE_NOTIFICATIONS)) {
-    if (site.GetContentSetting() != CONTENT_SETTING_ALLOW)
-      continue;
     urls.insert(GURL(site.primary_pattern.ToString()));
   }
 
@@ -125,12 +117,13 @@ bool SiteEngagementService::IsEnabled() {
 double SiteEngagementService::GetScoreFromSettings(
     HostContentSettingsMap* settings,
     const GURL& origin) {
-  auto clock = base::MakeUnique<base::DefaultClock>();
-  return SiteEngagementScore(clock.get(), origin, settings).GetTotalScore();
+  return SiteEngagementScore(base::DefaultClock::GetInstance(), origin,
+                             settings)
+      .GetTotalScore();
 }
 
 SiteEngagementService::SiteEngagementService(Profile* profile)
-    : SiteEngagementService(profile, base::MakeUnique<base::DefaultClock>()) {
+    : SiteEngagementService(profile, base::DefaultClock::GetInstance()) {
   content::BrowserThread::PostAfterStartupTask(
       FROM_HERE,
       content::BrowserThread::GetTaskRunnerForThread(
@@ -144,7 +137,11 @@ SiteEngagementService::SiteEngagementService(Profile* profile)
   }
 }
 
-SiteEngagementService::~SiteEngagementService() = default;
+SiteEngagementService::~SiteEngagementService() {
+  // Clear any observers to avoid dangling pointers back to this object.
+  for (auto& observer : observer_list_)
+    observer.Observe(nullptr);
+}
 
 void SiteEngagementService::Shutdown() {
   history::HistoryService* history = HistoryServiceFactory::GetForProfile(
@@ -180,12 +177,11 @@ void SiteEngagementService::HandleNotificationInteraction(const GURL& url) {
   if (!ShouldRecordEngagement(url))
     return;
 
-  SiteEngagementMetrics::RecordEngagement(
-      SiteEngagementMetrics::ENGAGEMENT_NOTIFICATION_INTERACTION);
   AddPoints(url, SiteEngagementScore::GetNotificationInteractionPoints());
 
   RecordMetrics();
-  OnEngagementIncreased(nullptr /* web_contents */, url);
+  OnEngagementEvent(nullptr /* web_contents */, url,
+                    ENGAGEMENT_NOTIFICATION_INTERACTION);
 }
 
 bool SiteEngagementService::IsBootstrapped() const {
@@ -232,7 +228,9 @@ void SiteEngagementService::ResetBaseScoreForURL(const GURL& url,
   engagement_score.Commit();
 }
 
-void SiteEngagementService::SetLastShortcutLaunchTime(const GURL& url) {
+void SiteEngagementService::SetLastShortcutLaunchTime(
+    content::WebContents* web_contents,
+    const GURL& url) {
   SiteEngagementScore score = CreateEngagementScore(url);
 
   // Record the number of days since the last launch in UMA. If the user's clock
@@ -243,11 +241,11 @@ void SiteEngagementService::SetLastShortcutLaunchTime(const GURL& url) {
     SiteEngagementMetrics::RecordDaysSinceLastShortcutLaunch(
         std::max(0, (now - last_launch).InDays()));
   }
-  SiteEngagementMetrics::RecordEngagement(
-      SiteEngagementMetrics::ENGAGEMENT_WEBAPP_SHORTCUT_LAUNCH);
 
   score.set_last_shortcut_launch_time(now);
   score.Commit();
+
+  OnEngagementEvent(web_contents, url, ENGAGEMENT_WEBAPP_SHORTCUT_LAUNCH);
 }
 
 void SiteEngagementService::HelperCreated(
@@ -284,6 +282,11 @@ double SiteEngagementService::GetTotalEngagementPoints() const {
   return total_score;
 }
 
+void SiteEngagementService::AddPointsForTesting(const GURL& url,
+                                                double points) {
+  AddPoints(url, points);
+}
+
 #if defined(OS_ANDROID)
 SiteEngagementServiceAndroid* SiteEngagementService::GetAndroidService() const {
   return android_service_.get();
@@ -296,8 +299,8 @@ void SiteEngagementService::SetAndroidService(
 #endif
 
 SiteEngagementService::SiteEngagementService(Profile* profile,
-                                             std::unique_ptr<base::Clock> clock)
-    : profile_(profile), clock_(std::move(clock)), weak_factory_(this) {
+                                             base::Clock* clock)
+    : profile_(profile), clock_(clock), weak_factory_(this) {
   // May be null in tests.
   history::HistoryService* history = HistoryServiceFactory::GetForProfile(
       profile, ServiceAccessType::IMPLICIT_ACCESS);
@@ -506,14 +509,13 @@ void SiteEngagementService::HandleMediaPlaying(
   if (!ShouldRecordEngagement(url))
     return;
 
-  SiteEngagementMetrics::RecordEngagement(
-      is_hidden ? SiteEngagementMetrics::ENGAGEMENT_MEDIA_HIDDEN
-                : SiteEngagementMetrics::ENGAGEMENT_MEDIA_VISIBLE);
   AddPoints(url, is_hidden ? SiteEngagementScore::GetHiddenMediaPoints()
                            : SiteEngagementScore::GetVisibleMediaPoints());
 
   RecordMetrics();
-  OnEngagementIncreased(web_contents, url);
+  OnEngagementEvent(
+      web_contents, url,
+      is_hidden ? ENGAGEMENT_MEDIA_HIDDEN : ENGAGEMENT_MEDIA_VISIBLE);
 }
 
 void SiteEngagementService::HandleNavigation(content::WebContents* web_contents,
@@ -522,34 +524,33 @@ void SiteEngagementService::HandleNavigation(content::WebContents* web_contents,
   if (!IsEngagementNavigation(transition) || !ShouldRecordEngagement(url))
     return;
 
-  SiteEngagementMetrics::RecordEngagement(
-      SiteEngagementMetrics::ENGAGEMENT_NAVIGATION);
   AddPoints(url, SiteEngagementScore::GetNavigationPoints());
 
   RecordMetrics();
-  OnEngagementIncreased(web_contents, url);
+  OnEngagementEvent(web_contents, url, ENGAGEMENT_NAVIGATION);
 }
 
-void SiteEngagementService::HandleUserInput(
-    content::WebContents* web_contents,
-    SiteEngagementMetrics::EngagementType type) {
+void SiteEngagementService::HandleUserInput(content::WebContents* web_contents,
+                                            EngagementType type) {
   const GURL& url = web_contents->GetLastCommittedURL();
   if (!ShouldRecordEngagement(url))
     return;
 
-  SiteEngagementMetrics::RecordEngagement(type);
   AddPoints(url, SiteEngagementScore::GetUserInputPoints());
 
   RecordMetrics();
-  OnEngagementIncreased(web_contents, url);
+  OnEngagementEvent(web_contents, url, type);
 }
 
-void SiteEngagementService::OnEngagementIncreased(
+void SiteEngagementService::OnEngagementEvent(
     content::WebContents* web_contents,
-    const GURL& url) {
+    const GURL& url,
+    EngagementType type) {
+  SiteEngagementMetrics::RecordEngagement(type);
+
   double score = GetScore(url);
   for (SiteEngagementObserver& observer : observer_list_)
-    observer.OnEngagementIncreased(web_contents, url, score);
+    observer.OnEngagementEvent(web_contents, url, score, type);
 }
 
 void SiteEngagementService::SendLevelChangeToHelpers(
@@ -596,8 +597,7 @@ SiteEngagementScore SiteEngagementService::CreateEngagementScore(
   // the original profile migrated in, so all engagement scores in incognito
   // will be initialised to the values from the original profile.
   return SiteEngagementScore(
-      clock_.get(), origin,
-      HostContentSettingsMapFactory::GetForProfile(profile_));
+      clock_, origin, HostContentSettingsMapFactory::GetForProfile(profile_));
 }
 
 int SiteEngagementService::OriginsWithMaxDailyEngagement() const {

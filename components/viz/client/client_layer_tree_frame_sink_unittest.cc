@@ -12,8 +12,8 @@
 #include "base/single_thread_task_runner.h"
 #include "base/threading/thread.h"
 #include "cc/test/fake_layer_tree_frame_sink_client.h"
-#include "cc/test/test_context_provider.h"
 #include "components/viz/client/local_surface_id_provider.h"
+#include "components/viz/test/test_context_provider.h"
 #include "components/viz/test/test_gpu_memory_buffer_manager.h"
 #include "mojo/public/cpp/bindings/interface_request.h"
 #include "services/viz/public/interfaces/compositing/compositor_frame_sink.mojom.h"
@@ -50,8 +50,10 @@ class ThreadTrackingLayerTreeFrameSinkClient
 
 TEST(ClientLayerTreeFrameSinkTest,
      DidLoseLayerTreeFrameSinkCalledOnConnectionError) {
-  scoped_refptr<cc::TestContextProvider> provider =
-      cc::TestContextProvider::Create();
+  base::Thread bg_thread("BG Thread");
+  bg_thread.Start();
+
+  scoped_refptr<TestContextProvider> provider = TestContextProvider::Create();
   TestGpuMemoryBufferManager test_gpu_memory_buffer_manager;
 
   mojom::CompositorFrameSinkPtrInfo sink_info;
@@ -62,6 +64,7 @@ TEST(ClientLayerTreeFrameSinkTest,
       mojo::MakeRequest(&client);
 
   ClientLayerTreeFrameSink::InitParams init_params;
+  init_params.compositor_task_runner = bg_thread.task_runner();
   init_params.gpu_memory_buffer_manager = &test_gpu_memory_buffer_manager;
   init_params.pipes.compositor_frame_sink_info = std::move(sink_info);
   init_params.pipes.client_request = std::move(client_request);
@@ -76,8 +79,6 @@ TEST(ClientLayerTreeFrameSinkTest,
   ThreadTrackingLayerTreeFrameSinkClient frame_sink_client(&called_thread_id,
                                                            &close_run_loop);
 
-  base::Thread bg_thread("BG Thread");
-  bg_thread.Start();
   auto bind_in_background =
       [](ClientLayerTreeFrameSink* layer_tree_frame_sink,
          ThreadTrackingLayerTreeFrameSinkClient* frame_sink_client) {

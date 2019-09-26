@@ -13,8 +13,8 @@
 #include "content/public/test/test_runner_support.h"
 #include "content/shell/test_runner/accessibility_controller.h"
 #include "content/shell/test_runner/event_sender.h"
-#include "content/shell/test_runner/mock_color_chooser.h"
 #include "content/shell/test_runner/mock_screen_orientation_client.h"
+#include "content/shell/test_runner/mock_web_speech_recognizer.h"
 #include "content/shell/test_runner/test_common.h"
 #include "content/shell/test_runner/test_interfaces.h"
 #include "content/shell/test_runner/test_plugin.h"
@@ -24,19 +24,19 @@
 #include "content/shell/test_runner/web_view_test_proxy.h"
 #include "content/shell/test_runner/web_widget_test_proxy.h"
 #include "net/base/net_errors.h"
-#include "third_party/WebKit/public/platform/WebString.h"
-#include "third_party/WebKit/public/platform/WebURL.h"
-#include "third_party/WebKit/public/platform/WebURLRequest.h"
-#include "third_party/WebKit/public/platform/WebURLResponse.h"
-#include "third_party/WebKit/public/web/WebConsoleMessage.h"
-#include "third_party/WebKit/public/web/WebElement.h"
-#include "third_party/WebKit/public/web/WebFrame.h"
-#include "third_party/WebKit/public/web/WebFrameWidget.h"
-#include "third_party/WebKit/public/web/WebLocalFrame.h"
-#include "third_party/WebKit/public/web/WebNavigationPolicy.h"
-#include "third_party/WebKit/public/web/WebPluginParams.h"
-#include "third_party/WebKit/public/web/WebUserGestureIndicator.h"
-#include "third_party/WebKit/public/web/WebView.h"
+#include "third_party/blink/public/platform/web_string.h"
+#include "third_party/blink/public/platform/web_url.h"
+#include "third_party/blink/public/platform/web_url_request.h"
+#include "third_party/blink/public/platform/web_url_response.h"
+#include "third_party/blink/public/web/web_console_message.h"
+#include "third_party/blink/public/web/web_element.h"
+#include "third_party/blink/public/web/web_frame.h"
+#include "third_party/blink/public/web/web_frame_widget.h"
+#include "third_party/blink/public/web/web_local_frame.h"
+#include "third_party/blink/public/web/web_navigation_policy.h"
+#include "third_party/blink/public/web/web_plugin_params.h"
+#include "third_party/blink/public/web/web_user_gesture_indicator.h"
+#include "third_party/blink/public/web/web_view.h"
 #include "url/gurl.h"
 #include "url/url_constants.h"
 
@@ -180,14 +180,6 @@ WebFrameTestClient::WebFrameTestClient(
 
 WebFrameTestClient::~WebFrameTestClient() {}
 
-blink::WebColorChooser* WebFrameTestClient::CreateColorChooser(
-    blink::WebColorChooserClient* client,
-    const blink::WebColor& color,
-    const blink::WebVector<blink::WebColorSuggestion>& suggestions) {
-  // This instance is deleted by WebCore::ColorInputType
-  return new MockColorChooser(client, delegate_, test_runner());
-}
-
 void WebFrameTestClient::RunModalAlertDialog(const blink::WebString& message) {
   if (!test_runner()->ShouldDumpJavaScriptDialogs())
     return;
@@ -222,11 +214,6 @@ bool WebFrameTestClient::RunModalBeforeUnloadDialog(bool is_reload) {
   return !test_runner()->shouldStayOnPageAfterHandlingBeforeUnload();
 }
 
-blink::WebScreenOrientationClient*
-WebFrameTestClient::GetWebScreenOrientationClient() {
-  return test_runner()->getMockScreenOrientationClient();
-}
-
 void WebFrameTestClient::PostAccessibilityEvent(const blink::WebAXObject& obj,
                                                 blink::WebAXEvent event) {
   // Only hook the accessibility events occured during the test run.
@@ -242,9 +229,6 @@ void WebFrameTestClient::PostAccessibilityEvent(const blink::WebAXObject& obj,
   switch (event) {
     case blink::kWebAXEventActiveDescendantChanged:
       event_name = "ActiveDescendantChanged";
-      break;
-    case blink::kWebAXEventAlert:
-      event_name = "Alert";
       break;
     case blink::kWebAXEventAriaAttributeChanged:
       event_name = "AriaAttributeChanged";
@@ -327,12 +311,6 @@ void WebFrameTestClient::PostAccessibilityEvent(const blink::WebAXObject& obj,
     case blink::kWebAXEventTextChanged:
       event_name = "TextChanged";
       break;
-    case blink::kWebAXEventTextInserted:
-      event_name = "TextInserted";
-      break;
-    case blink::kWebAXEventTextRemoved:
-      event_name = "TextRemoved";
-      break;
     case blink::kWebAXEventValueChanged:
       event_name = "ValueChanged";
       break;
@@ -368,6 +346,12 @@ void WebFrameTestClient::DidChangeSelection(bool is_empty_callback) {
         "webViewDidChangeSelection:WebViewDidChangeSelectionNotification\n");
 }
 
+void WebFrameTestClient::DidChangeContents() {
+  if (test_runner()->shouldDumpEditingCallbacks())
+    delegate_->PrintMessage(
+        "EDITING DELEGATE: webViewDidChange:WebViewDidChangeNotification\n");
+}
+
 blink::WebPlugin* WebFrameTestClient::CreatePlugin(
     const blink::WebPluginParams& params) {
   blink::WebLocalFrame* frame = web_frame_test_proxy_base_->web_frame();
@@ -383,12 +367,9 @@ void WebFrameTestClient::ShowContextMenu(
       ->SetContextMenuData(context_menu_data);
 }
 
-void WebFrameTestClient::DownloadURL(const blink::WebURLRequest& request,
-                                     const blink::WebString& suggested_name) {
+void WebFrameTestClient::DownloadURL(const blink::WebURLRequest& request) {
   if (test_runner()->shouldWaitUntilExternalURLLoad()) {
-    delegate_->PrintMessage(
-        std::string("Downloading URL with suggested filename \"") +
-        suggested_name.Utf8() + "\"\n");
+    delegate_->PrintMessage(std::string("Download started\n"));
     delegate_->TestFinished();
   }
 }
@@ -403,6 +384,15 @@ void WebFrameTestClient::LoadErrorPage(int reason) {
 void WebFrameTestClient::DidStartProvisionalLoad(
     blink::WebDocumentLoader* document_loader,
     blink::WebURLRequest& request) {
+  if (request.GetSuggestedFilename().has_value() &&
+      test_runner()->shouldWaitUntilExternalURLLoad()) {
+    delegate_->PrintMessage(
+        std::string("Downloading URL with suggested filename \"") +
+        request.GetSuggestedFilename()->Utf8() + "\"\n");
+    delegate_->PostTask(base::BindRepeating(&WebTestDelegate::TestFinished,
+                                            base::Unretained(delegate_)));
+  }
+
   // PlzNavigate
   // A provisional load notification is received when a frame navigation is
   // sent to the browser. We don't want to log it again during commit.
@@ -443,7 +433,18 @@ void WebFrameTestClient::DidFailProvisionalLoad(
 
 void WebFrameTestClient::DidCommitProvisionalLoad(
     const blink::WebHistoryItem& history_item,
-    blink::WebHistoryCommitType history_type) {
+    blink::WebHistoryCommitType history_type,
+    blink::WebGlobalObjectReusePolicy) {
+  if (test_runner()->shouldDumpFrameLoadCallbacks()) {
+    PrintFrameDescription(delegate_, web_frame_test_proxy_base_->web_frame());
+    delegate_->PrintMessage(" - didCommitLoadForFrame\n");
+  }
+}
+
+void WebFrameTestClient::DidNavigateWithinPage(
+    const blink::WebHistoryItem& history_item,
+    blink::WebHistoryCommitType history_type,
+    bool content_initiated) {
   if (test_runner()->shouldDumpFrameLoadCallbacks()) {
     PrintFrameDescription(delegate_, web_frame_test_proxy_base_->web_frame());
     delegate_->PrintMessage(" - didCommitLoadForFrame\n");
@@ -692,6 +693,10 @@ void WebFrameTestClient::CheckIfAudioSinkExistsAndIsAuthorized(
     callback->OnError(blink::WebSetSinkIdError::kNotAuthorized);
   else
     callback->OnError(blink::WebSetSinkIdError::kNotFound);
+}
+
+blink::WebSpeechRecognizer* WebFrameTestClient::SpeechRecognizer() {
+  return test_runner()->getMockWebSpeechRecognizer();
 }
 
 void WebFrameTestClient::DidClearWindowObject() {

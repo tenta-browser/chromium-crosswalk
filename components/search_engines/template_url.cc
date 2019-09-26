@@ -21,6 +21,7 @@
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/trace_event/memory_usage_estimator.h"
 #include "build/build_config.h"
 #include "components/google/core/browser/google_util.h"
 #include "components/search_engines/search_engines_switches.h"
@@ -70,19 +71,23 @@ const char kOutputEncodingType[] = "UTF-8";
 
 // Attempts to encode |terms| and |original_query| in |encoding| and escape
 // them.  |terms| may be escaped as path or query depending on |is_in_query|;
-// |original_query| is always escaped as query.  Returns whether the encoding
-// process succeeded.
+// |original_query| is always escaped as query. If |force_encode| is true
+// encoding ignores errors and function always returns true. Otherwise function
+// returns whether the encoding process succeeded.
 bool TryEncoding(const base::string16& terms,
                  const base::string16& original_query,
                  const char* encoding,
                  bool is_in_query,
+                 bool force_encode,
                  base::string16* escaped_terms,
                  base::string16* escaped_original_query) {
   DCHECK(escaped_terms);
   DCHECK(escaped_original_query);
+  base::OnStringConversionError::Type error_handling =
+      force_encode ? base::OnStringConversionError::SKIP
+                   : base::OnStringConversionError::FAIL;
   std::string encoded_terms;
-  if (!base::UTF16ToCodepage(terms, encoding,
-      base::OnStringConversionError::SKIP, &encoded_terms))
+  if (!base::UTF16ToCodepage(terms, encoding, error_handling, &encoded_terms))
     return false;
   *escaped_terms = base::UTF8ToUTF16(is_in_query ?
       net::EscapeQueryParamValue(encoded_terms, true) :
@@ -90,8 +95,8 @@ bool TryEncoding(const base::string16& terms,
   if (original_query.empty())
     return true;
   std::string encoded_original_query;
-  if (!base::UTF16ToCodepage(original_query, encoding,
-      base::OnStringConversionError::SKIP, &encoded_original_query))
+  if (!base::UTF16ToCodepage(original_query, encoding, error_handling,
+                             &encoded_original_query))
     return false;
   *escaped_original_query = base::UTF8ToUTF16(
       net::EscapeQueryParamValue(encoded_original_query, true));
@@ -196,6 +201,24 @@ TemplateURLRef::SearchTermsArgs::SearchTermsArgs(const SearchTermsArgs& other) =
 TemplateURLRef::SearchTermsArgs::~SearchTermsArgs() {
 }
 
+size_t TemplateURLRef::SearchTermsArgs::EstimateMemoryUsage() const {
+  size_t res = 0;
+
+  res += base::trace_event::EstimateMemoryUsage(search_terms);
+  res += base::trace_event::EstimateMemoryUsage(original_query);
+  res += base::trace_event::EstimateMemoryUsage(assisted_query_stats);
+  res += base::trace_event::EstimateMemoryUsage(current_page_url);
+  res += base::trace_event::EstimateMemoryUsage(session_token);
+  res += base::trace_event::EstimateMemoryUsage(prefetch_query);
+  res += base::trace_event::EstimateMemoryUsage(prefetch_query_type);
+  res += base::trace_event::EstimateMemoryUsage(suggest_query_params);
+  res += base::trace_event::EstimateMemoryUsage(image_thumbnail_content);
+  res += base::trace_event::EstimateMemoryUsage(image_url);
+  res += base::trace_event::EstimateMemoryUsage(contextual_search_params);
+
+  return res;
+}
+
 TemplateURLRef::SearchTermsArgs::ContextualSearchParams::
     ContextualSearchParams()
     : version(-1),
@@ -214,6 +237,12 @@ TemplateURLRef::SearchTermsArgs::ContextualSearchParams::ContextualSearchParams(
 
 TemplateURLRef::SearchTermsArgs::ContextualSearchParams::
     ~ContextualSearchParams() {
+}
+
+size_t
+TemplateURLRef::SearchTermsArgs::ContextualSearchParams::EstimateMemoryUsage()
+    const {
+  return base::trace_event::EstimateMemoryUsage(home_country);
 }
 
 // TemplateURLRef -------------------------------------------------------------
@@ -280,6 +309,32 @@ bool TemplateURLRef::UsesPOSTMethod(
     const SearchTermsData& search_terms_data) const {
   ParseIfNecessary(search_terms_data);
   return !post_params_.empty();
+}
+
+size_t TemplateURLRef::EstimateMemoryUsage() const {
+  size_t res = 0;
+
+  res += base::trace_event::EstimateMemoryUsage(parsed_url_);
+  res += base::trace_event::EstimateMemoryUsage(replacements_);
+  res += base::trace_event::EstimateMemoryUsage(host_);
+  res += base::trace_event::EstimateMemoryUsage(port_);
+  res += base::trace_event::EstimateMemoryUsage(path_);
+  res += base::trace_event::EstimateMemoryUsage(search_term_key_);
+  res += base::trace_event::EstimateMemoryUsage(search_term_value_prefix_);
+  res += base::trace_event::EstimateMemoryUsage(search_term_value_suffix_);
+  res += base::trace_event::EstimateMemoryUsage(post_params_);
+
+  return res;
+}
+
+size_t TemplateURLRef::PostParam::EstimateMemoryUsage() const {
+  size_t res = 0;
+
+  res += base::trace_event::EstimateMemoryUsage(name);
+  res += base::trace_event::EstimateMemoryUsage(value);
+  res += base::trace_event::EstimateMemoryUsage(content_type);
+
+  return res;
 }
 
 bool TemplateURLRef::EncodeFormData(const PostParams& post_params,
@@ -455,12 +510,11 @@ base::string16 TemplateURLRef::SearchTermToString16(
 bool TemplateURLRef::HasGoogleBaseURLs(
     const SearchTermsData& search_terms_data) const {
   ParseIfNecessary(search_terms_data);
-  for (size_t i = 0; i < replacements_.size(); ++i) {
-    if ((replacements_[i].type == GOOGLE_BASE_URL) ||
-        (replacements_[i].type == GOOGLE_BASE_SUGGEST_URL))
-      return true;
-  }
-  return false;
+  return std::any_of(replacements_.begin(), replacements_.end(),
+                     [](const Replacement& replacement) {
+                       return replacement.type == GOOGLE_BASE_URL ||
+                              replacement.type == GOOGLE_BASE_SUGGEST_URL;
+                     });
 }
 
 bool TemplateURLRef::ExtractSearchTermsFromURL(
@@ -857,14 +911,17 @@ std::string TemplateURLRef::HandleReplacements(
   // Determine if the search terms are in the query or before. We're escaping
   // space as '+' in the former case and as '%20' in the latter case.
   bool is_in_query = true;
-  for (Replacements::iterator i = replacements_.begin();
-       i != replacements_.end(); ++i) {
-    if (i->type == SEARCH_TERMS) {
-      base::string16::size_type query_start = parsed_url_.find('?');
-      is_in_query = query_start != base::string16::npos &&
-          (static_cast<base::string16::size_type>(i->index) > query_start);
-      break;
-    }
+
+  auto search_terms = std::find_if(replacements_.begin(), replacements_.end(),
+                                   [](const Replacement& replacement) {
+                                     return replacement.type == SEARCH_TERMS;
+                                   });
+
+  if (search_terms != replacements_.end()) {
+    base::string16::size_type query_start = parsed_url_.find('?');
+    is_in_query = query_start != base::string16::npos &&
+                  (static_cast<base::string16::size_type>(search_terms->index) >
+                   query_start);
   }
 
   std::string input_encoding;
@@ -1153,9 +1210,12 @@ TemplateURL::AssociatedExtensionInfo::AssociatedExtensionInfo(
 TemplateURL::AssociatedExtensionInfo::~AssociatedExtensionInfo() {
 }
 
+size_t TemplateURL::AssociatedExtensionInfo::EstimateMemoryUsage() const {
+  return base::trace_event::EstimateMemoryUsage(extension_id);
+}
+
 TemplateURL::TemplateURL(const TemplateURLData& data, Type type)
     : data_(data),
-      url_ref_(nullptr),
       suggestions_url_ref_(this, TemplateURLRef::SUGGEST),
       image_url_ref_(this, TemplateURLRef::IMAGE),
       new_tab_url_ref_(this, TemplateURLRef::NEW_TAB),
@@ -1177,7 +1237,7 @@ TemplateURL::TemplateURL(const TemplateURLData& data,
   // Omnibox keywords may not be set as default.
   DCHECK(!wants_to_be_default_engine || type != OMNIBOX_API_EXTENSION) << type;
   DCHECK_EQ(kInvalidTemplateURLID, data.id);
-  extension_info_ = base::MakeUnique<AssociatedExtensionInfo>(
+  extension_info_ = std::make_unique<AssociatedExtensionInfo>(
       extension_id, install_time, wants_to_be_default_engine);
 }
 
@@ -1247,15 +1307,17 @@ base::string16 TemplateURL::AdjustedShortNameForLocaleDirection() const {
 
 bool TemplateURL::SupportsReplacement(
     const SearchTermsData& search_terms_data) const {
-  return url_ref_->SupportsReplacement(search_terms_data);
+  return url_ref().SupportsReplacement(search_terms_data);
 }
 
 bool TemplateURL::HasGoogleBaseURLs(
     const SearchTermsData& search_terms_data) const {
-  for (const TemplateURLRef& ref : url_refs_) {
-    if (ref.HasGoogleBaseURLs(search_terms_data))
-      return true;
-  }
+  if (std::any_of(url_refs_.begin(), url_refs_.end(),
+                  [&](const TemplateURLRef& ref) {
+                    return ref.HasGoogleBaseURLs(search_terms_data);
+                  }))
+    return true;
+
   return suggestions_url_ref_.HasGoogleBaseURLs(search_terms_data) ||
       image_url_ref_.HasGoogleBaseURLs(search_terms_data) ||
       new_tab_url_ref_.HasGoogleBaseURLs(search_terms_data) ||
@@ -1264,10 +1326,9 @@ bool TemplateURL::HasGoogleBaseURLs(
 
 bool TemplateURL::IsGoogleSearchURLWithReplaceableKeyword(
     const SearchTermsData& search_terms_data) const {
-  return (type_ == NORMAL) &&
-      url_ref_->HasGoogleBaseURLs(search_terms_data) &&
-      google_util::IsGoogleHostname(base::UTF16ToUTF8(data_.keyword()),
-                                    google_util::DISALLOW_SUBDOMAIN);
+  return (type_ == NORMAL) && url_ref().HasGoogleBaseURLs(search_terms_data) &&
+         google_util::IsGoogleHostname(base::UTF16ToUTF8(data_.keyword()),
+                                       google_util::DISALLOW_SUBDOMAIN);
 }
 
 bool TemplateURL::HasSameKeywordAs(
@@ -1372,11 +1433,11 @@ void TemplateURL::EncodeSearchTerms(
   std::vector<std::string> encodings(input_encodings());
   if (std::find(encodings.begin(), encodings.end(), "UTF-8") == encodings.end())
     encodings.push_back("UTF-8");
-  for (std::vector<std::string>::const_iterator i(encodings.begin());
-       i != encodings.end(); ++i) {
+  for (auto i = encodings.begin(); i != encodings.end(); ++i) {
     if (TryEncoding(search_terms_args.search_terms,
-                    search_terms_args.original_query, i->c_str(),
-                    is_in_query, encoded_terms, encoded_original_query)) {
+                    search_terms_args.original_query, i->c_str(), is_in_query,
+                    std::next(i) == encodings.end(), encoded_terms,
+                    encoded_original_query)) {
       *input_encoding = *i;
       return;
     }
@@ -1386,10 +1447,10 @@ void TemplateURL::EncodeSearchTerms(
 
 GURL TemplateURL::GenerateSearchURL(
     const SearchTermsData& search_terms_data) const {
-  if (!url_ref_->IsValid(search_terms_data))
+  if (!url_ref().IsValid(search_terms_data))
     return GURL();
 
-  if (!url_ref_->SupportsReplacement(search_terms_data))
+  if (!url_ref().SupportsReplacement(search_terms_data))
     return GURL(url());
 
   // Use something obscure for the search terms argument so that in the rare
@@ -1397,7 +1458,7 @@ GURL TemplateURL::GenerateSearchURL(
   // same url.
   // TODO(jnd): Add additional parameters to get post data when the search URL
   // has post parameters.
-  return GURL(url_ref_->ReplaceSearchTerms(
+  return GURL(url_ref().ReplaceSearchTerms(
       TemplateURLRef::SearchTermsArgs(
           base::ASCIIToUTF16("blah.blah.blah.blah.blah")),
       search_terms_data, nullptr));
@@ -1416,7 +1477,7 @@ void TemplateURL::CopyFrom(const TemplateURL& other) {
 void TemplateURL::SetURL(const std::string& url) {
   data_.SetURL(url);
   engine_type_ = SEARCH_ENGINE_UNKNOWN;
-  url_ref_->InvalidateCachedValues();
+  url_ref().InvalidateCachedValues();
 }
 
 void TemplateURL::SetPrepopulateId(int id) {
@@ -1450,19 +1511,30 @@ void TemplateURL::InvalidateCachedValues() const {
   contextual_search_url_ref_.InvalidateCachedValues();
 }
 
+size_t TemplateURL::EstimateMemoryUsage() const {
+  size_t res = 0;
+
+  res += base::trace_event::EstimateMemoryUsage(data_);
+  res += base::trace_event::EstimateMemoryUsage(url_refs_);
+  res += base::trace_event::EstimateMemoryUsage(suggestions_url_ref_);
+  res += base::trace_event::EstimateMemoryUsage(image_url_ref_);
+  res += base::trace_event::EstimateMemoryUsage(new_tab_url_ref_);
+  res += base::trace_event::EstimateMemoryUsage(contextual_search_url_ref_);
+  res += base::trace_event::EstimateMemoryUsage(extension_info_);
+
+  return res;
+}
+
 void TemplateURL::ResizeURLRefVector() {
   const size_t new_size = data_.alternate_urls.size() + 1;
   if (url_refs_.size() == new_size)
     return;
 
-  // See comment on TemplateURL::ExtractSearchTermsFromURL() for understanding
-  // the order of TemplateURLRefs in the |url_refs_| vector.
   url_refs_.clear();
   url_refs_.reserve(new_size);
   for (size_t i = 0; i != data_.alternate_urls.size(); ++i)
     url_refs_.emplace_back(this, i);
   url_refs_.emplace_back(this, TemplateURLRef::SEARCH);
-  url_ref_ = &url_refs_.back();
 }
 
 bool TemplateURL::FindSearchTermsInURL(

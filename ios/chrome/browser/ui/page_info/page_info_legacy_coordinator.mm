@@ -14,6 +14,7 @@
 #import "ios/chrome/browser/tabs/tab_model.h"
 #import "ios/chrome/browser/ui/commands/command_dispatcher.h"
 #import "ios/chrome/browser/ui/commands/page_info_commands.h"
+#import "ios/chrome/browser/ui/fullscreen/chrome_coordinator+fullscreen_disabling.h"
 #include "ios/chrome/browser/ui/page_info/page_info_model.h"
 #import "ios/chrome/browser/ui/page_info/page_info_view_controller.h"
 #import "ios/chrome/browser/ui/page_info/requirements/page_info_presentation.h"
@@ -44,7 +45,6 @@ NSString* const kPageInfoWillHideNotification =
 
 @implementation PageInfoLegacyCoordinator
 
-@synthesize browserState = _browserState;
 @synthesize dispatcher = _dispatcher;
 @synthesize loader = _loader;
 @synthesize pageInfoViewController = _pageInfoViewController;
@@ -54,7 +54,6 @@ NSString* const kPageInfoWillHideNotification =
 - (void)disconnect {
   // DCHECK that the Page Info UI is not displayed before disconnecting.
   DCHECK(!self.pageInfoViewController);
-  self.browserState = nil;
   [self.dispatcher stopDispatchingToTarget:self];
   self.dispatcher = nil;
   self.loader = nil;
@@ -107,6 +106,9 @@ NSString* const kPageInfoWillHideNotification =
       postNotificationName:kPageInfoWillShowNotification
                     object:nil];
 
+  // Disable fullscreen while the page info UI is displayed.
+  [self didStartFullscreenDisablingUI];
+
   // TODO(crbug.com/760387): Get rid of PageInfoModel completely.
   PageInfoModelBubbleBridge* bridge = new PageInfoModelBubbleBridge();
   PageInfoModel* pageInfoModel = new PageInfoModel(
@@ -131,6 +133,9 @@ NSString* const kPageInfoWillHideNotification =
   [[NSNotificationCenter defaultCenter]
       postNotificationName:kPageInfoWillHideNotification
                     object:nil];
+
+  // Stop disabling fullscreen since the page info UI was stopped.
+  [self didStopFullscreenDisablingUI];
 
   [self.pageInfoViewController dismiss];
   self.pageInfoViewController = nil;

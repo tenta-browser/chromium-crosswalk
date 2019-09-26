@@ -4,33 +4,51 @@
 
 #include "chromecast/base/cast_sys_info_android.h"
 
+#include <sys/system_properties.h>
+#include <memory>
+#include <string>
+
 #include "base/android/build_info.h"
 #include "base/android/jni_android.h"
 #include "base/android/jni_string.h"
-#include "base/memory/ptr_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/sys_info.h"
 #include "chromecast/base/cast_sys_info_util.h"
 #include "chromecast/base/version.h"
+#include "chromecast/chromecast_buildflags.h"
 #include "jni/CastSysInfoAndroid_jni.h"
+#if BUILDFLAG(IS_ANDROID_THINGS_NON_PUBLIC)
+#include "jni/CastSysInfoAndroidThings_jni.h"
+#endif
 
 namespace chromecast {
 
 namespace {
 const char kBuildTypeUser[] = "user";
+
+std::string GetAndroidProperty(const std::string& key,
+                               const std::string& default_value) {
+  char value[PROP_VALUE_MAX];
+  int ret = __system_property_get(key.c_str(), value);
+  if (ret <= 0) {
+    VLOG(1) << "No value set for property: " << key;
+    return default_value;
+  }
+
+  return std::string(value);
+}
+
 }  // namespace
 
 // static
 std::unique_ptr<CastSysInfo> CreateSysInfo() {
-  return base::MakeUnique<CastSysInfoAndroid>();
+  return std::make_unique<CastSysInfoAndroid>();
 }
 
 CastSysInfoAndroid::CastSysInfoAndroid()
-    : build_info_(base::android::BuildInfo::GetInstance()) {
-}
+    : build_info_(base::android::BuildInfo::GetInstance()) {}
 
-CastSysInfoAndroid::~CastSysInfoAndroid() {
-}
+CastSysInfoAndroid::~CastSysInfoAndroid() {}
 
 CastSysInfo::BuildType CastSysInfoAndroid::GetBuildType() {
   if (CAST_IS_DEBUG_BUILD())
@@ -40,9 +58,9 @@ CastSysInfo::BuildType CastSysInfoAndroid::GetBuildType() {
   if (!base::StringToInt(CAST_BUILD_INCREMENTAL, &build_number))
     build_number = 0;
 
-  // Note: no way to determine which channel was used on play store.
+  const std::string channel(GetSystemReleaseChannel());
   if (strcmp(build_info_->build_type(), kBuildTypeUser) == 0 &&
-      build_number > 0) {
+      build_number > 0 && (channel.empty() || channel == "stable-channel")) {
     return BUILD_PRODUCTION;
   }
 
@@ -78,7 +96,13 @@ std::string CastSysInfoAndroid::GetSystemBuildNumber() {
 }
 
 std::string CastSysInfoAndroid::GetSystemReleaseChannel() {
+#if BUILDFLAG(IS_ANDROID_THINGS_NON_PUBLIC)
+  JNIEnv* env = base::android::AttachCurrentThread();
+  return base::android::ConvertJavaStringToUTF8(
+      Java_CastSysInfoAndroidThings_getReleaseChannel(env));
+#else
   return "";
+#endif
 }
 
 std::string CastSysInfoAndroid::GetBoardName() {
@@ -92,11 +116,24 @@ std::string CastSysInfoAndroid::GetBoardRevision() {
 }
 
 std::string CastSysInfoAndroid::GetFactoryCountry() {
-  return "";
+  return GetAndroidProperty("ro.boot.wificountrycode", "");
 }
 
 std::string CastSysInfoAndroid::GetFactoryLocale(std::string* second_locale) {
-  return "";
+  // This duplicates the read-only property portion of
+  // frameworks/base/core/jni/AndroidRuntime.cpp in the Android tree, which is
+  // effectively the "factory locale", i.e. the locale chosen by Android
+  // assuming the other persist.sys.* properties are not set.
+  const std::string locale = GetAndroidProperty("ro.product.locale", "");
+  if (!locale.empty()) {
+    return locale;
+  }
+
+  const std::string language =
+      GetAndroidProperty("ro.product.locale.language", "en");
+  const std::string region =
+      GetAndroidProperty("ro.product.locale.region", "US");
+  return language + "-" + region;
 }
 
 std::string CastSysInfoAndroid::GetWifiInterface() {

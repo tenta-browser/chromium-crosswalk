@@ -20,13 +20,6 @@
 
 namespace cryptohome {
 
-// Converts the given KeyDefinition to a Key.
-void CHROMEOS_EXPORT KeyDefinitionToKey(const KeyDefinition& key_def, Key* key);
-
-// Creates an AuthorizationRequest from the given secret and label.
-AuthorizationRequest CHROMEOS_EXPORT
-CreateAuthorizationRequest(const std::string& label, const std::string& secret);
-
 // This class manages calls to Cryptohome service's home directory methods:
 // Mount, CheckKey, Add/UpdateKey.
 class CHROMEOS_EXPORT HomedirMethods {
@@ -34,26 +27,8 @@ class CHROMEOS_EXPORT HomedirMethods {
   // Callbacks that are called back on the UI thread when the results of the
   // respective method calls are ready.
   typedef base::Callback<void(bool success, MountError return_code)> Callback;
-  typedef base::Callback<void(
-      bool success,
-      MountError return_code,
-      const std::vector<KeyDefinition>& key_definitions)> GetKeyDataCallback;
-  typedef base::Callback<
-      void(bool success, MountError return_code, const std::string& mount_hash)>
-      MountCallback;
-  typedef base::Callback<void(bool success, int64_t size)>
-      GetAccountDiskUsageCallback;
 
   virtual ~HomedirMethods() {}
-
-  // Asks cryptohomed to return data about the key identified by |request| for
-  // the user identified by |id|. At present, this does not return any secret
-  // information and the request does not need to be authenticated, so an empty
-  // authorization request is sufficient.
-  virtual void GetKeyDataEx(const Identification& id,
-                            const AuthorizationRequest& auth,
-                            const GetKeyDataRequest& request,
-                            const GetKeyDataCallback& callback) = 0;
 
   // Asks cryptohomed to attempt authorization for user identified by |id| using
   // |auth|. This can be used to unlock a user session.
@@ -61,17 +36,6 @@ class CHROMEOS_EXPORT HomedirMethods {
                           const AuthorizationRequest& auth,
                           const CheckKeyRequest& request,
                           const Callback& callback) = 0;
-
-  // Asks cryptohomed to find the cryptohome for user identified by |id| and
-  // then mount it using |auth| to unlock the key.
-  // If the |create_keys| are not given and no cryptohome exists for |id|,
-  // the expected result is
-  // callback.Run(false, kCryptohomeMountErrorUserDoesNotExist, string()).
-  // Otherwise, the normal range of return codes is expected.
-  virtual void MountEx(const Identification& id,
-                       const AuthorizationRequest& auth,
-                       const MountRequest& request,
-                       const MountCallback& callback) = 0;
 
   // Asks cryptohomed to try to add another key for the user identified by |id|
   // using |auth| to unlock the key.
@@ -97,18 +61,6 @@ class CHROMEOS_EXPORT HomedirMethods {
                            const AuthorizationRequest& auth,
                            const RemoveKeyRequest& request,
                            const Callback& callback) = 0;
-
-  // Asks cryptohomed to change cryptohome identification |id_from| to |id_to|,
-  // which results in cryptohome directory renaming.
-  virtual void RenameCryptohome(const Identification& id_from,
-                                const Identification& id_to,
-                                const Callback& callback) = 0;
-
-  // Asks cryptohomed to compute the size of cryptohome for user identified by
-  // |id|.
-  virtual void GetAccountDiskUsage(
-      const Identification& id,
-      const GetAccountDiskUsageCallback& callback) = 0;
 
   // Creates the global HomedirMethods instance.
   static void Initialize();

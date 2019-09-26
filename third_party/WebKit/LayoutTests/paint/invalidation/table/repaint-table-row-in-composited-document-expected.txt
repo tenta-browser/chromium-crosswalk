@@ -3,6 +3,17 @@
     {
       "name": "LayoutView #document",
       "bounds": [800, 600],
+      "drawsContent": false,
+      "backgroundColor": "#FFFFFF"
+    },
+    {
+      "name": "Scrolling Layer",
+      "bounds": [800, 600],
+      "drawsContent": false
+    },
+    {
+      "name": "Scrolling Contents Layer",
+      "bounds": [800, 600],
       "contentsOpaque": true,
       "backgroundColor": "#FFFFFF",
       "paintInvalidations": [
@@ -15,21 +26,6 @@
           "object": "LayoutTableCell TD",
           "rect": [256, 156, 204, 104],
           "reason": "geometry"
-        },
-        {
-          "object": "LayoutTableCell TD id='target'",
-          "rect": [52, 154, 202, 150],
-          "reason": "incremental"
-        },
-        {
-          "object": "LayoutTableCell TD",
-          "rect": [52, 306, 202, 104],
-          "reason": "geometry"
-        },
-        {
-          "object": "LayoutTableCell TD",
-          "rect": [52, 156, 202, 104],
-          "reason": "geometry"
         }
       ]
     }
@@ -38,6 +34,10 @@
     {
       "object": "LayoutTableCell TD id='target'",
       "reason": "incremental"
+    },
+    {
+      "object": "LayoutTableRow TR",
+      "reason": "geometry"
     },
     {
       "object": "LayoutTableCell TD",

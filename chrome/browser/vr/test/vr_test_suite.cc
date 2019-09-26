@@ -4,11 +4,14 @@
 
 #include "chrome/browser/vr/test/vr_test_suite.h"
 
+#include <memory>
+
 #include "base/files/file_util.h"
 #include "base/path_service.h"
 #include "base/test/scoped_task_environment.h"
 #include "build/build_config.h"
 #include "mojo/edk/embedder/embedder.h"
+#include "ui/base/material_design/material_design_controller.h"
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/base/ui_base_paths.h"
 
@@ -22,7 +25,7 @@ void VrTestSuite::Initialize() {
   base::TestSuite::Initialize();
 
   scoped_task_environment_ =
-      base::MakeUnique<base::test::ScopedTaskEnvironment>(
+      std::make_unique<base::test::ScopedTaskEnvironment>(
           base::test::ScopedTaskEnvironment::MainThreadType::UI);
 
   mojo::edk::Init();
@@ -36,6 +39,7 @@ void VrTestSuite::Initialize() {
 #endif
   ui::ResourceBundle::InitSharedInstanceWithPakPath(
       pak_path.AppendASCII("vr_test.pak"));
+  ui::MaterialDesignController::Initialize();
 }
 
 void VrTestSuite::Shutdown() {

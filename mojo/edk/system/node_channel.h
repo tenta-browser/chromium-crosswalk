@@ -17,7 +17,7 @@
 #include "base/task_runner.h"
 #include "build/build_config.h"
 #include "mojo/edk/embedder/connection_params.h"
-#include "mojo/edk/embedder/embedder.h"
+#include "mojo/edk/embedder/process_error_callback.h"
 #include "mojo/edk/embedder/scoped_platform_handle.h"
 #include "mojo/edk/system/channel.h"
 #include "mojo/edk/system/ports/name.h"
@@ -40,12 +40,12 @@ class NodeChannel : public base::RefCountedThreadSafe<NodeChannel>,
   class Delegate {
    public:
     virtual ~Delegate() {}
-    virtual void OnAcceptChild(const ports::NodeName& from_node,
-                               const ports::NodeName& parent_name,
-                               const ports::NodeName& token) = 0;
-    virtual void OnAcceptParent(const ports::NodeName& from_node,
-                                const ports::NodeName& token,
-                                const ports::NodeName& child_name) = 0;
+    virtual void OnAcceptInvitee(const ports::NodeName& from_node,
+                                 const ports::NodeName& inviter_name,
+                                 const ports::NodeName& token) = 0;
+    virtual void OnAcceptInvitation(const ports::NodeName& from_node,
+                                    const ports::NodeName& token,
+                                    const ports::NodeName& invitee_name) = 0;
     virtual void OnAddBrokerClient(const ports::NodeName& from_node,
                                    const ports::NodeName& client_name,
                                    base::ProcessHandle process_handle) = 0;
@@ -125,10 +125,10 @@ class NodeChannel : public base::RefCountedThreadSafe<NodeChannel>,
   // Used for context in Delegate calls (via |from_node| arguments.)
   void SetRemoteNodeName(const ports::NodeName& name);
 
-  void AcceptChild(const ports::NodeName& parent_name,
-                   const ports::NodeName& token);
-  void AcceptParent(const ports::NodeName& token,
-                    const ports::NodeName& child_name);
+  void AcceptInvitee(const ports::NodeName& inviter_name,
+                     const ports::NodeName& token);
+  void AcceptInvitation(const ports::NodeName& token,
+                        const ports::NodeName& invitee_name);
   void AcceptPeer(const ports::NodeName& sender_name,
                   const ports::NodeName& token,
                   const ports::PortName& port_name);

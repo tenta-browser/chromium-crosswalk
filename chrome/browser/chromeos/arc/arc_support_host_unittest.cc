@@ -4,9 +4,18 @@
 
 #include "chrome/browser/chromeos/arc/arc_support_host.h"
 
+#include <vector>
+
 #include "chrome/browser/chromeos/arc/extensions/fake_arc_support.h"
 #include "chrome/browser/chromeos/login/users/fake_chrome_user_manager.h"
+#include "chrome/browser/consent_auditor/consent_auditor_factory.h"
+#include "chrome/browser/consent_auditor/consent_auditor_test_utils.h"
+#include "chrome/browser/signin/fake_signin_manager_builder.h"
+#include "chrome/browser/signin/signin_manager_factory.h"
+#include "chrome/test/base/browser_with_test_window_test.h"
 #include "chrome/test/base/testing_profile.h"
+#include "components/consent_auditor/fake_consent_auditor.h"
+#include "components/signin/core/browser/fake_signin_manager.h"
 #include "components/user_manager/scoped_user_manager.h"
 #include "content/public/test/test_browser_thread_bundle.h"
 #include "testing/gmock/include/gmock/gmock.h"
@@ -54,17 +63,18 @@ class MockErrorDelegateNonStrict : public ArcSupportHost::ErrorDelegate {
 
 using MockErrorDelegate = StrictMock<MockErrorDelegateNonStrict>;
 
-class ArcSupportHostTest : public testing::Test {
+class ArcSupportHostTest : public BrowserWithTestWindowTest {
  public:
   ArcSupportHostTest() = default;
   ~ArcSupportHostTest() override = default;
 
   void SetUp() override {
+    BrowserWithTestWindowTest::SetUp();
     user_manager_enabler_ = std::make_unique<user_manager::ScopedUserManager>(
         std::make_unique<chromeos::FakeChromeUserManager>());
+    signin_manager()->SignIn("testing_account_id");
 
-    profile_ = std::make_unique<TestingProfile>();
-    support_host_ = std::make_unique<ArcSupportHost>(profile_.get());
+    support_host_ = std::make_unique<ArcSupportHost>(profile());
     fake_arc_support_ = std::make_unique<FakeArcSupport>(support_host_.get());
   }
 
@@ -75,8 +85,9 @@ class ArcSupportHostTest : public testing::Test {
 
     fake_arc_support_.reset();
     support_host_.reset();
-    profile_.reset();
     user_manager_enabler_.reset();
+
+    BrowserWithTestWindowTest::TearDown();
   }
 
   ArcSupportHost* support_host() { return support_host_.get(); }
@@ -107,11 +118,23 @@ class ArcSupportHostTest : public testing::Test {
                                             kFakeActiveDirectoryPrefix);
   }
 
- private:
-  // Fake as if the current testing thread is UI thread.
-  content::TestBrowserThreadBundle bundle_;
+  consent_auditor::FakeConsentAuditor* consent_auditor() {
+    return static_cast<consent_auditor::FakeConsentAuditor*>(
+        ConsentAuditorFactory::GetForProfile(profile()));
+  }
 
-  std::unique_ptr<TestingProfile> profile_;
+  FakeSigninManagerBase* signin_manager() {
+    return static_cast<FakeSigninManagerBase*>(
+        SigninManagerFactory::GetForProfile(profile()));
+  }
+
+  // BrowserWithTestWindowTest:
+  TestingProfile::TestingFactories GetTestingFactories() override {
+    return {{SigninManagerFactory::GetInstance(), BuildFakeSigninManagerBase},
+            {ConsentAuditorFactory::GetInstance(), BuildFakeConsentAuditor}};
+  }
+
+ private:
   std::unique_ptr<ArcSupportHost> support_host_;
   std::unique_ptr<FakeArcSupport> fake_arc_support_;
   std::unique_ptr<user_manager::ScopedUserManager> user_manager_enabler_;

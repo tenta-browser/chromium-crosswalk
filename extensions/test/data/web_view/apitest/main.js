@@ -172,9 +172,6 @@ function testAutosizeAfterNavigation() {
   var sizeChangeHandler = function(e) {
     switch (step) {
       case 1:
-        // This would be triggered after we set autosize attribute.
-        embedder.test.assertEq(50, e.oldWidth);
-        embedder.test.assertEq(100, e.oldHeight);
         embedder.test.assertTrue(e.newWidth >= 60 && e.newWidth <= 70);
         embedder.test.assertTrue(e.newHeight >= 110 && e.newHeight <= 120);
 
@@ -248,23 +245,19 @@ function testAutosizeHeight() {
   webview.maxheight = 200;
 
   var step = 1;
+  var finalWidth = 200;
+  var finalHeight = 50;
   webview.addEventListener('sizechanged', function(e) {
-    switch (step) {
-      case 1:
-        embedder.test.assertEq(200, e.newHeight);
-        // Change the maxheight to verify that we see the change.
-        webview.maxheight = 50;
-        break;
-      case 2:
-        embedder.test.assertEq(200, e.oldHeight);
-        embedder.test.assertEq(50, e.newHeight);
-        embedder.test.succeed();
-        break;
-      default:
-        window.console.log('Unexpected sizechanged event, step = ' + step);
-        embedder.test.fail();
-        break;
-    }
+    embedder.test.assertTrue(e.newHeight >= webview.minheight);
+    embedder.test.assertTrue(e.newHeight <= webview.maxheight);
+    embedder.test.assertTrue(e.newWidth >= webview.minwidth);
+    embedder.test.assertTrue(e.newWidth <= webview.maxwidth);
+    if (step == 1)
+      webview.maxheight = 50;
+
+    // We are done once the size settles on the final width and height.
+    if (e.newHeight == finalHeight && e.newWidth == finalWidth)
+      embedder.test.succeed();
     ++step;
   });
 
@@ -1091,6 +1084,27 @@ function testLoadAbortNonWebSafeScheme() {
   document.body.appendChild(webview);
 };
 
+// Verifies that cancelling a navigation due to an unsupported protocol doesn't
+// cause a crash.
+function testLoadAbortUnknownScheme() {
+  var webview = document.createElement('webview');
+  var ftpURL = 'ftp://example.com/';
+  webview.addEventListener('loadabort', function(e) {
+    embedder.test.assertEq('ERR_UNKNOWN_URL_SCHEME', e.reason);
+    embedder.test.assertEq(ftpURL, e.url);
+  });
+  webview.addEventListener('loadstop', function(e) {
+    embedder.test.assertEq(ftpURL, webview.src);
+    embedder.test.succeed();
+  });
+  webview.addEventListener('exit', function(e) {
+    // We should not crash.
+    embedder.test.fail();
+  });
+  webview.src = ftpURL;
+  document.body.appendChild(webview);
+}
+
 // This test verifies that the loadStart isn't sent for same-document
 // navigations, while loadCommit is (per docs).
 function testLoadEventsSameDocumentNavigation() {
@@ -1154,21 +1168,6 @@ function testLoadStartLoadRedirect() {
       embedder.test.fail();
     }
   });
-  document.body.appendChild(webview);
-}
-
-function testNavigationToExternalProtocol() {
-  var webview = document.createElement('webview');
-  webview.addEventListener('loadstop', function(e) {
-    webview.addEventListener('loadabort', function(e) {
-      embedder.test.assertEq('ERR_UNKNOWN_URL_SCHEME', e.reason);
-      embedder.test.succeed();
-    });
-    webview.executeScript({
-      code: 'window.location.href = "tel:+12223334444";'
-    }, function(results) {});
-  });
-  webview.setAttribute('src', 'data:text/html,navigate to external protocol');
   document.body.appendChild(webview);
 }
 
@@ -1827,11 +1826,11 @@ embedder.test.testList = {
   'testLoadAbortIllegalJavaScriptURL': testLoadAbortIllegalJavaScriptURL,
   'testLoadAbortInvalidNavigation': testLoadAbortInvalidNavigation,
   'testLoadAbortNonWebSafeScheme': testLoadAbortNonWebSafeScheme,
+  'testLoadAbortUnknownScheme': testLoadAbortUnknownScheme,
   'testLoadEventsSameDocumentNavigation': testLoadEventsSameDocumentNavigation,
   'testLoadProgressEvent': testLoadProgressEvent,
   'testLoadStartLoadRedirect': testLoadStartLoadRedirect,
   'testNavigateAfterResize': testNavigateAfterResize,
-  'testNavigationToExternalProtocol': testNavigationToExternalProtocol,
   'testNavOnConsecutiveSrcAttributeChanges':
       testNavOnConsecutiveSrcAttributeChanges,
   'testNavOnSrcAttributeChange': testNavOnSrcAttributeChange,

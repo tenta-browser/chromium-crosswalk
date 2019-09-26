@@ -12,18 +12,19 @@
 #include <sstream>
 #include <utility>
 
+#include "ash/public/cpp/ash_features.h"
 #include "ash/public/interfaces/ime_info.mojom.h"
 #include "base/bind.h"
 #include "base/feature_list.h"
 #include "base/hash.h"
 #include "base/location.h"
-#include "base/memory/ptr_util.h"
+#include "base/metrics/histogram_functions.h"
 #include "base/metrics/histogram_macros.h"
-#include "base/metrics/sparse_histogram.h"
 #include "base/stl_util.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/sys_info.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/browser_process_platform_part_chromeos.h"
 #include "chrome/browser/chromeos/ash_config.h"
@@ -49,7 +50,6 @@
 #include "ui/chromeos/ime/input_method_menu_item.h"
 #include "ui/chromeos/ime/input_method_menu_manager.h"
 #include "ui/keyboard/keyboard_controller.h"
-#include "ui/keyboard/keyboard_util.h"
 
 namespace chromeos {
 namespace input_method {
@@ -105,6 +105,19 @@ InputMethodCategory GetInputMethodCategory(const std::string& input_method_id,
   return category;
 }
 
+std::string KeysetToString(mojom::ImeKeyset keyset) {
+  switch (keyset) {
+    case mojom::ImeKeyset::kNone:
+      return "";
+    case mojom::ImeKeyset::kEmoji:
+      return "emoji";
+    case mojom::ImeKeyset::kHandwriting:
+      return "hwt";
+    case mojom::ImeKeyset::kVoice:
+      return "voice";
+  }
+}
+
 }  // namespace
 
 // ------------------------ InputMethodManagerImpl::StateImpl
@@ -129,6 +142,7 @@ void InputMethodManagerImpl::StateImpl::InitFrom(const StateImpl& other) {
   menu_activated = other.menu_activated;
   allowed_keyboard_layout_input_method_ids =
       other.allowed_keyboard_layout_input_method_ids;
+  input_view_url = other.input_view_url;
 }
 
 bool InputMethodManagerImpl::StateImpl::IsActive() const {
@@ -166,6 +180,7 @@ std::string InputMethodManagerImpl::StateImpl::Dump() const {
     os << " '" << it->first << "' => '" << it->second.id() << "',\n";
   }
   os << "pending_input_method_id: '" << pending_input_method_id << "'\n";
+  os << "input_view_url: '" << input_view_url << "'\n";
 
   return os.str();
 }
@@ -312,8 +327,10 @@ void InputMethodManagerImpl::StateImpl::EnableLockScreenLayouts() {
   for (size_t i = 0; i < active_input_method_ids.size(); ++i) {
     const std::string& input_method_id = active_input_method_ids[i];
     // Skip if it's not a keyboard layout. Drop input methods including
-    // extension ones.
-    if (!manager_->IsLoginKeyboard(input_method_id) ||
+    // extension ones. We need to keep all IMEs to support inputting on inline
+    // reply on a notification if notifications on lock screen is enabled.
+    if ((!ash::features::IsLockScreenNotificationsEnabled() &&
+         !manager_->IsLoginKeyboard(input_method_id)) ||
         added_ids.count(input_method_id)) {
       continue;
     }
@@ -500,6 +517,26 @@ void InputMethodManagerImpl::StateImpl::ChangeInputMethod(
     manager_->ChangeInputMethodInternal(*descriptor, profile, show_message,
                                         notify_menu);
   manager_->RecordInputMethodUsage(current_input_method.id());
+}
+
+void InputMethodManagerImpl::StateImpl::ChangeInputMethodToJpKeyboard() {
+  ChangeInputMethod(
+      extension_ime_util::GetInputMethodIDByEngineID("xkb:jp::jpn"), true);
+}
+
+void InputMethodManagerImpl::StateImpl::ChangeInputMethodToJpIme() {
+  ChangeInputMethod(
+      extension_ime_util::GetInputMethodIDByEngineID("nacl_mozc_jp"), true);
+}
+
+void InputMethodManagerImpl::StateImpl::ToggleInputMethodForJpIme() {
+  std::string jp_ime_id =
+      extension_ime_util::GetInputMethodIDByEngineID("nacl_mozc_jp");
+  ChangeInputMethod(
+      GetCurrentInputMethod().id() == jp_ime_id
+          ? extension_ime_util::GetInputMethodIDByEngineID("xkb:jp::jpn")
+          : jp_ime_id,
+      true);
 }
 
 bool InputMethodManagerImpl::StateImpl::MethodAwaitsExtensionLoad(
@@ -799,6 +836,18 @@ bool InputMethodManagerImpl::StateImpl::InputMethodIsActivated(
   return base::ContainsValue(active_input_method_ids, input_method_id);
 }
 
+void InputMethodManagerImpl::StateImpl::EnableInputView() {
+  input_view_url = current_input_method.input_view_url();
+}
+
+void InputMethodManagerImpl::StateImpl::DisableInputView() {
+  input_view_url = GURL();
+}
+
+const GURL& InputMethodManagerImpl::StateImpl::GetInputViewUrl() const {
+  return input_view_url;
+}
+
 // ------------------------ InputMethodManagerImpl
 bool InputMethodManagerImpl::IsLoginKeyboard(
     const std::string& layout) const {
@@ -861,7 +910,7 @@ InputMethodManagerImpl::InputMethodManagerImpl(
       is_ime_menu_activated_(false),
       features_enabled_state_(InputMethodManager::FEATURE_ALL) {
   if (IsRunningAsSystemCompositor()) {
-    keyboard_ = base::MakeUnique<ImeKeyboardMus>(
+    keyboard_ = std::make_unique<ImeKeyboardMus>(
         g_browser_process->platform_part()->GetInputDeviceControllerClient());
   } else {
     keyboard_.reset(new FakeImeKeyboard());
@@ -888,8 +937,8 @@ void InputMethodManagerImpl::RecordInputMethodUsage(
   UMA_HISTOGRAM_ENUMERATION("InputMethod.Category",
                             GetInputMethodCategory(input_method_id),
                             INPUT_METHOD_CATEGORY_MAX);
-  UMA_HISTOGRAM_SPARSE_SLOWLY(
-      "InputMethod.ID2", static_cast<int32_t>(base::Hash(input_method_id)));
+  base::UmaHistogramSparse("InputMethod.ID2",
+                           static_cast<int32_t>(base::Hash(input_method_id)));
 }
 
 void InputMethodManagerImpl::AddObserver(
@@ -1028,7 +1077,8 @@ void InputMethodManagerImpl::ChangeInputMethodInternal(
       extension_ime_util::GetComponentIDByInputMethodID(descriptor.id());
   if (engine_map_.find(profile) == engine_map_.end() ||
       engine_map_[profile].find(extension_id) == engine_map_[profile].end()) {
-    LOG(ERROR) << "IMEEngine for \"" << extension_id << "\" is not registered";
+    LOG_IF(ERROR, base::SysInfo::IsRunningOnChromeOS())
+        << "IMEEngine for \"" << extension_id << "\" is not registered";
   }
   engine = engine_map_[profile][extension_id];
 
@@ -1039,7 +1089,7 @@ void InputMethodManagerImpl::ChangeInputMethodInternal(
   } else {
     // If no engine to enable, cancel the virtual keyboard url override so that
     // it can use the fallback system virtual keyboard UI.
-    keyboard::SetOverrideContentUrl(GURL());
+    state_->DisableInputView();
     keyboard::KeyboardController* keyboard_controller =
         keyboard::KeyboardController::GetInstance();
     if (keyboard_controller)
@@ -1225,14 +1275,8 @@ void InputMethodManagerImpl::MaybeNotifyImeMenuActivationChanged() {
                         is_ime_menu_activated_);
 }
 
-void InputMethodManagerImpl::OverrideKeyboardUrlRef(const std::string& keyset) {
-  GURL input_view_url;
-  if (GetActiveIMEState()) {
-    input_view_url =
-        GetActiveIMEState()->GetCurrentInputMethod().input_view_url();
-  }
-  GURL url = input_view_url.is_empty() ? keyboard::GetOverrideContentUrl()
-                                       : input_view_url;
+void InputMethodManagerImpl::OverrideKeyboardKeyset(mojom::ImeKeyset keyset) {
+  GURL url = state_->GetInputViewUrl();
 
   // If fails to find ref or tag "id" in the ref, it means the current IME is
   // not system IME, and we don't support show emoji, handwriting or voice
@@ -1245,10 +1289,10 @@ void InputMethodManagerImpl::OverrideKeyboardUrlRef(const std::string& keyset) {
   if (i == std::string::npos)
     return;
 
-  if (keyset.empty()) {
+  if (keyset == mojom::ImeKeyset::kNone) {
     // Resets the url as the input method default url and notify the hash
     // changed to VK.
-    keyboard::SetOverrideContentUrl(input_view_url);
+    state_->input_view_url = state_->current_input_method.input_view_url();
     keyboard::KeyboardController* keyboard_controller =
         keyboard::KeyboardController::GetInstance();
     if (keyboard_controller)
@@ -1263,14 +1307,14 @@ void InputMethodManagerImpl::OverrideKeyboardUrlRef(const std::string& keyset) {
   // id like: id=${keyset}.emoji/hwt/voice.
   auto j = overridden_ref.find("&", i + 1);
   if (j == std::string::npos) {
-    overridden_ref += "." + keyset;
+    overridden_ref += "." + KeysetToString(keyset);
   } else {
-    overridden_ref.replace(j, 0, "." + keyset);
+    overridden_ref.replace(j, 0, "." + KeysetToString(keyset));
   }
 
   GURL::Replacements replacements;
   replacements.SetRefStr(overridden_ref);
-  keyboard::SetOverrideContentUrl(url.ReplaceComponents(replacements));
+  state_->input_view_url = url.ReplaceComponents(replacements);
 
   keyboard::KeyboardController* keyboard_controller =
       keyboard::KeyboardController::GetInstance();

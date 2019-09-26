@@ -33,11 +33,17 @@ class UiTexture {
   UiTexture();
   virtual ~UiTexture();
 
-  void DrawAndLayout(SkCanvas* canvas, const gfx::Size& texture_size);
-  virtual gfx::Size GetPreferredTextureSize(int maximum_width) const = 0;
-  virtual gfx::SizeF GetDrawnSize() const = 0;
-  virtual bool HitTest(const gfx::PointF& point) const;
+  void DrawTexture(SkCanvas* canvas, const gfx::Size& texture_size);
 
+  // Marks the texture as drawn, when there isn't anything to draw.  For
+  // example, a text element with no text in it.
+  void DrawEmptyTexture();
+
+  virtual void Draw(SkCanvas* canvas, const gfx::Size& texture_size) = 0;
+
+  virtual bool LocalHitTest(const gfx::PointF& point) const;
+
+  bool measured() const { return measured_; }
   bool dirty() const { return dirty_; }
 
   void OnInitialized();
@@ -75,9 +81,18 @@ class UiTexture {
     kWrappingBehaviorNoWrap,
   };
 
- protected:
-  virtual void Draw(SkCanvas* canvas, const gfx::Size& texture_size) = 0;
+  struct TextRenderParameters {
+    SkColor color = SK_ColorBLACK;
+    TextAlignment text_alignment = kTextAlignmentNone;
+    WrappingBehavior wrapping_behavior = kWrappingBehaviorNoWrap;
+    bool cursor_enabled = false;
+    int cursor_position = 0;
+    bool shadows_enabled = false;
+    SkColor shadow_color = SK_ColorBLACK;
+    float shadow_size = 10.0f;
+  };
 
+ protected:
   template <typename T>
   void SetAndDirty(T* target, const T& value) {
     if (*target != value)
@@ -85,12 +100,20 @@ class UiTexture {
     *target = value;
   }
 
-  // Prepares a set of RenderText objects with the given color and fonts.
+  // Prepares a set of RenderText objects with the given parameters.
   // Attempts to fit the text within the provided size. |flags| specifies how
   // the text should be rendered. If multiline is requested and provided height
   // is 0, it will be set to the minimum needed to fit the whole text. If
   // multiline is not requested and provided width is 0, it will be set to the
   // minimum needed to fit the whole text.
+  static std::vector<std::unique_ptr<gfx::RenderText>> PrepareDrawStringRect(
+      const base::string16& text,
+      const gfx::FontList& font_list,
+      gfx::Rect* bounds,
+      const TextRenderParameters& parameters);
+
+  // Deprecated legacy text prep function. UI elements that use this routine
+  // should migrate to use Text elements, rather than drawing text directly.
   static std::vector<std::unique_ptr<gfx::RenderText>> PrepareDrawStringRect(
       const base::string16& text,
       const gfx::FontList& font_list,
@@ -105,16 +128,28 @@ class UiTexture {
       const base::string16& text,
       const gfx::FontList& font_list,
       SkColor color,
-      TextAlignment text_alignment);
+      TextAlignment text_alignment,
+      bool shadows_enabled,
+      SkColor shadow_color,
+      float shadow_size);
 
   static bool IsRTL();
   static void SetForceFontFallbackFailureForTesting(bool force);
 
-  void set_dirty() { dirty_ = true; }
+  void set_dirty() {
+    measured_ = false;
+    dirty_ = true;
+  }
+
+  // Textures that depend on measurement to draw must call this when they
+  // complete measurement work.
+  void set_measured() { measured_ = true; }
+
   SkColor foreground_color() const;
   SkColor background_color() const;
 
  private:
+  bool measured_ = false;
   bool dirty_ = true;
   base::Optional<SkColor> foreground_color_;
   base::Optional<SkColor> background_color_;

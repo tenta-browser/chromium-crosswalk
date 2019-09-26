@@ -475,8 +475,7 @@ class PinterestDesktopStory(_MediaBrowsingStory):
   SUPPORTED_PLATFORMS = platforms.DESKTOP_ONLY
 
   def _Login(self, action_runner):
-    pinterest_login.LoginDesktopAccount(action_runner, 'googletest',
-                                        self.credentials_path)
+    pinterest_login.LoginDesktopAccount(action_runner, 'googletest')
 
   def _ViewMediaItem(self, action_runner, index):
     super(PinterestDesktopStory, self)._ViewMediaItem(action_runner, index)
@@ -707,7 +706,7 @@ class GoogleMapsStory(_BrowsingStory):
     action_runner.ClickElement(selector=self._MAPS_ZOOM_IN_SELECTOR)
     action_runner.WaitForJavaScriptCondition(
         self._CHECK_RESTAURANTS_UPDATED,
-        old_restaurant=prev_restaurant_hash)
+        old_restaurant=prev_restaurant_hash, timeout=90)
     # This wait is required to fetch the data for all the tiles in the map.
     action_runner.Wait(1)
 
@@ -716,7 +715,7 @@ class GoogleMapsStory(_BrowsingStory):
     action_runner.ClickElement(selector=self._MAPS_ZOOM_IN_SELECTOR)
     action_runner.WaitForJavaScriptCondition(
         self._CHECK_RESTAURANTS_UPDATED,
-        old_restaurant=prev_restaurant_hash)
+        old_restaurant=prev_restaurant_hash, timeout=90)
     # This wait is required to fetch the data for all the tiles in the map.
     action_runner.Wait(1)
 
@@ -731,7 +730,7 @@ class GoogleMapsStory(_BrowsingStory):
         repeat_count=2, speed=500, timeout=120, repeat_delay_ms=2000)
     action_runner.WaitForJavaScriptCondition(
         self._CHECK_RESTAURANTS_UPDATED,
-        old_restaurant=prev_restaurant_hash)
+        old_restaurant=prev_restaurant_hash, timeout=90)
 
     prev_restaurant_hash = action_runner.EvaluateJavaScript(
         self._GET_RESTAURANT_RESPONSE_HASH)
@@ -740,7 +739,7 @@ class GoogleMapsStory(_BrowsingStory):
         repeat_count=2, speed=500, timeout=120, repeat_delay_ms=2000)
     action_runner.WaitForJavaScriptCondition(
         self._CHECK_RESTAURANTS_UPDATED,
-        old_restaurant=prev_restaurant_hash)
+        old_restaurant=prev_restaurant_hash, timeout=90)
 
     # To make the recording more realistic.
     action_runner.Wait(1)
@@ -892,8 +891,7 @@ class FacebookScrollMobileStory(_InfiniteScrollStory):
   SUPPORTED_PLATFORMS = platforms.MOBILE_ONLY
 
   def _Login(self, action_runner):
-    facebook_login.LoginWithMobileSite(
-        action_runner, 'facebook3', self.credentials_path)
+    facebook_login.LoginWithMobileSite(action_runner, 'facebook3')
 
 
 class FlickrDesktopStory(_InfiniteScrollStory):

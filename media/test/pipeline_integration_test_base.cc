@@ -4,11 +4,11 @@
 
 #include "media/test/pipeline_integration_test_base.h"
 
+#include <memory>
 #include <utility>
 
 #include "base/bind.h"
 #include "base/callback.h"
-#include "base/memory/ptr_util.h"
 #include "base/memory/ref_counted.h"
 #include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
@@ -18,25 +18,28 @@
 #include "media/base/test_data_util.h"
 #include "media/filters/file_data_source.h"
 #include "media/filters/memory_data_source.h"
-#include "media/media_features.h"
+#include "media/media_buildflags.h"
 #include "media/renderers/audio_renderer_impl.h"
 #include "media/renderers/renderer_impl.h"
 #include "media/test/fake_encrypted_media.h"
 #include "media/test/mock_media_source.h"
 #include "third_party/libaom/av1_features.h"
 
-#if !defined(MEDIA_DISABLE_FFMPEG)
+#if BUILDFLAG(ENABLE_AV1_DECODER)
+#include "media/filters/aom_video_decoder.h"
+#endif
+
+#if BUILDFLAG(ENABLE_FFMPEG)
 #include "media/filters/ffmpeg_audio_decoder.h"
 #include "media/filters/ffmpeg_demuxer.h"
+#endif
+
+#if BUILDFLAG(ENABLE_FFMPEG_VIDEO_DECODERS)
 #include "media/filters/ffmpeg_video_decoder.h"
 #endif
 
-#if !defined(MEDIA_DISABLE_LIBVPX)
+#if BUILDFLAG(ENABLE_LIBVPX)
 #include "media/filters/vpx_video_decoder.h"
-#endif
-
-#if BUILDFLAG(ENABLE_AV1_DECODER)
-#include "media/filters/aom_video_decoder.h"
 #endif
 
 using ::testing::_;
@@ -61,18 +64,16 @@ static std::vector<std::unique_ptr<VideoDecoder>> CreateVideoDecodersForTest(
     DCHECK(!video_decoders.empty());
   }
 
-#if !defined(MEDIA_DISABLE_LIBVPX)
+#if BUILDFLAG(ENABLE_LIBVPX)
   video_decoders.push_back(std::make_unique<OffloadingVpxVideoDecoder>());
-#endif  // !defined(MEDIA_DISABLE_LIBVPX)
+#endif
 
 #if BUILDFLAG(ENABLE_AV1_DECODER)
   if (base::FeatureList::IsEnabled(kAv1Decoder))
-    video_decoders.push_back(base::MakeUnique<AomVideoDecoder>(media_log));
-#endif  // !defined(MEDIA_DISABLE_LIBVPX)
+    video_decoders.push_back(std::make_unique<AomVideoDecoder>(media_log));
+#endif
 
-// Android does not have an ffmpeg video decoder.
-#if !defined(MEDIA_DISABLE_FFMPEG) && !defined(OS_ANDROID) && \
-    !defined(DISABLE_FFMPEG_VIDEO_DECODERS)
+#if BUILDFLAG(ENABLE_FFMPEG_VIDEO_DECODERS)
   video_decoders.push_back(std::make_unique<FFmpegVideoDecoder>(media_log));
 #endif
   return video_decoders;
@@ -89,7 +90,7 @@ static std::vector<std::unique_ptr<AudioDecoder>> CreateAudioDecodersForTest(
     DCHECK(!audio_decoders.empty());
   }
 
-#if !defined(MEDIA_DISABLE_FFMPEG)
+#if BUILDFLAG(ENABLE_FFMPEG)
   audio_decoders.push_back(
       std::make_unique<FFmpegAudioDecoder>(media_task_runner, media_log));
 #endif
@@ -125,6 +126,7 @@ PipelineIntegrationTestBase::PipelineIntegrationTestBase()
       webaudio_attached_(false),
       pipeline_(
           new PipelineImpl(scoped_task_environment_.GetMainThreadTaskRunner(),
+                           scoped_task_environment_.GetMainThreadTaskRunner(),
                            &media_log_)),
       ended_(false),
       pipeline_status_(PIPELINE_OK),
@@ -257,6 +259,8 @@ PipelineStatus PipelineIntegrationTestBase::StartInternal(
   }
   EXPECT_CALL(*this, OnVideoNaturalSizeChange(_)).Times(AtMost(1));
   EXPECT_CALL(*this, OnVideoOpacityChange(_)).WillRepeatedly(Return());
+  EXPECT_CALL(*this, OnAudioDecoderChange(_)).Times(AnyNumber());
+  EXPECT_CALL(*this, OnVideoDecoderChange(_)).Times(AnyNumber());
   CreateDemuxer(std::move(data_source));
 
   if (cdm_context) {
@@ -279,7 +283,7 @@ PipelineStatus PipelineIntegrationTestBase::StartInternal(
 
   base::RunLoop run_loop;
   pipeline_->Start(
-      demuxer_.get(),
+      Pipeline::StartType::kNormal, demuxer_.get(),
       renderer_factory_->CreateRenderer(prepend_video_decoders_cb,
                                         prepend_audio_decoders_cb),
       this,
@@ -432,7 +436,7 @@ void PipelineIntegrationTestBase::CreateDemuxer(
     std::unique_ptr<DataSource> data_source) {
   data_source_ = std::move(data_source);
 
-#if !defined(MEDIA_DISABLE_FFMPEG)
+#if BUILDFLAG(ENABLE_FFMPEG)
   demuxer_ = std::unique_ptr<Demuxer>(new FFmpegDemuxer(
       scoped_task_environment_.GetMainThreadTaskRunner(), data_source_.get(),
       base::Bind(&PipelineIntegrationTestBase::DemuxerEncryptedMediaInitDataCB,
@@ -455,12 +459,10 @@ std::unique_ptr<Renderer> PipelineIntegrationTestBase::CreateRenderer(
 
   // Disable frame dropping if hashing is enabled.
   std::unique_ptr<VideoRenderer> video_renderer(new VideoRendererImpl(
-      scoped_task_environment_.GetMainThreadTaskRunner(),
-      scoped_task_environment_.GetMainThreadTaskRunner().get(),
-      video_sink_.get(),
+      scoped_task_environment_.GetMainThreadTaskRunner(), video_sink_.get(),
       base::Bind(&CreateVideoDecodersForTest, &media_log_,
                  prepend_video_decoders_cb),
-      false, nullptr, &media_log_));
+      false, &media_log_, nullptr));
 
   if (!clockless_playback_) {
     audio_sink_ =
@@ -594,6 +596,8 @@ PipelineStatus PipelineIntegrationTestBase::StartPipelineWithMediaSource(
   EXPECT_CALL(*this, OnDurationChange()).Times(AnyNumber());
   EXPECT_CALL(*this, OnVideoNaturalSizeChange(_)).Times(AtMost(1));
   EXPECT_CALL(*this, OnVideoOpacityChange(_)).Times(AtMost(1));
+  EXPECT_CALL(*this, OnAudioDecoderChange(_)).Times(AnyNumber());
+  EXPECT_CALL(*this, OnVideoDecoderChange(_)).Times(AnyNumber());
 
   base::RunLoop run_loop;
 
@@ -627,7 +631,7 @@ PipelineStatus PipelineIntegrationTestBase::StartPipelineWithMediaSource(
   }
 
   pipeline_->Start(
-      demuxer_.get(),
+      Pipeline::StartType::kNormal, demuxer_.get(),
       renderer_factory_->CreateRenderer(CreateVideoDecodersCB(),
                                         CreateAudioDecodersCB()),
       this,
@@ -676,7 +680,7 @@ void PipelineIntegrationTestBase::RunUntilIdleEndedOrErrorInternal(
   scoped_task_environment_.RunUntilIdle();
 }
 
-base::TimeTicks DummyTickClock::NowTicks() {
+base::TimeTicks DummyTickClock::NowTicks() const {
   now_ += base::TimeDelta::FromSeconds(60);
   return now_;
 }

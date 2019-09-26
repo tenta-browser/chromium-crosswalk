@@ -27,17 +27,16 @@
 #include "content/browser/service_worker/service_worker_navigation_handle.h"
 #include "content/common/child_process_host_impl.h"
 #include "content/common/frame_messages.h"
-#include "content/common/site_isolation_policy.h"
 #include "content/public/browser/content_browser_client.h"
 #include "content/public/browser/navigation_ui_data.h"
 #include "content/public/browser/site_instance.h"
 #include "content/public/common/browser_side_navigation_policy.h"
 #include "content/public/common/content_client.h"
-#include "content/public/common/resource_request_body.h"
 #include "content/public/common/url_constants.h"
 #include "content/public/common/url_utils.h"
 #include "net/base/net_errors.h"
 #include "net/url_request/redirect_info.h"
+#include "services/network/public/cpp/resource_request_body.h"
 #include "url/gurl.h"
 #include "url/url_constants.h"
 
@@ -58,10 +57,50 @@ void UpdateThrottleCheckResult(
   *to_update = result;
 }
 
-void NotifyAbandonedTransferNavigation(const GlobalRequestID& id) {
-  DCHECK_CURRENTLY_ON(BrowserThread::IO);
-  if (ResourceDispatcherHostImpl* rdh = ResourceDispatcherHostImpl::Get())
-    rdh->CancelRequest(id.child_id, id.request_id);
+// TODO(csharrison,nasko): This macro is incorrect for subframe navigations,
+// which will only have subframe-specific transition types. This means that all
+// subframes currently are tagged as NewNavigations.
+#define LOG_NAVIGATION_TIMING_HISTOGRAM(histogram, transition, value,      \
+                                        max_time)                          \
+  do {                                                                     \
+    const base::TimeDelta kMinTime = base::TimeDelta::FromMilliseconds(1); \
+    const int kBuckets = 50;                                               \
+    UMA_HISTOGRAM_CUSTOM_TIMES("Navigation." histogram, value, kMinTime,   \
+                               max_time, kBuckets);                        \
+    if (transition & ui::PAGE_TRANSITION_FORWARD_BACK) {                   \
+      UMA_HISTOGRAM_CUSTOM_TIMES("Navigation." histogram ".BackForward",   \
+                                 value, kMinTime, max_time, kBuckets);     \
+    } else if (ui::PageTransitionCoreTypeIs(transition,                    \
+                                            ui::PAGE_TRANSITION_RELOAD)) { \
+      UMA_HISTOGRAM_CUSTOM_TIMES("Navigation." histogram ".Reload", value, \
+                                 kMinTime, max_time, kBuckets);            \
+    } else if (ui::PageTransitionIsNewNavigation(transition)) {            \
+      UMA_HISTOGRAM_CUSTOM_TIMES("Navigation." histogram ".NewNavigation", \
+                                 value, kMinTime, max_time, kBuckets);     \
+    } else {                                                               \
+      NOTREACHED() << "Invalid page transition: " << transition;           \
+    }                                                                      \
+  } while (0)
+
+void LogIsSameProcess(ui::PageTransition transition, bool is_same_process) {
+  // Log overall value, then log specific value per type of navigation.
+  UMA_HISTOGRAM_BOOLEAN("Navigation.IsSameProcess", is_same_process);
+
+  if (transition & ui::PAGE_TRANSITION_FORWARD_BACK) {
+    UMA_HISTOGRAM_BOOLEAN("Navigation.IsSameProcess.BackForward",
+                          is_same_process);
+    return;
+  }
+  if (ui::PageTransitionCoreTypeIs(transition, ui::PAGE_TRANSITION_RELOAD)) {
+    UMA_HISTOGRAM_BOOLEAN("Navigation.IsSameProcess.Reload", is_same_process);
+    return;
+  }
+  if (ui::PageTransitionIsNewNavigation(transition)) {
+    UMA_HISTOGRAM_BOOLEAN("Navigation.IsSameProcess.NewNavigation",
+                          is_same_process);
+    return;
+  }
+  NOTREACHED() << "Invalid page transition: " << transition;
 }
 
 }  // namespace
@@ -77,12 +116,26 @@ std::unique_ptr<NavigationHandleImpl> NavigationHandleImpl::Create(
     int pending_nav_entry_id,
     bool started_from_context_menu,
     CSPDisposition should_check_main_world_csp,
-    bool is_form_submission) {
+    bool is_form_submission,
+    const base::Optional<std::string>& suggested_filename,
+    std::unique_ptr<NavigationUIData> navigation_ui_data,
+    const std::string& method,
+    net::HttpRequestHeaders request_headers,
+    scoped_refptr<network::ResourceRequestBody> resource_request_body,
+    const Referrer& sanitized_referrer,
+    bool has_user_gesture,
+    ui::PageTransition transition,
+    bool is_external_protocol,
+    RequestContextType request_context_type,
+    blink::WebMixedContentContextType mixed_content_context_type) {
   return std::unique_ptr<NavigationHandleImpl>(new NavigationHandleImpl(
       url, redirect_chain, frame_tree_node, is_renderer_initiated,
       is_same_document, navigation_start, pending_nav_entry_id,
       started_from_context_menu, should_check_main_world_csp,
-      is_form_submission));
+      is_form_submission, suggested_filename, std::move(navigation_ui_data),
+      method, std::move(request_headers), resource_request_body,
+      sanitized_referrer, has_user_gesture, transition, is_external_protocol,
+      request_context_type, mixed_content_context_type));
 }
 
 NavigationHandleImpl::NavigationHandleImpl(
@@ -95,11 +148,22 @@ NavigationHandleImpl::NavigationHandleImpl(
     int pending_nav_entry_id,
     bool started_from_context_menu,
     CSPDisposition should_check_main_world_csp,
-    bool is_form_submission)
+    bool is_form_submission,
+    const base::Optional<std::string>& suggested_filename,
+    std::unique_ptr<NavigationUIData> navigation_ui_data,
+    const std::string& method,
+    net::HttpRequestHeaders request_headers,
+    scoped_refptr<network::ResourceRequestBody> resource_request_body,
+    const Referrer& sanitized_referrer,
+    bool has_user_gesture,
+    ui::PageTransition transition,
+    bool is_external_protocol,
+    RequestContextType request_context_type,
+    blink::WebMixedContentContextType mixed_content_context_type)
     : url_(url),
-      has_user_gesture_(false),
-      transition_(ui::PAGE_TRANSITION_LINK),
-      is_external_protocol_(false),
+      has_user_gesture_(has_user_gesture),
+      transition_(transition),
+      is_external_protocol_(is_external_protocol),
       net_error_code_(net::OK),
       render_frame_host_(nullptr),
       is_renderer_initiated_(is_renderer_initiated),
@@ -109,35 +173,39 @@ NavigationHandleImpl::NavigationHandleImpl(
       should_update_history_(false),
       subframe_entry_committed_(false),
       connection_info_(net::HttpResponseInfo::CONNECTION_INFO_UNKNOWN),
-      should_ssl_errors_be_fatal_(false),
       original_url_(url),
+      method_(method),
+      request_headers_(std::move(request_headers)),
       state_(INITIAL),
-      is_transferring_(false),
       frame_tree_node_(frame_tree_node),
       next_index_(0),
       navigation_start_(navigation_start),
       pending_nav_entry_id_(pending_nav_entry_id),
-      request_context_type_(REQUEST_CONTEXT_TYPE_UNSPECIFIED),
-      mixed_content_context_type_(
-          blink::WebMixedContentContextType::kBlockable),
+      request_context_type_(request_context_type),
+      mixed_content_context_type_(mixed_content_context_type),
+      navigation_ui_data_(std::move(navigation_ui_data)),
       navigation_id_(CreateUniqueHandleID()),
-      should_replace_current_entry_(false),
       redirect_chain_(redirect_chain),
-      is_download_(false),
-      is_stream_(false),
-      started_from_context_menu_(started_from_context_menu),
       reload_type_(ReloadType::NONE),
       restore_type_(RestoreType::NONE),
       navigation_type_(NAVIGATION_TYPE_UNKNOWN),
       should_check_main_world_csp_(should_check_main_world_csp),
-      is_form_submission_(is_form_submission),
       expected_render_process_host_id_(ChildProcessHost::kInvalidUniqueID),
+      suggested_filename_(suggested_filename),
+      is_transferring_(false),
+      is_form_submission_(is_form_submission),
+      should_replace_current_entry_(false),
+      is_download_(false),
+      is_stream_(false),
+      started_from_context_menu_(started_from_context_menu),
+      is_same_process_(true),
       weak_factory_(this) {
   TRACE_EVENT_ASYNC_BEGIN2("navigation", "NavigationHandle", this,
                            "frame_tree_node",
                            frame_tree_node_->frame_tree_node_id(), "url",
                            url_.possibly_invalid_spec());
   DCHECK(!navigation_start.is_null());
+  DCHECK(!IsRendererDebugURL(url));
 
   site_url_ = SiteInstance::GetSiteForURL(frame_tree_node_->current_frame_host()
                                               ->GetSiteInstance()
@@ -148,6 +216,23 @@ NavigationHandleImpl::NavigationHandleImpl(
 
   starting_site_instance_ =
       frame_tree_node_->current_frame_host()->GetSiteInstance();
+
+  if (method != "POST")
+    DCHECK(!resource_request_body);
+
+  // Update the navigation parameters.
+  if (method_ == "POST")
+    resource_request_body_ = resource_request_body;
+
+  // Mirrors the logic in RenderFrameImpl::SendDidCommitProvisionalLoad.
+  if (transition_ & ui::PAGE_TRANSITION_CLIENT_REDIRECT) {
+    // If the page contained a client redirect (meta refresh,
+    // document.location), set the referrer appropriately.
+    sanitized_referrer_ =
+        Referrer(redirect_chain_[0], sanitized_referrer.policy);
+  } else {
+    sanitized_referrer_ = sanitized_referrer;
+  }
 
   // Try to match this with a pending NavigationEntry if possible.  Note that
   // the NavigationController itself may be gone if this is a navigation inside
@@ -173,8 +258,7 @@ NavigationHandleImpl::NavigationHandleImpl(
     }
   }
 
-  if (!IsRendererDebugURL(url_))
-    GetDelegate()->DidStartNavigation(this);
+  GetDelegate()->DidStartNavigation(this);
 
   if (IsInMainFrame()) {
     TRACE_EVENT_ASYNC_BEGIN_WITH_TIMESTAMP1(
@@ -200,22 +284,7 @@ NavigationHandleImpl::~NavigationHandleImpl() {
     }
   }
 
-  // Transfer requests that have not matched up with another navigation request
-  // from the renderer need to be cleaned up. These are marked as protected in
-  // the RDHI, so they do not get cancelled when frames are destroyed.
-  if (is_transferring()) {
-    BrowserThread::PostTask(BrowserThread::IO, FROM_HERE,
-                            base::BindOnce(&NotifyAbandonedTransferNavigation,
-                                           GetGlobalRequestID()));
-  }
-
-  if (!IsRendererDebugURL(url_))
-    GetDelegate()->DidFinishNavigation(this);
-
-  // Cancel the navigation on the IO thread if the NavigationHandle is being
-  // destroyed in the middle of the NavigationThrottles checks.
-  if (!IsBrowserSideNavigationEnabled() && !complete_callback_.is_null())
-    RunCompleteCallback(NavigationThrottle::CANCEL_AND_IGNORE);
+  GetDelegate()->DidFinishNavigation(this);
 
   if (IsInMainFrame()) {
     TRACE_EVENT_ASYNC_END2("navigation", "Navigation StartToCommit", this,
@@ -280,39 +349,31 @@ const base::TimeTicks& NavigationHandleImpl::NavigationStart() {
 }
 
 bool NavigationHandleImpl::IsPost() {
-  CHECK_NE(INITIAL, state_)
-      << "This accessor should not be called before the request is started.";
   return method_ == "POST";
 }
 
-const scoped_refptr<ResourceRequestBody>&
+const scoped_refptr<network::ResourceRequestBody>&
 NavigationHandleImpl::GetResourceRequestBody() {
-  CHECK_NE(INITIAL, state_)
-      << "This accessor should not be called before the request is started.";
   return resource_request_body_;
 }
 
 const Referrer& NavigationHandleImpl::GetReferrer() {
-  CHECK_NE(INITIAL, state_)
-      << "This accessor should not be called before the request is started.";
   return sanitized_referrer_;
 }
 
 bool NavigationHandleImpl::HasUserGesture() {
-  CHECK_NE(INITIAL, state_)
-      << "This accessor should not be called before the request is started.";
   return has_user_gesture_;
 }
 
 ui::PageTransition NavigationHandleImpl::GetPageTransition() {
-  CHECK_NE(INITIAL, state_)
-      << "This accessor should not be called before the request is started.";
   return transition_;
 }
 
+const NavigationUIData* NavigationHandleImpl::GetNavigationUIData() {
+  return navigation_ui_data_.get();
+}
+
 bool NavigationHandleImpl::IsExternalProtocol() {
-  CHECK_NE(INITIAL, state_)
-      << "This accessor should not be called before the request is started.";
   return is_external_protocol_;
 }
 
@@ -334,6 +395,10 @@ bool NavigationHandleImpl::IsSameDocument() {
   return is_same_document_;
 }
 
+const net::HttpRequestHeaders& NavigationHandleImpl::GetRequestHeaders() {
+  return request_headers_;
+}
+
 const net::HttpResponseHeaders* NavigationHandleImpl::GetResponseHeaders() {
   return response_headers_.get();
 }
@@ -345,10 +410,6 @@ NavigationHandleImpl::GetConnectionInfo() {
 
 const net::SSLInfo& NavigationHandleImpl::GetSSLInfo() {
   return ssl_info_;
-}
-
-bool NavigationHandleImpl::ShouldSSLErrorsBeFatal() {
-  return should_ssl_errors_be_fatal_;
 }
 
 bool NavigationHandleImpl::HasCommitted() {
@@ -405,29 +466,9 @@ void NavigationHandleImpl::RegisterThrottleForTesting(
 }
 
 NavigationThrottle::ThrottleCheckResult
-NavigationHandleImpl::CallWillStartRequestForTesting(
-    bool is_post,
-    const Referrer& sanitized_referrer,
-    bool has_user_gesture,
-    ui::PageTransition transition,
-    bool is_external_protocol) {
+NavigationHandleImpl::CallWillStartRequestForTesting() {
   NavigationThrottle::ThrottleCheckResult result = NavigationThrottle::DEFER;
-
-  scoped_refptr<ResourceRequestBody> resource_request_body;
-  std::string method = "GET";
-  if (is_post) {
-    method = "POST";
-
-    std::string body = "test=body";
-    resource_request_body = new ResourceRequestBody();
-    resource_request_body->AppendBytes(body.data(), body.size());
-  }
-
-  WillStartRequest(method, resource_request_body, sanitized_referrer,
-                   has_user_gesture, transition, is_external_protocol,
-                   REQUEST_CONTEXT_TYPE_LOCATION,
-                   blink::WebMixedContentContextType::kBlockable,
-                   base::Bind(&UpdateThrottleCheckResult, &result));
+  WillStartRequest(base::Bind(&UpdateThrottleCheckResult, &result));
 
   // Reset the callback to ensure it will not be called later.
   complete_callback_.Reset();
@@ -454,11 +495,9 @@ NavigationHandleImpl::CallWillRedirectRequestForTesting(
 
 NavigationThrottle::ThrottleCheckResult
 NavigationHandleImpl::CallWillFailRequestForTesting(
-    base::Optional<net::SSLInfo> ssl_info,
-    bool should_ssl_errors_be_fatal) {
+    base::Optional<net::SSLInfo> ssl_info) {
   NavigationThrottle::ThrottleCheckResult result = NavigationThrottle::DEFER;
-  WillFailRequest(ssl_info, should_ssl_errors_be_fatal,
-                  base::Bind(&UpdateThrottleCheckResult, &result));
+  WillFailRequest(ssl_info, base::Bind(&UpdateThrottleCheckResult, &result));
 
   // Reset the callback to ensure it will not be called later.
   complete_callback_.Reset();
@@ -475,7 +514,7 @@ NavigationHandleImpl::CallWillProcessResponseForTesting(
   WillProcessResponse(static_cast<RenderFrameHostImpl*>(render_frame_host),
                       headers, net::HttpResponseInfo::CONNECTION_INFO_UNKNOWN,
                       net::HostPortPair(), net::SSLInfo(), GlobalRequestID(),
-                      false, false, false, base::Closure(),
+                      false, false, false,
                       base::Bind(&UpdateThrottleCheckResult, &result));
 
   // Reset the callback to ensure it will not be called later.
@@ -496,7 +535,6 @@ void NavigationHandleImpl::CallDidCommitNavigationForTesting(const GURL& url) {
   params.searchable_form_encoding = std::string();
   params.did_create_new_entry = false;
   params.gesture = NavigationGestureUser;
-  params.was_within_same_document = false;
   params.method = "GET";
   params.page_state = PageState::CreateFromURL(url);
   params.contents_mime_type = std::string("text/html");
@@ -537,9 +575,17 @@ NavigationData* NavigationHandleImpl::GetNavigationData() {
   return navigation_data_.get();
 }
 
-void NavigationHandleImpl::SetOnDeferCallbackForTesting(
-    const base::Closure& on_defer_callback) {
-  on_defer_callback_for_testing_ = on_defer_callback;
+void NavigationHandleImpl::RegisterSubresourceOverride(
+    mojom::TransferrableURLLoaderPtr transferrable_loader) {
+  if (!transferrable_loader)
+    return;
+
+  NavigationRequest* request = frame_tree_node_->navigation_request();
+  if (!request)
+    request = frame_tree_node_->current_frame_host()->navigation_request();
+
+  if (request)
+    request->RegisterSubresourceOverride(std::move(transferrable_loader));
 }
 
 const GlobalRequestID& NavigationHandleImpl::GetGlobalRequestID() {
@@ -551,28 +597,27 @@ bool NavigationHandleImpl::IsDownload() {
   return is_download_;
 }
 
+bool NavigationHandleImpl::IsFormSubmission() {
+  return is_form_submission_;
+}
+
+const base::Optional<std::string>&
+NavigationHandleImpl::GetSuggestedFilename() {
+  return suggested_filename_;
+}
+
 void NavigationHandleImpl::InitServiceWorkerHandle(
     ServiceWorkerContextWrapper* service_worker_context) {
-  DCHECK(IsBrowserSideNavigationEnabled());
   service_worker_handle_.reset(
       new ServiceWorkerNavigationHandle(service_worker_context));
 }
 
 void NavigationHandleImpl::InitAppCacheHandle(
     ChromeAppCacheService* appcache_service) {
-  DCHECK(IsBrowserSideNavigationEnabled());
   appcache_handle_.reset(new AppCacheNavigationHandle(appcache_service));
 }
 
 void NavigationHandleImpl::WillStartRequest(
-    const std::string& method,
-    scoped_refptr<content::ResourceRequestBody> resource_request_body,
-    const Referrer& sanitized_referrer,
-    bool has_user_gesture,
-    ui::PageTransition transition,
-    bool is_external_protocol,
-    RequestContextType request_context_type,
-    blink::WebMixedContentContextType mixed_content_context_type,
     const ThrottleChecksFinishedCallback& callback) {
   TRACE_EVENT_ASYNC_STEP_INTO0("navigation", "NavigationHandle", this,
                                "WillStartRequest");
@@ -583,27 +628,6 @@ void NavigationHandleImpl::WillStartRequest(
     return;
   }
 
-  if (method != "POST")
-    DCHECK(!resource_request_body);
-
-  // Update the navigation parameters.
-  method_ = method;
-  if (method_ == "POST")
-    resource_request_body_ = resource_request_body;
-  has_user_gesture_ = has_user_gesture;
-  transition_ = transition;
-  // Mirrors the logic in RenderFrameImpl::SendDidCommitProvisionalLoad.
-  if (transition_ & ui::PAGE_TRANSITION_CLIENT_REDIRECT) {
-    // If the page contained a client redirect (meta refresh,
-    // document.location), set the referrer appropriately.
-    sanitized_referrer_ =
-        Referrer(redirect_chain_[0], sanitized_referrer.policy);
-  } else {
-    sanitized_referrer_ = sanitized_referrer;
-  }
-  is_external_protocol_ = is_external_protocol;
-  request_context_type_ = request_context_type;
-  mixed_content_context_type_ = mixed_content_context_type;
   state_ = WILL_SEND_REQUEST;
   complete_callback_ = callback;
 
@@ -613,18 +637,16 @@ void NavigationHandleImpl::WillStartRequest(
     return;
   }
 
-  if (!IsRendererDebugURL(url_))
-    RegisterNavigationThrottles();
+  RegisterNavigationThrottles();
 
-  if (IsBrowserSideNavigationEnabled())
+  // If the content/ embedder did not pass the NavigationUIData at the beginning
+  // of the navigation, ask for it now.
+  if (!navigation_ui_data_)
     navigation_ui_data_ = GetDelegate()->GetNavigationUIData(this);
 
   // Notify each throttle of the request.
-  base::Closure on_defer_callback_copy = on_defer_callback_for_testing_;
   NavigationThrottle::ThrottleCheckResult result = CheckWillStartRequest();
   if (result.action() == NavigationThrottle::DEFER) {
-    if (!on_defer_callback_copy.is_null())
-      on_defer_callback_copy.Run();
     // DO NOT ADD CODE: the NavigationHandle might have been destroyed during
     // one of the NavigationThrottle checks.
     return;
@@ -697,11 +719,8 @@ void NavigationHandleImpl::WillRedirectRequest(
   }
 
   // Notify each throttle of the request.
-  base::Closure on_defer_callback_copy = on_defer_callback_for_testing_;
   NavigationThrottle::ThrottleCheckResult result = CheckWillRedirectRequest();
   if (result.action() == NavigationThrottle::DEFER) {
-    if (!on_defer_callback_copy.is_null())
-      on_defer_callback_copy.Run();
     // DO NOT ADD CODE: the NavigationHandle might have been destroyed during
     // one of the NavigationThrottle checks.
     return;
@@ -714,22 +733,18 @@ void NavigationHandleImpl::WillRedirectRequest(
 
 void NavigationHandleImpl::WillFailRequest(
     base::Optional<net::SSLInfo> ssl_info,
-    bool should_ssl_errors_be_fatal,
     const ThrottleChecksFinishedCallback& callback) {
   TRACE_EVENT_ASYNC_STEP_INTO0("navigation", "NavigationHandle", this,
                                "WillFailRequest");
   if (ssl_info.has_value())
     ssl_info_ = ssl_info.value();
-  should_ssl_errors_be_fatal_ = should_ssl_errors_be_fatal;
+
   complete_callback_ = callback;
   state_ = WILL_FAIL_REQUEST;
 
   // Notify each throttle of the request.
-  base::Closure on_defer_callback_copy = on_defer_callback_for_testing_;
   NavigationThrottle::ThrottleCheckResult result = CheckWillFailRequest();
   if (result.action() == NavigationThrottle::DEFER) {
-    if (!on_defer_callback_copy.is_null())
-      on_defer_callback_copy.Run();
     // DO NOT ADD CODE: the NavigationHandle might have been destroyed during
     // one of the NavigationThrottle checks.
     return;
@@ -750,7 +765,6 @@ void NavigationHandleImpl::WillProcessResponse(
     bool should_replace_current_entry,
     bool is_download,
     bool is_stream,
-    const base::Closure& transfer_callback,
     const ThrottleChecksFinishedCallback& callback) {
   TRACE_EVENT_ASYNC_STEP_INTO0("navigation", "NavigationHandle", this,
                                "WillProcessResponse");
@@ -767,27 +781,28 @@ void NavigationHandleImpl::WillProcessResponse(
   ssl_info_ = ssl_info;
   socket_address_ = socket_address;
   complete_callback_ = callback;
-  transfer_callback_ = transfer_callback;
 
   // Notify each throttle of the response.
-  base::Closure on_defer_callback_copy = on_defer_callback_for_testing_;
   NavigationThrottle::ThrottleCheckResult result = CheckWillProcessResponse();
   if (result.action() == NavigationThrottle::DEFER) {
-    if (!on_defer_callback_copy.is_null())
-      on_defer_callback_copy.Run();
     // DO NOT ADD CODE: the NavigationHandle might have been destroyed during
     // one of the NavigationThrottle checks.
     return;
   }
 
   // If the navigation is done processing the response, then it's ready to
-  // commit. Determine which RenderFrameHost should render the response, based
-  // on its site (after any redirects).
-  // Note: if MaybeTransferAndProceed returns false, this means that this
-  // NavigationHandle was deleted, so return immediately.
-  if (result.action() == NavigationThrottle::PROCEED &&
-      !MaybeTransferAndProceed())
-    return;
+  // commit. Inform observers that the navigation is now ready to commit, unless
+  // it is not set to commit (204/205s/downloads).
+  if (result.action() == NavigationThrottle::PROCEED && render_frame_host_) {
+    CHECK(!suggested_filename_.has_value() ||
+          !(url_.SchemeIsBlob() || url_.SchemeIsFileSystem() ||
+            url_.SchemeIs(url::kAboutScheme) ||
+            url_.SchemeIs(url::kDataScheme)))
+        << "Blob, filesystem, data, and about URLs with a suggested filename "
+           "should always result in a download, so we should never process a "
+           "navigation response here.";
+    ReadyToCommitNavigation(render_frame_host_, false);
+  }
 
   TRACE_EVENT_ASYNC_STEP_INTO1("navigation", "NavigationHandle", this,
                                "ProcessResponse", "result", result.action());
@@ -795,7 +810,8 @@ void NavigationHandleImpl::WillProcessResponse(
 }
 
 void NavigationHandleImpl::ReadyToCommitNavigation(
-    RenderFrameHostImpl* render_frame_host) {
+    RenderFrameHostImpl* render_frame_host,
+    bool is_error) {
   TRACE_EVENT_ASYNC_STEP_INTO0("navigation", "NavigationHandle", this,
                                "ReadyToCommitNavigation");
 
@@ -804,21 +820,33 @@ void NavigationHandleImpl::ReadyToCommitNavigation(
   state_ = READY_TO_COMMIT;
   ready_to_commit_time_ = base::TimeTicks::Now();
 
-  // For back-forward navigations, record metrics.
-  if ((transition_ & ui::PAGE_TRANSITION_FORWARD_BACK) && !IsSameDocument()) {
-    bool is_same_process =
+  // Record metrics for the time it takes to get to this state from the
+  // beginning of the navigation.
+  if (!IsSameDocument() && !is_error) {
+    is_same_process_ =
         render_frame_host_->GetProcess()->GetID() ==
         frame_tree_node_->current_frame_host()->GetProcess()->GetID();
-    UMA_HISTOGRAM_BOOLEAN("Navigation.BackForward.IsSameProcess",
-                          is_same_process);
-    UMA_HISTOGRAM_TIMES("Navigation.BackForward.TimeToReadyToCommit",
-                        ready_to_commit_time_ - navigation_start_);
+    LogIsSameProcess(transition_, is_same_process_);
+
+    // TODO(csharrison,nasko): Increase the max value to 3 minutes in M68 or
+    // M69.
+    base::TimeDelta delta = ready_to_commit_time_ - navigation_start_;
+    LOG_NAVIGATION_TIMING_HISTOGRAM("TimeToReadyToCommit", transition_, delta,
+                                    base::TimeDelta::FromSeconds(10));
+    if (is_same_process_) {
+      LOG_NAVIGATION_TIMING_HISTOGRAM("TimeToReadyToCommit.SameProcess",
+                                      transition_, delta,
+                                      base::TimeDelta::FromSeconds(10));
+    } else {
+      LOG_NAVIGATION_TIMING_HISTOGRAM("TimeToReadyToCommit.CrossProcess",
+                                      transition_, delta,
+                                      base::TimeDelta::FromSeconds(10));
+    }
   }
 
-  if (IsBrowserSideNavigationEnabled())
-    SetExpectedProcess(render_frame_host->GetProcess());
+  SetExpectedProcess(render_frame_host->GetProcess());
 
-  if (!IsRendererDebugURL(url_) && !IsSameDocument())
+  if (!IsSameDocument())
     GetDelegate()->ReadyToCommitNavigation(this);
 }
 
@@ -843,18 +871,6 @@ void NavigationHandleImpl::DidCommitNavigation(
   base_url_ = params.base_url;
   navigation_type_ = navigation_type;
 
-  // For back-forward navigations, record metrics.
-  if ((transition_ & ui::PAGE_TRANSITION_FORWARD_BACK) &&
-      !ready_to_commit_time_.is_null() && !IsSameDocument()) {
-    UMA_HISTOGRAM_TIMES("Navigation.BackForward.ReadyToCommitUntilCommit",
-                        base::TimeTicks::Now() - ready_to_commit_time_);
-  }
-
-  DCHECK(!IsInMainFrame() || navigation_entry_committed)
-      << "Only subframe navigations can get here without changing the "
-      << "NavigationEntry";
-  subframe_entry_committed_ = navigation_entry_committed;
-
   // If an error page reloads, net_error_code might be 200 but we still want to
   // count it as an error page.
   if (params.base_url.spec() == kUnreachableWebDataURL ||
@@ -866,18 +882,69 @@ void NavigationHandleImpl::DidCommitNavigation(
     TRACE_EVENT_ASYNC_STEP_INTO0("navigation", "NavigationHandle", this,
                                  "DidCommitNavigation");
     state_ = DID_COMMIT;
+  }
 
-    // Getting this far means that the navigation was not blocked, and neither
-    // is this the error page navigation following a blocked navigation. Ensure
-    // the frame owner element is no longer collapsed as a result of a prior
-    // navigation having been blocked with BLOCK_REQUEST_AND_COLLAPSE.
-    if (!frame_tree_node()->IsMainFrame()) {
-      // The last committed load in collapsed frames will be an error page with
-      // |kUnreachableWebDataURL|. Same-document navigation should not be
-      // possible.
-      DCHECK(!is_same_document_ || !frame_tree_node()->is_collapsed());
-      frame_tree_node()->SetCollapsed(false);
+  // Record metrics for the time it took to commit the navigation if it was to
+  // another document without error.
+  if (!IsSameDocument() && !IsErrorPage()) {
+    base::TimeTicks now = base::TimeTicks::Now();
+    base::TimeDelta delta = now - navigation_start_;
+    ui::PageTransition transition = GetPageTransition();
+    // 3 minutes aligns with UMA_HISTOGRAM_MEDIUM_TIMES.
+    const base::TimeDelta kMaxTime = base::TimeDelta::FromMinutes(3);
+    LOG_NAVIGATION_TIMING_HISTOGRAM("StartToCommit", transition, delta,
+                                    kMaxTime);
+    if (IsInMainFrame()) {
+      LOG_NAVIGATION_TIMING_HISTOGRAM("StartToCommit.MainFrame", transition,
+                                      delta, kMaxTime);
+    } else {
+      LOG_NAVIGATION_TIMING_HISTOGRAM("StartToCommit.Subframe", transition,
+                                      delta, kMaxTime);
     }
+    if (is_same_process_) {
+      LOG_NAVIGATION_TIMING_HISTOGRAM("StartToCommit.SameProcess", transition,
+                                      delta, kMaxTime);
+      if (IsInMainFrame()) {
+        LOG_NAVIGATION_TIMING_HISTOGRAM("StartToCommit.SameProcess.MainFrame",
+                                        transition, delta, kMaxTime);
+      } else {
+        LOG_NAVIGATION_TIMING_HISTOGRAM("StartToCommit.SameProcess.Subframe",
+                                        transition, delta, kMaxTime);
+      }
+    } else {
+      LOG_NAVIGATION_TIMING_HISTOGRAM("StartToCommit.CrossProcess", transition,
+                                      delta, kMaxTime);
+      if (IsInMainFrame()) {
+        LOG_NAVIGATION_TIMING_HISTOGRAM("StartToCommit.CrossProcess.MainFrame",
+                                        transition, delta, kMaxTime);
+      } else {
+        LOG_NAVIGATION_TIMING_HISTOGRAM("StartToCommit.CrossProcess.Subframe",
+                                        transition, delta, kMaxTime);
+      }
+    }
+
+    // 10 seconds aligns with UMA_HISTOGRAM_TIMES.
+    if (!ready_to_commit_time_.is_null()) {
+      LOG_NAVIGATION_TIMING_HISTOGRAM("ReadyToCommitUntilCommit", transition_,
+                                      now - ready_to_commit_time_,
+                                      base::TimeDelta::FromSeconds(10));
+    }
+  }
+
+  DCHECK(!IsInMainFrame() || navigation_entry_committed)
+      << "Only subframe navigations can get here without changing the "
+      << "NavigationEntry";
+  subframe_entry_committed_ = navigation_entry_committed;
+
+  // For successful navigations, ensure the frame owner element is no longer
+  // collapsed as a result of a prior navigation having been blocked with
+  // BLOCK_REQUEST_AND_COLLAPSE.
+  if (!IsErrorPage() && !frame_tree_node()->IsMainFrame()) {
+    // The last committed load in collapsed frames will be an error page with
+    // |kUnreachableWebDataURL|. Same-document navigation should not be
+    // possible.
+    DCHECK(!is_same_document_ || !frame_tree_node()->is_collapsed());
+    frame_tree_node()->SetCollapsed(false);
   }
 }
 
@@ -913,19 +980,6 @@ void NavigationHandleImpl::SetExpectedProcess(
       expected_process, site_url_);
 }
 
-void NavigationHandleImpl::Transfer() {
-  DCHECK(!IsBrowserSideNavigationEnabled());
-  // This is an actual transfer. Inform the NavigationResourceThrottle. This
-  // will allow to mark the URLRequest as transferring. When it is marked as
-  // transferring, the URLRequest can no longer be cancelled by its original
-  // RenderFrame. Instead it will persist until being picked up by the transfer
-  // RenderFrame, even if the original RenderFrame is destroyed.
-  // Note: |transfer_callback_| can be null in unit tests.
-  if (!transfer_callback_.is_null())
-    BrowserThread::PostTask(BrowserThread::IO, FROM_HERE, transfer_callback_);
-  transfer_callback_.Reset();
-}
-
 NavigationThrottle::ThrottleCheckResult
 NavigationHandleImpl::CheckWillStartRequest() {
   DCHECK(state_ == WILL_SEND_REQUEST || state_ == DEFERRING_START);
@@ -933,6 +987,8 @@ NavigationHandleImpl::CheckWillStartRequest() {
   DCHECK(state_ != DEFERRING_START || next_index_ != 0);
   base::WeakPtr<NavigationHandleImpl> weak_ref = weak_factory_.GetWeakPtr();
   for (size_t i = next_index_; i < throttles_.size(); ++i) {
+    TRACE_EVENT1("navigation", "NavigationThrottle::WillStartRequest",
+                 "throttle", throttles_[i]->GetNameForLogging());
     NavigationThrottle::ThrottleCheckResult result =
         throttles_[i]->WillStartRequest();
     if (!weak_ref) {
@@ -940,6 +996,9 @@ NavigationHandleImpl::CheckWillStartRequest() {
       // Return immediately.
       return NavigationThrottle::DEFER;
     }
+    // TODO(csharrison): It would be nice if the Check* traces also included
+    // synchronous time in the throttle's respective method, and did not include
+    // time spent in the next throttle's method.
     TRACE_EVENT_ASYNC_STEP_INTO0(
         "navigation", "NavigationHandle", this,
         base::StringPrintf("CheckWillStartRequest: %s: %d",
@@ -950,7 +1009,8 @@ NavigationHandleImpl::CheckWillStartRequest() {
         continue;
 
       case NavigationThrottle::BLOCK_REQUEST_AND_COLLAPSE:
-        frame_tree_node_->SetCollapsed(true);  // Fall through.
+        frame_tree_node_->SetCollapsed(true);
+        FALLTHROUGH;
       case NavigationThrottle::BLOCK_REQUEST:
       case NavigationThrottle::CANCEL:
       case NavigationThrottle::CANCEL_AND_IGNORE:
@@ -997,11 +1057,9 @@ NavigationHandleImpl::CheckWillRedirectRequest() {
         continue;
 
       case NavigationThrottle::BLOCK_REQUEST_AND_COLLAPSE:
-        frame_tree_node_->SetCollapsed(true);  // Fall through.
+        frame_tree_node_->SetCollapsed(true);
+        FALLTHROUGH;
       case NavigationThrottle::BLOCK_REQUEST:
-        CHECK(IsBrowserSideNavigationEnabled())
-            << "BLOCK_REQUEST and BLOCK_REQUEST_AND_COLLAPSE must not be used "
-               "on redirect without PlzNavigate";
       case NavigationThrottle::CANCEL:
       case NavigationThrottle::CANCEL_AND_IGNORE:
         state_ = CANCELING;
@@ -1126,12 +1184,9 @@ void NavigationHandleImpl::ResumeInternal() {
                                "Resume");
 
   NavigationThrottle::ThrottleCheckResult result = NavigationThrottle::DEFER;
-  base::Closure on_defer_callback_copy = on_defer_callback_for_testing_;
   if (state_ == DEFERRING_START) {
     result = CheckWillStartRequest();
     if (result.action() == NavigationThrottle::DEFER) {
-      if (!on_defer_callback_copy.is_null())
-        on_defer_callback_copy.Run();
       // DO NOT ADD CODE: the NavigationHandle might have been destroyed during
       // one of the NavigationThrottle checks.
       return;
@@ -1139,8 +1194,6 @@ void NavigationHandleImpl::ResumeInternal() {
   } else if (state_ == DEFERRING_REDIRECT) {
     result = CheckWillRedirectRequest();
     if (result.action() == NavigationThrottle::DEFER) {
-      if (!on_defer_callback_copy.is_null())
-        on_defer_callback_copy.Run();
       // DO NOT ADD CODE: the NavigationHandle might have been destroyed during
       // one of the NavigationThrottle checks.
       return;
@@ -1148,8 +1201,6 @@ void NavigationHandleImpl::ResumeInternal() {
   } else if (state_ == DEFERRING_FAILURE) {
     result = CheckWillFailRequest();
     if (result.action() == NavigationThrottle::DEFER) {
-      if (!on_defer_callback_copy.is_null())
-        on_defer_callback_copy.Run();
       // DO NOT ADD CODE: the NavigationHandle might have been destroyed during
       // one of the NavigationThrottle checks.
       return;
@@ -1157,22 +1208,17 @@ void NavigationHandleImpl::ResumeInternal() {
   } else {
     result = CheckWillProcessResponse();
     if (result.action() == NavigationThrottle::DEFER) {
-      if (!on_defer_callback_copy.is_null())
-        on_defer_callback_copy.Run();
       // DO NOT ADD CODE: the NavigationHandle might have been destroyed during
       // one of the NavigationThrottle checks.
       return;
     }
 
     // If the navigation is about to proceed after having been deferred while
-    // processing the response, then it's ready to commit. Determine which
-    // RenderFrameHost should render the response, based on its site (after any
-    // redirects).
-    // Note: if MaybeTransferAndProceed returns false, this means that this
-    // NavigationHandle was deleted, so return immediately.
-    if (result.action() == NavigationThrottle::PROCEED &&
-        !MaybeTransferAndProceed())
-      return;
+    // processing the response, then it's ready to commit. Inform observers that
+    // the navigation is now ready to commit, unless it is not set to commit
+    // (204/205s/downloads).
+    if (result.action() == NavigationThrottle::PROCEED && render_frame_host_)
+      ReadyToCommitNavigation(render_frame_host_, false);
   }
   DCHECK_NE(NavigationThrottle::DEFER, result.action());
 
@@ -1189,8 +1235,7 @@ void NavigationHandleImpl::CancelDeferredNavigationInternal(
          result.action() == NavigationThrottle::CANCEL ||
          result.action() == NavigationThrottle::BLOCK_REQUEST_AND_COLLAPSE);
   DCHECK(result.action() != NavigationThrottle::BLOCK_REQUEST_AND_COLLAPSE ||
-         state_ == DEFERRING_START ||
-         (state_ == DEFERRING_REDIRECT && IsBrowserSideNavigationEnabled()));
+         state_ == DEFERRING_START || state_ == DEFERRING_REDIRECT);
 
   if (result.action() == NavigationThrottle::BLOCK_REQUEST_AND_COLLAPSE)
     frame_tree_node_->SetCollapsed(true);
@@ -1199,93 +1244,6 @@ void NavigationHandleImpl::CancelDeferredNavigationInternal(
                                "CancelDeferredNavigation");
   state_ = CANCELING;
   RunCompleteCallback(result);
-}
-
-bool NavigationHandleImpl::MaybeTransferAndProceed() {
-  DCHECK_EQ(WILL_PROCESS_RESPONSE, state_);
-
-  // Check if the navigation should transfer. This may result in the
-  // destruction of this NavigationHandle, and the cancellation of the request.
-  if (!MaybeTransferAndProceedInternal())
-    return false;
-
-  // Inform observers that the navigation is now ready to commit, unless a
-  // transfer of the navigation failed.
-  // PlzNavigate: when a navigation is not set to commit (204/205s/downloads) do
-  // not call ReadyToCommitNavigation.
-  DCHECK(!IsBrowserSideNavigationEnabled() || render_frame_host_ ||
-         net_error_code_ == net::ERR_ABORTED);
-  if (!IsBrowserSideNavigationEnabled() || render_frame_host_)
-    ReadyToCommitNavigation(render_frame_host_);
-  return true;
-}
-
-bool NavigationHandleImpl::MaybeTransferAndProceedInternal() {
-  DCHECK(render_frame_host_ || (IsBrowserSideNavigationEnabled() &&
-                                net_error_code_ == net::ERR_ABORTED));
-
-  // PlzNavigate: the final RenderFrameHost handling this navigation has been
-  // decided before calling WillProcessResponse in
-  // NavigationRequest::OnResponseStarted.
-  // TODO(clamy): See if PlzNavigate could use this code to check whether to
-  // use the RFH determined at the start of the navigation or to switch to
-  // another one.
-  if (IsBrowserSideNavigationEnabled())
-    return true;
-
-  // A navigation from a RenderFrame that is no longer active should not attempt
-  // to transfer.
-  if (!render_frame_host_->is_active()) {
-    // This will cause the deletion of this NavigationHandle and the
-    // cancellation of the navigation.
-    render_frame_host_->SetNavigationHandle(nullptr);
-    return false;
-  }
-
-  // If this is a download, do not do a cross-site check. The renderer will
-  // see it is a download and abort the request.
-  //
-  // Similarly, HTTP 204 (No Content) responses leave the renderer showing the
-  // previous page. The navigation should be allowed to finish without running
-  // the unload handler or swapping in the pending RenderFrameHost.
-  if (is_download_ || is_stream_ ||
-      (response_headers_.get() && response_headers_->response_code() == 204)) {
-    return true;
-  }
-
-  // The content embedder can decide that a transfer to a different process is
-  // required for this URL.
-  bool should_transfer =
-      GetContentClient()->browser()->ShouldSwapProcessesForRedirect(
-          frame_tree_node_->navigator()->GetController()->GetBrowserContext(),
-          original_url_, url_);
-
-  RenderFrameHostManager* manager =
-      render_frame_host_->frame_tree_node()->render_manager();
-
-  // In the site-per-process model, the RenderFrameHostManager may also decide
-  // (independently from the content embedder's ShouldSwapProcessesForRedirect
-  // above) that a process transfer is needed. Process transfers are skipped for
-  // WebUI processes for now, since e.g. chrome://settings has multiple
-  // "cross-site" chrome:// frames, and that doesn't yet work cross-process.
-  if (!ChildProcessSecurityPolicyImpl::GetInstance()->HasWebUIBindings(
-          render_frame_host_->GetProcess()->GetID())) {
-    should_transfer |= manager->IsRendererTransferNeededForNavigation(
-        render_frame_host_, url_);
-  }
-
-  // Start the transfer if needed.
-  if (should_transfer) {
-    // This may destroy the NavigationHandle if the transfer fails.
-    base::WeakPtr<NavigationHandleImpl> weak_self = weak_factory_.GetWeakPtr();
-    manager->OnCrossSiteResponse(render_frame_host_, request_id_,
-                                 redirect_chain_, sanitized_referrer_,
-                                 transition_, should_replace_current_entry_);
-    if (!weak_self)
-      return false;
-  }
-
-  return true;
 }
 
 void NavigationHandleImpl::RunCompleteCallback(
@@ -1301,7 +1259,7 @@ void NavigationHandleImpl::RunCompleteCallback(
   }
 
   if (!callback.is_null())
-    callback.Run(result);
+    std::move(callback).Run(result);
 
   // No code after running the callback, as it might have resulted in our
   // destruction.

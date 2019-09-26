@@ -16,8 +16,7 @@
 #include "base/debug/stack_trace.h"
 #include "base/logging.h"
 #include "base/macros.h"
-#include "base/metrics/histogram_macros.h"
-#include "base/metrics/sparse_histogram.h"
+#include "base/metrics/histogram_functions.h"
 #include "base/metrics/user_metrics.h"
 #include "base/path_service.h"
 #include "base/strings/string_number_conversions.h"
@@ -31,14 +30,14 @@
 #include "chrome/browser/net/chrome_extensions_network_delegate.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/task_manager/task_manager_interface.h"
-#include "chrome/common/features.h"
+#include "chrome/common/buildflags.h"
 #include "chrome/common/pref_names.h"
 #include "components/content_settings/core/browser/cookie_settings.h"
 #include "components/data_usage/core/data_use_aggregator.h"
 #include "components/domain_reliability/monitor.h"
-#include "components/policy/core/browser/url_blacklist_manager.h"
 #include "components/prefs/pref_member.h"
 #include "components/prefs/pref_service.h"
+#include "components/variations/net/variations_http_headers.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/render_view_host.h"
@@ -46,7 +45,7 @@
 #include "content/public/common/content_switches.h"
 #include "content/public/common/process_type.h"
 #include "content/public/common/resource_type.h"
-#include "extensions/features/features.h"
+#include "extensions/buildflags/buildflags.h"
 #include "net/base/host_port_pair.h"
 #include "net/base/load_flags.h"
 #include "net/base/net_errors.h"
@@ -80,8 +79,6 @@ using content::ResourceRequestInfo;
 namespace {
 
 bool g_access_to_all_files_enabled = false;
-
-const char kDNTHeader[] = "DNT";
 
 // Gets called when the extensions finish work on the URL. If the extensions
 // did not do a redirect (so |new_url| is empty) then we enforce the
@@ -120,12 +117,12 @@ void ReportInvalidReferrerSend(const GURL& target_url,
 void RecordNetworkErrorHistograms(const net::URLRequest* request,
                                   int net_error) {
   if (request->url().SchemeIs("http")) {
-    UMA_HISTOGRAM_SPARSE_SLOWLY("Net.HttpRequestCompletionErrorCodes",
-                                std::abs(net_error));
+    base::UmaHistogramSparse("Net.HttpRequestCompletionErrorCodes",
+                             std::abs(net_error));
 
     if (request->load_flags() & net::LOAD_MAIN_FRAME_DEPRECATED) {
-      UMA_HISTOGRAM_SPARSE_SLOWLY(
-          "Net.HttpRequestCompletionErrorCodes.MainFrame", std::abs(net_error));
+      base::UmaHistogramSparse("Net.HttpRequestCompletionErrorCodes.MainFrame",
+                               std::abs(net_error));
     }
   }
 }
@@ -201,11 +198,9 @@ ChromeNetworkDelegate::ChromeNetworkDelegate(
     BooleanPrefMember* enable_referrers)
     : profile_(nullptr),
       enable_referrers_(enable_referrers),
-      enable_do_not_track_(nullptr),
       force_google_safe_search_(nullptr),
       force_youtube_restrict_(nullptr),
       allowed_domains_for_apps_(nullptr),
-      url_blacklist_manager_(NULL),
       experimental_web_platform_features_enabled_(
           base::CommandLine::ForCurrentProcess()->HasSwitch(
               switches::kEnableExperimentalWebPlatformFeatures)),
@@ -243,7 +238,6 @@ void ChromeNetworkDelegate::set_data_use_aggregator(
 // static
 void ChromeNetworkDelegate::InitializePrefsOnUIThread(
     BooleanPrefMember* enable_referrers,
-    BooleanPrefMember* enable_do_not_track,
     BooleanPrefMember* force_google_safe_search,
     IntegerPrefMember* force_youtube_restrict,
     StringPrefMember* allowed_domains_for_apps,
@@ -252,11 +246,6 @@ void ChromeNetworkDelegate::InitializePrefsOnUIThread(
   enable_referrers->Init(prefs::kEnableReferrers, pref_service);
   enable_referrers->MoveToThread(
       BrowserThread::GetTaskRunnerForThread(BrowserThread::IO));
-  if (enable_do_not_track) {
-    enable_do_not_track->Init(prefs::kEnableDoNotTrack, pref_service);
-    enable_do_not_track->MoveToThread(
-        BrowserThread::GetTaskRunnerForThread(BrowserThread::IO));
-  }
   if (force_google_safe_search) {
     force_google_safe_search->Init(prefs::kForceGoogleSafeSearch, pref_service);
     force_google_safe_search->MoveToThread(
@@ -278,30 +267,11 @@ int ChromeNetworkDelegate::OnBeforeURLRequest(
     net::URLRequest* request,
     const net::CompletionCallback& callback,
     GURL* new_url) {
-  // TODO(joaodasilva): This prevents extensions from seeing URLs that are
-  // blocked. However, an extension might redirect the request to another URL,
-  // which is not blocked.
-
-  const ResourceRequestInfo* info = ResourceRequestInfo::ForRequest(request);
-  int error = net::ERR_BLOCKED_BY_ADMINISTRATOR;
-  if (info && content::IsResourceTypeFrame(info->GetResourceType()) &&
-      url_blacklist_manager_ &&
-      url_blacklist_manager_->ShouldBlockRequestForFrame(
-          request->url(), &error)) {
-    // URL access blocked by policy.
-    request->net_log().AddEvent(
-        net::NetLogEventType::CHROME_POLICY_ABORTED_REQUEST,
-        net::NetLog::StringCallback("url",
-                                    &request->url().possibly_invalid_spec()));
-    return error;
-  }
 
   extensions_delegate_->ForwardStartRequestStatus(request);
 
   if (!enable_referrers_->GetValue())
     request->SetReferrer(std::string());
-  if (enable_do_not_track_ && enable_do_not_track_->GetValue())
-    request->SetExtraRequestHeaderByName(kDNTHeader, "1", true /* override */);
 
   bool force_safe_search =
       (force_google_safe_search_ && force_google_safe_search_->GetValue());
@@ -375,6 +345,7 @@ void ChromeNetworkDelegate::OnBeforeRedirect(net::URLRequest* request,
   if (domain_reliability_monitor_)
     domain_reliability_monitor_->OnBeforeRedirect(request);
   extensions_delegate_->OnBeforeRedirect(request, new_location);
+  variations::StripVariationHeaderIfNeeded(new_location, request);
 }
 
 void ChromeNetworkDelegate::OnResponseStarted(net::URLRequest* request,
@@ -544,26 +515,30 @@ bool ChromeNetworkDelegate::OnCancelURLRequestWithPolicyViolatingReferrerHeader(
 bool ChromeNetworkDelegate::OnCanQueueReportingReport(
     const url::Origin& origin) const {
   if (!cookie_settings_)
-    return true;
+    return false;
 
   return cookie_settings_->IsCookieAccessAllowed(origin.GetURL(),
                                                  origin.GetURL());
 }
 
-bool ChromeNetworkDelegate::OnCanSendReportingReport(
-    const url::Origin& origin) const {
-  if (!cookie_settings_)
-    return true;
+void ChromeNetworkDelegate::OnCanSendReportingReports(
+    std::set<url::Origin> origins,
+    base::OnceCallback<void(std::set<url::Origin>)> result_callback) const {
+  if (!reporting_permissions_checker_) {
+    origins.clear();
+    std::move(result_callback).Run(std::move(origins));
+    return;
+  }
 
-  return cookie_settings_->IsCookieAccessAllowed(origin.GetURL(),
-                                                 origin.GetURL());
+  reporting_permissions_checker_->FilterReportingOrigins(
+      std::move(origins), std::move(result_callback));
 }
 
 bool ChromeNetworkDelegate::OnCanSetReportingClient(
     const url::Origin& origin,
     const GURL& endpoint) const {
   if (!cookie_settings_)
-    return true;
+    return false;
 
   return cookie_settings_->IsCookieAccessAllowed(endpoint, origin.GetURL());
 }
@@ -572,7 +547,7 @@ bool ChromeNetworkDelegate::OnCanUseReportingClient(
     const url::Origin& origin,
     const GURL& endpoint) const {
   if (!cookie_settings_)
-    return true;
+    return false;
 
   return cookie_settings_->IsCookieAccessAllowed(endpoint, origin.GetURL());
 }

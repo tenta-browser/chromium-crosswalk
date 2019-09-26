@@ -10,7 +10,7 @@ layer at (0,0) size 800x600
       LayoutBlockFlow {P} at (0,36) size 784x245
         LayoutText {#text} at (0,0) size 86x19
           text run at (0,0) width 86: "TEXTAREA"
-        LayoutBR {BR} at (85,15) size 1x0
+        LayoutBR {BR} at (86,15) size 0x0
         LayoutText {#text} at (400,205) size 4x19
           text run at (400,205) width 4: " "
         LayoutBR {BR} at (0,0) size 0x0
@@ -18,7 +18,7 @@ layer at (0,0) size 800x600
 layer at (8,64) size 400x200 clip at (9,65) size 398x198
   LayoutTextControl {TEXTAREA} at (0,20) size 400x200 [bgcolor=#FFFFFF] [border: (1px dotted #C0C0C0)]
     LayoutBlockFlow {DIV} at (3,3) size 396x32
-      LayoutText {#text} at (0,0) size 387x32
-        text run at (0,0) width 382: "Demo text here that wraps a bit and should demonstrate"
-        text run at (382,0) width 5: " "
-        text run at (0,16) width 182: "the goodness of line-height"
+      LayoutText {#text} at (0,0) size 351x32
+        text run at (0,0) width 347: "Demo text here that wraps a bit and should demonstrate the"
+        text run at (347,0) width 4: " "
+        text run at (0,16) width 134: "goodness of line-height"

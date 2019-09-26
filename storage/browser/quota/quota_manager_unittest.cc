@@ -32,20 +32,12 @@
 #include "storage/browser/test/mock_storage_client.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "url/gurl.h"
+#include "url/origin.h"
 
-using storage::kQuotaErrorAbort;
-using storage::kQuotaErrorInvalidModification;
-using storage::kQuotaErrorNotSupported;
-using storage::kQuotaStatusOk;
-using storage::kQuotaStatusUnknown;
-using storage::kStorageTypePersistent;
-using storage::kStorageTypeSyncable;
-using storage::kStorageTypeTemporary;
-using storage::kStorageTypeUnknown;
+using blink::mojom::QuotaStatusCode;
+using blink::mojom::StorageType;
 using storage::QuotaClient;
 using storage::QuotaManager;
-using storage::QuotaStatusCode;
-using storage::StorageType;
 using storage::UsageInfo;
 using storage::UsageInfoEntries;
 
@@ -54,9 +46,9 @@ namespace content {
 namespace {
 
 // For shorter names.
-const StorageType kTemp = kStorageTypeTemporary;
-const StorageType kPerm = kStorageTypePersistent;
-const StorageType kSync = kStorageTypeSyncable;
+const StorageType kTemp = StorageType::kTemporary;
+const StorageType kPerm = StorageType::kPersistent;
+const StorageType kSync = StorageType::kSyncable;
 
 const int kAllClients = QuotaClient::kAllClientsMask;
 
@@ -78,6 +70,10 @@ std::tuple<int64_t, int64_t> GetVolumeInfoForTests(
   int64_t available = static_cast<uint64_t>(GetAvailableDiskSpaceForTest());
   int64_t total = available * 2;
   return std::make_tuple(total, available);
+}
+
+url::Origin ToOrigin(const std::string& url) {
+  return url::Origin::Create(GURL(url));
 }
 
 }  // namespace
@@ -136,40 +132,41 @@ class QuotaManagerTest : public testing::Test {
 
   void GetUsageInfo() {
     usage_info_.clear();
-    quota_manager_->GetUsageInfo(
-        base::Bind(&QuotaManagerTest::DidGetUsageInfo,
-                   weak_factory_.GetWeakPtr()));
+    quota_manager_->GetUsageInfo(base::BindOnce(
+        &QuotaManagerTest::DidGetUsageInfo, weak_factory_.GetWeakPtr()));
   }
 
   void GetUsageAndQuotaForWebApps(const GURL& origin,
                                   StorageType type) {
-    quota_status_ = kQuotaStatusUnknown;
+    quota_status_ = QuotaStatusCode::kUnknown;
     usage_ = -1;
     quota_ = -1;
     quota_manager_->GetUsageAndQuotaForWebApps(
-        origin, type, base::Bind(&QuotaManagerTest::DidGetUsageAndQuota,
-                                 weak_factory_.GetWeakPtr()));
+        origin, type,
+        base::BindOnce(&QuotaManagerTest::DidGetUsageAndQuota,
+                       weak_factory_.GetWeakPtr()));
   }
 
   void GetUsageAndQuotaWithBreakdown(const GURL& origin, StorageType type) {
-    quota_status_ = kQuotaStatusUnknown;
+    quota_status_ = QuotaStatusCode::kUnknown;
     usage_ = -1;
     quota_ = -1;
     usage_breakdown_.clear();
     quota_manager_->GetUsageAndQuotaWithBreakdown(
         origin, type,
-        base::Bind(&QuotaManagerTest::DidGetUsageAndQuotaWithBreakdown,
-                   weak_factory_.GetWeakPtr()));
+        base::BindOnce(&QuotaManagerTest::DidGetUsageAndQuotaWithBreakdown,
+                       weak_factory_.GetWeakPtr()));
   }
 
   void GetUsageAndQuotaForStorageClient(const GURL& origin,
                                         StorageType type) {
-    quota_status_ = kQuotaStatusUnknown;
+    quota_status_ = QuotaStatusCode::kUnknown;
     usage_ = -1;
     quota_ = -1;
     quota_manager_->GetUsageAndQuota(
-        origin, type, base::Bind(&QuotaManagerTest::DidGetUsageAndQuota,
-                                 weak_factory_.GetWeakPtr()));
+        origin, type,
+        base::BindOnce(&QuotaManagerTest::DidGetUsageAndQuota,
+                       weak_factory_.GetWeakPtr()));
   }
 
   void SetQuotaSettings(int64_t pool_size,
@@ -186,111 +183,108 @@ class QuotaManagerTest : public testing::Test {
   }
 
   void GetPersistentHostQuota(const std::string& host) {
-    quota_status_ = kQuotaStatusUnknown;
+    quota_status_ = QuotaStatusCode::kUnknown;
     quota_ = -1;
     quota_manager_->GetPersistentHostQuota(
-        host,
-        base::Bind(&QuotaManagerTest::DidGetHostQuota,
-                   weak_factory_.GetWeakPtr()));
+        host, base::BindOnce(&QuotaManagerTest::DidGetHostQuota,
+                             weak_factory_.GetWeakPtr()));
   }
 
   void SetPersistentHostQuota(const std::string& host, int64_t new_quota) {
-    quota_status_ = kQuotaStatusUnknown;
+    quota_status_ = QuotaStatusCode::kUnknown;
     quota_ = -1;
     quota_manager_->SetPersistentHostQuota(
         host, new_quota,
-        base::Bind(&QuotaManagerTest::DidGetHostQuota,
-                   weak_factory_.GetWeakPtr()));
+        base::BindOnce(&QuotaManagerTest::DidGetHostQuota,
+                       weak_factory_.GetWeakPtr()));
   }
 
   void GetGlobalUsage(StorageType type) {
     usage_ = -1;
     unlimited_usage_ = -1;
     quota_manager_->GetGlobalUsage(
-        type,
-        base::Bind(&QuotaManagerTest::DidGetGlobalUsage,
-                   weak_factory_.GetWeakPtr()));
+        type, base::BindOnce(&QuotaManagerTest::DidGetGlobalUsage,
+                             weak_factory_.GetWeakPtr()));
   }
 
   void GetHostUsage(const std::string& host, StorageType type) {
     usage_ = -1;
     quota_manager_->GetHostUsage(
         host, type,
-        base::Bind(&QuotaManagerTest::DidGetHostUsage,
-                   weak_factory_.GetWeakPtr()));
+        base::BindOnce(&QuotaManagerTest::DidGetHostUsage,
+                       weak_factory_.GetWeakPtr()));
   }
 
   void GetHostUsageBreakdown(const std::string& host, StorageType type) {
     usage_ = -1;
     quota_manager_->GetHostUsageWithBreakdown(
         host, type,
-        base::Bind(&QuotaManagerTest::DidGetHostUsageBreakdown,
-                   weak_factory_.GetWeakPtr()));
+        base::BindOnce(&QuotaManagerTest::DidGetHostUsageBreakdown,
+                       weak_factory_.GetWeakPtr()));
   }
 
   void RunAdditionalUsageAndQuotaTask(const GURL& origin, StorageType type) {
     quota_manager_->GetUsageAndQuota(
         origin, type,
-        base::Bind(&QuotaManagerTest::DidGetUsageAndQuotaAdditional,
-                   weak_factory_.GetWeakPtr()));
+        base::BindOnce(&QuotaManagerTest::DidGetUsageAndQuotaAdditional,
+                       weak_factory_.GetWeakPtr()));
   }
 
   void DeleteClientOriginData(QuotaClient* client,
                               const GURL& origin,
                               StorageType type) {
     DCHECK(client);
-    quota_status_ = kQuotaStatusUnknown;
-    client->DeleteOriginData(
-        origin, type,
-        base::Bind(&QuotaManagerTest::StatusCallback,
-                   weak_factory_.GetWeakPtr()));
+    quota_status_ = QuotaStatusCode::kUnknown;
+    client->DeleteOriginData(url::Origin::Create(origin), type,
+                             base::BindOnce(&QuotaManagerTest::StatusCallback,
+                                            weak_factory_.GetWeakPtr()));
   }
 
   void EvictOriginData(const GURL& origin,
                        StorageType type) {
-    quota_status_ = kQuotaStatusUnknown;
+    quota_status_ = QuotaStatusCode::kUnknown;
     quota_manager_->EvictOriginData(
         origin, type,
-        base::Bind(&QuotaManagerTest::StatusCallback,
-                   weak_factory_.GetWeakPtr()));
+        base::BindOnce(&QuotaManagerTest::StatusCallback,
+                       weak_factory_.GetWeakPtr()));
   }
 
   void DeleteOriginData(const GURL& origin,
                         StorageType type,
                         int quota_client_mask) {
-    quota_status_ = kQuotaStatusUnknown;
+    quota_status_ = QuotaStatusCode::kUnknown;
     quota_manager_->DeleteOriginData(
         origin, type, quota_client_mask,
-        base::Bind(&QuotaManagerTest::StatusCallback,
-                   weak_factory_.GetWeakPtr()));
+        base::BindOnce(&QuotaManagerTest::StatusCallback,
+                       weak_factory_.GetWeakPtr()));
   }
 
   void DeleteHostData(const std::string& host,
                       StorageType type,
                       int quota_client_mask) {
-    quota_status_ = kQuotaStatusUnknown;
+    quota_status_ = QuotaStatusCode::kUnknown;
     quota_manager_->DeleteHostData(
         host, type, quota_client_mask,
-        base::Bind(&QuotaManagerTest::StatusCallback,
-                   weak_factory_.GetWeakPtr()));
+        base::BindOnce(&QuotaManagerTest::StatusCallback,
+                       weak_factory_.GetWeakPtr()));
   }
 
   void GetStorageCapacity() {
     available_space_ = -1;
     total_space_ = -1;
-    quota_manager_->GetStorageCapacity(base::Bind(
+    quota_manager_->GetStorageCapacity(base::BindOnce(
         &QuotaManagerTest::DidGetStorageCapacity, weak_factory_.GetWeakPtr()));
   }
 
   void GetEvictionRoundInfo() {
-    quota_status_ = kQuotaStatusUnknown;
+    quota_status_ = QuotaStatusCode::kUnknown;
     settings_ = storage::QuotaSettings();
     available_space_ = -1;
     total_space_ = -1;
     usage_ = -1;
     quota_manager_->GetEvictionRoundInfo(
-        base::Bind(&QuotaManagerTest::DidGetEvictionRoundInfo,
-                   weak_factory_.GetWeakPtr()));
+        base::BindOnce(&QuotaManagerTest::DidGetEvictionRoundInfo,
+                       weak_factory_.GetWeakPtr()));
   }
 
   void GetCachedOrigins(StorageType type, std::set<GURL>* origins) {
@@ -317,8 +311,8 @@ class QuotaManagerTest : public testing::Test {
     // policy.
     quota_manager_->GetEvictionOrigin(
         type, std::set<GURL>(), 0,
-        base::Bind(&QuotaManagerTest::DidGetEvictionOrigin,
-                   weak_factory_.GetWeakPtr()));
+        base::BindOnce(&QuotaManagerTest::DidGetEvictionOrigin,
+                       weak_factory_.GetWeakPtr()));
   }
 
   void NotifyOriginInUse(const GURL& origin) {
@@ -331,25 +325,23 @@ class QuotaManagerTest : public testing::Test {
 
   void GetOriginsModifiedSince(StorageType type, base::Time modified_since) {
     modified_origins_.clear();
-    modified_origins_type_ = kStorageTypeUnknown;
+    modified_origins_type_ = StorageType::kUnknown;
     quota_manager_->GetOriginsModifiedSince(
         type, modified_since,
-        base::Bind(&QuotaManagerTest::DidGetModifiedOrigins,
-                   weak_factory_.GetWeakPtr()));
+        base::BindOnce(&QuotaManagerTest::DidGetModifiedOrigins,
+                       weak_factory_.GetWeakPtr()));
   }
 
   void DumpQuotaTable() {
     quota_entries_.clear();
-    quota_manager_->DumpQuotaTable(
-        base::Bind(&QuotaManagerTest::DidDumpQuotaTable,
-                   weak_factory_.GetWeakPtr()));
+    quota_manager_->DumpQuotaTable(base::BindOnce(
+        &QuotaManagerTest::DidDumpQuotaTable, weak_factory_.GetWeakPtr()));
   }
 
   void DumpOriginInfoTable() {
     origin_info_entries_.clear();
-    quota_manager_->DumpOriginInfoTable(
-        base::Bind(&QuotaManagerTest::DidDumpOriginInfoTable,
-                   weak_factory_.GetWeakPtr()));
+    quota_manager_->DumpOriginInfoTable(base::BindOnce(
+        &QuotaManagerTest::DidDumpOriginInfoTable, weak_factory_.GetWeakPtr()));
   }
 
   void DidGetUsageInfo(const UsageInfoEntries& entries) {
@@ -554,8 +546,8 @@ TEST_F(QuotaManagerTest, GetUsageInfo) {
     } else if (info.host == "example.com" && info.type == kPerm) {
       EXPECT_EQ(40, info.usage);
     } else {
-      ADD_FAILURE()
-          << "Unexpected host, type: " << info.host << ", " << info.type;
+      ADD_FAILURE() << "Unexpected host, type: " << info.host << ", "
+                    << static_cast<int>(info.type);
     }
   }
 }
@@ -570,20 +562,20 @@ TEST_F(QuotaManagerTest, GetUsageAndQuota_Simple) {
 
   GetUsageAndQuotaForWebApps(GURL("http://foo.com/"), kPerm);
   scoped_task_environment_.RunUntilIdle();
-  EXPECT_EQ(kQuotaStatusOk, status());
+  EXPECT_EQ(QuotaStatusCode::kOk, status());
   EXPECT_EQ(80, usage());
   EXPECT_EQ(0, quota());
 
   GetUsageAndQuotaForWebApps(GURL("http://foo.com/"), kTemp);
   scoped_task_environment_.RunUntilIdle();
-  EXPECT_EQ(kQuotaStatusOk, status());
+  EXPECT_EQ(QuotaStatusCode::kOk, status());
   EXPECT_EQ(10, usage());
   EXPECT_LE(0, quota());
   int64_t quota_returned_for_foo = quota();
 
   GetUsageAndQuotaForWebApps(GURL("http://bar.com/"), kTemp);
   scoped_task_environment_.RunUntilIdle();
-  EXPECT_EQ(kQuotaStatusOk, status());
+  EXPECT_EQ(QuotaStatusCode::kOk, status());
   EXPECT_EQ(0, usage());
   EXPECT_EQ(quota_returned_for_foo, quota());
 }
@@ -591,12 +583,12 @@ TEST_F(QuotaManagerTest, GetUsageAndQuota_Simple) {
 TEST_F(QuotaManagerTest, GetUsage_NoClient) {
   GetUsageAndQuotaForWebApps(GURL("http://foo.com/"), kTemp);
   scoped_task_environment_.RunUntilIdle();
-  EXPECT_EQ(kQuotaStatusOk, status());
+  EXPECT_EQ(QuotaStatusCode::kOk, status());
   EXPECT_EQ(0, usage());
 
   GetUsageAndQuotaForWebApps(GURL("http://foo.com/"), kPerm);
   scoped_task_environment_.RunUntilIdle();
-  EXPECT_EQ(kQuotaStatusOk, status());
+  EXPECT_EQ(QuotaStatusCode::kOk, status());
   EXPECT_EQ(0, usage());
 
   GetHostUsage("foo.com", kTemp);
@@ -622,12 +614,12 @@ TEST_F(QuotaManagerTest, GetUsage_EmptyClient) {
   RegisterClient(CreateClient(NULL, 0, QuotaClient::kFileSystem));
   GetUsageAndQuotaForWebApps(GURL("http://foo.com/"), kTemp);
   scoped_task_environment_.RunUntilIdle();
-  EXPECT_EQ(kQuotaStatusOk, status());
+  EXPECT_EQ(QuotaStatusCode::kOk, status());
   EXPECT_EQ(0, usage());
 
   GetUsageAndQuotaForWebApps(GURL("http://foo.com/"), kPerm);
   scoped_task_environment_.RunUntilIdle();
-  EXPECT_EQ(kQuotaStatusOk, status());
+  EXPECT_EQ(QuotaStatusCode::kOk, status());
   EXPECT_EQ(0, usage());
 
   GetHostUsage("foo.com", kTemp);
@@ -668,7 +660,7 @@ TEST_F(QuotaManagerTest, GetTemporaryUsageAndQuota_MultiOrigins) {
 
   GetUsageAndQuotaForWebApps(GURL("http://foo.com/"), kTemp);
   scoped_task_environment_.RunUntilIdle();
-  EXPECT_EQ(kQuotaStatusOk, status());
+  EXPECT_EQ(QuotaStatusCode::kOk, status());
   EXPECT_EQ(10 + 20, usage());
 
   // The host's quota should be its full portion of the global quota
@@ -677,7 +669,7 @@ TEST_F(QuotaManagerTest, GetTemporaryUsageAndQuota_MultiOrigins) {
 
   GetUsageAndQuotaForWebApps(GURL("http://bar.com/"), kTemp);
   scoped_task_environment_.RunUntilIdle();
-  EXPECT_EQ(kQuotaStatusOk, status());
+  EXPECT_EQ(QuotaStatusCode::kOk, status());
   EXPECT_EQ(5 + 7, usage());
   EXPECT_EQ(kPerHostQuota, quota());
 }
@@ -706,37 +698,37 @@ TEST_F(QuotaManagerTest, GetUsage_MultipleClients) {
 
   GetUsageAndQuotaForWebApps(GURL("http://foo.com/"), kTemp);
   scoped_task_environment_.RunUntilIdle();
-  EXPECT_EQ(kQuotaStatusOk, status());
+  EXPECT_EQ(QuotaStatusCode::kOk, status());
   EXPECT_EQ(1 + 128, usage());
   EXPECT_EQ(kPerHostQuota, quota());
 
   GetUsageAndQuotaForWebApps(GURL("http://bar.com/"), kPerm);
   scoped_task_environment_.RunUntilIdle();
-  EXPECT_EQ(kQuotaStatusOk, status());
+  EXPECT_EQ(QuotaStatusCode::kOk, status());
   EXPECT_EQ(4, usage());
   EXPECT_EQ(0, quota());
 
   GetUsageAndQuotaForWebApps(GURL("http://unlimited/"), kTemp);
   scoped_task_environment_.RunUntilIdle();
-  EXPECT_EQ(kQuotaStatusOk, status());
+  EXPECT_EQ(QuotaStatusCode::kOk, status());
   EXPECT_EQ(512, usage());
   EXPECT_EQ(kAvailableSpaceForApp + usage(), quota());
 
   GetUsageAndQuotaForWebApps(GURL("http://unlimited/"), kPerm);
   scoped_task_environment_.RunUntilIdle();
-  EXPECT_EQ(kQuotaStatusOk, status());
+  EXPECT_EQ(QuotaStatusCode::kOk, status());
   EXPECT_EQ(8, usage());
   EXPECT_EQ(kAvailableSpaceForApp + usage(), quota());
 
   GetGlobalUsage(kTemp);
   scoped_task_environment_.RunUntilIdle();
-  EXPECT_EQ(kQuotaStatusOk, status());
+  EXPECT_EQ(QuotaStatusCode::kOk, status());
   EXPECT_EQ(1 + 2 + 128 + 512, usage());
   EXPECT_EQ(512, unlimited_usage());
 
   GetGlobalUsage(kPerm);
   scoped_task_environment_.RunUntilIdle();
-  EXPECT_EQ(kQuotaStatusOk, status());
+  EXPECT_EQ(QuotaStatusCode::kOk, status());
   EXPECT_EQ(4 + 8 + 256, usage());
   EXPECT_EQ(8, unlimited_usage());
 }
@@ -764,7 +756,7 @@ TEST_F(QuotaManagerTest, GetUsageWithBreakdown_Simple) {
 
   GetUsageAndQuotaWithBreakdown(GURL("http://foo.com/"), kPerm);
   scoped_task_environment_.RunUntilIdle();
-  EXPECT_EQ(kQuotaStatusOk, status());
+  EXPECT_EQ(QuotaStatusCode::kOk, status());
   EXPECT_EQ(80, usage());
   usage_breakdown_expected[QuotaClient::kFileSystem] = 80;
   usage_breakdown_expected[QuotaClient::kDatabase] = 0;
@@ -773,7 +765,7 @@ TEST_F(QuotaManagerTest, GetUsageWithBreakdown_Simple) {
 
   GetUsageAndQuotaWithBreakdown(GURL("http://foo.com/"), kTemp);
   scoped_task_environment_.RunUntilIdle();
-  EXPECT_EQ(kQuotaStatusOk, status());
+  EXPECT_EQ(QuotaStatusCode::kOk, status());
   EXPECT_EQ(1 + 4 + 8, usage());
   usage_breakdown_expected[QuotaClient::kFileSystem] = 1;
   usage_breakdown_expected[QuotaClient::kDatabase] = 4;
@@ -782,7 +774,7 @@ TEST_F(QuotaManagerTest, GetUsageWithBreakdown_Simple) {
 
   GetUsageAndQuotaWithBreakdown(GURL("http://bar.com/"), kTemp);
   scoped_task_environment_.RunUntilIdle();
-  EXPECT_EQ(kQuotaStatusOk, status());
+  EXPECT_EQ(QuotaStatusCode::kOk, status());
   EXPECT_EQ(0, usage());
   usage_breakdown_expected[QuotaClient::kFileSystem] = 0;
   usage_breakdown_expected[QuotaClient::kDatabase] = 0;
@@ -795,13 +787,13 @@ TEST_F(QuotaManagerTest, GetUsageWithBreakdown_NoClient) {
 
   GetUsageAndQuotaWithBreakdown(GURL("http://foo.com/"), kTemp);
   scoped_task_environment_.RunUntilIdle();
-  EXPECT_EQ(kQuotaStatusOk, status());
+  EXPECT_EQ(QuotaStatusCode::kOk, status());
   EXPECT_EQ(0, usage());
   EXPECT_EQ(usage_breakdown_expected, usage_breakdown());
 
   GetUsageAndQuotaWithBreakdown(GURL("http://foo.com/"), kPerm);
   scoped_task_environment_.RunUntilIdle();
-  EXPECT_EQ(kQuotaStatusOk, status());
+  EXPECT_EQ(QuotaStatusCode::kOk, status());
   EXPECT_EQ(0, usage());
   EXPECT_EQ(usage_breakdown_expected, usage_breakdown());
 
@@ -828,14 +820,14 @@ TEST_F(QuotaManagerTest, GetUsageWithBreakdown_MultiOrigins) {
 
   GetUsageAndQuotaWithBreakdown(GURL("http://foo.com/"), kTemp);
   scoped_task_environment_.RunUntilIdle();
-  EXPECT_EQ(kQuotaStatusOk, status());
+  EXPECT_EQ(QuotaStatusCode::kOk, status());
   EXPECT_EQ(10 + 20, usage());
   usage_breakdown_expected[QuotaClient::kFileSystem] = 10 + 20;
   EXPECT_EQ(usage_breakdown_expected, usage_breakdown());
 
   GetUsageAndQuotaWithBreakdown(GURL("http://bar.com/"), kTemp);
   scoped_task_environment_.RunUntilIdle();
-  EXPECT_EQ(kQuotaStatusOk, status());
+  EXPECT_EQ(QuotaStatusCode::kOk, status());
   EXPECT_EQ(5 + 7, usage());
   usage_breakdown_expected[QuotaClient::kFileSystem] = 5 + 7;
   EXPECT_EQ(usage_breakdown_expected, usage_breakdown());
@@ -862,7 +854,7 @@ TEST_F(QuotaManagerTest, GetUsageWithBreakdown_MultipleClients) {
 
   GetUsageAndQuotaWithBreakdown(GURL("http://foo.com/"), kTemp);
   scoped_task_environment_.RunUntilIdle();
-  EXPECT_EQ(kQuotaStatusOk, status());
+  EXPECT_EQ(QuotaStatusCode::kOk, status());
   EXPECT_EQ(1 + 128, usage());
   usage_breakdown_expected[QuotaClient::kFileSystem] = 1;
   usage_breakdown_expected[QuotaClient::kDatabase] = 128;
@@ -870,7 +862,7 @@ TEST_F(QuotaManagerTest, GetUsageWithBreakdown_MultipleClients) {
 
   GetUsageAndQuotaWithBreakdown(GURL("http://bar.com/"), kPerm);
   scoped_task_environment_.RunUntilIdle();
-  EXPECT_EQ(kQuotaStatusOk, status());
+  EXPECT_EQ(QuotaStatusCode::kOk, status());
   EXPECT_EQ(4, usage());
   usage_breakdown_expected[QuotaClient::kFileSystem] = 4;
   usage_breakdown_expected[QuotaClient::kDatabase] = 0;
@@ -878,7 +870,7 @@ TEST_F(QuotaManagerTest, GetUsageWithBreakdown_MultipleClients) {
 
   GetUsageAndQuotaWithBreakdown(GURL("http://unlimited/"), kTemp);
   scoped_task_environment_.RunUntilIdle();
-  EXPECT_EQ(kQuotaStatusOk, status());
+  EXPECT_EQ(QuotaStatusCode::kOk, status());
   EXPECT_EQ(512, usage());
   usage_breakdown_expected[QuotaClient::kFileSystem] = 0;
   usage_breakdown_expected[QuotaClient::kDatabase] = 512;
@@ -886,7 +878,7 @@ TEST_F(QuotaManagerTest, GetUsageWithBreakdown_MultipleClients) {
 
   GetUsageAndQuotaWithBreakdown(GURL("http://unlimited/"), kPerm);
   scoped_task_environment_.RunUntilIdle();
-  EXPECT_EQ(kQuotaStatusOk, status());
+  EXPECT_EQ(QuotaStatusCode::kOk, status());
   EXPECT_EQ(8, usage());
   usage_breakdown_expected[QuotaClient::kFileSystem] = 8;
   usage_breakdown_expected[QuotaClient::kDatabase] = 0;
@@ -904,23 +896,23 @@ void QuotaManagerTest::GetUsage_WithModifyTestBody(const StorageType type) {
 
   GetUsageAndQuotaForWebApps(GURL("http://foo.com/"), type);
   scoped_task_environment_.RunUntilIdle();
-  EXPECT_EQ(kQuotaStatusOk, status());
+  EXPECT_EQ(QuotaStatusCode::kOk, status());
   EXPECT_EQ(10 + 20, usage());
 
-  client->ModifyOriginAndNotify(GURL("http://foo.com/"), type, 30);
-  client->ModifyOriginAndNotify(GURL("http://foo.com:1/"), type, -5);
-  client->AddOriginAndNotify(GURL("https://foo.com/"), type, 1);
+  client->ModifyOriginAndNotify(ToOrigin("http://foo.com/"), type, 30);
+  client->ModifyOriginAndNotify(ToOrigin("http://foo.com:1/"), type, -5);
+  client->AddOriginAndNotify(ToOrigin("https://foo.com/"), type, 1);
 
   GetUsageAndQuotaForWebApps(GURL("http://foo.com/"), type);
   scoped_task_environment_.RunUntilIdle();
-  EXPECT_EQ(kQuotaStatusOk, status());
+  EXPECT_EQ(QuotaStatusCode::kOk, status());
   EXPECT_EQ(10 + 20 + 30 - 5 + 1, usage());
   int foo_usage = usage();
 
-  client->AddOriginAndNotify(GURL("http://bar.com/"), type, 40);
+  client->AddOriginAndNotify(ToOrigin("http://bar.com/"), type, 40);
   GetUsageAndQuotaForWebApps(GURL("http://bar.com/"), type);
   scoped_task_environment_.RunUntilIdle();
-  EXPECT_EQ(kQuotaStatusOk, status());
+  EXPECT_EQ(QuotaStatusCode::kOk, status());
   EXPECT_EQ(40, usage());
 
   GetGlobalUsage(type);
@@ -951,7 +943,7 @@ TEST_F(QuotaManagerTest, GetTemporaryUsageAndQuota_WithAdditionalTasks) {
   GetUsageAndQuotaForWebApps(GURL("http://foo.com/"), kTemp);
   GetUsageAndQuotaForWebApps(GURL("http://foo.com/"), kTemp);
   scoped_task_environment_.RunUntilIdle();
-  EXPECT_EQ(kQuotaStatusOk, status());
+  EXPECT_EQ(QuotaStatusCode::kOk, status());
   EXPECT_EQ(10 + 20, usage());
   EXPECT_EQ(kPerHostQuota, quota());
 
@@ -961,7 +953,7 @@ TEST_F(QuotaManagerTest, GetTemporaryUsageAndQuota_WithAdditionalTasks) {
   GetUsageAndQuotaForWebApps(GURL("http://foo.com/"), kTemp);
   RunAdditionalUsageAndQuotaTask(GURL("http://bar.com/"), kTemp);
   scoped_task_environment_.RunUntilIdle();
-  EXPECT_EQ(kQuotaStatusOk, status());
+  EXPECT_EQ(QuotaStatusCode::kOk, status());
   EXPECT_EQ(10 + 20, usage());
   EXPECT_EQ(kPerHostQuota, quota());
   EXPECT_EQ(2, additional_callback_count());
@@ -993,7 +985,7 @@ TEST_F(QuotaManagerTest, GetTemporaryUsageAndQuota_NukeManager) {
   // Nuke before waiting for callbacks.
   set_quota_manager(NULL);
   scoped_task_environment_.RunUntilIdle();
-  EXPECT_EQ(kQuotaErrorAbort, status());
+  EXPECT_EQ(QuotaStatusCode::kErrorAbort, status());
 }
 
 TEST_F(QuotaManagerTest, GetTemporaryUsageAndQuota_Overbudget) {
@@ -1017,19 +1009,19 @@ TEST_F(QuotaManagerTest, GetTemporaryUsageAndQuota_Overbudget) {
 
   GetUsageAndQuotaForWebApps(GURL("http://usage1/"), kTemp);
   scoped_task_environment_.RunUntilIdle();
-  EXPECT_EQ(kQuotaStatusOk, status());
+  EXPECT_EQ(QuotaStatusCode::kOk, status());
   EXPECT_EQ(1, usage());
   EXPECT_EQ(kPerHostQuota, quota());
 
   GetUsageAndQuotaForWebApps(GURL("http://usage10/"), kTemp);
   scoped_task_environment_.RunUntilIdle();
-  EXPECT_EQ(kQuotaStatusOk, status());
+  EXPECT_EQ(QuotaStatusCode::kOk, status());
   EXPECT_EQ(10, usage());
   EXPECT_EQ(kPerHostQuota, quota());
 
   GetUsageAndQuotaForWebApps(GURL("http://usage200/"), kTemp);
   scoped_task_environment_.RunUntilIdle();
-  EXPECT_EQ(kQuotaStatusOk, status());
+  EXPECT_EQ(QuotaStatusCode::kOk, status());
   EXPECT_EQ(200, usage());
   EXPECT_EQ(kPerHostQuota, quota());  // should be clamped to the nominal quota
 }
@@ -1056,25 +1048,25 @@ TEST_F(QuotaManagerTest, GetTemporaryUsageAndQuota_Unlimited) {
 
   GetUsageAndQuotaForWebApps(GURL("http://usage10/"), kTemp);
   scoped_task_environment_.RunUntilIdle();
-  EXPECT_EQ(kQuotaStatusOk, status());
+  EXPECT_EQ(QuotaStatusCode::kOk, status());
   EXPECT_EQ(10, usage());
   EXPECT_EQ(kPerHostQuotaFor1000, quota());
 
   GetUsageAndQuotaForWebApps(GURL("http://usage50/"), kTemp);
   scoped_task_environment_.RunUntilIdle();
-  EXPECT_EQ(kQuotaStatusOk, status());
+  EXPECT_EQ(QuotaStatusCode::kOk, status());
   EXPECT_EQ(50, usage());
   EXPECT_EQ(kPerHostQuotaFor1000, quota());
 
   GetUsageAndQuotaForWebApps(GURL("http://unlimited/"), kTemp);
   scoped_task_environment_.RunUntilIdle();
-  EXPECT_EQ(kQuotaStatusOk, status());
+  EXPECT_EQ(QuotaStatusCode::kOk, status());
   EXPECT_EQ(4000, usage());
   EXPECT_EQ(kAvailableSpaceForApp + usage(), quota());
 
   GetUsageAndQuotaForStorageClient(GURL("http://unlimited/"), kTemp);
   scoped_task_environment_.RunUntilIdle();
-  EXPECT_EQ(kQuotaStatusOk, status());
+  EXPECT_EQ(QuotaStatusCode::kOk, status());
   EXPECT_EQ(0, usage());
   EXPECT_EQ(QuotaManager::kNoLimit, quota());
 
@@ -1084,25 +1076,25 @@ TEST_F(QuotaManagerTest, GetTemporaryUsageAndQuota_Unlimited) {
 
   GetUsageAndQuotaForWebApps(GURL("http://usage10/"), kTemp);
   scoped_task_environment_.RunUntilIdle();
-  EXPECT_EQ(kQuotaStatusOk, status());
+  EXPECT_EQ(QuotaStatusCode::kOk, status());
   EXPECT_EQ(10, usage());
   EXPECT_EQ(kPerHostQuotaFor100, quota());
 
   GetUsageAndQuotaForWebApps(GURL("http://usage50/"), kTemp);
   scoped_task_environment_.RunUntilIdle();
-  EXPECT_EQ(kQuotaStatusOk, status());
+  EXPECT_EQ(QuotaStatusCode::kOk, status());
   EXPECT_EQ(50, usage());
   EXPECT_EQ(kPerHostQuotaFor100, quota());
 
   GetUsageAndQuotaForWebApps(GURL("http://unlimited/"), kTemp);
   scoped_task_environment_.RunUntilIdle();
-  EXPECT_EQ(kQuotaStatusOk, status());
+  EXPECT_EQ(QuotaStatusCode::kOk, status());
   EXPECT_EQ(4000, usage());
   EXPECT_EQ(kAvailableSpaceForApp + usage(), quota());
 
   GetUsageAndQuotaForStorageClient(GURL("http://unlimited/"), kTemp);
   scoped_task_environment_.RunUntilIdle();
-  EXPECT_EQ(kQuotaStatusOk, status());
+  EXPECT_EQ(QuotaStatusCode::kOk, status());
   EXPECT_EQ(0, usage());
   EXPECT_EQ(QuotaManager::kNoLimit, quota());
 
@@ -1117,25 +1109,25 @@ TEST_F(QuotaManagerTest, GetTemporaryUsageAndQuota_Unlimited) {
 
   GetUsageAndQuotaForWebApps(GURL("http://usage10/"), kTemp);
   scoped_task_environment_.RunUntilIdle();
-  EXPECT_EQ(kQuotaStatusOk, status());
+  EXPECT_EQ(QuotaStatusCode::kOk, status());
   EXPECT_EQ(10, usage());
   EXPECT_EQ(kPerHostQuotaFor100, quota());
 
   GetUsageAndQuotaForWebApps(GURL("http://usage50/"), kTemp);
   scoped_task_environment_.RunUntilIdle();
-  EXPECT_EQ(kQuotaStatusOk, status());
+  EXPECT_EQ(QuotaStatusCode::kOk, status());
   EXPECT_EQ(50, usage());
   EXPECT_EQ(kPerHostQuotaFor100, quota());
 
   GetUsageAndQuotaForWebApps(GURL("http://unlimited/"), kTemp);
   scoped_task_environment_.RunUntilIdle();
-  EXPECT_EQ(kQuotaStatusOk, status());
+  EXPECT_EQ(QuotaStatusCode::kOk, status());
   EXPECT_EQ(4000, usage());
   EXPECT_EQ(kPerHostQuotaFor100, quota());
 
   GetUsageAndQuotaForStorageClient(GURL("http://unlimited/"), kTemp);
   scoped_task_environment_.RunUntilIdle();
-  EXPECT_EQ(kQuotaStatusOk, status());
+  EXPECT_EQ(QuotaStatusCode::kOk, status());
   EXPECT_EQ(4000, usage());
   EXPECT_EQ(kPerHostQuotaFor100, quota());
 }
@@ -1194,14 +1186,14 @@ TEST_F(QuotaManagerTest, GetAndSetPersistentUsageAndQuota) {
 
   GetUsageAndQuotaForWebApps(GURL("http://foo.com/"), kPerm);
   scoped_task_environment_.RunUntilIdle();
-  EXPECT_EQ(kQuotaStatusOk, status());
+  EXPECT_EQ(QuotaStatusCode::kOk, status());
   EXPECT_EQ(0, usage());
   EXPECT_EQ(0, quota());
 
   SetPersistentHostQuota("foo.com", 100);
   GetUsageAndQuotaForWebApps(GURL("http://foo.com/"), kPerm);
   scoped_task_environment_.RunUntilIdle();
-  EXPECT_EQ(kQuotaStatusOk, status());
+  EXPECT_EQ(QuotaStatusCode::kOk, status());
   EXPECT_EQ(0, usage());
   EXPECT_EQ(100, quota());
 
@@ -1232,7 +1224,7 @@ TEST_F(QuotaManagerTest, GetSyncableQuota) {
   mock_special_storage_policy()->AddUnlimited(GURL("http://unlimited/"));
   GetUsageAndQuotaForWebApps(GURL("http://unlimited/"), kSync);
   scoped_task_environment_.RunUntilIdle();
-  EXPECT_EQ(kQuotaStatusOk, status());
+  EXPECT_EQ(QuotaStatusCode::kOk, status());
   EXPECT_EQ(0, usage());
   EXPECT_EQ(kAvailableSpaceForApp, quota());
 }
@@ -1254,7 +1246,7 @@ TEST_F(QuotaManagerTest, GetPersistentUsageAndQuota_MultiOrigins) {
   SetPersistentHostQuota("foo.com", 100);
   GetUsageAndQuotaForWebApps(GURL("http://foo.com/"), kPerm);
   scoped_task_environment_.RunUntilIdle();
-  EXPECT_EQ(kQuotaStatusOk, status());
+  EXPECT_EQ(QuotaStatusCode::kOk, status());
   EXPECT_EQ(10 + 20 + 13 + 19, usage());
   EXPECT_EQ(100, quota());
 }
@@ -1278,7 +1270,7 @@ TEST_F(QuotaManagerTest, GetPersistentUsageAndQuota_WithAdditionalTasks) {
   GetUsageAndQuotaForWebApps(GURL("http://foo.com/"), kPerm);
   GetUsageAndQuotaForWebApps(GURL("http://foo.com/"), kPerm);
   scoped_task_environment_.RunUntilIdle();
-  EXPECT_EQ(kQuotaStatusOk, status());
+  EXPECT_EQ(QuotaStatusCode::kOk, status());
   EXPECT_EQ(10 + 20, usage());
   EXPECT_EQ(100, quota());
 
@@ -1288,7 +1280,7 @@ TEST_F(QuotaManagerTest, GetPersistentUsageAndQuota_WithAdditionalTasks) {
   GetUsageAndQuotaForWebApps(GURL("http://foo.com/"), kPerm);
   RunAdditionalUsageAndQuotaTask(GURL("http://bar.com/"), kPerm);
   scoped_task_environment_.RunUntilIdle();
-  EXPECT_EQ(kQuotaStatusOk, status());
+  EXPECT_EQ(QuotaStatusCode::kOk, status());
   EXPECT_EQ(10 + 20, usage());
   EXPECT_EQ(2, additional_callback_count());
 }
@@ -1312,7 +1304,7 @@ TEST_F(QuotaManagerTest, GetPersistentUsageAndQuota_NukeManager) {
   // Nuke before waiting for callbacks.
   set_quota_manager(NULL);
   scoped_task_environment_.RunUntilIdle();
-  EXPECT_EQ(kQuotaErrorAbort, status());
+  EXPECT_EQ(QuotaStatusCode::kErrorAbort, status());
 }
 
 TEST_F(QuotaManagerTest, GetUsage_Simple) {
@@ -1367,8 +1359,7 @@ TEST_F(QuotaManagerTest, GetUsage_WithModification) {
   EXPECT_EQ(usage(), 1 + 20 + 600000);
   EXPECT_EQ(0, unlimited_usage());
 
-  client->ModifyOriginAndNotify(
-      GURL("http://foo.com/"), kPerm, 80000000);
+  client->ModifyOriginAndNotify(ToOrigin("http://foo.com/"), kPerm, 80000000);
 
   GetGlobalUsage(kPerm);
   scoped_task_environment_.RunUntilIdle();
@@ -1380,8 +1371,7 @@ TEST_F(QuotaManagerTest, GetUsage_WithModification) {
   EXPECT_EQ(usage(), 300 + 4000 + 50000 + 7000000);
   EXPECT_EQ(0, unlimited_usage());
 
-  client->ModifyOriginAndNotify(
-      GURL("http://foo.com/"), kTemp, 1);
+  client->ModifyOriginAndNotify(ToOrigin("http://foo.com/"), kTemp, 1);
 
   GetGlobalUsage(kTemp);
   scoped_task_environment_.RunUntilIdle();
@@ -1392,8 +1382,7 @@ TEST_F(QuotaManagerTest, GetUsage_WithModification) {
   scoped_task_environment_.RunUntilIdle();
   EXPECT_EQ(usage(), 4000 + 50000);
 
-  client->ModifyOriginAndNotify(
-      GURL("http://buz.com/"), kTemp, 900000000);
+  client->ModifyOriginAndNotify(ToOrigin("http://buz.com/"), kTemp, 900000000);
 
   GetHostUsage("buz.com", kTemp);
   scoped_task_environment_.RunUntilIdle();
@@ -1426,7 +1415,7 @@ TEST_F(QuotaManagerTest, GetUsage_WithDeleteOrigin) {
   DeleteClientOriginData(client, GURL("http://foo.com/"),
                          kTemp);
   scoped_task_environment_.RunUntilIdle();
-  EXPECT_EQ(kQuotaStatusOk, status());
+  EXPECT_EQ(QuotaStatusCode::kOk, status());
 
   GetGlobalUsage(kTemp);
   scoped_task_environment_.RunUntilIdle();
@@ -1545,7 +1534,7 @@ TEST_F(QuotaManagerTest, EvictOriginDataHistogram) {
   histograms.ExpectTotalCount(
       QuotaManager::kDaysBetweenRepeatedOriginEvictionsHistogram, 0);
 
-  client->AddOriginAndNotify(kOrigin, kTemp, 100);
+  client->AddOriginAndNotify(url::Origin::Create(kOrigin), kTemp, 100);
 
   // Change the used count of the origin.
   quota_manager()->NotifyStorageAccessed(QuotaClient::kUnknown, GURL(kOrigin),
@@ -1570,7 +1559,7 @@ TEST_F(QuotaManagerTest, EvictOriginDataHistogram) {
   histograms.ExpectTotalCount(
       QuotaManager::kDaysBetweenRepeatedOriginEvictionsHistogram, 1);
 
-  client->AddOriginAndNotify(kOrigin, kTemp, 100);
+  client->AddOriginAndNotify(url::Origin::Create(kOrigin), kTemp, 100);
 
   GetGlobalUsage(kTemp);
   scoped_task_environment_.RunUntilIdle();
@@ -1610,14 +1599,14 @@ TEST_F(QuotaManagerTest, EvictOriginDataWithDeletionError) {
     NotifyStorageAccessed(client, GURL(kData[i].origin), kData[i].type);
   scoped_task_environment_.RunUntilIdle();
 
-  client->AddOriginToErrorSet(GURL("http://foo.com/"), kTemp);
+  client->AddOriginToErrorSet(ToOrigin("http://foo.com/"), kTemp);
 
   for (int i = 0;
        i < QuotaManager::kThresholdOfErrorsToBeBlacklisted + 1;
        ++i) {
     EvictOriginData(GURL("http://foo.com/"), kTemp);
     scoped_task_environment_.RunUntilIdle();
-    EXPECT_EQ(kQuotaErrorInvalidModification, status());
+    EXPECT_EQ(QuotaStatusCode::kErrorInvalidModification, status());
   }
 
   DumpOriginInfoTable();
@@ -1685,7 +1674,7 @@ TEST_F(QuotaManagerTest, GetEvictionRoundInfo) {
 
   GetEvictionRoundInfo();
   scoped_task_environment_.RunUntilIdle();
-  EXPECT_EQ(kQuotaStatusOk, status());
+  EXPECT_EQ(QuotaStatusCode::kOk, status());
   EXPECT_EQ(21, usage());
   EXPECT_EQ(kPoolSize, settings().pool_size);
   EXPECT_LE(0, available_space());
@@ -1713,7 +1702,7 @@ TEST_F(QuotaManagerTest, DeleteHostDataSimple) {
 
   DeleteHostData(std::string(), kTemp, kAllClients);
   scoped_task_environment_.RunUntilIdle();
-  EXPECT_EQ(kQuotaStatusOk, status());
+  EXPECT_EQ(QuotaStatusCode::kOk, status());
 
   GetGlobalUsage(kTemp);
   scoped_task_environment_.RunUntilIdle();
@@ -1729,7 +1718,7 @@ TEST_F(QuotaManagerTest, DeleteHostDataSimple) {
 
   DeleteHostData("foo.com", kTemp, kAllClients);
   scoped_task_environment_.RunUntilIdle();
-  EXPECT_EQ(kQuotaStatusOk, status());
+  EXPECT_EQ(QuotaStatusCode::kOk, status());
 
   GetGlobalUsage(kTemp);
   scoped_task_environment_.RunUntilIdle();
@@ -2082,12 +2071,12 @@ TEST_F(QuotaManagerTest, GetOriginsModifiedSince) {
   EXPECT_EQ(modified_origins_type(), kTemp);
 
   base::Time time1 = client->IncrementMockTime();
-  client->ModifyOriginAndNotify(GURL("http://a.com/"), kTemp, 10);
-  client->ModifyOriginAndNotify(GURL("http://a.com:1/"), kTemp, 10);
-  client->ModifyOriginAndNotify(GURL("http://b.com/"), kPerm, 10);
+  client->ModifyOriginAndNotify(ToOrigin("http://a.com/"), kTemp, 10);
+  client->ModifyOriginAndNotify(ToOrigin("http://a.com:1/"), kTemp, 10);
+  client->ModifyOriginAndNotify(ToOrigin("http://b.com/"), kPerm, 10);
   base::Time time2 = client->IncrementMockTime();
-  client->ModifyOriginAndNotify(GURL("https://a.com/"), kTemp, 10);
-  client->ModifyOriginAndNotify(GURL("http://c.com/"), kTemp, 10);
+  client->ModifyOriginAndNotify(ToOrigin("https://a.com/"), kTemp, 10);
+  client->ModifyOriginAndNotify(ToOrigin("http://c.com/"), kTemp, 10);
   base::Time time3 = client->IncrementMockTime();
 
   GetOriginsModifiedSince(kTemp, time1);
@@ -2108,7 +2097,7 @@ TEST_F(QuotaManagerTest, GetOriginsModifiedSince) {
   EXPECT_TRUE(modified_origins().empty());
   EXPECT_EQ(modified_origins_type(), kTemp);
 
-  client->ModifyOriginAndNotify(GURL("http://a.com/"), kTemp, 10);
+  client->ModifyOriginAndNotify(ToOrigin("http://a.com/"), kTemp, 10);
 
   GetOriginsModifiedSince(kTemp, time3);
   scoped_task_environment_.RunUntilIdle();
@@ -2178,7 +2167,7 @@ TEST_F(QuotaManagerTest, DumpOriginInfoTable) {
        itr != end; ++itr) {
     SCOPED_TRACE(testing::Message()
                  << "host = " << itr->origin << ", "
-                 << "type = " << itr->type << ", "
+                 << "type = " << static_cast<int>(itr->type) << ", "
                  << "used_count = " << itr->used_count);
     EXPECT_EQ(1u, entries.erase(
         make_pair(make_pair(itr->origin, itr->type),
@@ -2190,12 +2179,12 @@ TEST_F(QuotaManagerTest, DumpOriginInfoTable) {
 TEST_F(QuotaManagerTest, QuotaForEmptyHost) {
   GetPersistentHostQuota(std::string());
   scoped_task_environment_.RunUntilIdle();
-  EXPECT_EQ(kQuotaStatusOk, status());
+  EXPECT_EQ(QuotaStatusCode::kOk, status());
   EXPECT_EQ(0, quota());
 
   SetPersistentHostQuota(std::string(), 10);
   scoped_task_environment_.RunUntilIdle();
-  EXPECT_EQ(kQuotaErrorNotSupported, status());
+  EXPECT_EQ(QuotaStatusCode::kErrorNotSupported, status());
 }
 
 TEST_F(QuotaManagerTest, DeleteSpecificClientTypeSingleOrigin) {
@@ -2416,7 +2405,7 @@ TEST_F(QuotaManagerTest, GetUsageAndQuota_Incognito) {
 
   GetUsageAndQuotaForWebApps(GURL("http://foo.com/"), kPerm);
   scoped_task_environment_.RunUntilIdle();
-  EXPECT_EQ(kQuotaStatusOk, status());
+  EXPECT_EQ(QuotaStatusCode::kOk, status());
   EXPECT_EQ(80, usage());
   EXPECT_EQ(0, quota());
 
@@ -2431,20 +2420,20 @@ TEST_F(QuotaManagerTest, GetUsageAndQuota_Incognito) {
 
   GetUsageAndQuotaForWebApps(GURL("http://foo.com/"), kTemp);
   scoped_task_environment_.RunUntilIdle();
-  EXPECT_EQ(kQuotaStatusOk, status());
+  EXPECT_EQ(QuotaStatusCode::kOk, status());
   EXPECT_EQ(10, usage());
   EXPECT_LE(kPerHostQuota, quota());
 
   mock_special_storage_policy()->AddUnlimited(GURL("http://foo.com/"));
   GetUsageAndQuotaForWebApps(GURL("http://foo.com/"), kPerm);
   scoped_task_environment_.RunUntilIdle();
-  EXPECT_EQ(kQuotaStatusOk, status());
+  EXPECT_EQ(QuotaStatusCode::kOk, status());
   EXPECT_EQ(80, usage());
   EXPECT_EQ(available_space() + usage(), quota());
 
   GetUsageAndQuotaForWebApps(GURL("http://foo.com/"), kTemp);
   scoped_task_environment_.RunUntilIdle();
-  EXPECT_EQ(kQuotaStatusOk, status());
+  EXPECT_EQ(QuotaStatusCode::kOk, status());
   EXPECT_EQ(10, usage());
   EXPECT_EQ(available_space() + usage(), quota());
 }

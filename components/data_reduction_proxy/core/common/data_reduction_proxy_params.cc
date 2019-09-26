@@ -18,11 +18,11 @@
 #include "components/data_reduction_proxy/core/common/data_reduction_proxy_server.h"
 #include "components/data_reduction_proxy/core/common/data_reduction_proxy_switches.h"
 #include "components/variations/variations_associated_data.h"
-#include "net/proxy/proxy_server.h"
+#include "net/base/proxy_server.h"
+#include "net/http/http_status_code.h"
 #include "url/url_constants.h"
 
 #if defined(OS_ANDROID)
-#include "base/android/build_info.h"
 #include "base/sys_info.h"
 #endif
 
@@ -32,7 +32,7 @@ const char kEnabled[] = "Enabled";
 const char kControl[] = "Control";
 const char kDisabled[] = "Disabled";
 const char kDefaultSecureProxyCheckUrl[] = "http://check.googlezip.net/connect";
-const char kDefaultWarmupUrl[] = "http://check.googlezip.net/generate_204";
+const char kDefaultWarmupUrl[] = "http://check.googlezip.net/e2e_probe";
 
 const char kQuicFieldTrial[] = "DataReductionProxyUseQuic";
 
@@ -54,6 +54,9 @@ const char kServerExperimentsFieldTrial[] =
 // LitePage black list version.
 const char kLitePageBlackListVersion[] = "lite-page-blacklist-version";
 
+const char kWarmupFetchCallbackEnabledParam[] = "warmup_fetch_callback_enabled";
+const char kMissingViaBypassDisabledParam[] = "bypass_missing_via_disabled";
+
 bool IsIncludedInFieldTrial(const std::string& name) {
   return base::StartsWith(base::FieldTrialList::FindFullName(name), kEnabled,
                           base::CompareCase::SENSITIVE);
@@ -69,12 +72,6 @@ std::string GetStringValueForVariationParamWithDefaultValue(
   if (it == variation_params.end())
     return default_value;
   return it->second;
-}
-
-bool IsIncludedInAndroidOnePromoFieldTrial(
-    base::StringPiece build_fingerprint) {
-  static const char kAndroidOneIdentifier[] = "sprout";
-  return build_fingerprint.find(kAndroidOneIdentifier) != std::string::npos;
 }
 
 bool CanShowAndroidLowMemoryDevicePromo() {
@@ -96,12 +93,6 @@ bool IsIncludedInPromoFieldTrial() {
   if (IsIncludedInFieldTrial("DataCompressionProxyPromoVisibility"))
     return true;
 
-#if defined(OS_ANDROID)
-  base::StringPiece android_build_fingerprint =
-      base::android::BuildInfo::GetInstance()->android_build_fp();
-  if (IsIncludedInAndroidOnePromoFieldTrial(android_build_fingerprint))
-    return true;
-#endif
   return CanShowAndroidLowMemoryDevicePromo();
 }
 
@@ -109,18 +100,7 @@ bool IsIncludedInFREPromoFieldTrial() {
   if (IsIncludedInFieldTrial("DataReductionProxyFREPromo"))
     return true;
 
-#if defined(OS_ANDROID)
-  base::StringPiece android_build_fingerprint =
-      base::android::BuildInfo::GetInstance()->android_build_fp();
-  if (IsIncludedInAndroidOnePromoFieldTrial(android_build_fingerprint))
-    return true;
-#endif
   return CanShowAndroidLowMemoryDevicePromo();
-}
-
-bool IsIncludedInAndroidOnePromoFieldTrialForTesting(
-    base::StringPiece build_fingerprint) {
-  return IsIncludedInAndroidOnePromoFieldTrial(build_fingerprint);
 }
 
 bool IsIncludedInHoldbackFieldTrial() {
@@ -139,6 +119,14 @@ const char* GetLoFiFlagFieldTrialName() {
   return kLoFiFlagFieldTrial;
 }
 
+const char* GetWarmupCallbackParamName() {
+  return kWarmupFetchCallbackEnabledParam;
+}
+
+const char* GetMissingViaBypassParamName() {
+  return kMissingViaBypassDisabledParam;
+}
+
 bool IsIncludedInServerExperimentsFieldTrial() {
   return !base::CommandLine::ForCurrentProcess()->HasSwitch(
              data_reduction_proxy::switches::
@@ -147,7 +135,7 @@ bool IsIncludedInServerExperimentsFieldTrial() {
                  .find(kDisabled) != 0;
 }
 
-bool FetchWarmupURLEnabled() {
+bool FetchWarmupProbeURLEnabled() {
   return !base::CommandLine::ForCurrentProcess()->HasSwitch(
       switches::kDisableDataReductionProxyWarmupURLFetch);
 }
@@ -157,6 +145,25 @@ GURL GetWarmupURL() {
   variations::GetVariationParams(GetQuicFieldTrialName(), &params);
   return GURL(GetStringValueForVariationParamWithDefaultValue(
       params, "warmup_url", kDefaultWarmupUrl));
+}
+
+bool IsWhitelistedHttpResponseCodeForProbes(int http_response_code) {
+  // 200 and 404 are always whitelisted.
+  if (http_response_code == net::HTTP_OK ||
+      http_response_code == net::HTTP_NOT_FOUND) {
+    return true;
+  }
+
+  // Check if there is an additional whitelisted HTTP response code provided via
+  // the field trial params.
+  std::map<std::string, std::string> params;
+  variations::GetVariationParams(GetQuicFieldTrialName(), &params);
+  const std::string value = GetStringValueForVariationParamWithDefaultValue(
+      params, "whitelisted_probe_http_response_code", "");
+  int response_code;
+  if (!base::StringToInt(value, &response_code))
+    return false;
+  return response_code == http_response_code;
 }
 
 bool ShouldBypassMissingViaHeader(bool connection_is_cellular) {
@@ -182,48 +189,6 @@ GetMissingViaHeaderBypassDurationRange(bool connection_is_cellular) {
                                  : "missing_via_min_bypass_wifi_in_seconds",
           60));
   return {bypass_min, bypass_max};
-}
-
-bool IsLoFiOnViaFlags() {
-  return IsLoFiAlwaysOnViaFlags() || IsLoFiCellularOnlyViaFlags() ||
-         IsLoFiSlowConnectionsOnlyViaFlags();
-}
-
-bool IsLoFiAlwaysOnViaFlags() {
-  const std::string& lo_fi_value =
-      base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII(
-          data_reduction_proxy::switches::kDataReductionProxyLoFi);
-  return lo_fi_value ==
-         data_reduction_proxy::switches::kDataReductionProxyLoFiValueAlwaysOn;
-}
-
-bool IsLoFiCellularOnlyViaFlags() {
-  const std::string& lo_fi_value =
-      base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII(
-          data_reduction_proxy::switches::kDataReductionProxyLoFi);
-  return lo_fi_value == data_reduction_proxy::switches::
-                            kDataReductionProxyLoFiValueCellularOnly;
-}
-
-bool IsLoFiSlowConnectionsOnlyViaFlags() {
-  const std::string& lo_fi_value =
-      base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII(
-          data_reduction_proxy::switches::kDataReductionProxyLoFi);
-  return lo_fi_value == data_reduction_proxy::switches::
-                            kDataReductionProxyLoFiValueSlowConnectionsOnly;
-}
-
-bool IsLoFiDisabledViaFlags() {
-  const std::string& lo_fi_value =
-      base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII(
-          data_reduction_proxy::switches::kDataReductionProxyLoFi);
-  return lo_fi_value ==
-         data_reduction_proxy::switches::kDataReductionProxyLoFiValueDisabled;
-}
-
-bool AreLitePagesEnabledViaFlags() {
-  return base::CommandLine::ForCurrentProcess()->HasSwitch(
-      data_reduction_proxy::switches::kEnableDataReductionProxyLitePage);
 }
 
 bool IsForcePingbackEnabledViaFlags() {

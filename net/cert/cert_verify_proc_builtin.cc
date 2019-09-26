@@ -20,6 +20,7 @@
 #include "net/cert/cert_verify_result.h"
 #include "net/cert/ev_root_ca_metadata.h"
 #include "net/cert/internal/cert_errors.h"
+#include "net/cert/internal/cert_issuer_source_aia.h"
 #include "net/cert/internal/cert_issuer_source_static.h"
 #include "net/cert/internal/common_cert_errors.h"
 #include "net/cert/internal/parsed_certificate.h"
@@ -27,6 +28,7 @@
 #include "net/cert/internal/revocation_checker.h"
 #include "net/cert/internal/simple_path_builder_delegate.h"
 #include "net/cert/internal/system_trust_store.h"
+#include "net/cert/known_roots.h"
 #include "net/cert/x509_certificate.h"
 #include "net/cert/x509_util.h"
 #include "net/der/encode_values.h"
@@ -183,8 +185,7 @@ class PathBuilderDelegateImpl : public SimplePathBuilderDelegate {
         !certs.empty() && !ssl_trust_store_->IsKnownRoot(certs.back().get())) {
       RevocationPolicy policy;
       policy.check_revocation = true;
-      policy.networking_allowed =
-          (flags_ & CertVerifier::VERIFY_CERT_IO_ENABLED);
+      policy.networking_allowed = true;
       policy.allow_missing_info = true;
       policy.allow_network_failure = false;
 
@@ -204,12 +205,7 @@ class PathBuilderDelegateImpl : public SimplePathBuilderDelegate {
 
       RevocationPolicy policy;
       policy.check_revocation = true;
-      // TODO(eroman): This definition for |networking_allowed| is redundant.
-      //               Perhaps VERIFY_EV_CERT should imply revocation checking.
-      policy.networking_allowed =
-          (flags_ & CertVerifier::VERIFY_CERT_IO_ENABLED) &&
-          ((flags_ & CertVerifier::VERIFY_REV_CHECKING_ENABLED) ||
-           (flags_ & CertVerifier::VERIFY_REV_CHECKING_ENABLED_EV_ONLY));
+      policy.networking_allowed = true;
       policy.allow_missing_info = false;
       policy.allow_network_failure = false;
       return policy;
@@ -219,7 +215,7 @@ class PathBuilderDelegateImpl : public SimplePathBuilderDelegate {
     if (flags_ & CertVerifier::VERIFY_REV_CHECKING_ENABLED) {
       RevocationPolicy policy;
       policy.check_revocation = true;
-      policy.networking_allowed = flags_ & CertVerifier::VERIFY_CERT_IO_ENABLED;
+      policy.networking_allowed = true;
       policy.allow_missing_info = true;
       policy.allow_network_failure = true;
       return policy;
@@ -293,25 +289,20 @@ bool CertVerifyProcBuiltin::SupportsOCSPStapling() const {
   return true;
 }
 
-scoped_refptr<ParsedCertificate> ParseCertificateFromOSHandle(
-    X509Certificate::OSCertHandle cert_handle,
+scoped_refptr<ParsedCertificate> ParseCertificateFromBuffer(
+    CRYPTO_BUFFER* cert_handle,
     CertErrors* errors) {
-  std::string cert_bytes;
-  if (!X509Certificate::GetDEREncoded(cert_handle, &cert_bytes))
-    return nullptr;
-  return ParsedCertificate::Create(x509_util::CreateCryptoBuffer(cert_bytes),
+  return ParsedCertificate::Create(x509_util::DupCryptoBuffer(cert_handle),
                                    x509_util::DefaultParseCertificateOptions(),
                                    errors);
 }
 
 void AddIntermediatesToIssuerSource(X509Certificate* x509_cert,
                                     CertIssuerSourceStatic* intermediates) {
-  const X509Certificate::OSCertHandles& cert_handles =
-      x509_cert->GetIntermediateCertificates();
   CertErrors errors;
-  for (auto it = cert_handles.begin(); it != cert_handles.end(); ++it) {
+  for (const auto& intermediate : x509_cert->intermediate_buffers()) {
     scoped_refptr<ParsedCertificate> cert =
-        ParseCertificateFromOSHandle(*it, &errors);
+        ParseCertificateFromBuffer(intermediate.get(), &errors);
     if (cert)
       intermediates->AddCert(std::move(cert));
     // TODO(crbug.com/634443): Surface these parsing errors?
@@ -363,6 +354,9 @@ void MapPathBuilderErrorsToCertStatus(const CertPathErrors& errors,
     *cert_status |= CERT_STATUS_DATE_INVALID;
   }
 
+  if (errors.ContainsError(cert_errors::kDistrustedByTrustStore))
+    *cert_status |= CERT_STATUS_AUTHORITY_INVALID;
+
   // IMPORTANT: If the path was invalid for a reason that was not
   // explicity checked above, set a general error. This is important as
   // |cert_status| is what ultimately indicates whether verification was
@@ -371,9 +365,9 @@ void MapPathBuilderErrorsToCertStatus(const CertPathErrors& errors,
     *cert_status |= CERT_STATUS_INVALID;
 }
 
-X509Certificate::OSCertHandle CreateOSCertHandle(
+bssl::UniquePtr<CRYPTO_BUFFER> CreateCertBuffers(
     const scoped_refptr<ParsedCertificate>& certificate) {
-  return X509Certificate::CreateOSCertHandleFromBytes(
+  return X509Certificate::CreateCertBufferFromBytes(
       reinterpret_cast<const char*>(certificate->der_cert().UnsafeData()),
       certificate->der_cert().Length());
 }
@@ -386,19 +380,17 @@ X509Certificate::OSCertHandle CreateOSCertHandle(
 scoped_refptr<X509Certificate> CreateVerifiedCertChain(
     X509Certificate* target_cert,
     const CertPathBuilderResultPath& path) {
-  X509Certificate::OSCertHandles intermediates;
+  std::vector<bssl::UniquePtr<CRYPTO_BUFFER>> intermediates;
 
   // Skip the first certificate in the path as that is the target certificate
   for (size_t i = 1; i < path.certs.size(); ++i)
-    intermediates.push_back(CreateOSCertHandle(path.certs[i]));
+    intermediates.push_back(CreateCertBuffers(path.certs[i]));
 
-  scoped_refptr<X509Certificate> result = X509Certificate::CreateFromHandle(
-      target_cert->os_cert_handle(), intermediates);
+  scoped_refptr<X509Certificate> result = X509Certificate::CreateFromBuffer(
+      x509_util::DupCryptoBuffer(target_cert->cert_buffer()),
+      std::move(intermediates));
   // |target_cert| was already successfully parsed, so this should never fail.
   DCHECK(result);
-
-  for (const X509Certificate::OSCertHandle handle : intermediates)
-    X509Certificate::FreeOSCertHandle(handle);
 
   return result;
 }
@@ -449,8 +441,14 @@ void TryBuildPath(const scoped_refptr<ParsedCertificate>& target,
   // |input_cert|.
   path_builder.AddCertIssuerSource(intermediates);
 
-  // TODO(crbug.com/649017): Allow the path builder to discover intermediates
-  // through AIA fetching.
+  // Allow the path builder to discover intermediates through AIA fetching.
+  std::unique_ptr<CertIssuerSourceAia> aia_cert_issuer_source;
+  if (net_fetcher) {
+    aia_cert_issuer_source = std::make_unique<CertIssuerSourceAia>(net_fetcher);
+    path_builder.AddCertIssuerSource(aia_cert_issuer_source.get());
+  } else {
+    LOG(ERROR) << "No net_fetcher for performing AIA chasing.";
+  }
 
   path_builder.Run();
 }
@@ -475,12 +473,24 @@ int AssignVerifyResult(X509Certificate* input_cert,
   const CertPathBuilderResultPath& partial_path =
       *result.paths[result.best_result_index].get();
 
+  AppendPublicKeyHashes(partial_path, &verify_result->public_key_hashes);
+
+  for (auto it = verify_result->public_key_hashes.rbegin();
+       it != verify_result->public_key_hashes.rend() &&
+       !verify_result->is_issued_by_known_root;
+       ++it) {
+    verify_result->is_issued_by_known_root =
+        GetNetTrustAnchorHistogramIdForSPKI(*it) != 0;
+  }
+
   bool path_is_valid = partial_path.IsValid();
 
   const ParsedCertificate* trusted_cert = partial_path.GetTrustedCert();
   if (trusted_cert) {
-    verify_result->is_issued_by_known_root =
-        ssl_trust_store->IsKnownRoot(trusted_cert);
+    if (!verify_result->is_issued_by_known_root) {
+      verify_result->is_issued_by_known_root =
+          ssl_trust_store->IsKnownRoot(trusted_cert);
+    }
 
     verify_result->is_issued_by_additional_trust_anchor =
         ssl_trust_store->IsAdditionalTrustAnchor(trusted_cert);
@@ -501,7 +511,6 @@ int AssignVerifyResult(X509Certificate* input_cert,
   verify_result->verified_cert =
       CreateVerifiedCertChain(input_cert, partial_path);
 
-  AppendPublicKeyHashes(partial_path, &verify_result->public_key_hashes);
   MapPathBuilderErrorsToCertStatus(partial_path.errors,
                                    &verify_result->cert_status);
 
@@ -534,8 +543,8 @@ int CertVerifyProcBuiltin::VerifyInternal(
   base::Time verification_time = base::Time::Now();
 
   // Parse the target certificate.
-  scoped_refptr<ParsedCertificate> target = ParseCertificateFromOSHandle(
-      input_cert->os_cert_handle(), &parsing_errors);
+  scoped_refptr<ParsedCertificate> target =
+      ParseCertificateFromBuffer(input_cert->cert_buffer(), &parsing_errors);
   if (!target) {
     // TODO(crbug.com/634443): Surface these parsing errors?
     verify_result->cert_status |= CERT_STATUS_INVALID;
@@ -551,8 +560,8 @@ int CertVerifyProcBuiltin::VerifyInternal(
       CreateSslSystemTrustStore();
 
   for (const auto& x509_cert : additional_trust_anchors) {
-    scoped_refptr<ParsedCertificate> cert = ParseCertificateFromOSHandle(
-        x509_cert->os_cert_handle(), &parsing_errors);
+    scoped_refptr<ParsedCertificate> cert =
+        ParseCertificateFromBuffer(x509_cert->cert_buffer(), &parsing_errors);
     if (cert)
       ssl_trust_store->AddTrustAnchor(cert);
     // TODO(eroman): Surface parsing errors of additional trust anchor.
@@ -567,10 +576,9 @@ int CertVerifyProcBuiltin::VerifyInternal(
   // setting output flag CERT_STATUS_REV_CHECKING_ENABLED).
   bool checked_revocation_for_some_path = false;
 
-  // Only attempt to build EV paths if it was requested by the caller AND the
-  // target could possibly be an EV certificate.
-  const bool should_try_ev = (flags & CertVerifier::VERIFY_EV_CERT) &&
-                             IsEVCandidate(ev_metadata, target.get());
+  // Only attempt to build EV paths if the target could possibly be an EV
+  // certificate.
+  const bool should_try_ev = IsEVCandidate(ev_metadata, target.get());
 
   // Run path building with the different parameters (attempts) until a valid
   // path is found. Earlier successful attempts have priority over later

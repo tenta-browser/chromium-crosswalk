@@ -72,7 +72,7 @@ void AppCacheURLLoaderJob::DeliverNetworkResponse() {
   // We signal our caller with an empy callback that it needs to perform
   // the network load.
   DCHECK(loader_callback_ && !binding_.is_bound());
-  std::move(loader_callback_).Run(StartLoaderCallback());
+  std::move(loader_callback_).Run({});
   weak_factory_.InvalidateWeakPtrs();
   is_deleting_soon_ = true;
   base::ThreadTaskRunnerHandle::Get()->DeleteSoon(FROM_HERE, this);
@@ -109,6 +109,12 @@ void AppCacheURLLoaderJob::FollowRedirect() {
   NOTREACHED() << "appcache never produces redirects";
 }
 
+void AppCacheURLLoaderJob::ProceedWithResponse() {
+  // TODO(arthursonzogni):  Implement this if AppCache starts using the
+  // AppCacheURLLoader before the Network Service has shipped.
+  NOTREACHED();
+}
+
 void AppCacheURLLoaderJob::SetPriority(net::RequestPriority priority,
                                        int32_t intra_priority_value) {}
 void AppCacheURLLoaderJob::PauseReadingBodyFromNet() {}
@@ -120,8 +126,8 @@ void AppCacheURLLoaderJob::DeleteIfNeeded() {
   delete this;
 }
 
-void AppCacheURLLoaderJob::Start(mojom::URLLoaderRequest request,
-                                 mojom::URLLoaderClientPtr client) {
+void AppCacheURLLoaderJob::Start(network::mojom::URLLoaderRequest request,
+                                 network::mojom::URLLoaderClientPtr client) {
   DCHECK(!binding_.is_bound());
   binding_.Bind(std::move(request));
   client_ = std::move(client);
@@ -132,18 +138,19 @@ void AppCacheURLLoaderJob::Start(mojom::URLLoaderRequest request,
 AppCacheURLLoaderJob::AppCacheURLLoaderJob(
     AppCacheURLLoaderRequest* appcache_request,
     AppCacheStorage* storage,
-    LoaderCallback loader_callback)
+    NavigationLoaderInterceptor::LoaderCallback loader_callback)
     : storage_(storage->GetWeakPtr()),
       start_time_tick_(base::TimeTicks::Now()),
       cache_id_(kAppCacheNoCacheId),
       is_fallback_(false),
       binding_(this),
       writable_handle_watcher_(FROM_HERE,
-                               mojo::SimpleWatcher::ArmingPolicy::MANUAL),
+                               mojo::SimpleWatcher::ArmingPolicy::MANUAL,
+                               base::SequencedTaskRunnerHandle::Get()),
       loader_callback_(std::move(loader_callback)),
       appcache_request_(appcache_request->GetWeakPtr()),
-      is_main_resource_load_(IsResourceTypeFrame(
-          appcache_request->GetResourceRequest()->resource_type)),
+      is_main_resource_load_(IsResourceTypeFrame(static_cast<ResourceType>(
+          appcache_request->GetResourceRequest()->resource_type))),
       weak_factory_(this) {}
 
 void AppCacheURLLoaderJob::CallLoaderCallback() {
@@ -199,8 +206,8 @@ void AppCacheURLLoaderJob::OnResponseInfoLoaded(
     // See http://code.google.com/p/chromium/issues/detail?id=50657
     storage_->service()->CheckAppCacheResponse(manifest_url_, cache_id_,
                                                entry_.response_id());
-    AppCacheHistograms::CountResponseRetrieval(false, is_main_resource_load_,
-                                               manifest_url_.GetOrigin());
+    AppCacheHistograms::CountResponseRetrieval(
+        false, is_main_resource_load_, url::Origin::Create(manifest_url_));
   }
   cache_entry_not_found_ = true;
 
@@ -255,7 +262,7 @@ void AppCacheURLLoaderJob::SendResponseInfo() {
   const net::HttpResponseInfo* http_info = is_range_request()
                                                ? range_response_info_.get()
                                                : info_->http_response_info();
-  ResourceResponseHead response_head;
+  network::ResourceResponseHead response_head;
   response_head.headers = http_info->headers;
   response_head.appcache_id = cache_id_;
   response_head.appcache_manifest_url = manifest_url_;
@@ -275,10 +282,12 @@ void AppCacheURLLoaderJob::SendResponseInfo() {
   response_head.was_fetched_via_spdy = http_info->was_fetched_via_spdy;
   response_head.was_alpn_negotiated = http_info->was_alpn_negotiated;
   response_head.alpn_negotiated_protocol = http_info->alpn_negotiated_protocol;
+  if (http_info->ssl_info.cert)
+    response_head.ssl_info = http_info->ssl_info;
   response_head.load_timing = load_timing_info_;
 
-  client_->OnReceiveResponse(response_head, http_info->ssl_info,
-                             mojom::DownloadedTempFilePtr());
+  client_->OnReceiveResponse(response_head,
+                             network::mojom::DownloadedTempFilePtr());
   client_->OnStartLoadingResponseBody(std::move(data_pipe_.consumer_handle));
 }
 
@@ -307,9 +316,9 @@ void AppCacheURLLoaderJob::ReadMore() {
   uint32_t bytes_to_read =
       std::min<uint32_t>(num_bytes, info_->response_data_size());
 
-  reader_->ReadData(
-      buffer.get(), bytes_to_read,
-      base::Bind(&AppCacheURLLoaderJob::OnReadComplete, GetDerivedWeakPtr()));
+  reader_->ReadData(buffer.get(), bytes_to_read,
+                    base::BindOnce(&AppCacheURLLoaderJob::OnReadComplete,
+                                   GetDerivedWeakPtr()));
 }
 
 void AppCacheURLLoaderJob::NotifyCompleted(int error_code) {
@@ -335,7 +344,8 @@ void AppCacheURLLoaderJob::NotifyCompleted(int error_code) {
 
   if (delivery_type_ == APPCACHED_DELIVERY) {
     AppCacheHistograms::CountResponseRetrieval(
-        error_code == 0, is_main_resource_load_, manifest_url_.GetOrigin());
+        error_code == 0, is_main_resource_load_,
+        url::Origin::Create(manifest_url_));
   }
 }
 

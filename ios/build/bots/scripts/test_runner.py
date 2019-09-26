@@ -4,16 +4,22 @@
 
 """Test runners for iOS."""
 
+from multiprocessing import pool
+
 import argparse
 import collections
 import errno
+import json
 import os
 import plistlib
+import re
 import shutil
 import subprocess
 import sys
 import tempfile
 import time
+
+from multiprocessing import pool
 
 import find_xcode
 import gtest_utils
@@ -51,10 +57,12 @@ class DeviceDetectionError(TestRunnerError):
     super(DeviceDetectionError, self).__init__(
       'Expected one device, found %s:\n%s' % (len(udids), '\n'.join(udids)))
 
+
 class DeviceRestartError(TestRunnerError):
   """Error restarting a device."""
   def __init__(self):
     super(DeviceRestartError, self).__init__('Error restarting a device')
+
 
 class PlugInsNotFoundError(TestRunnerError):
   """The PlugIns directory was not found."""
@@ -196,6 +204,46 @@ def install_xcode(xcode_build_version, mac_toolchain_cmd, xcode_app_path):
   return True
 
 
+def shard_xctest(object_path, shards, test_cases=None):
+  """Gets EarlGrey test methods inside a test target and splits them into shards
+
+  Args:
+    object_path: Path of the test target bundle.
+    shards: Number of shards to split tests.
+    test_cases: Passed in test cases to run.
+
+  Returns:
+    A list of test shards.
+  """
+  cmd = ['otool', '-ov', object_path]
+  test_pattern = re.compile(
+    'imp -\[(?P<testSuite>[A-Za-z_][A-Za-z0-9_]*Test[Case]*) '
+    '(?P<testMethod>test[A-Za-z0-9_]*)\]')
+  test_names = test_pattern.findall(subprocess.check_output(cmd))
+
+  # If test_cases are passed in, only shard the intersection of them and the
+  # listed tests.  Format of passed-in test_cases can be either 'testSuite' or
+  # 'testSuite/testMethod'.  The listed tests are tuples of ('testSuite',
+  # 'testMethod').  The intersection includes both test suites and test methods.
+  tests_set = set()
+  if test_cases:
+    for test in test_names:
+      test_method = '%s/%s' % (test[0], test[1])
+      if test[0] in test_cases or test_method in test_cases:
+        tests_set.add(test_method)
+  else:
+    for test in test_names:
+      # 'ChromeTestCase' is the parent class of all EarlGrey test classes. It
+      # has no real tests.
+      if 'ChromeTestCase' != test[0]:
+        tests_set.add('%s/%s' % (test[0], test[1]))
+
+  tests = sorted(tests_set)
+  shard_len = len(tests)/shards  + (len(tests) % shards > 0)
+  test_shards=[tests[i:i + shard_len] for i in range(0, len(tests), shard_len)]
+  return test_shards
+
+
 class TestRunner(object):
   """Base class containing common functionality."""
 
@@ -208,7 +256,9 @@ class TestRunner(object):
     env_vars=None,
     mac_toolchain='',
     retries=None,
+    shards=None,
     test_args=None,
+    test_cases=None,
     xcode_path='',
     xctest=False,
   ):
@@ -225,6 +275,8 @@ class TestRunner(object):
       retries: Number of times to retry failed test cases.
       test_args: List of strings to pass as arguments to the test when
         launching.
+      test_cases: List of tests to be included in the test run. None or [] to
+        include all tests.
       xcode_path: Path to Xcode.app folder where its contents will be installed.
       xctest: Whether or not this is an XCTest.
 
@@ -262,7 +314,9 @@ class TestRunner(object):
     self.logs = collections.OrderedDict()
     self.out_dir = out_dir
     self.retries = retries or 0
+    self.shards = shards or 1
     self.test_args = test_args or []
+    self.test_cases = test_cases or []
     self.xcode_version = xcode_version
     self.xctest_path = ''
 
@@ -343,7 +397,20 @@ class TestRunner(object):
       shutil.rmtree(DERIVED_DATA)
       os.mkdir(DERIVED_DATA)
 
-  def _run(self, cmd):
+  def run_tests(self, test_shard=None):
+    """Runs passed-in tests.
+
+    Args:
+      test_shard: Test cases to be included in the run.
+
+    Return:
+      out: (list) List of strings of subprocess's output.
+      udid: (string) Name of the simulator device in the run.
+      returncode: (int) Return code of subprocess.
+    """
+    raise NotImplementedError
+
+  def _run(self, cmd, shards=1):
     """Runs the specified command, parsing GTest output.
 
     Args:
@@ -352,33 +419,51 @@ class TestRunner(object):
     Returns:
       GTestResult instance.
     """
-    print ' '.join(cmd)
-    print
-
     result = gtest_utils.GTestResult(cmd)
     if self.xctest_path:
       parser = xctest_utils.XCTestLogParser()
     else:
       parser = gtest_utils.GTestLogParser()
 
-    proc = subprocess.Popen(
-        cmd,
-        env=self.get_launch_env(),
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-    )
+    if shards > 1:
+      test_shards = shard_xctest(
+        os.path.join(self.app_path, self.app_name),
+        shards,
+        self.test_cases
+      )
 
-    while True:
-      line = proc.stdout.readline()
-      if not line:
-        break
-      line = line.rstrip()
-      parser.ProcessLine(line)
-      print line
+      thread_pool = pool.ThreadPool(processes=shards)
+      for out, name, ret in thread_pool.imap_unordered(
+        self.run_tests, test_shards):
+        print "Simulator %s" % name
+        for line in out:
+          print line
+          parser.ProcessLine(line)
+        returncode = ret if ret else 0
+      thread_pool.close()
+      thread_pool.join()
+    else:
+      # TODO(crbug.com/812705): Implement test sharding for unit tests.
+      # TODO(crbug.com/812712): Use thread pool for DeviceTestRunner as well.
+      proc = subprocess.Popen(
+          cmd,
+          env=self.get_launch_env(),
+          stdout=subprocess.PIPE,
+          stderr=subprocess.STDOUT,
+      )
+      while True:
+        line = proc.stdout.readline()
+        if not line:
+          break
+        line = line.rstrip()
+        parser.ProcessLine(line)
+        print line
+        sys.stdout.flush()
+
+      proc.wait()
       sys.stdout.flush()
 
-    proc.wait()
-    sys.stdout.flush()
+      returncode = proc.returncode
 
     for test in parser.FailedTests(include_flaky=True):
       # Test cases are named as <test group>.<test case>. If the test case
@@ -390,12 +475,12 @@ class TestRunner(object):
 
     result.passed_tests.extend(parser.PassedTests(include_flaky=True))
 
-    print '%s returned %s' % (cmd[0], proc.returncode)
+    print '%s returned %s' % (cmd[0], returncode)
     print
 
     # iossim can return 5 if it exits noncleanly even if all tests passed.
     # Therefore we cannot rely on process exit code to determine success.
-    result.finalize(proc.returncode, parser.CompletedWithoutFailure())
+    result.finalize(returncode, parser.CompletedWithoutFailure())
     return result
 
   def launch(self):
@@ -403,7 +488,7 @@ class TestRunner(object):
     self.set_up()
     cmd = self.get_launch_command()
     try:
-      result = self._run(cmd)
+      result = self._run(cmd=cmd, shards=self.shards or 1)
       if result.crashed and not result.crashed_test:
         # If the app crashed but not during any particular test case, assume
         # it crashed on startup. Try one more time.
@@ -494,7 +579,9 @@ class SimulatorTestRunner(TestRunner):
       env_vars=None,
       mac_toolchain='',
       retries=None,
+      shards=None,
       test_args=None,
+      test_cases=None,
       xcode_path='',
       xctest=False,
   ):
@@ -516,6 +603,8 @@ class SimulatorTestRunner(TestRunner):
       retries: Number of times to retry failed test cases.
       test_args: List of strings to pass as arguments to the test when
         launching.
+      test_cases: List of tests to be included in the test run. None or [] to
+        include all tests.
       xcode_path: Path to Xcode.app folder where its contents will be installed.
       xctest: Whether or not this is an XCTest.
 
@@ -534,6 +623,7 @@ class SimulatorTestRunner(TestRunner):
         mac_toolchain=mac_toolchain,
         retries=retries,
         test_args=test_args,
+        test_cases=test_cases,
         xcode_path=xcode_path,
         xctest=xctest,
     )
@@ -547,6 +637,7 @@ class SimulatorTestRunner(TestRunner):
     self.platform = platform
     self.start_time = None
     self.version = version
+    self.shards = shards
 
   @staticmethod
   def kill_simulators():
@@ -659,7 +750,81 @@ class SimulatorTestRunner(TestRunner):
       shutil.rmtree(self.homedir, ignore_errors=True)
       self.homedir = ''
 
-  def get_launch_command(self, test_filter=None, invert=False):
+  def run_tests(self, test_shard=None):
+    """Runs passed-in tests. Builds a command and create a simulator to
+      run tests.
+    Args:
+      test_shard: Test cases to be included in the run.
+
+    Return:
+      out: (list) List of strings of subprocess's output.
+      udid: (string) Name of the simulator device in the run.
+      returncode: (int) Return code of subprocess.
+    """
+    udid = self.getSimulator()
+    cmd = self.sharding_cmd[:]
+    cmd.extend(['-u', udid])
+    if test_shard:
+      for test in test_shard:
+        cmd.extend(['-t', test])
+
+    cmd.append(self.app_path)
+    if self.xctest_path:
+      cmd.append(self.xctest_path)
+
+    proc = subprocess.Popen(
+      cmd,
+      env=self.get_launch_env(),
+      stdout=subprocess.PIPE,
+      stderr=subprocess.STDOUT,
+    )
+
+    out = []
+    while True:
+      line = proc.stdout.readline()
+      if not line:
+        break
+      out.append(line.rstrip())
+
+    self.deleteSimulator(udid)
+    return (out, udid, proc.returncode)
+
+  def getSimulator(self):
+    """Creates a simulator device by device types and runtimes. Returns the
+      udid for the created simulator instance.
+
+    Returns:
+      An udid of a simulator device.
+    """
+    simctl_list = json.loads(subprocess.check_output(
+                             ['xcrun', 'simctl', 'list', '-j']))
+    runtimes = simctl_list['runtimes']
+    devices = simctl_list['devicetypes']
+
+    device_type_id = ''
+    for device in devices:
+      if device['name'] == self.platform:
+        device_type_id = device['identifier']
+
+    runtime_id = ''
+    for runtime in runtimes:
+      if runtime['name'] == 'iOS %s' % self.version:
+        runtime_id = runtime['identifier']
+
+    name = '%s test' % self.platform
+    print 'creating simulator %s' % name
+    udid = subprocess.check_output([
+      'xcrun', 'simctl', 'create', name, device_type_id, runtime_id]).rstrip()
+    print udid
+    return udid
+
+  def deleteSimulator(self, udid=None):
+    """Removes dynamically created simulator devices."""
+    if udid:
+      print 'deleting simulator %s' % udid
+      subprocess.check_output(['xcrun', 'simctl', 'delete', udid])
+
+  def get_launch_command(self, test_filter=None, invert=False, test_shard=None):
     """Returns the command that can be used to launch the test app.
 
     Args:
@@ -676,23 +841,30 @@ class SimulatorTestRunner(TestRunner):
         '-s', self.version,
     ]
 
-    if test_filter:
-      if self.xctest_path:
-        # iossim doesn't support inverted filters for XCTests.
-        if not invert:
-          for test in test_filter:
-            cmd.extend(['-t', test])
-      else:
-        kif_filter = get_kif_test_filter(test_filter, invert=invert)
-        gtest_filter = get_gtest_filter(test_filter, invert=invert)
-        cmd.extend(['-e', 'GKIF_SCENARIO_FILTER=%s' % kif_filter])
-        cmd.extend(['-c', '--gtest_filter=%s' % gtest_filter])
-
     for env_var in self.env_vars:
       cmd.extend(['-e', env_var])
 
     for test_arg in self.test_args:
       cmd.extend(['-c', test_arg])
+
+    if self.xctest_path:
+      self.sharding_cmd = cmd[:]
+      if test_filter:
+        # iossim doesn't support inverted filters for XCTests.
+        if not invert:
+          for test in test_filter:
+            cmd.extend(['-t', test])
+      elif test_shard:
+        for test in test_shard:
+          cmd.extend(['-t', test])
+      elif not invert:
+        for test_case in self.test_cases:
+          cmd.extend(['-t', test_case])
+    elif test_filter:
+        kif_filter = get_kif_test_filter(test_filter, invert=invert)
+        gtest_filter = get_gtest_filter(test_filter, invert=invert)
+        cmd.extend(['-e', 'GKIF_SCENARIO_FILTER=%s' % kif_filter])
+        cmd.extend(['-c', '--gtest_filter=%s' % gtest_filter])
 
     cmd.append(self.app_path)
     if self.xctest_path:
@@ -724,7 +896,9 @@ class DeviceTestRunner(TestRunner):
     mac_toolchain='',
     restart=False,
     retries=None,
+    shards=None,
     test_args=None,
+    test_cases=None,
     xctest=False,
     xcode_path='',
   ):
@@ -742,6 +916,8 @@ class DeviceTestRunner(TestRunner):
       retries: Number of times to retry failed test cases.
       test_args: List of strings to pass as arguments to the test when
         launching.
+      test_cases: List of tests to be included in the test run. None or [] to
+        include all tests.
       xctest: Whether or not this is an XCTest.
       xcode_path: Path to Xcode.app folder where its contents will be installed.
 
@@ -759,6 +935,7 @@ class DeviceTestRunner(TestRunner):
       env_vars=env_vars,
       retries=retries,
       test_args=test_args,
+      test_cases=test_cases,
       xctest=xctest,
       mac_toolchain=mac_toolchain,
       xcode_path=xcode_path,
@@ -846,7 +1023,8 @@ class DeviceTestRunner(TestRunner):
         logs_dir,
       ])
     except subprocess.CalledProcessError:
-      raise TestDataExtractionError()
+      # TODO(crbug.com/828951): Raise the exception when the bug is fixed.
+      print 'Warning: Failed to retrieve crash reports from the device.'
 
   def tear_down(self):
     """Performs cleanup actions which must occur after every test launch."""
@@ -855,6 +1033,28 @@ class DeviceTestRunner(TestRunner):
     self.extract_test_data()
     self.retrieve_crash_reports()
     self.uninstall_apps()
+
+  def set_xctest_filters(self, test_filter=None, invert=False):
+    """Sets the tests be included in the test run."""
+    if self.test_cases:
+      filter = self.test_cases
+      if test_filter:
+        # If inverted, the filter should match tests in test_cases except the
+        # ones in test_filter. Otherwise, the filter should be tests both in
+        # test_cases and test_filter. test_filter is used for test retries, it
+        # should be a subset of test_cases. If the intersection of test_cases
+        # and test_filter fails, use test_filter.
+        filter = (sorted(set(filter) - set(test_filter)) if invert
+                  else sorted(set(filter) & set(test_filter)) or test_filter)
+      self.xctestrun_data['TestTargetName'].update(
+        {'OnlyTestIdentifiers': filter})
+    elif test_filter:
+      if invert:
+        self.xctestrun_data['TestTargetName'].update(
+          {'SkipTestIdentifiers': test_filter})
+      else:
+        self.xctestrun_data['TestTargetName'].update(
+          {'OnlyTestIdentifiers': test_filter})
 
   def get_launch_command(self, test_filter=None, invert=False):
     """Returns the command that can be used to launch the test app.
@@ -868,13 +1068,7 @@ class DeviceTestRunner(TestRunner):
       A list of strings forming the command to launch the test.
     """
     if self.xctest_path:
-      if test_filter:
-        if invert:
-          self.xctestrun_data['TestTargetName'].update(
-            {'SkipTestIdentifiers': test_filter})
-        else:
-          self.xctestrun_data['TestTargetName'].update(
-            {'OnlyTestIdentifiers': test_filter})
+      self.set_xctest_filters(test_filter, invert)
       if self.env_vars:
         self.xctestrun_data['TestTargetName'].update(
           {'EnvironmentVariables': self.env_vars})

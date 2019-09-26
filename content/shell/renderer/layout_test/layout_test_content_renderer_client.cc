@@ -4,10 +4,12 @@
 
 #include "content/shell/renderer/layout_test/layout_test_content_renderer_client.h"
 
+#include <string>
+#include <utility>
+
 #include "base/callback.h"
 #include "base/command_line.h"
 #include "base/debug/debugger.h"
-#include "base/memory/ptr_util.h"
 #include "build/build_config.h"
 #include "components/web_cache/renderer/web_cache_impl.h"
 #include "content/public/common/content_constants.h"
@@ -23,27 +25,26 @@
 #include "content/shell/renderer/layout_test/layout_test_render_frame_observer.h"
 #include "content/shell/renderer/layout_test/layout_test_render_thread_observer.h"
 #include "content/shell/renderer/layout_test/test_media_stream_renderer_factory.h"
+#include "content/shell/renderer/layout_test/test_websocket_handshake_throttle.h"
 #include "content/shell/renderer/shell_render_view_observer.h"
-#include "content/shell/test_runner/mock_credential_manager_client.h"
 #include "content/shell/test_runner/web_frame_test_proxy.h"
 #include "content/shell/test_runner/web_test_interfaces.h"
 #include "content/shell/test_runner/web_test_runner.h"
 #include "content/shell/test_runner/web_view_test_proxy.h"
 #include "content/test/mock_webclipboard_impl.h"
-#include "gin/modules/module_registry.h"
 #include "media/base/audio_latency.h"
 #include "media/base/mime_util.h"
-#include "media/media_features.h"
-#include "third_party/WebKit/public/platform/WebAudioLatencyHint.h"
-#include "third_party/WebKit/public/platform/WebMediaStreamCenter.h"
-#include "third_party/WebKit/public/platform/WebRTCPeerConnectionHandler.h"
-#include "third_party/WebKit/public/platform/WebRuntimeFeatures.h"
-#include "third_party/WebKit/public/platform/modules/webmidi/WebMIDIAccessor.h"
-#include "third_party/WebKit/public/web/WebFrameWidget.h"
-#include "third_party/WebKit/public/web/WebKit.h"
-#include "third_party/WebKit/public/web/WebPluginParams.h"
-#include "third_party/WebKit/public/web/WebTestingSupport.h"
-#include "third_party/WebKit/public/web/WebView.h"
+#include "media/media_buildflags.h"
+#include "third_party/blink/public/platform/modules/webmidi/web_midi_accessor.h"
+#include "third_party/blink/public/platform/web_audio_latency_hint.h"
+#include "third_party/blink/public/platform/web_media_stream_center.h"
+#include "third_party/blink/public/platform/web_rtc_peer_connection_handler.h"
+#include "third_party/blink/public/platform/web_runtime_features.h"
+#include "third_party/blink/public/web/blink.h"
+#include "third_party/blink/public/web/web_frame_widget.h"
+#include "third_party/blink/public/web/web_plugin_params.h"
+#include "third_party/blink/public/web/web_testing_support.h"
+#include "third_party/blink/public/web/web_view.h"
 #include "ui/gfx/icc_profile.h"
 #include "v8/include/v8.h"
 
@@ -133,13 +134,6 @@ LayoutTestContentRendererClient::~LayoutTestContentRendererClient() {
 }
 
 void LayoutTestContentRendererClient::RenderThreadStarted() {
-// Unless/until WebM files are added to the media layout tests, we need to
-// avoid removing MP4/H264/AAC so that layout tests can run on Android.
-// TODO(chcunningham): We should fix the tests to always use non-proprietary
-// codecs and just delete this code. http://crbug.com/787575
-#if !defined(OS_ANDROID)
-  media::RemoveProprietaryMediaTypesAndCodecsForTests();
-#endif
   ShellContentRendererClient::RenderThreadStarted();
   shell_observer_.reset(new LayoutTestRenderThreadObserver());
 }
@@ -167,11 +161,6 @@ void LayoutTestContentRendererClient::RenderViewCreated(
 
   BlinkTestRunner* test_runner = BlinkTestRunner::Get(render_view);
   test_runner->Reset(false /* for_new_test */);
-
-  LayoutTestRenderThreadObserver::GetInstance()
-      ->test_interfaces()
-      ->TestRunner()
-      ->InitializeWebViewWithMocks(render_view->GetWebView());
 }
 
 std::unique_ptr<WebMIDIAccessor>
@@ -237,6 +226,11 @@ LayoutTestContentRendererClient::CreateMediaStreamRendererFactory() {
 #endif
 }
 
+std::unique_ptr<blink::WebSocketHandshakeThrottle>
+LayoutTestContentRendererClient::CreateWebSocketHandshakeThrottle() {
+  return std::make_unique<TestWebSocketHandshakeThrottle>();
+}
+
 void LayoutTestContentRendererClient::DidInitializeWorkerContextOnWorkerThread(
     v8::Local<v8::Context> context) {
   blink::WebTestingSupport::InjectInternalsObject(context);
@@ -255,6 +249,12 @@ void LayoutTestContentRendererClient::
           switches::kEnableFontAntialiasing)) {
     blink::SetFontAntialiasingEnabledForTest(true);
   }
+}
+
+bool LayoutTestContentRendererClient::AllowIdleMediaSuspend() {
+  // Disable idle media suspend to avoid layout tests getting into accidentally
+  // bad states if they take too long to run.
+  return false;
 }
 
 }  // namespace content

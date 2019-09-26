@@ -22,60 +22,26 @@
 #include "gpu/command_buffer/service/gl_utils.h"
 #include "gpu/command_buffer/service/memory_tracking.h"
 #include "gpu/command_buffer/service/sampler_manager.h"
-#include "gpu/gpu_export.h"
+#include "gpu/command_buffer/service/texture_base.h"
+#include "gpu/gpu_gles2_export.h"
 #include "ui/gfx/geometry/rect.h"
 #include "ui/gl/gl_image.h"
 
 namespace gpu {
+class DecoderContext;
 class ServiceDiscardableManager;
 
 namespace gles2 {
-class GLES2Decoder;
 class GLStreamTextureImage;
 struct ContextState;
 struct DecoderFramebufferState;
 class ErrorState;
 class FeatureInfo;
 class FramebufferManager;
-class MailboxManager;
 class ProgressReporter;
 class Texture;
 class TextureManager;
 class TextureRef;
-
-class GPU_EXPORT TextureBase {
- public:
-  explicit TextureBase(GLuint service_id);
-  virtual ~TextureBase();
-
-  // The service side OpenGL id of the texture.
-  GLuint service_id() const { return service_id_; }
-
-  // Returns the target this texure was first bound to or 0 if it has not
-  // been bound. Once a texture is bound to a specific target it can never be
-  // bound to a different target.
-  GLenum target() const { return target_; }
-
- protected:
-  // The id of the texture.
-  GLuint service_id_;
-
-  // The target. 0 if unset, otherwise GL_TEXTURE_2D or GL_TEXTURE_CUBE_MAP.
-  //             Or GL_TEXTURE_2D_ARRAY or GL_TEXTURE_3D (for GLES3).
-  GLenum target_;
-
-  void SetTarget(GLenum target);
-
-  void DeleteFromMailboxManager();
-
- private:
-  friend class MailboxManagerSync;
-  friend class MailboxManagerImpl;
-
-  void SetMailboxManager(MailboxManager* mailbox_manager);
-
-  MailboxManager* mailbox_manager_;
-};
 
 // A ref-counted version of the TextureBase class that deletes the texture after
 // all references have been released.
@@ -108,7 +74,7 @@ class TexturePassthrough final : public TextureBase,
 // Info about Textures currently in the system.
 // This class wraps a real GL texture, keeping track of its meta-data. It is
 // jointly owned by possibly multiple TextureRef.
-class GPU_EXPORT Texture final : public TextureBase {
+class GPU_GLES2_EXPORT Texture final : public TextureBase {
  public:
   enum ImageState {
     // If an image is associated with the texture and image state is UNBOUND,
@@ -343,7 +309,6 @@ class GPU_EXPORT Texture final : public TextureBase {
                               bool immutable);
 
  private:
-  friend class MailboxManagerImpl;
   friend class MailboxManagerSync;
   friend class MailboxManagerTest;
   friend class TextureDefinition;
@@ -456,11 +421,11 @@ class GPU_EXPORT Texture final : public TextureBase {
 
   // Clears any renderable uncleared levels.
   // Returns false if a GL error was generated.
-  bool ClearRenderableLevels(GLES2Decoder* decoder);
+  bool ClearRenderableLevels(DecoderContext* decoder);
 
   // Clears the level.
   // Returns false if a GL error was generated.
-  bool ClearLevel(GLES2Decoder* decoder, GLenum target, GLint level);
+  bool ClearLevel(DecoderContext* decoder, GLenum target, GLint level);
 
   // Sets a texture parameter.
   // TODO(gman): Expand to SetParameteriv,fv
@@ -662,7 +627,7 @@ class GPU_EXPORT Texture final : public TextureBase {
 // with a client id, though it can outlive the client id if it's still bound to
 // a FBO or another context when destroyed.
 // Multiple TextureRef can point to the same texture with cross-context sharing.
-class GPU_EXPORT TextureRef : public base::RefCounted<TextureRef> {
+class GPU_GLES2_EXPORT TextureRef : public base::RefCounted<TextureRef> {
  public:
   TextureRef(TextureManager* manager, GLuint client_id, Texture* texture);
   static scoped_refptr<TextureRef> Create(TextureManager* manager,
@@ -727,10 +692,11 @@ struct DecoderTextureState {
 // texture complete checking.
 //
 // NOTE: To support shared resources an instance of this class will need to be
-// shared by multiple GLES2Decoders.
-class GPU_EXPORT TextureManager : public base::trace_event::MemoryDumpProvider {
+// shared by multiple DecoderContexts.
+class GPU_GLES2_EXPORT TextureManager
+    : public base::trace_event::MemoryDumpProvider {
  public:
-  class GPU_EXPORT DestructionObserver {
+  class GPU_GLES2_EXPORT DestructionObserver {
    public:
     DestructionObserver();
     virtual ~DestructionObserver();
@@ -896,11 +862,13 @@ class GPU_EXPORT TextureManager : public base::trace_event::MemoryDumpProvider {
   void MarkMipmapsGenerated(TextureRef* ref);
 
   // Clears any uncleared renderable levels.
-  bool ClearRenderableLevels(GLES2Decoder* decoder, TextureRef* ref);
+  bool ClearRenderableLevels(DecoderContext* decoder, TextureRef* ref);
 
   // Clear a specific level.
-  bool ClearTextureLevel(
-      GLES2Decoder* decoder, TextureRef* ref, GLenum target, GLint level);
+  bool ClearTextureLevel(DecoderContext* decoder,
+                         TextureRef* ref,
+                         GLenum target,
+                         GLint level);
 
   // Creates a new texture info.
   TextureRef* CreateTexture(GLuint client_id, GLuint service_id);
@@ -1084,7 +1052,7 @@ class GPU_EXPORT TextureManager : public base::trace_event::MemoryDumpProvider {
       // Presumes the pointer is valid.
       TextureRef** texture_ref);
 
-  void ValidateAndDoTexSubImage(GLES2Decoder* decoder,
+  void ValidateAndDoTexSubImage(DecoderContext* decoder,
                                 DecoderTextureState* texture_state,
                                 ContextState* state,
                                 DecoderFramebufferState* framebuffer_state,
@@ -1125,6 +1093,9 @@ class GPU_EXPORT TextureManager : public base::trace_event::MemoryDumpProvider {
                                         GLenum format);
   static GLenum AdjustTexFormat(const gles2::FeatureInfo* feature_info,
                                 GLenum format);
+
+  static GLenum AdjustTexStorageFormat(const gles2::FeatureInfo* feature_info,
+                                       GLenum format);
 
   void WorkaroundCopyTexImageCubeMap(
       DecoderTextureState* texture_state,

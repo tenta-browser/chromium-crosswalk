@@ -7,7 +7,6 @@
 #include <memory>
 
 #include "base/ios/block_types.h"
-#include "base/ios/ios_util.h"
 #include "base/mac/foundation_util.h"
 #include "base/mac/scoped_block.h"
 #import "components/autofill/core/browser/keyboard_accessory_metrics_logger.h"
@@ -268,7 +267,6 @@ NSArray* FindDescendantToolbarItemsForActionName(
 }
 
 - (void)dealloc {
-  [[NSNotificationCenter defaultCenter] removeObserver:self];
   if (_webState) {
     _webState->RemoveObserver(_webStateObserverBridge.get());
     _webStateObserverBridge.reset();
@@ -462,7 +460,8 @@ NSArray* FindDescendantToolbarItemsForActionName(
     return;
   }
 
-  if ((params.type == "blur" || params.type == "change")) {
+  if (params.type == "blur" || params.type == "change" ||
+      params.type == "form_changed") {
     return;
   }
 

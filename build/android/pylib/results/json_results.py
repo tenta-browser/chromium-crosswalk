@@ -5,6 +5,7 @@
 import collections
 import itertools
 import json
+import logging
 
 from pylib.base import base_test_result
 
@@ -104,7 +105,7 @@ def GenerateResultsDict(test_run_results, global_tags=None):
       result_dict = {
           'status': status_as_string(r.GetType()),
           'elapsed_time_ms': r.GetDuration(),
-          'output_snippet': r.GetLog(),
+          'output_snippet': unicode(r.GetLog(), errors='replace'),
           'losless_snippet': '',
           'output_snippet_base64': '',
           'links': r.GetLinks(),
@@ -139,6 +140,7 @@ def GenerateJsonResultsFile(test_run_result, file_path, global_tags=None,
     json_result_file.write(json.dumps(
         GenerateResultsDict(test_run_result, global_tags=global_tags),
         **kwargs))
+    logging.info('Generated json results file at %s', file_path)
 
 
 def ParseResultsFromJson(json_results):

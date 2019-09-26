@@ -156,7 +156,7 @@ NetworkThrottleManagerImpl::NetworkThrottleManagerImpl()
       outstanding_recomputation_timer_(
           std::make_unique<base::Timer>(false /* retain_user_task */,
                                         false /* is_repeating */)),
-      tick_clock_(new base::DefaultTickClock()),
+      tick_clock_(base::DefaultTickClock::GetInstance()),
       weak_ptr_factory_(this) {}
 
 NetworkThrottleManagerImpl::~NetworkThrottleManagerImpl() = default;
@@ -188,12 +188,11 @@ NetworkThrottleManagerImpl::CreateThrottle(
 }
 
 void NetworkThrottleManagerImpl::SetTickClockForTesting(
-    std::unique_ptr<base::TickClock> tick_clock) {
-  tick_clock_ = std::move(tick_clock);
+    const base::TickClock* tick_clock) {
+  tick_clock_ = tick_clock;
   DCHECK(!outstanding_recomputation_timer_->IsRunning());
   outstanding_recomputation_timer_ = std::make_unique<base::Timer>(
-      false /* retain_user_task */, false /* is_repeating */,
-      tick_clock_.get());
+      false /* retain_user_task */, false /* is_repeating */, tick_clock_);
 }
 
 bool NetworkThrottleManagerImpl::ConditionallyTriggerTimerForTesting() {
@@ -233,7 +232,7 @@ void NetworkThrottleManagerImpl::OnThrottleDestroyed(ThrottleImpl* throttle) {
       DCHECK(throttle->queue_pointer() != outstanding_throttles_.end());
       DCHECK_EQ(throttle, *(throttle->queue_pointer()));
       outstanding_throttles_.erase(throttle->queue_pointer());
-    // Fall through
+      FALLTHROUGH;
     case ThrottleImpl::State::AGED:
       DCHECK(!throttle->start_time().is_null());
       lifetime_median_estimate_.AddSample(

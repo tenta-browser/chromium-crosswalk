@@ -34,19 +34,19 @@ class MockableQuicClient : public QuicClient {
  public:
   MockableQuicClient(QuicSocketAddress server_address,
                      const QuicServerId& server_id,
-                     const QuicTransportVersionVector& supported_versions,
+                     const ParsedQuicVersionVector& supported_versions,
                      EpollServer* epoll_server);
 
   MockableQuicClient(QuicSocketAddress server_address,
                      const QuicServerId& server_id,
                      const QuicConfig& config,
-                     const QuicTransportVersionVector& supported_versions,
+                     const ParsedQuicVersionVector& supported_versions,
                      EpollServer* epoll_server);
 
   MockableQuicClient(QuicSocketAddress server_address,
                      const QuicServerId& server_id,
                      const QuicConfig& config,
-                     const QuicTransportVersionVector& supported_versions,
+                     const ParsedQuicVersionVector& supported_versions,
                      EpollServer* epoll_server,
                      std::unique_ptr<ProofVerifier> proof_verifier);
 
@@ -79,15 +79,15 @@ class QuicTestClient : public QuicSpdyStream::Visitor,
  public:
   QuicTestClient(QuicSocketAddress server_address,
                  const std::string& server_hostname,
-                 const QuicTransportVersionVector& supported_versions);
+                 const ParsedQuicVersionVector& supported_versions);
   QuicTestClient(QuicSocketAddress server_address,
                  const std::string& server_hostname,
                  const QuicConfig& config,
-                 const QuicTransportVersionVector& supported_versions);
+                 const ParsedQuicVersionVector& supported_versions);
   QuicTestClient(QuicSocketAddress server_address,
                  const std::string& server_hostname,
                  const QuicConfig& config,
-                 const QuicTransportVersionVector& supported_versions,
+                 const ParsedQuicVersionVector& supported_versions,
                  std::unique_ptr<ProofVerifier> proof_verifier);
 
   ~QuicTestClient() override;
@@ -127,6 +127,7 @@ class QuicTestClient : public QuicSpdyStream::Visitor,
   // Sends a GET request for |uri|, waits for the response, and returns the
   // response body.
   std::string SendSynchronousRequest(const std::string& uri);
+  void SendConnectivityProbing();
   void Connect();
   void ResetConnection();
   void Disconnect();
@@ -183,7 +184,12 @@ class QuicTestClient : public QuicSpdyStream::Visitor,
     WaitUntil(timeout_ms, [this]() { return response_size() != 0; });
   }
 
-  void MigrateSocket(const QuicIpAddress& new_host);
+  // Migrate local address to <|new_host|, a random port>.
+  // Return whether the migration succeeded.
+  bool MigrateSocket(const QuicIpAddress& new_host);
+  // Migrate local address to <|new_host|, |port|>.
+  // Return whether the migration succeeded.
+  bool MigrateSocketWithSpecifiedPort(const QuicIpAddress& new_host, int port);
   QuicIpAddress bind_to_address() const;
   void set_bind_to_address(QuicIpAddress address);
   const QuicSocketAddress& address() const;
@@ -295,6 +301,10 @@ class QuicTestClient : public QuicSpdyStream::Visitor,
   // use to specify the authority.
   bool PopulateHeaderBlockFromUrl(const std::string& uri,
                                   SpdyHeaderBlock* headers);
+
+  // Waits for a period of time that is long enough to receive all delayed acks
+  // sent by peer.
+  void WaitForDelayedAcks();
 
  protected:
   QuicTestClient();

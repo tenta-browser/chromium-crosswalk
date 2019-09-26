@@ -7,8 +7,6 @@
 
 ## Whitespace rules that we can't enforce yet ##
 
-CR AT EOL: svg/import/*
-
 INDENT TABS: .gitmodules
 INDENT TABS: conformance-checkers/*
 INDENT TABS: content-security-policy/*
@@ -16,7 +14,6 @@ INDENT TABS: custom-elements/*
 INDENT TABS: old-tests/*
 INDENT TABS: pointerlock/*
 INDENT TABS: shadow-dom/*
-INDENT TABS: svg/import/*
 INDENT TABS: tools/*
 INDENT TABS: web-animations/*
 INDENT TABS: webaudio/*
@@ -32,12 +29,12 @@ TRAILING WHITESPACE: html-longdesc/*
 TRAILING WHITESPACE: old-tests/*
 TRAILING WHITESPACE: pointerevents/*
 TRAILING WHITESPACE: shadow-dom/*
-TRAILING WHITESPACE: svg/import/*
 TRAILING WHITESPACE: tools/*
 TRAILING WHITESPACE: webaudio/*
 TRAILING WHITESPACE: WebIDL/*
 TRAILING WHITESPACE: webvtt/*
 TRAILING WHITESPACE: encoding/legacy*/*
+TRAILING WHITESPACE: server-timing/resources/parsing/*.sub.headers
 
 ## File types that should never be checked ##
 
@@ -57,6 +54,7 @@ TRAILING WHITESPACE, INDENT TABS, CR AT EOL: *.m4v
 TRAILING WHITESPACE, INDENT TABS, CR AT EOL: *.otf
 TRAILING WHITESPACE, INDENT TABS, CR AT EOL: *.ttf
 TRAILING WHITESPACE, INDENT TABS, CR AT EOL: *.TTF
+TRAILING WHITESPACE, INDENT TABS, CR AT EOL: *.ttc
 TRAILING WHITESPACE, INDENT TABS, CR AT EOL: *.woff
 TRAILING WHITESPACE, INDENT TABS, CR AT EOL: *.woff2
 TRAILING WHITESPACE, INDENT TABS, CR AT EOL: *.eot
@@ -73,6 +71,9 @@ W3C-TEST.ORG: README.md
 W3C-TEST.ORG: */README.md
 W3C-TEST.ORG: docs/*
 SET TIMEOUT: docs/*
+WEB-PLATFORM.TEST:README.md
+WEB-PLATFORM.TEST:*/README.md
+WEB-PLATFORM.TEST:docs/*
 
 ## Helper scripts ##
 
@@ -86,7 +87,7 @@ PRINT STATEMENT: */tools/*
 AHEM COPY: fonts/Ahem.ttf
 
 # None of these are actually Ahem
-AHEM COPY: css/fonts/ahem-extra/AHEM_*.TTF
+AHEM COPY: fonts/ahem-extra/AHEM_*.TTF
 
 # https://github.com/w3c/web-platform-tests/issues/7437
 AHEM COPY: css/vendor-imports/mozilla/mozilla-central-reftests/*/Ahem.ttf
@@ -96,18 +97,26 @@ AHEM COPY: css/vendor-imports/mozilla/mozilla-central-reftests/*/Ahem.ttf
 # Intentional use of CRLF
 CR AT EOL: WebIDL/valid/idl/documentation-dos.widl
 CR AT EOL: cors/resources/cors-headers.asis
+CR AT EOL: html/form-elements/the-textarea-element/multiline-placeholder-cr.html
+CR AT EOL: html/form-elements/the-textarea-element/multiline-placeholder-crlf.html
+CR AT EOL: html/input/the-placeholder-attribute/multiline-cr.html
+CR AT EOL: html/input/the-placeholder-attribute/multiline-crlf.html
 CR AT EOL: html/semantics/embedded-content/the-canvas-element/size.attributes.parse.whitespace.html
 CR AT EOL: webvtt/parsing/file-parsing/tests/support/newlines.vtt
 
 # Intentional use of tabs
 INDENT TABS: html/semantics/embedded-content/the-canvas-element/size.attributes.parse.whitespace.html
 
-# Test generation files containing print statements
+# Intentional use of print statements
 PRINT STATEMENT: dom/nodes/Document-createElement-namespace-tests/generate.py
 PRINT STATEMENT: encrypted-media/polyfill/make-polyfill-tests.py
+PRINT STATEMENT: webdriver/tests/support/fixtures.py
 
 # semi-legitimate use of console.*
 CONSOLE: console/*
+CONSOLE: resources/check-layout-th.js
+CONSOLE: resources/chromium/*
+CONSOLE: resources/idlharness.js
 CONSOLE: streams/resources/test-utils.js
 CONSOLE: service-workers/service-worker/resources/navigation-redirect-other-origin.html
 CONSOLE: service-workers/service-worker/navigation-redirect.https.html
@@ -118,9 +127,6 @@ CONSOLE: service-workers/service-worker/resources/clients-get-other-origin.html
 CONSOLE: annotation-model/scripts/ajv.min.js
 CONSOLE: annotation-model/scripts/showdown.min.js
 CR AT EOL: annotation-model/scripts/showdown.min.js
-
-# Lint doesn't know about sub.svg I guess
-PARSE-FAILED: content-security-policy/svg/including.sub.svg
 
 # Helper files that aren't valid XML
 PARSE-FAILED: acid/acid3/empty.xml
@@ -145,7 +151,6 @@ SET TIMEOUT: css/selectors/selector-placeholder-shown-type-change-002.html
 SET TIMEOUT: css/selectors/selector-placeholder-shown-type-change-003.html
 SET TIMEOUT: css/selectors/selector-read-write-type-change-002.html
 SET TIMEOUT: css/selectors/selector-required-type-change-002.html
-SET TIMEOUT: css/css-fonts/font-display/font-display.html
 SET TIMEOUT: encrypted-media/polyfill/chrome-polyfill.js
 SET TIMEOUT: encrypted-media/polyfill/clearkey-polyfill.js
 SET TIMEOUT: encrypted-media/scripts/playback-temporary-events.js
@@ -189,6 +194,7 @@ SET TIMEOUT: screen-orientation/lock-bad-argument.html
 SET TIMEOUT: screen-orientation/onchange-event.html
 SET TIMEOUT: screen-orientation/resources/sandboxed-iframe-locking.html
 SET TIMEOUT: secure-contexts/basic-popup-and-iframe-tests.https.js
+SET TIMEOUT: service-workers/cache-storage/script-tests/cache-abort.js
 SET TIMEOUT: service-workers/service-worker/activation.https.html
 SET TIMEOUT: service-workers/service-worker/fetch-frame-resource.https.html
 SET TIMEOUT: service-workers/service-worker/fetch-request-redirect.https.html
@@ -218,14 +224,19 @@ SET TIMEOUT: streams/writable-streams/byte-length-queuing-strategy.js
 SET TIMEOUT: user-timing/*
 SET TIMEOUT: webaudio/js/lodash.js
 SET TIMEOUT: webaudio/the-audio-api/the-mediaelementaudiosourcenode-interface/mediaElementAudioSourceToScriptProcessorTest.html
+SET TIMEOUT: webauthn/*timeout.https.html
 SET TIMEOUT: webdriver/*
 SET TIMEOUT: webmessaging/*
 SET TIMEOUT: websockets/*
 SET TIMEOUT: webstorage/eventTestHarness.js
 SET TIMEOUT: webvtt/*
 SET TIMEOUT: workers/*
-SET TIMEOUT: XMLHttpRequest/resources/init.htm
-SET TIMEOUT: XMLHttpRequest/resources/xmlhttprequest-timeout.js
+SET TIMEOUT: xhr/resources/init.htm
+SET TIMEOUT: xhr/resources/xmlhttprequest-timeout.js
+
+# generate_tests implementation and sample usage
+GENERATE_TESTS: resources/test/tests/generate-callback.html
+GENERATE_TESTS: resources/testharness.js
 
 # generate_tests usage (should be got rid of)
 GENERATE_TESTS: 2dcontext/drawing-images-to-the-canvas/*
@@ -263,14 +274,12 @@ GENERATE_TESTS: css/css-tables/width-distribution/distribution-algo-min-content-
 GENERATE_TESTS: css/css-tables/width-distribution/distribution-algo-min-content-percent-guess.html
 GENERATE_TESTS: css/css-tables/width-distribution/distribution-algo-min-content-specified-guess.1.html
 GENERATE_TESTS: css/css-tables/width-distribution/distribution-algo-min-content-specified-guess.html
-GENERATE_TESTS: css/cssom/index-002.html
 GENERATE_TESTS: dom/nodes/case.js
 GENERATE_TESTS: dom/ranges/Range-cloneRange.html
 GENERATE_TESTS: dom/ranges/Range-collapse.html
 GENERATE_TESTS: dom/ranges/Range-mutations.js
 GENERATE_TESTS: dom/ranges/Range-selectNode.html
 GENERATE_TESTS: dom/ranges/Range-set.html
-GENERATE_TESTS: dom/traversal/NodeIterator.html
 GENERATE_TESTS: dom/traversal/TreeWalker.html
 GENERATE_TESTS: domparsing/createContextualFragment.html
 GENERATE_TESTS: domxpath/001.html
@@ -297,21 +306,34 @@ GENERATE_TESTS: shadow-dom/untriaged/shadow-trees/upper-boundary-encapsulation/w
 GENERATE_TESTS: shadow-dom/untriaged/shadow-trees/upper-boundary-encapsulation/window-named-properties-003.html
 
 # Intentional use of setTimeout
+SET TIMEOUT: css/css-fonts/font-display/font-display.html
+SET TIMEOUT: css/css-fonts/font-display/font-display-change.html
+SET TIMEOUT: css/css-fonts/font-display/font-display-change-ref.html
 SET TIMEOUT: html/browsers/windows/auxiliary-browsing-contexts/resources/close-opener.html
 SET TIMEOUT: html/dom/documents/dom-tree-accessors/Document.currentScript.html
 SET TIMEOUT: html/webappapis/timers/*
+SET TIMEOUT: resources/chromium/*
+SET TIMEOUT: resources/test/tests/add_cleanup.html
+SET TIMEOUT: resources/test/tests/api-tests-1.html
+SET TIMEOUT: resources/test/tests/worker.js
+SET TIMEOUT: resources/testharness.js
 
 # setTimeout use in reftests
 SET TIMEOUT: acid/acid3/test.html
 
 # Travis
 W3C-TEST.ORG: .travis.yml
+WEB-PLATFORM.TEST: .travis.yml
 
-# Git submodules are not currently scanned
-*: tools/*
-*: resources/*
+# Config
+WEB-PLATFORM.TEST: config.default.json
+WEB-PLATFORM.TEST: resources/test/config.test.json
+
+# Third party code
 *: css/tools/apiclient/*
 *: css/tools/w3ctestlib/*
+*: resources/webidl2/*
+*: tools/*
 
 # Build system virtualenv
 *: css/tools/_virtualenv/*
@@ -319,6 +341,7 @@ W3C-TEST.ORG: .travis.yml
 
 ## Third party data files
 TRAILING WHITESPACE: css/css-writing-modes/tools/generators/ucd/Blocks.txt
+TRAILING WHITESPACE: resources/chromium/*
 
 
 ## Test generation files
@@ -353,7 +376,7 @@ SUPPORT-WRONG-DIR: css/*/LICENSE-*
 SUPPORT-WRONG-DIR: css/*/COPYING
 SUPPORT-WRONG-DIR: css/*/Makefile
 SUPPORT-WRONG-DIR: css/*/OWNERS
-SUPPORT-WRONG-DIR: css/fonts/*
+SUPPORT-WRONG-DIR: fonts/*
 
 # The selectors-3 testsuite has a weird build system
 SUPPORT-WRONG-DIR: css/selectors/*
@@ -376,19 +399,6 @@ SUPPORT-WRONG-DIR: css/filter-effects/filter-external-002-filter.svg
 SUPPORT-WRONG-DIR: css/vendor-imports/mozilla/mozilla-central-reftests/check-for-references.sh
 SUPPORT-WRONG-DIR: css/vendor-imports/mozilla/mozilla-central-reftests/sync-tests-filter
 SUPPORT-WRONG-DIR: css/vendor-imports/mozilla/mozilla-central-reftests/sync-tests.sh
-SUPPORT-WRONG-DIR: css/vendor-imports/mozilla/mozilla-central-reftests/background/aqua-yellow-32x32.png
-SUPPORT-WRONG-DIR: css/vendor-imports/mozilla/mozilla-central-reftests/background/aqua-yellow-37x37.png
-SUPPORT-WRONG-DIR: css/vendor-imports/mozilla/mozilla-central-reftests/background/border.png
-SUPPORT-WRONG-DIR: css/vendor-imports/mozilla/mozilla-central-reftests/background/reticule-bl.png
-SUPPORT-WRONG-DIR: css/vendor-imports/mozilla/mozilla-central-reftests/background/reticule-bo.png
-SUPPORT-WRONG-DIR: css/vendor-imports/mozilla/mozilla-central-reftests/background/reticule-br.png
-SUPPORT-WRONG-DIR: css/vendor-imports/mozilla/mozilla-central-reftests/background/reticule-ct.png
-SUPPORT-WRONG-DIR: css/vendor-imports/mozilla/mozilla-central-reftests/background/reticule-le.png
-SUPPORT-WRONG-DIR: css/vendor-imports/mozilla/mozilla-central-reftests/background/reticule-ri.png
-SUPPORT-WRONG-DIR: css/vendor-imports/mozilla/mozilla-central-reftests/background/reticule-tl.png
-SUPPORT-WRONG-DIR: css/vendor-imports/mozilla/mozilla-central-reftests/background/reticule-to.png
-SUPPORT-WRONG-DIR: css/vendor-imports/mozilla/mozilla-central-reftests/background/reticule-tr.png
-SUPPORT-WRONG-DIR: css/vendor-imports/mozilla/mozilla-central-reftests/background/reticule.png
 SUPPORT-WRONG-DIR: css/vendor-imports/mozilla/mozilla-central-reftests/masking/blank.html
 SUPPORT-WRONG-DIR: css/WOFF2/testcaseindex.xht
 NON-EXISTENT-REF: css/css-masking/clip-path-svg-content/clip-path-clip-rule-008.svg
@@ -426,7 +436,7 @@ INDENT TABS: css/css-values/*
 INDENT TABS: css/css-variables/*
 INDENT TABS: css/css-writing-modes/*
 INDENT TABS: css/filter-effects/*
-INDENT TABS: css/fonts/*
+INDENT TABS: fonts/*
 INDENT TABS: css/mediaqueries/*
 INDENT TABS: css/selectors/*
 INDENT TABS: css/vendor-imports/*
@@ -444,7 +454,6 @@ CONSOLE: css/css-values/viewport-units-css2-001.html
 CONSOLE: css/css-writing-modes/orthogonal-parent-shrink-to-fit-001*.html
 CONSOLE: css/css-writing-modes/tools/generators/gulpfile.js
 CONSOLE: css/css-writing-modes/tools/generators/text-orientation-generator.js
-CONSOLE: css/cssom/index-002.html
 
 TRAILING WHITESPACE: css/CSS2/generated-content/before-after-positioned-002.html
 TRAILING WHITESPACE: css/CSS2/generated-content/before-after-positioned-003.html
@@ -560,8 +569,6 @@ CSS-COLLIDING-SUPPORT-NAME: css/*/.htaccess
 CSS-COLLIDING-SUPPORT-NAME: css/*/LOCK
 
 # These are all the current "merge mismatch" errors the build system produces
-CSS-COLLIDING-SUPPORT-NAME: css/css-flexbox/support/100x100-green.png
-CSS-COLLIDING-SUPPORT-NAME: css/css-grid/grid-items/support/100x100-green.png
 CSS-COLLIDING-SUPPORT-NAME: css/css-flexbox/support/200x200-green.png
 CSS-COLLIDING-SUPPORT-NAME: css/css-grid/grid-items/support/200x200-green.png
 CSS-COLLIDING-SUPPORT-NAME: css/css-regions/contentEditable/support/common.css
@@ -770,6 +777,8 @@ CSS-COLLIDING-REF-NAME: css/CSS2/visufx/overflow-applies-to-001-ref.xht
 CSS-COLLIDING-REF-NAME: css/CSS2/ui/overflow-applies-to-001-ref.xht
 CSS-COLLIDING-REF-NAME: css/CSS2/visuren/inline-formatting-context-001-ref.xht
 CSS-COLLIDING-REF-NAME: css/CSS2/linebox/inline-formatting-context-001-ref.xht
+CSS-COLLIDING-REF-NAME: css/css-transforms/individual-transform/individual-transform-1-ref.html
+CSS-COLLIDING-REF-NAME: css/vendor-imports/mozilla/mozilla-central-reftests/transforms/individual-transform-1-ref.html
 CSS-COLLIDING-SUPPORT-NAME: css/css-backgrounds/support/red.png
 CSS-COLLIDING-SUPPORT-NAME: css/compositing/mix-blend-mode/support/red.png
 CSS-COLLIDING-SUPPORT-NAME: css/compositing/background-blending/support/red.png
@@ -875,25 +884,7 @@ SUPPORT-WRONG-DIR: css/css-timing/testcommon.js
 MISSING-LINK: css/css-typed-om/CSSMatrixComponent-DOMMatrix-mutable.html
 MISSING-LINK: css/css-typed-om/declared-styleMap-accepts-inherit.html
 MISSING-LINK: css/css-typed-om/styleMap-update-function.html
-MISSING-LINK: css/cssom/CSS.html
-MISSING-LINK: css/cssom/CSSKeyframeRule.html
-MISSING-LINK: css/cssom/CSSKeyframesRule.html
-MISSING-LINK: css/cssom/CSSNamespaceRule.html
-MISSING-LINK: css/cssom/CSSRuleList.html
-MISSING-LINK: css/cssom/CSSStyleSheet.html
-MISSING-LINK: css/cssom/GetBoundingRect.html
-MISSING-LINK: css/cssom/historical.html
-MISSING-LINK: css/cssom/MediaList.html
-MISSING-LINK: css/cssom/overflow-serialization.html
-MISSING-LINK: css/cssom/selectorText-modification-restyle-001.html
-MISSING-LINK: css/cssom/serialization-CSSDeclaration-with-important.html
-MISSING-LINK: css/cssom/serialize-values.html
-MISSING-LINK: css/cssom/serialize-variable-reference.html
-MISSING-LINK: css/cssom/shorthand-serialization.html
 SUPPORT-WRONG-DIR: css/cssom/stylesheet-same-origin.css
-MISSING-LINK: css/cssom/stylesheet-same-origin.sub.html
-MISSING-LINK: css/cssom/StyleSheetList.html
-MISSING-LINK: css/cssom/variable-names.html
 MISSING-LINK: css/cssom-view/DOMRectList.html
 MISSING-LINK: css/cssom-view/elementFromPoint-002.html
 MISSING-LINK: css/cssom-view/elementFromPoint-003.html
@@ -919,11 +910,13 @@ MISSING-LINK: css/cssom-view/scrolling-quirks-vs-nonquirks.html
 MISSING-LINK: css/cssom-view/scrollingElement.html
 MISSING-LINK: css/cssom-view/scrollIntoView-shadow.html
 MISSING-LINK: css/cssom-view/scrollIntoView-smooth.html
+MISSING-LINK: css/cssom-view/scrollTop-display-change.html
 CSS-COLLIDING-TEST-NAME: css/cssom-view/interfaces.html
 CSS-COLLIDING-TEST-NAME: css/cssom/interfaces.html
 
 # TODO https://github.com/w3c/web-platform-tests/issues/5770
 MISSING-LINK: css/geometry/*.worker.js
+MISSING-LINK: css/filter-effects/*.any.js
 
 WEBIDL2.JS: .gitmodules
 
@@ -932,3 +925,24 @@ CONSOLE: payment-request/payment-request-response-id.html
 
 # Tests that use WebKit/Blink testing APIs
 LAYOUTTESTS APIS: css/css-regions/interactivity/*
+
+# Existing use of WEB-PLATFORM.TEST
+WEB-PLATFORM.TEST: clear-site-data/support/test_utils.sub.js
+WEB-PLATFORM.TEST: content-security-policy/base-uri/report-uri-does-not-respect-base-uri.sub.html
+WEB-PLATFORM.TEST: content-security-policy/generic/generic-0_8.sub.html
+WEB-PLATFORM.TEST: content-security-policy/generic/generic-0_8_1.sub.html
+WEB-PLATFORM.TEST: content-security-policy/nonce-hiding/script-nonces-hidden-meta.tentative.html
+WEB-PLATFORM.TEST: content-security-policy/nonce-hiding/svgscript-nonces-hidden-meta.tentative.html
+WEB-PLATFORM.TEST: fetch/api/request/request-structure.html
+WEB-PLATFORM.TEST: html/browsers/origin/relaxing-the-same-origin-restriction/document_domain_setter.html
+WEB-PLATFORM.TEST: html/semantics/embedded-content/the-iframe-element/cross_origin_parentage.html
+WEB-PLATFORM.TEST: html/semantics/forms/the-label-element/label-attributes.html
+WEB-PLATFORM.TEST: longtask-timing/longtask-in-childiframe-crossorigin.html
+WEB-PLATFORM.TEST: longtask-timing/longtask-in-sibling-iframe-crossorigin.html
+WEB-PLATFORM.TEST: navigation-timing/nav2_test_attributes_values.html
+WEB-PLATFORM.TEST: navigation-timing/nav2_test_instance_accessors.html
+WEB-PLATFORM.TEST: service-workers/service-worker/update-bytecheck.https.html
+WEB-PLATFORM.TEST: webdriver/tests/cookies/add_cookie.py
+WEB-PLATFORM.TEST: webdriver/tests/cookies/get_named_cookie.py
+WEB-PLATFORM.TEST: webrtc/RTCPeerConnection-getIdentityAssertion.html
+WEB-PLATFORM.TEST: webrtc/identity-helper.js

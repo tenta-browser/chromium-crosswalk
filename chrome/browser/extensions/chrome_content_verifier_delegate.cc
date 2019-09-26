@@ -11,9 +11,9 @@
 
 #include "base/base_switches.h"
 #include "base/command_line.h"
-#include "base/memory/ptr_util.h"
 #include "base/metrics/field_trial.h"
 #include "base/metrics/histogram_macros.h"
+#include "base/no_destructor.h"
 #include "base/strings/string_piece.h"
 #include "base/strings/string_util.h"
 #include "base/syslog_logging.h"
@@ -26,11 +26,11 @@
 #include "chrome/common/chrome_switches.h"
 #include "chrome/common/extensions/extension_constants.h"
 #include "extensions/browser/content_verifier.h"
+#include "extensions/browser/disable_reason.h"
 #include "extensions/browser/extension_prefs.h"
 #include "extensions/browser/extension_registry.h"
 #include "extensions/browser/extension_system.h"
 #include "extensions/browser/management_policy.h"
-#include "extensions/common/disable_reason.h"
 #include "extensions/common/extension_urls.h"
 #include "extensions/common/extensions_client.h"
 #include "extensions/common/manifest.h"
@@ -42,18 +42,26 @@
 #include "chrome/browser/extensions/extension_assets_manager_chromeos.h"
 #endif
 
+namespace extensions {
+
 namespace {
+
+base::Optional<ContentVerifierDelegate::Mode>& GetModeForTesting() {
+  static base::NoDestructor<base::Optional<ContentVerifierDelegate::Mode>>
+      testing_mode;
+  return *testing_mode;
+}
 
 const char kContentVerificationExperimentName[] =
     "ExtensionContentVerification";
 
-
 }  // namespace
-
-namespace extensions {
 
 // static
 ContentVerifierDelegate::Mode ChromeContentVerifierDelegate::GetDefaultMode() {
+  if (GetModeForTesting())
+    return *GetModeForTesting();
+
   base::CommandLine* command_line = base::CommandLine::ForCurrentProcess();
 
   Mode experiment_value;
@@ -109,12 +117,20 @@ ContentVerifierDelegate::Mode ChromeContentVerifierDelegate::GetDefaultMode() {
   return std::max(experiment_value, cmdline_value);
 }
 
+// static
+void ChromeContentVerifierDelegate::SetDefaultModeForTesting(
+    base::Optional<Mode> mode) {
+  DCHECK(!GetModeForTesting() || !mode)
+      << "Verification mode already overridden, unset it first.";
+  GetModeForTesting() = mode;
+}
+
 ChromeContentVerifierDelegate::ChromeContentVerifierDelegate(
     content::BrowserContext* context)
     : context_(context),
       default_mode_(GetDefaultMode()),
       policy_extension_reinstaller_(
-          base::MakeUnique<PolicyExtensionReinstaller>(context_)) {}
+          std::make_unique<PolicyExtensionReinstaller>(context_)) {}
 
 ChromeContentVerifierDelegate::~ChromeContentVerifierDelegate() {
 }
@@ -185,6 +201,11 @@ void ChromeContentVerifierDelegate::VerifyFailed(
   if (!extension)
     return;
   ExtensionSystem* system = ExtensionSystem::Get(context_);
+  if (!system->management_policy()) {
+    // Some tests will add an extension to the registry, but there is no
+    // management policy.
+    return;
+  }
   ExtensionService* service = system->extension_service();
   Mode mode = ShouldBeVerified(*extension);
   if (mode >= ContentVerifierDelegate::ENFORCE) {

@@ -26,7 +26,8 @@ namespace {
 
 class FakeArcImeBridge : public ArcImeBridge {
  public:
-  FakeArcImeBridge() : count_send_insert_text_(0) {}
+  FakeArcImeBridge()
+      : count_send_insert_text_(0), last_keyboard_availability_(false) {}
 
   void SendSetCompositionText(const ui::CompositionText& composition) override {
   }
@@ -35,15 +36,26 @@ class FakeArcImeBridge : public ArcImeBridge {
   void SendInsertText(const base::string16& text) override {
     count_send_insert_text_++;
   }
-  void SendOnKeyboardBoundsChanging(const gfx::Rect& new_bounds) override {
-  }
   void SendExtendSelectionAndDelete(size_t before, size_t after) override {
+  }
+  void SendOnKeyboardAppearanceChanging(const gfx::Rect& new_bounds,
+                                        bool is_available) override {
+    last_keyboard_bounds_ = new_bounds;
+    last_keyboard_availability_ = is_available;
   }
 
   int count_send_insert_text() const { return count_send_insert_text_; }
+  const gfx::Rect& last_keyboard_bounds() const {
+    return last_keyboard_bounds_;
+  }
+  bool last_keyboard_availability() const {
+    return last_keyboard_availability_;
+  }
 
  private:
   int count_send_insert_text_;
+  gfx::Rect last_keyboard_bounds_;
+  bool last_keyboard_availability_;
 };
 
 class FakeInputMethod : public ui::DummyInputMethod {
@@ -101,6 +113,10 @@ class FakeArcWindowDelegate : public ArcImeService::ArcWindowDelegate {
  public:
   explicit FakeArcWindowDelegate(ui::InputMethod* input_method)
       : next_id_(0), test_input_method_(input_method) {}
+
+  bool IsExoWindow(const aura::Window* window) const override {
+    return IsArcWindow(window);
+  }
 
   bool IsArcWindow(const aura::Window* window) const override {
     return arc_window_id_.count(window->id());
@@ -166,6 +182,7 @@ class ArcImeServiceTest : public testing::Test {
   }
 
   void TearDown() override {
+    ArcImeService::SetOverrideDefaultDeviceScaleFactorForTesting(base::nullopt);
     arc_win_.reset();
     fake_window_delegate_ = nullptr;
     fake_arc_ime_bridge_ = nullptr;
@@ -302,7 +319,8 @@ TEST_F(ArcImeServiceTest, GetTextFromRange) {
   const gfx::Range selection_range(cursor_pos, cursor_pos);
 
   instance_->OnCursorRectChangedWithSurroundingText(
-      gfx::Rect(0, 0, 1, 1), text_range, text_in_range, selection_range);
+      gfx::Rect(0, 0, 1, 1), text_range, text_in_range, selection_range,
+      true /* is_screen_coordinates */);
 
   gfx::Range temp;
   instance_->GetTextRange(&temp);
@@ -314,6 +332,58 @@ TEST_F(ArcImeServiceTest, GetTextFromRange) {
 
   instance_->GetSelectionRange(&temp);
   EXPECT_EQ(selection_range, temp);
+}
+
+TEST_F(ArcImeServiceTest, OnKeyboardAppearanceChanged) {
+  instance_->OnWindowFocused(arc_win_.get(), nullptr);
+  EXPECT_EQ(gfx::Rect(), fake_arc_ime_bridge_->last_keyboard_bounds());
+  EXPECT_FALSE(fake_arc_ime_bridge_->last_keyboard_availability());
+
+  const gfx::Rect keyboard_bounds(0, 480, 1200, 320);
+  keyboard::KeyboardStateDescriptor desc1{true, false, keyboard_bounds,
+                                          keyboard_bounds, keyboard_bounds};
+  instance_->OnKeyboardAppearanceChanged(desc1);
+  EXPECT_EQ(keyboard_bounds, fake_arc_ime_bridge_->last_keyboard_bounds());
+  EXPECT_TRUE(fake_arc_ime_bridge_->last_keyboard_availability());
+
+  // Change the default scale factor of the internal display.
+  const double new_scale_factor = 10.0;
+  const gfx::Rect new_keyboard_bounds(
+      0 * new_scale_factor, 480 * new_scale_factor, 1200 * new_scale_factor,
+      320 * new_scale_factor);
+  instance_->SetOverrideDefaultDeviceScaleFactorForTesting(new_scale_factor);
+
+  // Keyboard bounds passed to Android should be changed.
+  instance_->OnKeyboardAppearanceChanged(desc1);
+  EXPECT_EQ(new_keyboard_bounds, fake_arc_ime_bridge_->last_keyboard_bounds());
+  EXPECT_TRUE(fake_arc_ime_bridge_->last_keyboard_availability());
+}
+
+TEST_F(ArcImeServiceTest, GetCaretBounds) {
+  EXPECT_EQ(gfx::Rect(), instance_->GetCaretBounds());
+
+  const gfx::Rect window_rect(123, 321, 100, 100);
+  arc_win_->SetBounds(window_rect);
+  instance_->OnWindowFocused(arc_win_.get(), nullptr);
+
+  const gfx::Rect cursor_rect(10, 12, 2, 8);
+  instance_->OnCursorRectChanged(cursor_rect, true);  // screen coordinates
+  EXPECT_EQ(cursor_rect, instance_->GetCaretBounds());
+
+  instance_->OnCursorRectChanged(cursor_rect, false);  // window coordinates
+  EXPECT_EQ(cursor_rect + window_rect.OffsetFromOrigin(),
+            instance_->GetCaretBounds());
+
+  const double new_scale_factor = 10.0;
+  const gfx::Rect new_cursor_rect(10 * new_scale_factor, 12 * new_scale_factor,
+                                  2 * new_scale_factor, 8 * new_scale_factor);
+  instance_->SetOverrideDefaultDeviceScaleFactorForTesting(new_scale_factor);
+  instance_->OnCursorRectChanged(new_cursor_rect, true);  // screen coordinates
+  EXPECT_EQ(cursor_rect, instance_->GetCaretBounds());
+
+  instance_->OnCursorRectChanged(new_cursor_rect, false);  // window coordinates
+  EXPECT_EQ(cursor_rect + window_rect.OffsetFromOrigin(),
+            instance_->GetCaretBounds());
 }
 
 }  // namespace arc

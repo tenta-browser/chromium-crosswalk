@@ -24,6 +24,8 @@ namespace metrics_util {
 enum class CredentialSourceType;
 }  // namespace metrics_util
 }  // namespace password_manager
+
+struct AccountInfo;
 class GURL;
 
 // An interface for ManagePasswordsBubbleModel implemented by
@@ -54,10 +56,6 @@ class PasswordsModelDelegate {
   // Returns the source of the credential to be saved.
   virtual password_manager::metrics_util::CredentialSourceType
   GetCredentialSource() const = 0;
-
-  // True if the password for previously stored account was overridden, i.e. in
-  // newly submitted form the password is different from stored one.
-  virtual bool IsPasswordOverridden() const = 0;
 
   // Returns current local forms for the current page.
   virtual const std::vector<std::unique_ptr<autofill::PasswordForm>>&
@@ -107,11 +105,25 @@ class PasswordsModelDelegate {
   virtual void NavigateToPasswordManagerAccountDashboard() = 0;
   // Open a new tab, pointing to the password manager settings page.
   virtual void NavigateToPasswordManagerSettingsPage() = 0;
-  // Starts the Chrome Sign in flow.
-  virtual void NavigateToChromeSignIn() = 0;
+  // Called by the view when the "Sign in to Chrome" button or the "Sync to"
+  // button in the promo bubble are clicked.
+  virtual void EnableSync(const AccountInfo& account,
+                          bool is_default_promo_account) = 0;
 
   // Called from the dialog controller when the dialog is hidden.
   virtual void OnDialogHidden() = 0;
+
+  // Called from the model when re-auth is needed to show passwords. Returns
+  // true immediately if user authentication is not available for the given
+  // platform. Otherwise, the method schedules a task to show an authentication
+  // dialog and reopens the bubble afterwards, then the method returns false.
+  // The password in the reopened bubble will be revealed if the authentication
+  // was successful.
+  virtual bool AuthenticateUser() = 0;
+
+  // Returns true if the password values should be revealed when the bubble is
+  // opened.
+  virtual bool ArePasswordsRevealedWhenBubbleIsOpened() const = 0;
 
  protected:
   virtual ~PasswordsModelDelegate() = default;

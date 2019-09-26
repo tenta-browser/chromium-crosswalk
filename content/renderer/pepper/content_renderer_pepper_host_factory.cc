@@ -33,16 +33,16 @@
 #include "content/renderer/pepper/pepper_websocket_host.h"
 #include "content/renderer/pepper/ppb_image_data_impl.h"
 #include "content/renderer/pepper/renderer_ppapi_host_impl.h"
-#include "media/media_features.h"
+#include "media/media_buildflags.h"
 #include "ppapi/host/resource_host.h"
 #include "ppapi/proxy/ppapi_message_utils.h"
 #include "ppapi/proxy/ppapi_messages.h"
 #include "ppapi/proxy/serialized_structs.h"
 #include "ppapi/shared_impl/ppb_image_data_shared.h"
 #include "services/service_manager/sandbox/switches.h"
-#include "third_party/WebKit/public/platform/WebURL.h"
-#include "third_party/WebKit/public/web/WebDocument.h"
-#include "third_party/WebKit/public/web/WebPluginContainer.h"
+#include "third_party/blink/public/platform/web_url.h"
+#include "third_party/blink/public/web/web_document.h"
+#include "third_party/blink/public/web/web_plugin_container.h"
 
 #if defined(OS_WIN)
 #include "base/win/windows_version.h"
@@ -197,10 +197,12 @@ ContentRendererPepperHostFactory::CreateResourceHost(
       if (CanUseMediaStreamAPI(host_, instance))
         return std::make_unique<PepperVideoDestinationHost>(host_, instance,
                                                             resource);
+      return nullptr;
     case PpapiHostMsg_VideoSource_Create::ID:
       if (CanUseMediaStreamAPI(host_, instance))
         return std::make_unique<PepperVideoSourceHost>(host_, instance,
                                                        resource);
+      return nullptr;
 #endif  // BUILDFLAG(ENABLE_WEBRTC)
   }
 
@@ -220,9 +222,9 @@ ContentRendererPepperHostFactory::CreateResourceHost(
         return std::make_unique<PepperFileChooserHost>(host_, instance,
                                                        resource);
       case PpapiHostMsg_VideoCapture_Create::ID: {
-        std::unique_ptr<PepperVideoCaptureHost> host(
+        std::unique_ptr<PepperVideoCaptureHost> video_host(
             new PepperVideoCaptureHost(host_, instance, resource));
-        return host->Init() ? std::move(host) : nullptr;
+        return video_host->Init() ? std::move(video_host) : nullptr;
       }
     }
   }
@@ -233,9 +235,9 @@ ContentRendererPepperHostFactory::CreateResourceHost(
     if (!GetPermissions().HasPermission(ppapi::PERMISSION_PRIVATE) &&
         !CanUseCameraDeviceAPI(host_, instance))
       return nullptr;
-    std::unique_ptr<PepperCameraDeviceHost> host(
+    std::unique_ptr<PepperCameraDeviceHost> camera_host(
         new PepperCameraDeviceHost(host_, instance, resource));
-    return host->Init() ? std::move(host) : nullptr;
+    return camera_host->Init() ? std::move(camera_host) : nullptr;
   }
 
   return nullptr;

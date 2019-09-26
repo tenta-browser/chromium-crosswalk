@@ -15,7 +15,6 @@
 #include "base/memory/ptr_util.h"
 #include "base/run_loop.h"
 #include "base/strings/utf_string_conversions.h"
-#include "chrome/browser/loader/chrome_resource_dispatcher_host_delegate.h"
 #include "chrome/browser/prerender/prerender_manager.h"
 #include "chrome/browser/prerender/prerender_manager_factory.h"
 #include "chrome/browser/profiles/profile.h"
@@ -107,16 +106,19 @@ class CountingInterceptor : public net::URLRequestInterceptor {
 class CountingInterceptorWithCallback : public net::URLRequestInterceptor {
  public:
   // Inserts the interceptor object to intercept requests to |url|.  Can be
-  // called on any thread. Assumes that |counter| lives on the UI thread.  The
-  // |callback_io| will be called on IO thread with the net::URLrequest
-  // provided.
+  // called on any thread. Assumes that |counter| (if non-null) lives on the UI
+  // thread.  The |callback_io| will be called on IO thread with the
+  // net::URLrequest provided.
   static void Initialize(const GURL& url,
                          RequestCounter* counter,
                          base::Callback<void(net::URLRequest*)> callback_io) {
+    base::WeakPtr<RequestCounter> weakptr;
+    if (counter)
+      weakptr = counter->AsWeakPtr();
     content::BrowserThread::PostTask(
         content::BrowserThread::IO, FROM_HERE,
         base::BindOnce(&CountingInterceptorWithCallback::CreateAndAddOnIO, url,
-                       counter->AsWeakPtr(), callback_io));
+                       weakptr, callback_io));
   }
 
   // net::URLRequestInterceptor:
@@ -429,7 +431,7 @@ DestructionWaiter::DestructionWaiter(TestPrerenderContents* prerender_contents,
     // The contents was already destroyed by the time this was called.
     MarkDestruction(prerender_contents->final_status());
   } else {
-    marker_ = base::MakeUnique<DestructionMarker>(this);
+    marker_ = std::make_unique<DestructionMarker>(this);
     prerender_contents->AddObserver(marker_.get());
   }
 }
@@ -562,7 +564,7 @@ void FirstContentfulPaintManagerWaiter::OnFirstContentfulPaint() {
 void FirstContentfulPaintManagerWaiter::Wait() {
   if (saw_fcp_)
     return;
-  waiter_ = base::MakeUnique<base::RunLoop>();
+  waiter_ = std::make_unique<base::RunLoop>();
   waiter_->Run();
   waiter_.reset();
 }
@@ -615,9 +617,9 @@ TestPrerenderContentsFactory::ExpectedContents::~ExpectedContents() {}
 
 PrerenderInProcessBrowserTest::PrerenderInProcessBrowserTest()
     : external_protocol_handler_delegate_(
-          base::MakeUnique<NeverRunsExternalProtocolHandlerDelegate>()),
+          std::make_unique<NeverRunsExternalProtocolHandlerDelegate>()),
       safe_browsing_factory_(
-          base::MakeUnique<safe_browsing::TestSafeBrowsingServiceFactory>()),
+          std::make_unique<safe_browsing::TestSafeBrowsingServiceFactory>()),
       prerender_contents_factory_(nullptr),
       explicitly_set_browser_(nullptr),
       autostart_test_server_(true) {}
@@ -709,9 +711,8 @@ void PrerenderInProcessBrowserTest::SetUpOnMainThread() {
                  base::Unretained(this)));
   if (autostart_test_server_)
     CHECK(embedded_test_server()->Start());
-  ChromeResourceDispatcherHostDelegate::
-      SetExternalProtocolHandlerDelegateForTesting(
-          external_protocol_handler_delegate_.get());
+  ExternalProtocolHandler::SetDelegateForTesting(
+      external_protocol_handler_delegate_.get());
 
   // Check that PrerenderManager exists, which is necessary to make sure
   // NoStatePrefetch can be enabled and perceived FCP metrics can be recorded.
@@ -850,7 +851,12 @@ void CreateCountingInterceptorOnIO(
     const base::WeakPtr<RequestCounter>& counter) {
   CHECK(content::BrowserThread::CurrentlyOn(content::BrowserThread::IO));
   net::URLRequestFilter::GetInstance()->AddUrlInterceptor(
-      url, base::MakeUnique<CountingInterceptor>(file, counter));
+      url, std::make_unique<CountingInterceptor>(file, counter));
+}
+
+void InterceptRequest(const GURL& url,
+                      base::Callback<void(net::URLRequest*)> callback_io) {
+  CountingInterceptorWithCallback::Initialize(url, nullptr, callback_io);
 }
 
 void InterceptRequestAndCount(

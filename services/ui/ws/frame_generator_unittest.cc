@@ -55,6 +55,11 @@ class TestClientBinding : public viz::mojom::CompositorFrameSink,
     last_begin_frame_ack_ = ack;
   }
 
+  void DidAllocateSharedBitmap(mojo::ScopedSharedBufferHandle buffer,
+                               const viz::SharedBitmapId& id) override {}
+
+  void DidDeleteSharedBitmap(const viz::SharedBitmapId& id) override {}
+
   void SetNeedsBeginFrame(bool needs_begin_frame) override {
     if (needs_begin_frame == observing_begin_frames_)
       return;
@@ -66,6 +71,8 @@ class TestClientBinding : public viz::mojom::CompositorFrameSink,
       begin_frame_source_->RemoveObserver(this);
   }
 
+  void SetWantsAnimateOnlyBeginFrames() override {}
+
   // viz::BeginFrameObserver implementation.
   void OnBeginFrame(const viz::BeginFrameArgs& args) override {
     sink_client_->OnBeginFrame(args);
@@ -75,6 +82,8 @@ class TestClientBinding : public viz::mojom::CompositorFrameSink,
   const viz::BeginFrameArgs& LastUsedBeginFrameArgs() const override {
     return last_begin_frame_args_;
   }
+
+  bool WantsAnimateOnlyBeginFrames() const override { return false; }
 
   void OnBeginFrameSourcePausedChanged(bool paused) override {}
 
@@ -136,7 +145,7 @@ class FrameGeneratorTest : public testing::Test {
   // |frame_generator_|. After InitWithSurfaceInfo finishes, |frame_generator_|
   // has a valid SurfaceInfo and does not request BeginFrames.
   void InitWithSurfaceInfo() {
-    frame_generator_->OnFirstSurfaceActivation(kArbitrarySurfaceInfo);
+    frame_generator_->SetEmbeddedSurface(kArbitrarySurfaceInfo);
 
     // Issue a BeginFrame so that frame_generator_ stops requesting BeginFrames
     // after submitting a CompositorFrame.

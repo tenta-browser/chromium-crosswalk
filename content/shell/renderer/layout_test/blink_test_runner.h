@@ -90,12 +90,8 @@ class BlinkTestRunner : public RenderViewObserver,
   void EnableAutoResizeMode(const blink::WebSize& min_size,
                             const blink::WebSize& max_size) override;
   void DisableAutoResizeMode(const blink::WebSize& new_size) override;
-  void ClearDevToolsLocalStorage() override;
-  void ShowDevTools(const std::string& settings,
-                    const std::string& frontend_url) override;
-  void CloseDevTools() override;
-  void EvaluateInWebInspector(int call_id, const std::string& script) override;
-  std::string EvaluateInWebInspectorOverlay(const std::string& script) override;
+  void NavigateSecondaryWindow(const GURL& url) override;
+  void InspectSecondaryWindow() override;
   void ClearAllDatabases() override;
   void SetDatabaseQuota(int quota) override;
   void SimulateWebNotificationClick(
@@ -139,9 +135,7 @@ class BlinkTestRunner : public RenderViewObserver,
   bool AllowExternalPages() override;
   void FetchManifest(
       blink::WebView* view,
-      const GURL& url,
-      const base::Callback<void(const blink::WebURLResponse& response,
-                                const std::string& data)>& callback) override;
+      base::OnceCallback<void(const GURL&, const Manifest&)> callback) override;
   void SetPermission(const std::string& name,
                      const std::string& value,
                      const GURL& origin,
@@ -178,6 +172,7 @@ class BlinkTestRunner : public RenderViewObserver,
   void OnSetTestConfiguration(mojom::ShellTestConfigurationPtr params);
   void OnReplicateTestConfiguration(mojom::ShellTestConfigurationPtr params);
   void OnSetupSecondaryRenderer();
+  void CaptureDump(mojom::LayoutTestControl::CaptureDumpCallback callback);
 
  private:
   // Message handlers.
@@ -201,11 +196,12 @@ class BlinkTestRunner : public RenderViewObserver,
 
   // After finishing the test, retrieves the audio, text, and pixel dumps from
   // the TestRunner library and sends them to the browser process.
-  void CaptureDump();
   void OnLayoutDumpCompleted(std::string completed_layout_dump);
-  void CaptureDumpContinued();
   void OnPixelsDumpCompleted(const SkBitmap& snapshot);
   void CaptureDumpComplete();
+  void CaptureLocalAudioDump();
+  void CaptureLocalLayoutDump();
+  void CaptureLocalPixelsDump();
 
   mojom::LayoutTestBluetoothFakeAdapterSetter&
   GetBluetoothFakeAdapterSetter();
@@ -225,6 +221,11 @@ class BlinkTestRunner : public RenderViewObserver,
   std::unique_ptr<test_runner::AppBannerService> app_banner_service_;
 
   std::unique_ptr<LeakDetector> leak_detector_;
+
+  mojom::LayoutTestControl::CaptureDumpCallback dump_callback_;
+  mojom::LayoutTestDumpPtr dump_result_;
+  bool waiting_for_layout_dump_results_ = false;
+  bool waiting_for_pixels_dump_result_ = false;
 
   DISALLOW_COPY_AND_ASSIGN(BlinkTestRunner);
 };

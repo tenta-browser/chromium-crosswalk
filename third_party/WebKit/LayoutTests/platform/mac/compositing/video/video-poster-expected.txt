@@ -7,6 +7,17 @@ Case: No src, no poster
     {
       "name": "LayoutView #document",
       "bounds": [800, 600],
+      "drawsContent": false,
+      "backgroundColor": "#FFFFFF"
+    },
+    {
+      "name": "Scrolling Layer",
+      "bounds": [800, 600],
+      "drawsContent": false
+    },
+    {
+      "name": "Scrolling Contents Layer",
+      "bounds": [800, 600],
       "contentsOpaque": true,
       "backgroundColor": "#FFFFFF"
     }
@@ -20,6 +31,17 @@ Case: Displaying poster
     {
       "name": "LayoutView #document",
       "bounds": [800, 600],
+      "drawsContent": false,
+      "backgroundColor": "#FFFFFF"
+    },
+    {
+      "name": "Scrolling Layer",
+      "bounds": [785, 600],
+      "drawsContent": false
+    },
+    {
+      "name": "Scrolling Contents Layer",
+      "bounds": [785, 752],
       "contentsOpaque": true,
       "backgroundColor": "#FFFFFF"
     }
@@ -32,7 +54,18 @@ Case: Displaying movie
   "layers": [
     {
       "name": "LayoutView #document",
-      "bounds": [785, 782],
+      "bounds": [800, 600],
+      "drawsContent": false,
+      "backgroundColor": "#FFFFFF"
+    },
+    {
+      "name": "Scrolling Layer",
+      "bounds": [785, 600],
+      "drawsContent": false
+    },
+    {
+      "name": "Scrolling Contents Layer",
+      "bounds": [785, 1112],
       "contentsOpaque": true,
       "backgroundColor": "#FFFFFF"
     },
@@ -43,18 +76,9 @@ Case: Displaying movie
       "drawsContent": false
     },
     {
-      "name": "Squashing Containment Layer",
-      "drawsContent": false
-    },
-    {
       "name": "LayoutFlexibleBox (relative positioned) DIV class='phase-ready state-stopped'",
       "position": [8, 8],
       "bounds": [352, 288]
-    },
-    {
-      "name": "Squashing Layer (first squashed layer: LayoutFlexibleBox (relative positioned) DIV)",
-      "position": [8, 8],
-      "bounds": [352, 246]
     }
   ]
 }

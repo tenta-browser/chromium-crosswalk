@@ -9,8 +9,10 @@
 #include <memory>
 #include <vector>
 
+#include "ash/accessibility/accessibility_controller.h"
 #include "ash/login_status.h"
 #include "ash/metrics/user_metrics_recorder.h"
+#include "ash/public/cpp/ash_features.h"
 #include "ash/public/cpp/ash_switches.h"
 #include "ash/public/cpp/config.h"
 #include "ash/public/cpp/shell_window_ids.h"
@@ -30,6 +32,8 @@
 #include "ash/system/ime/tray_ime_chromeos.h"
 #include "ash/system/keyboard_brightness/tray_keyboard_brightness.h"
 #include "ash/system/media_security/multi_profile_media_tray_item.h"
+#include "ash/system/model/clock_model.h"
+#include "ash/system/model/system_tray_model.h"
 #include "ash/system/network/tray_network.h"
 #include "ash/system/network/tray_vpn.h"
 #include "ash/system/night_light/tray_night_light.h"
@@ -40,6 +44,7 @@
 #include "ash/system/screen_security/screen_share_tray_item.h"
 #include "ash/system/screen_security/screen_tray_item.h"
 #include "ash/system/session/tray_session_length_limit.h"
+#include "ash/system/status_area_widget.h"
 #include "ash/system/supervised/tray_supervised_user.h"
 #include "ash/system/tiles/tray_tiles.h"
 #include "ash/system/tray/system_tray_controller.h"
@@ -50,6 +55,7 @@
 #include "ash/system/tray_accessibility.h"
 #include "ash/system/tray_caps_lock.h"
 #include "ash/system/tray_tracing.h"
+#include "ash/system/unified/unified_system_tray.h"
 #include "ash/system/update/tray_update.h"
 #include "ash/system/user/tray_user.h"
 #include "ash/system/web_notification/web_notification_tray.h"
@@ -96,7 +102,7 @@ class CancelCastingDialog : public views::DialogDelegateView {
       : callback_(std::move(callback)) {
     AddChildView(new views::MessageBoxView(views::MessageBoxView::InitParams(
         l10n_util::GetStringUTF16(IDS_DESKTOP_CASTING_ACTIVE_MESSAGE))));
-    SetLayoutManager(new views::FillLayout());
+    SetLayoutManager(std::make_unique<views::FillLayout>());
   }
   ~CancelCastingDialog() override = default;
 
@@ -232,14 +238,14 @@ SystemTray::~SystemTray() {
 
 void SystemTray::InitializeTrayItems(
     WebNotificationTray* web_notification_tray) {
-  DCHECK(web_notification_tray);
+  DCHECK(web_notification_tray || features::IsSystemTrayUnifiedEnabled());
   web_notification_tray_ = web_notification_tray;
   TrayBackgroundView::Initialize();
   CreateItems();
 }
 
 void SystemTray::Shutdown() {
-  DCHECK(web_notification_tray_);
+  DCHECK(web_notification_tray_ || features::IsSystemTrayUnifiedEnabled());
   web_notification_tray_ = nullptr;
 }
 
@@ -256,7 +262,8 @@ void SystemTray::CreateItems() {
   AddTrayItem(base::WrapUnique(tray_enterprise_));
   tray_supervised_user_ = new TraySupervisedUser(this);
   AddTrayItem(base::WrapUnique(tray_supervised_user_));
-  AddTrayItem(std::make_unique<TrayIME>(this));
+  tray_ime_ = new TrayIME(this);
+  AddTrayItem(base::WrapUnique(tray_ime_));
   tray_accessibility_ = new TrayAccessibility(this);
   AddTrayItem(base::WrapUnique(tray_accessibility_));
   tray_tracing_ = new TrayTracing(this);
@@ -265,8 +272,10 @@ void SystemTray::CreateItems() {
       std::make_unique<TrayPower>(this, message_center::MessageCenter::Get()));
   tray_network_ = new TrayNetwork(this);
   AddTrayItem(base::WrapUnique(tray_network_));
-  AddTrayItem(std::make_unique<TrayVPN>(this));
-  AddTrayItem(std::make_unique<TrayBluetooth>(this));
+  tray_vpn_ = new TrayVPN(this);
+  AddTrayItem(base::WrapUnique(tray_vpn_));
+  tray_bluetooth_ = new TrayBluetooth(this);
+  AddTrayItem(base::WrapUnique(tray_bluetooth_));
   tray_cast_ = new TrayCast(this);
   AddTrayItem(base::WrapUnique(tray_cast_));
   screen_capture_tray_item_ = new ScreenCaptureTrayItem(this);
@@ -397,6 +406,26 @@ TrayAudio* SystemTray::GetTrayAudio() const {
   return tray_audio_;
 }
 
+TrayNetwork* SystemTray::GetTrayNetwork() const {
+  return tray_network_;
+}
+
+TrayBluetooth* SystemTray::GetTrayBluetooth() const {
+  return tray_bluetooth_;
+}
+
+TrayAccessibility* SystemTray::GetTrayAccessibility() const {
+  return tray_accessibility_;
+}
+
+TrayVPN* SystemTray::GetTrayVPN() const {
+  return tray_vpn_;
+}
+
+TrayIME* SystemTray::GetTrayIME() const {
+  return tray_ime_;
+}
+
 void SystemTray::CanSwitchAwayFromActiveUser(
     base::OnceCallback<void(bool)> callback) {
   // If neither screen sharing nor capturing is going on we can immediately
@@ -479,8 +508,10 @@ void SystemTray::ShowItems(const std::vector<SystemTrayItem*>& items,
     }
 
     system_bubble_ = std::make_unique<SystemBubbleWrapper>();
-    system_bubble_->InitView(this, GetBubbleAnchor(), GetBubbleAnchorInsets(),
-                             items, system_tray_type, &init_params, persistent);
+    system_bubble_->InitView(
+        this, shelf()->GetSystemTrayAnchor()->GetBubbleAnchor(),
+        shelf()->GetSystemTrayAnchor()->GetBubbleAnchorInsets(), items,
+        system_tray_type, &init_params, persistent);
 
     // Record metrics for the system menu when the default view is invoked.
     if (!detailed)
@@ -525,7 +556,7 @@ void SystemTray::UpdateWebNotifications() {
 base::string16 SystemTray::GetAccessibleTimeString(
     const base::Time& now) const {
   base::HourClockType hour_type =
-      Shell::Get()->system_tray_controller()->hour_clock_type();
+      Shell::Get()->system_tray_model()->clock()->hour_clock_type();
   return base::TimeFormatTimeOfDayWithHourClockType(now, hour_type,
                                                     base::kKeepAmPm);
 }
@@ -571,8 +602,13 @@ void SystemTray::ClickedOutsideBubble() {
 }
 
 bool SystemTray::PerformAction(const ui::Event& event) {
-  UserMetricsRecorder::RecordUserClick(
-      LoginMetricsRecorder::LockScreenUserClickTarget::kSystemTray);
+  UserMetricsRecorder::RecordUserClickOnTray(
+      LoginMetricsRecorder::TrayClickTarget::kSystemTray);
+
+  if (features::IsSystemTrayUnifiedEnabled()) {
+    return shelf()->GetStatusAreaWidget()->unified_system_tray()->PerformAction(
+        event);
+  }
 
   // If we're already showing a full system tray menu, either default or
   // detailed menu, hide it; otherwise, show it (and hide any popup that's
@@ -630,7 +666,7 @@ bool SystemTray::ShouldEnableExtraKeyboardAccessibility() {
   // e.g. volume slider. Persistent system bubble is a bubble which is not
   // closed even if user clicks outside of the bubble.
   return system_bubble_ && !system_bubble_->is_persistent() &&
-         Shell::Get()->accessibility_delegate()->IsSpokenFeedbackEnabled();
+         Shell::Get()->accessibility_controller()->IsSpokenFeedbackEnabled();
 }
 
 void SystemTray::HideBubble(const TrayBubbleView* bubble_view) {

@@ -19,6 +19,7 @@ class DictionaryValue;
 
 namespace content {
 
+class DevToolsAgentHostClient;
 class WebContents;
 
 class CONTENT_EXPORT DevToolsManagerDelegate {
@@ -42,30 +43,23 @@ class CONTENT_EXPORT DevToolsManagerDelegate {
   // Creates new inspectable target given the |url|.
   virtual scoped_refptr<DevToolsAgentHost> CreateNewTarget(const GURL& url);
 
-  // Called when a new session is created/destroyed. Note that |session_id| is
-  // globally unique.
-  virtual void SessionCreated(content::DevToolsAgentHost* agent_host,
-                              int session_id);
-  virtual void SessionDestroyed(content::DevToolsAgentHost* agent_host,
-                                int session_id);
+  // Called when a new client is attached/detached.
+  virtual void ClientAttached(DevToolsAgentHost* agent_host,
+                              DevToolsAgentHostClient* client);
+  virtual void ClientDetached(DevToolsAgentHost* agent_host,
+                              DevToolsAgentHostClient* client);
 
   // Returns true if the command has been handled, false otherwise.
   virtual bool HandleCommand(DevToolsAgentHost* agent_host,
-                             int session_id,
+                             DevToolsAgentHostClient* client,
                              base::DictionaryValue* command);
 
-  using CommandCallback =
-      base::Callback<void(std::unique_ptr<base::DictionaryValue> response)>;
-  virtual bool HandleAsyncCommand(DevToolsAgentHost* agent_host,
-                                  int session_id,
-                                  base::DictionaryValue* command,
-                                  const CommandCallback& callback);
   // Should return discovery page HTML that should list available tabs
   // and provide attach links.
   virtual std::string GetDiscoveryPageHTML();
 
-  // Returns frontend resource data by |path|.
-  virtual std::string GetFrontendResource(const std::string& path);
+  // Returns whether frontend resources are bundled within the binary.
+  virtual bool HasBundledFrontendResources();
 
   // Makes browser target easily discoverable for remote debugging.
   // This should only return true when remote debugging endpoint is not

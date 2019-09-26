@@ -7,7 +7,7 @@
 
 #include "content/common/service_worker/service_worker_container.mojom.h"
 #include "content/common/service_worker/service_worker_types.h"
-#include "third_party/WebKit/common/service_worker/service_worker_provider_type.mojom.h"
+#include "third_party/blink/public/mojom/service_worker/service_worker_provider_type.mojom.h"
 
 namespace content {
 
@@ -36,9 +36,7 @@ struct CONTENT_EXPORT ServiceWorkerProviderHostInfo {
   int provider_id;
 
   // When this provider is created for a document, |route_id| is the frame ID of
-  // it. When this provider is created for a Shared Worker, |route_id| is the
-  // Shared Worker route ID. When this provider is created for a Service Worker,
-  // |route_id| is MSG_ROUTING_NONE.
+  // it. Otherwise |route_id| is MSG_ROUTING_NONE.
   int route_id;
 
   // This identifies whether this provider is for a service worker or for a
@@ -58,14 +56,14 @@ struct CONTENT_EXPORT ServiceWorkerProviderHostInfo {
 
   // Mojo endpoint to send a message from the renderer to the browser. This
   // will be associated with ServiceWorkerDisptacherHost. |host_request| should
-  // be valid when ServiceWorkerProviderHostInfo is passed to any Mojo methods.
+  // be valid when ServiceWorkerProviderHostInfo is passed to any Mojo method.
   // After used to create the ServiceWorkerProviderHost, this will be invalid.
   mojom::ServiceWorkerContainerHostAssociatedRequest host_request;
 
   // Mojo endpoint to send a message from the browser to the renderer. This
-  // will be associated with ServiceWorkerDisptacherHost. |client_ptr_info|
+  // will be associated with ServiceWorkerDispatcherHost. |client_ptr_info|
   // should be valid when ServiceWorkerProviderHostInfo is passed to any Mojo
-  // methods.
+  // method.
   // After used to create the ServiceWorkerProviderHost, this will be invalid.
   mojom::ServiceWorkerContainerAssociatedPtrInfo client_ptr_info;
 

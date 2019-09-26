@@ -8,12 +8,15 @@
 #include "base/command_line.h"
 #include "base/debug/debugger.h"
 #include "base/debug/leak_annotations.h"
+#include "base/lazy_instance.h"
 #include "base/logging.h"
 #include "base/macros.h"
 #include "base/message_loop/message_loop.h"
 #include "base/metrics/histogram_macros.h"
-#include "base/metrics/statistics_recorder.h"
 #include "base/run_loop.h"
+#include "base/sampling_heap_profiler/sampling_heap_profiler.h"
+#include "base/strings/string_number_conversions.h"
+#include "base/synchronization/atomic_flag.h"
 #include "base/time/time.h"
 #include "base/trace_event/heap_profiler_allocation_context_tracker.h"
 #include "base/trace_event/trace_event.h"
@@ -24,7 +27,6 @@
 #include "content/browser/browser_shutdown_profile_dumper.h"
 #include "content/browser/notification_service_impl.h"
 #include "content/common/content_switches_internal.h"
-#include "content/public/browser/tracing_controller.h"
 #include "content/public/common/content_switches.h"
 #include "content/public/common/main_function_params.h"
 #include "third_party/skia/include/core/SkGraphics.h"
@@ -72,6 +74,20 @@ class BrowserMainRunnerImpl : public BrowserMainRunner {
 
       const base::TimeTicks start_time_step1 = base::TimeTicks::Now();
 
+      base::SamplingHeapProfiler::InitTLSSlot();
+      if (parameters.command_line.HasSwitch(switches::kSamplingHeapProfiler)) {
+        base::SamplingHeapProfiler* profiler =
+            base::SamplingHeapProfiler::GetInstance();
+        unsigned sampling_interval = 0;
+        bool parsed =
+            base::StringToUint(parameters.command_line.GetSwitchValueASCII(
+                                   switches::kSamplingHeapProfiler),
+                               &sampling_interval);
+        if (parsed && sampling_interval > 0)
+          profiler->SetSamplingInterval(sampling_interval * 1024);
+        profiler->Start();
+      }
+
       SkGraphics::Init();
 
       if (parameters.command_line.HasSwitch(switches::kWaitForDebugger))
@@ -79,8 +95,6 @@ class BrowserMainRunnerImpl : public BrowserMainRunner {
 
       if (parameters.command_line.HasSwitch(switches::kBrowserStartupDialog))
         WaitForDebugger("Browser");
-
-      base::StatisticsRecorder::Initialize();
 
       notification_service_.reset(new NotificationServiceImpl);
 
@@ -97,7 +111,14 @@ class BrowserMainRunnerImpl : public BrowserMainRunner {
 
       main_loop_->Init();
 
-      main_loop_->EarlyInitialization();
+      if (parameters.created_main_parts_closure) {
+        parameters.created_main_parts_closure->Run(main_loop_->parts());
+        delete parameters.created_main_parts_closure;
+      }
+
+      const int early_init_error_code = main_loop_->EarlyInitialization();
+      if (early_init_error_code > 0)
+        return early_init_error_code;
 
       // Must happen before we try to use a message loop or display any UI.
       if (!main_loop_->InitializeToolkit())
@@ -170,8 +191,7 @@ class BrowserMainRunnerImpl : public BrowserMainRunner {
         startup_profiler.reset(
             new BrowserShutdownProfileDumper(main_loop_->startup_trace_file()));
       }
-    } else if (tracing::TraceConfigFile::GetInstance()->IsEnabled() &&
-               TracingController::GetInstance()->IsTracing()) {
+    } else if (tracing::TraceConfigFile::GetInstance()->IsEnabled()) {
       base::FilePath result_file;
 #if defined(OS_ANDROID)
       TracingControllerAndroid::GenerateTracingFilePath(&result_file);
@@ -242,7 +262,7 @@ BrowserMainRunner* BrowserMainRunner::Create() {
 
 // static
 bool BrowserMainRunner::ExitedMainMessageLoop() {
-  return !(g_exited_main_message_loop == nullptr) &&
+  return g_exited_main_message_loop.IsCreated() &&
          g_exited_main_message_loop.Get().IsSet();
 }
 

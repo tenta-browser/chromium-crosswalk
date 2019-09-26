@@ -9,7 +9,6 @@
 #include "base/android/jni_array.h"
 #include "base/android/jni_string.h"
 #include "base/logging.h"
-#include "base/memory/ptr_util.h"
 #include "base/numerics/safe_conversions.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/web_data_service_factory.h"
@@ -101,6 +100,17 @@ void PaymentManifestWebDataServiceAndroid::OnPaymentMethodManifestRequestDone(
 void PaymentManifestWebDataServiceAndroid::Destroy(
     JNIEnv* env,
     const base::android::JavaParamRef<jobject>& unused_obj) {
+  scoped_refptr<payments::PaymentManifestWebDataService> web_data_service =
+      WebDataServiceFactory::GetPaymentManifestWebDataForProfile(
+          ProfileManager::GetActiveUserProfile(),
+          ServiceAccessType::EXPLICIT_ACCESS);
+  if (web_data_service) {
+    for (const auto& request : web_data_service_requests_) {
+      web_data_service->CancelRequest(request.first);
+    }
+    web_data_service_requests_.clear();
+  }
+
   delete this;
 }
 
@@ -187,7 +197,7 @@ bool PaymentManifestWebDataServiceAndroid::GetPaymentMethodManifest(
       web_data_service->GetPaymentMethodManifest(
           base::android::ConvertJavaStringToUTF8(env, jmethod_name), this);
   web_data_service_requests_[handle] =
-      base::MakeUnique<base::android::ScopedJavaGlobalRef<jobject>>(jcallback);
+      std::make_unique<base::android::ScopedJavaGlobalRef<jobject>>(jcallback);
 
   return true;
 }
@@ -208,7 +218,7 @@ bool PaymentManifestWebDataServiceAndroid::GetPaymentWebAppManifest(
       web_data_service->GetPaymentWebAppManifest(
           base::android::ConvertJavaStringToUTF8(env, japp_package_name), this);
   web_data_service_requests_[handle] =
-      base::MakeUnique<base::android::ScopedJavaGlobalRef<jobject>>(jcallback);
+      std::make_unique<base::android::ScopedJavaGlobalRef<jobject>>(jcallback);
 
   return true;
 }

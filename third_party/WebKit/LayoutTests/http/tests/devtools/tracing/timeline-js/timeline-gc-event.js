@@ -9,23 +9,18 @@
   await TestRunner.evaluateInPagePromise(`
       function produceGarbageForGCEvents()
       {
-          if (window.testRunner) {
-              window.gc();
-              return new Promise((fulfill) => testRunner.layoutAndPaintAsyncThen(fulfill));
-          }
-          return Promise.reject();
+          window.gc();
+          return new Promise(fulfill => testRunner.layoutAndPaintAsyncThen(fulfill));
       }
   `);
 
-  PerformanceTestRunner.invokeAsyncWithTimeline('produceGarbageForGCEvents', validate);
+  await PerformanceTestRunner.invokeAsyncWithTimeline('produceGarbageForGCEvents');
 
-  function validate() {
-    var gcEvent = PerformanceTestRunner.findTimelineEvent(TimelineModel.TimelineModel.RecordType.MajorGC) ||
-        PerformanceTestRunner.findTimelineEvent(TimelineModel.TimelineModel.RecordType.MinorGC);
-    if (gcEvent)
-      TestRunner.addResult('SUCCESS: Found expected GC event record');
-    else
-      TestRunner.addResult('FAIL: GC event record wasn\'t found');
-    TestRunner.completeTest();
-  }
+  const gcEvent = PerformanceTestRunner.findTimelineEvent(TimelineModel.TimelineModel.RecordType.MajorGC) ||
+      PerformanceTestRunner.findTimelineEvent(TimelineModel.TimelineModel.RecordType.MinorGC);
+  if (gcEvent)
+    TestRunner.addResult('SUCCESS: Found expected GC event record');
+  else
+    TestRunner.addResult(`FAIL: GC event record wasn't found`);
+  TestRunner.completeTest();
 })();

@@ -10,7 +10,6 @@
 #include "base/feature_list.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
-#include "base/memory/ptr_util.h"
 #include "base/memory/ref_counted.h"
 #include "base/metrics/user_metrics.h"
 #include "base/path_service.h"
@@ -54,7 +53,7 @@
 #include "components/signin/core/browser/signin_manager_base.h"
 #include "components/signin/core/browser/signin_switches.h"
 #include "content/public/browser/browser_thread.h"
-#include "extensions/features/features.h"
+#include "extensions/buildflags/buildflags.h"
 #include "net/traffic_annotation/network_traffic_annotation.h"
 #include "ui/base/l10n/l10n_util.h"
 
@@ -118,25 +117,24 @@ const char* const kCustodianInfoPrefs[] = {
   prefs::kSupervisedUserSecondCustodianProfileURL,
 };
 
-void CreateURLAccessRequest(
-    const GURL& url,
-    PermissionRequestCreator* creator,
-    const SupervisedUserService::SuccessCallback& callback) {
-  creator->CreateURLAccessRequest(url, callback);
+void CreateURLAccessRequest(const GURL& url,
+                            PermissionRequestCreator* creator,
+                            SupervisedUserService::SuccessCallback callback) {
+  creator->CreateURLAccessRequest(url, std::move(callback));
 }
 
 void CreateExtensionInstallRequest(
     const std::string& id,
     PermissionRequestCreator* creator,
-    const SupervisedUserService::SuccessCallback& callback) {
-  creator->CreateExtensionInstallRequest(id, callback);
+    SupervisedUserService::SuccessCallback callback) {
+  creator->CreateExtensionInstallRequest(id, std::move(callback));
 }
 
 void CreateExtensionUpdateRequest(
     const std::string& id,
     PermissionRequestCreator* creator,
-    const SupervisedUserService::SuccessCallback& callback) {
-  creator->CreateExtensionUpdateRequest(id, callback);
+    SupervisedUserService::SuccessCallback callback) {
+  creator->CreateExtensionUpdateRequest(id, std::move(callback));
 }
 
 // Default callback for AddExtensionInstallRequest.
@@ -234,50 +232,51 @@ bool SupervisedUserService::AccessRequestsEnabled() {
   return FindEnabledPermissionRequestCreator(0) < permissions_creators_.size();
 }
 
-void SupervisedUserService::AddURLAccessRequest(
-    const GURL& url,
-    const SuccessCallback& callback) {
+void SupervisedUserService::AddURLAccessRequest(const GURL& url,
+                                                SuccessCallback callback) {
   GURL effective_url = url_filter_.GetEmbeddedURL(url);
   if (!effective_url.is_valid())
     effective_url = url;
   AddPermissionRequestInternal(
-      base::Bind(CreateURLAccessRequest,
-                 SupervisedUserURLFilter::Normalize(effective_url)),
-      callback, 0);
+      base::BindRepeating(CreateURLAccessRequest,
+                          SupervisedUserURLFilter::Normalize(effective_url)),
+      std::move(callback), 0);
 }
 
 void SupervisedUserService::ReportURL(const GURL& url,
-                                      const SuccessCallback& callback) {
+                                      SuccessCallback callback) {
   if (url_reporter_)
-    url_reporter_->ReportUrl(url, callback);
+    url_reporter_->ReportUrl(url, std::move(callback));
   else
-    callback.Run(false);
+    std::move(callback).Run(false);
 }
 
 void SupervisedUserService::AddExtensionInstallRequest(
     const std::string& extension_id,
     const base::Version& version,
-    const SuccessCallback& callback) {
+    SuccessCallback callback) {
   std::string id = GetExtensionRequestId(extension_id, version);
-  AddPermissionRequestInternal(base::Bind(CreateExtensionInstallRequest, id),
-                               callback, 0);
+  AddPermissionRequestInternal(
+      base::BindRepeating(CreateExtensionInstallRequest, id),
+      std::move(callback), 0);
 }
 
 void SupervisedUserService::AddExtensionInstallRequest(
     const std::string& extension_id,
     const base::Version& version) {
   std::string id = GetExtensionRequestId(extension_id, version);
-  AddPermissionRequestInternal(base::Bind(CreateExtensionInstallRequest, id),
-                               base::Bind(ExtensionInstallRequestSent, id), 0);
+  AddExtensionInstallRequest(extension_id, version,
+                             base::BindOnce(ExtensionInstallRequestSent, id));
 }
 
 void SupervisedUserService::AddExtensionUpdateRequest(
     const std::string& extension_id,
     const base::Version& version,
-    const SuccessCallback& callback) {
+    SuccessCallback callback) {
   std::string id = GetExtensionRequestId(extension_id, version);
   AddPermissionRequestInternal(
-      base::Bind(CreateExtensionUpdateRequest, id), callback, 0);
+      base::BindRepeating(CreateExtensionUpdateRequest, id),
+      std::move(callback), 0);
 }
 
 void SupervisedUserService::AddExtensionUpdateRequest(
@@ -285,7 +284,7 @@ void SupervisedUserService::AddExtensionUpdateRequest(
     const base::Version& version) {
   std::string id = GetExtensionRequestId(extension_id, version);
   AddExtensionUpdateRequest(extension_id, version,
-                            base::Bind(ExtensionUpdateRequestSent, id));
+                            base::BindOnce(ExtensionUpdateRequestSent, id));
 }
 
 // static
@@ -363,7 +362,7 @@ void SupervisedUserService::RegisterAndInitSync(
     SupervisedUserRegistrationUtility* registration_utility,
     Profile* custodian_profile,
     const std::string& supervised_user_id,
-    const AuthErrorCallback& callback) {
+    AuthErrorCallback callback) {
   DCHECK(ProfileIsSupervised());
   DCHECK(!custodian_profile->IsSupervised());
 
@@ -373,10 +372,10 @@ void SupervisedUserService::RegisterAndInitSync(
       prefs::kProfileAvatarIndex);
   SupervisedUserRegistrationInfo info(name, avatar_index);
   registration_utility->Register(
-      supervised_user_id,
-      info,
-      base::Bind(&SupervisedUserService::OnSupervisedUserRegistered,
-                 weak_ptr_factory_.GetWeakPtr(), callback, custodian_profile));
+      supervised_user_id, info,
+      base::BindOnce(&SupervisedUserService::OnSupervisedUserRegistered,
+                     weak_ptr_factory_.GetWeakPtr(), std::move(callback),
+                     custodian_profile));
 
   // Fetch the custodian's profile information, to store the name.
   // TODO(pamg): Take the name from the ProfileAttributesStorage instead.
@@ -468,7 +467,7 @@ void SupervisedUserService::SetActive(bool active) {
           supervised_users::kSupervisedUserPseudoEmail);
 
       if (base::FeatureList::IsEnabled(features::kSupervisedUserCreation)) {
-        permissions_creators_.push_back(base::MakeUnique<
+        permissions_creators_.push_back(std::make_unique<
                                         PermissionRequestCreatorSync>(
             GetSettingsService(),
             SupervisedUserSharedSettingsServiceFactory::GetForBrowserContext(
@@ -507,27 +506,32 @@ void SupervisedUserService::SetActive(bool active) {
   if (active_) {
     pref_change_registrar_.Add(
         prefs::kDefaultSupervisedUserFilteringBehavior,
-        base::Bind(&SupervisedUserService::OnDefaultFilteringBehaviorChanged,
+        base::BindRepeating(
+            &SupervisedUserService::OnDefaultFilteringBehaviorChanged,
             base::Unretained(this)));
 #if BUILDFLAG(ENABLE_EXTENSIONS)
     pref_change_registrar_.Add(
         prefs::kSupervisedUserApprovedExtensions,
-        base::Bind(&SupervisedUserService::UpdateApprovedExtensions,
-                   base::Unretained(this)));
+        base::BindRepeating(&SupervisedUserService::UpdateApprovedExtensions,
+                            base::Unretained(this)));
 #endif
-    pref_change_registrar_.Add(prefs::kSupervisedUserSafeSites,
-        base::Bind(&SupervisedUserService::OnSafeSitesSettingChanged,
-                   base::Unretained(this)));
-    pref_change_registrar_.Add(prefs::kSupervisedUserManualHosts,
-        base::Bind(&SupervisedUserService::UpdateManualHosts,
-                   base::Unretained(this)));
-    pref_change_registrar_.Add(prefs::kSupervisedUserManualURLs,
-        base::Bind(&SupervisedUserService::UpdateManualURLs,
-                   base::Unretained(this)));
+    pref_change_registrar_.Add(
+        prefs::kSupervisedUserSafeSites,
+        base::BindRepeating(&SupervisedUserService::OnSafeSitesSettingChanged,
+                            base::Unretained(this)));
+    pref_change_registrar_.Add(
+        prefs::kSupervisedUserManualHosts,
+        base::BindRepeating(&SupervisedUserService::UpdateManualHosts,
+                            base::Unretained(this)));
+    pref_change_registrar_.Add(
+        prefs::kSupervisedUserManualURLs,
+        base::BindRepeating(&SupervisedUserService::UpdateManualURLs,
+                            base::Unretained(this)));
     for (const char* pref : kCustodianInfoPrefs) {
-      pref_change_registrar_.Add(pref,
-          base::Bind(&SupervisedUserService::OnCustodianInfoChanged,
-                     base::Unretained(this)));
+      pref_change_registrar_.Add(
+          pref,
+          base::BindRepeating(&SupervisedUserService::OnCustodianInfoChanged,
+                              base::Unretained(this)));
     }
 
     // Initialize the filter.
@@ -584,7 +588,7 @@ void SupervisedUserService::OnCustodianProfileDownloaded(
 }
 
 void SupervisedUserService::OnSupervisedUserRegistered(
-    const AuthErrorCallback& callback,
+    AuthErrorCallback callback,
     Profile* custodian_profile,
     const GoogleServiceAuthError& auth_error,
     const std::string& token) {
@@ -607,7 +611,7 @@ void SupervisedUserService::OnSupervisedUserRegistered(
     DCHECK_EQ(std::string(), token);
   }
 
-  callback.Run(auth_error);
+  std::move(callback).Run(auth_error);
 }
 void SupervisedUserService::SetupSync() {
   StartSetupSync();
@@ -677,33 +681,33 @@ size_t SupervisedUserService::FindEnabledPermissionRequestCreator(
 
 void SupervisedUserService::AddPermissionRequestInternal(
     const CreatePermissionRequestCallback& create_request,
-    const SuccessCallback& callback,
+    SuccessCallback callback,
     size_t index) {
   // Find a permission request creator that is enabled.
   size_t next_index = FindEnabledPermissionRequestCreator(index);
   if (next_index >= permissions_creators_.size()) {
-    callback.Run(false);
+    std::move(callback).Run(false);
     return;
   }
 
   create_request.Run(
       permissions_creators_[next_index].get(),
-      base::Bind(&SupervisedUserService::OnPermissionRequestIssued,
-                 weak_ptr_factory_.GetWeakPtr(), create_request, callback,
-                 next_index));
+      base::BindOnce(&SupervisedUserService::OnPermissionRequestIssued,
+                     weak_ptr_factory_.GetWeakPtr(), create_request,
+                     std::move(callback), next_index));
 }
 
 void SupervisedUserService::OnPermissionRequestIssued(
     const CreatePermissionRequestCallback& create_request,
-    const SuccessCallback& callback,
+    SuccessCallback callback,
     size_t index,
     bool success) {
   if (success) {
-    callback.Run(true);
+    std::move(callback).Run(true);
     return;
   }
 
-  AddPermissionRequestInternal(create_request, callback, index + 1);
+  AddPermissionRequestInternal(create_request, std::move(callback), index + 1);
 }
 
 void SupervisedUserService::OnSupervisedUserIdChanged() {
@@ -958,7 +962,7 @@ SupervisedUserService::ExtensionState SupervisedUserService::GetExtensionState(
   // If the installed version is approved, then the extension is allowed,
   // otherwise, it requires approval.
   if (extension_it != approved_extensions_map_.end() &&
-      extension_it->second == *extension.version()) {
+      extension_it->second == extension.version()) {
     return ExtensionState::ALLOWED;
   }
   return ExtensionState::REQUIRE_APPROVAL;
@@ -1051,7 +1055,7 @@ bool SupervisedUserService::MustRemainDisabled(
         SupervisedUserService* supervised_user_service =
             SupervisedUserServiceFactory::GetForProfile(profile_);
         supervised_user_service->AddExtensionInstallRequest(
-            extension->id(), *extension->version());
+            extension->id(), extension->version());
       }
     }
   }
@@ -1069,7 +1073,7 @@ void SupervisedUserService::OnExtensionInstalled(
 
   ExtensionPrefs* extension_prefs = ExtensionPrefs::Get(profile_);
   const std::string& id = extension->id();
-  const base::Version& version = *extension->version();
+  const base::Version& version = extension->version();
 
   // If an already approved extension is updated without requiring
   // new permissions, we update the approved_version.

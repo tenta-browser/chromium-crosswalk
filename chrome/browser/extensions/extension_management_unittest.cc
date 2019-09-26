@@ -9,7 +9,6 @@
 #include <vector>
 
 #include "base/json/json_parser.h"
-#include "base/memory/ptr_util.h"
 #include "base/stl_util.h"
 #include "base/values.h"
 #include "chrome/browser/extensions/extension_management_internal.h"
@@ -238,6 +237,7 @@ class ExtensionManagementServiceTest : public testing::Test {
     base::DictionaryValue manifest_dict;
     manifest_dict.SetString(manifest_keys::kName, "test");
     manifest_dict.SetString(manifest_keys::kVersion, version);
+    manifest_dict.SetInteger(manifest_keys::kManifestVersion, 2);
     manifest_dict.SetString(manifest_keys::kUpdateURL, update_url);
     std::string error;
     scoped_refptr<const Extension> extension =
@@ -266,7 +266,7 @@ class ExtensionAdminPolicyTest : public ExtensionManagementServiceTest {
   void CreateHostedApp(Manifest::Location location) {
     base::DictionaryValue values;
     values.Set(extensions::manifest_keys::kWebURLs,
-               base::MakeUnique<base::ListValue>());
+               std::make_unique<base::ListValue>());
     values.SetString(extensions::manifest_keys::kLaunchWebURL,
                      "http://www.example.com");
     CreateExtensionFromValues(location, &values);
@@ -276,6 +276,7 @@ class ExtensionAdminPolicyTest : public ExtensionManagementServiceTest {
                                  base::DictionaryValue* values) {
     values->SetString(extensions::manifest_keys::kName, "test");
     values->SetString(extensions::manifest_keys::kVersion, "0.1");
+    values->SetInteger(extensions::manifest_keys::kManifestVersion, 2);
     std::string error;
     extension_ = Extension::Create(base::FilePath(), location, *values,
                                    Extension::NO_FLAGS, &error);

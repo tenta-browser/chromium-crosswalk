@@ -6,8 +6,8 @@
 
 #include <memory>
 
-#include "base/memory/ptr_util.h"
 #include "base/threading/thread_task_runner_handle.h"
+#include "build/build_config.h"
 #include "chrome/browser/offline_pages/prefetch/prefetch_service_factory.h"
 #include "chrome/test/base/testing_profile.h"
 #include "components/offline_pages/core/offline_page_item.h"
@@ -22,6 +22,13 @@
 
 namespace {
 const GURL kTestPageUrl("http://mystery.site/foo.html");
+const GURL kTestFileUrl("file://foo");
+
+#if defined(OS_ANDROID)
+const GURL kTestContentUrl("content://foo");
+#endif
+
+const char kTestHeader[] = "reason=download";
 }  // namespace
 
 namespace offline_pages {
@@ -54,8 +61,8 @@ class TestMetricsCollector : public OfflineMetricsCollector {
 // This is used by KeyedServiceFactory::SetTestingFactoryAndUse.
 std::unique_ptr<KeyedService> BuildTestPrefetchService(
     content::BrowserContext*) {
-  auto taco = base::MakeUnique<PrefetchServiceTestTaco>();
-  taco->SetOfflineMetricsCollector(base::MakeUnique<TestMetricsCollector>());
+  auto taco = std::make_unique<PrefetchServiceTestTaco>();
+  taco->SetOfflineMetricsCollector(std::make_unique<TestMetricsCollector>());
   return taco->CreateAndReturnPrefetchService();
 }
 
@@ -67,6 +74,8 @@ class OfflinePageTabHelperTest : public content::RenderViewHostTestHarness {
   void SetUp() override;
   void TearDown() override;
   content::BrowserContext* CreateBrowserContext() override;
+
+  void CreateNavigationSimulator(const GURL& url);
 
   OfflinePageTabHelper* tab_helper() const { return tab_helper_; }
   PrefetchService* prefetch_service() const { return prefetch_service_; }
@@ -98,15 +107,8 @@ void OfflinePageTabHelperTest::SetUp() {
   prefetch_service_ =
       PrefetchServiceFactory::GetForBrowserContext(browser_context());
 
-  // This initializes a nav stack inside the harness.
-  NavigateAndCommit(kTestPageUrl);
-
   OfflinePageTabHelper::CreateForWebContents(web_contents());
   tab_helper_ = OfflinePageTabHelper::FromWebContents(web_contents());
-
-  navigation_simulator_ = content::NavigationSimulator::CreateRendererInitiated(
-      kTestPageUrl, main_rfh());
-  navigation_simulator_->SetTransition(ui::PAGE_TRANSITION_LINK);
 }
 
 void OfflinePageTabHelperTest::TearDown() {
@@ -118,8 +120,15 @@ content::BrowserContext* OfflinePageTabHelperTest::CreateBrowserContext() {
   return builder.Build().release();
 }
 
+void OfflinePageTabHelperTest::CreateNavigationSimulator(const GURL& url) {
+  navigation_simulator_ =
+      content::NavigationSimulator::CreateBrowserInitiated(url, web_contents());
+  navigation_simulator_->SetTransition(ui::PAGE_TRANSITION_LINK);
+}
+
 // Checks the test setup.
 TEST_F(OfflinePageTabHelperTest, InitialSetup) {
+  CreateNavigationSimulator(kTestPageUrl);
   EXPECT_NE(nullptr, tab_helper());
   EXPECT_NE(nullptr, prefetch_service());
   EXPECT_NE(nullptr, prefetch_service()->GetOfflineMetricsCollector());
@@ -131,6 +140,7 @@ TEST_F(OfflinePageTabHelperTest, InitialSetup) {
 }
 
 TEST_F(OfflinePageTabHelperTest, MetricsStartNavigation) {
+  CreateNavigationSimulator(kTestPageUrl);
   // This causes WCO::DidStartNavigation()
   navigation_simulator()->Start();
 
@@ -141,6 +151,7 @@ TEST_F(OfflinePageTabHelperTest, MetricsStartNavigation) {
 }
 
 TEST_F(OfflinePageTabHelperTest, MetricsOnlineNavigation) {
+  CreateNavigationSimulator(kTestPageUrl);
   navigation_simulator()->Start();
   navigation_simulator()->Commit();
 
@@ -152,12 +163,16 @@ TEST_F(OfflinePageTabHelperTest, MetricsOnlineNavigation) {
 }
 
 TEST_F(OfflinePageTabHelperTest, MetricsOfflineNavigation) {
+  CreateNavigationSimulator(kTestPageUrl);
   navigation_simulator()->Start();
 
   // Simulate offline interceptor loading an offline page instead.
   OfflinePageItem offlinePage(kTestPageUrl, 0, ClientId(), base::FilePath(), 0);
   OfflinePageHeader offlineHeader;
-  tab_helper()->SetOfflinePage(offlinePage, offlineHeader, false);
+  tab_helper()->SetOfflinePage(
+      offlinePage, offlineHeader,
+      OfflinePageTrustedState::TRUSTED_AS_IN_INTERNAL_DIR, false);
+  navigation_simulator()->SetContentsMimeType("multipart/related");
 
   navigation_simulator()->Commit();
 
@@ -166,6 +181,134 @@ TEST_F(OfflinePageTabHelperTest, MetricsOfflineNavigation) {
   EXPECT_EQ(1, metrics()->successful_offline_navigations_count_);
   // During offline navigation, request to send data should not be made.
   EXPECT_EQ(0, metrics()->report_stats_count_);
+}
+
+TEST_F(OfflinePageTabHelperTest, TrustedInternalOfflinePage) {
+  CreateNavigationSimulator(kTestPageUrl);
+  navigation_simulator()->Start();
+
+  OfflinePageItem offlinePage(kTestPageUrl, 0, ClientId(), base::FilePath(), 0);
+  OfflinePageHeader offlineHeader(kTestHeader);
+  tab_helper()->SetOfflinePage(
+      offlinePage, offlineHeader,
+      OfflinePageTrustedState::TRUSTED_AS_IN_INTERNAL_DIR, false);
+  navigation_simulator()->SetContentsMimeType("multipart/related");
+  navigation_simulator()->Commit();
+
+  ASSERT_NE(nullptr, tab_helper()->offline_page());
+  EXPECT_EQ(kTestPageUrl, tab_helper()->offline_page()->url);
+  EXPECT_EQ(OfflinePageTrustedState::TRUSTED_AS_IN_INTERNAL_DIR,
+            tab_helper()->trusted_state());
+  EXPECT_TRUE(tab_helper()->IsShowingTrustedOfflinePage());
+  EXPECT_EQ(OfflinePageHeader::Reason::DOWNLOAD,
+            tab_helper()->offline_header().reason);
+}
+
+TEST_F(OfflinePageTabHelperTest, TrustedPublicOfflinePage) {
+  CreateNavigationSimulator(kTestPageUrl);
+  navigation_simulator()->Start();
+
+  OfflinePageItem offlinePage(kTestPageUrl, 0, ClientId(), base::FilePath(), 0);
+  OfflinePageHeader offlineHeader(kTestHeader);
+  tab_helper()->SetOfflinePage(
+      offlinePage, offlineHeader,
+      OfflinePageTrustedState::TRUSTED_AS_UNMODIFIED_AND_IN_PUBLIC_DIR, false);
+  navigation_simulator()->SetContentsMimeType("multipart/related");
+  navigation_simulator()->Commit();
+
+  ASSERT_NE(nullptr, tab_helper()->offline_page());
+  EXPECT_EQ(kTestPageUrl, tab_helper()->offline_page()->url);
+  EXPECT_EQ(OfflinePageTrustedState::TRUSTED_AS_UNMODIFIED_AND_IN_PUBLIC_DIR,
+            tab_helper()->trusted_state());
+  EXPECT_TRUE(tab_helper()->IsShowingTrustedOfflinePage());
+  EXPECT_EQ(OfflinePageHeader::Reason::DOWNLOAD,
+            tab_helper()->offline_header().reason);
+}
+
+TEST_F(OfflinePageTabHelperTest, UntrustedOfflinePageForFileUrl) {
+  CreateNavigationSimulator(kTestFileUrl);
+  navigation_simulator()->Start();
+  navigation_simulator()->SetContentsMimeType("multipart/related");
+  navigation_simulator()->Commit();
+
+  ASSERT_NE(nullptr, tab_helper()->offline_page());
+  EXPECT_EQ(OfflinePageTrustedState::UNTRUSTED, tab_helper()->trusted_state());
+  EXPECT_FALSE(tab_helper()->IsShowingTrustedOfflinePage());
+  EXPECT_EQ(OfflinePageHeader::Reason::NONE,
+            tab_helper()->offline_header().reason);
+}
+
+#if defined(OS_ANDROID)
+TEST_F(OfflinePageTabHelperTest,
+       UntrustedOfflinePageForContentUrlWithMultipartRelatedType) {
+  CreateNavigationSimulator(kTestContentUrl);
+  navigation_simulator()->Start();
+  navigation_simulator()->SetContentsMimeType("multipart/related");
+  navigation_simulator()->Commit();
+
+  ASSERT_NE(nullptr, tab_helper()->offline_page());
+  EXPECT_EQ(OfflinePageTrustedState::UNTRUSTED, tab_helper()->trusted_state());
+  EXPECT_FALSE(tab_helper()->IsShowingTrustedOfflinePage());
+  EXPECT_EQ(OfflinePageHeader::Reason::NONE,
+            tab_helper()->offline_header().reason);
+}
+
+TEST_F(OfflinePageTabHelperTest,
+       UntrustedOfflinePageForContentUrlWithMessageRfc822Type) {
+  CreateNavigationSimulator(kTestContentUrl);
+  navigation_simulator()->Start();
+  navigation_simulator()->SetContentsMimeType("message/rfc822");
+  navigation_simulator()->Commit();
+
+  ASSERT_NE(nullptr, tab_helper()->offline_page());
+  EXPECT_EQ(OfflinePageTrustedState::UNTRUSTED, tab_helper()->trusted_state());
+  EXPECT_FALSE(tab_helper()->IsShowingTrustedOfflinePage());
+  EXPECT_EQ(OfflinePageHeader::Reason::NONE,
+            tab_helper()->offline_header().reason);
+}
+#endif
+
+TEST_F(OfflinePageTabHelperTest, TestNotifyIsMhtmlPage) {
+  GURL mhtml_url("https://www.example.com");
+  base::Time mhtml_creation_time = base::Time::FromJsTime(1522339419011L);
+  tab_helper()->SetCurrentTargetFrameForTest(web_contents()->GetMainFrame());
+
+  CreateNavigationSimulator(kTestFileUrl);
+  navigation_simulator()->Start();
+  navigation_simulator()->SetContentsMimeType("multipart/related");
+  tab_helper()->NotifyIsMhtmlPage(mhtml_url, mhtml_creation_time);
+  navigation_simulator()->Commit();
+
+  EXPECT_EQ(OfflinePageTrustedState::UNTRUSTED, tab_helper()->trusted_state());
+  EXPECT_FALSE(tab_helper()->IsShowingTrustedOfflinePage());
+  EXPECT_EQ(OfflinePageHeader::Reason::NONE,
+            tab_helper()->offline_header().reason);
+
+  const OfflinePageItem* offline_page = tab_helper()->offline_page();
+  ASSERT_NE(nullptr, offline_page);
+  EXPECT_EQ(mhtml_url, offline_page->url);
+  EXPECT_EQ(mhtml_creation_time, offline_page->creation_time);
+}
+
+TEST_F(OfflinePageTabHelperTest, TestNotifyIsMhtmlPage_BadUrl) {
+  GURL mhtml_url("sftp://www.example.com");
+  base::Time mhtml_creation_time = base::Time::FromJsTime(1522339419011L);
+  tab_helper()->SetCurrentTargetFrameForTest(web_contents()->GetMainFrame());
+
+  CreateNavigationSimulator(kTestFileUrl);
+  navigation_simulator()->Start();
+  navigation_simulator()->SetContentsMimeType("multipart/related");
+  tab_helper()->NotifyIsMhtmlPage(mhtml_url, mhtml_creation_time);
+  navigation_simulator()->Commit();
+
+  EXPECT_EQ(OfflinePageTrustedState::UNTRUSTED, tab_helper()->trusted_state());
+  EXPECT_FALSE(tab_helper()->IsShowingTrustedOfflinePage());
+  EXPECT_EQ(OfflinePageHeader::Reason::NONE,
+            tab_helper()->offline_header().reason);
+
+  const OfflinePageItem* offline_page = tab_helper()->offline_page();
+  EXPECT_EQ(kTestFileUrl, offline_page->url);
+  EXPECT_EQ(base::Time(), offline_page->creation_time);
 }
 
 }  // namespace offline_pages

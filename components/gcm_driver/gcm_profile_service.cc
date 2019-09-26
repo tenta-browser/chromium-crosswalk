@@ -17,7 +17,6 @@
 
 #if BUILDFLAG(USE_GCM_FROM_PLATFORM)
 #include "base/sequenced_task_runner.h"
-#include "base/threading/sequenced_worker_pool.h"
 #include "components/gcm_driver/gcm_driver_android.h"
 #else
 #include "base/bind.h"
@@ -174,12 +173,13 @@ void GCMProfileService::Shutdown() {
   }
 }
 
-void GCMProfileService::SetDriverForTesting(GCMDriver* driver) {
-  driver_.reset(driver);
+void GCMProfileService::SetDriverForTesting(std::unique_ptr<GCMDriver> driver) {
+  driver_ = std::move(driver);
+
 #if !BUILDFLAG(USE_GCM_FROM_PLATFORM)
   if (identity_observer_) {
-    identity_observer_.reset(new IdentityObserver(
-        profile_identity_provider_.get(), request_context_, driver));
+    identity_observer_ = std::make_unique<IdentityObserver>(
+        profile_identity_provider_.get(), request_context_, driver_.get());
   }
 #endif  // !BUILDFLAG(USE_GCM_FROM_PLATFORM)
 }

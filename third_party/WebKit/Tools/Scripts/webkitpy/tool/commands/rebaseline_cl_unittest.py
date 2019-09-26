@@ -118,6 +118,7 @@ class RebaselineCLTest(BaseTestCase, LoggingTestCase):
             'test_name_file': None,
             'verbose': False,
             'builders': [],
+            'patchset': None,
         }
         options.update(kwargs)
         return optparse.Values(dict(**options))
@@ -392,7 +393,7 @@ class RebaselineCLTest(BaseTestCase, LoggingTestCase):
         self.command.trigger_try_jobs(['MOCK Try Linux', 'MOCK Try Win'])
         self.assertEqual(
             self.command.git_cl.calls,
-            [['git', 'cl', 'try', '-m', 'tryserver.blink',
+            [['git', 'cl', 'try', '-B', 'master.tryserver.blink',
               '-b', 'MOCK Try Linux', '-b', 'MOCK Try Win']])
         self.assertLog([
             'INFO: Triggering try jobs:\n',
@@ -409,7 +410,7 @@ class RebaselineCLTest(BaseTestCase, LoggingTestCase):
         self.assertLog([
             'INFO: Finished try jobs found for all try bots.\n',
             'INFO: Failed to fetch results for "MOCK Try Win".\n',
-            ('INFO: Results URL: https://storage.googleapis.com/chromium-layout-test-archives'
+            ('INFO: Results URL: https://test-results.appspot.com/data/layout_results'
              '/MOCK_Try_Win/5000/layout-test-results/results.html\n'),
             'INFO: There are some builders with no results:\n',
             'INFO:   MOCK Try Win\n',
@@ -426,7 +427,7 @@ class RebaselineCLTest(BaseTestCase, LoggingTestCase):
         self.assertLog([
             'INFO: Finished try jobs found for all try bots.\n',
             'INFO: Failed to fetch results for "MOCK Try Win".\n',
-            ('INFO: Results URL: https://storage.googleapis.com/chromium-layout-test-archives'
+            ('INFO: Results URL: https://test-results.appspot.com/data/layout_results'
              '/MOCK_Try_Win/5000/layout-test-results/results.html\n'),
             'INFO: There are some builders with no results:\n',
             'INFO:   MOCK Try Win\n',

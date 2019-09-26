@@ -2,6 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <memory>
+
 #include "base/files/scoped_temp_dir.h"
 #include "base/test/scoped_feature_list.h"
 #include "components/ukm/content/source_url_recorder.h"
@@ -29,7 +31,7 @@ class SourceUrlRecorderWebContentsObserverBrowserTest
 
     ASSERT_TRUE(embedded_test_server()->Start());
 
-    test_ukm_recorder_ = base::MakeUnique<ukm::TestAutoSetUkmRecorder>();
+    test_ukm_recorder_ = std::make_unique<ukm::TestAutoSetUkmRecorder>();
     ukm::InitializeSourceUrlRecorderForWebContents(shell()->web_contents());
   }
 
@@ -38,6 +40,12 @@ class SourceUrlRecorderWebContentsObserverBrowserTest
     const ukm::SourceId source_id =
         ukm::ConvertToSourceId(navigation_id, ukm::SourceIdType::NAVIGATION_ID);
     return test_ukm_recorder_->GetSourceForSourceId(source_id);
+  }
+
+  GURL GetAssociatedURLForWebContentsDocument() {
+    const ukm::UkmSource* src = test_ukm_recorder_->GetSourceForSourceId(
+        ukm::GetSourceIdForWebContentsDocument(shell()->web_contents()));
+    return src ? src->url() : GURL();
   }
 
  private:
@@ -79,6 +87,8 @@ IN_PROC_BROWSER_TEST_F(SourceUrlRecorderWebContentsObserverBrowserTest, Basic) {
   EXPECT_NE(nullptr, source);
   EXPECT_EQ(url, source->url());
   EXPECT_TRUE(source->initial_url().is_empty());
+
+  EXPECT_EQ(url, GetAssociatedURLForWebContentsDocument());
 }
 
 IN_PROC_BROWSER_TEST_F(SourceUrlRecorderWebContentsObserverBrowserTest,
@@ -102,6 +112,8 @@ IN_PROC_BROWSER_TEST_F(SourceUrlRecorderWebContentsObserverBrowserTest,
   EXPECT_EQ(main_url, source->url());
   EXPECT_EQ(nullptr,
             GetSourceForNavigationId(subframe_observer.navigation_id()));
+
+  EXPECT_EQ(main_url, GetAssociatedURLForWebContentsDocument());
 }
 
 IN_PROC_BROWSER_TEST_F(SourceUrlRecorderWebContentsObserverDownloadBrowserTest,
@@ -112,4 +124,5 @@ IN_PROC_BROWSER_TEST_F(SourceUrlRecorderWebContentsObserverDownloadBrowserTest,
   EXPECT_FALSE(observer.has_committed());
   EXPECT_TRUE(observer.is_download());
   EXPECT_EQ(nullptr, GetSourceForNavigationId(observer.navigation_id()));
+  EXPECT_EQ(GURL(), GetAssociatedURLForWebContentsDocument());
 }

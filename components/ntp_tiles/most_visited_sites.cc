@@ -16,7 +16,6 @@
 #include "base/strings/utf_string_conversions.h"
 #include "components/history/core/browser/top_sites.h"
 #include "components/ntp_tiles/constants.h"
-#include "components/ntp_tiles/field_trial.h"
 #include "components/ntp_tiles/icon_cacher.h"
 #include "components/ntp_tiles/pref_names.h"
 #include "components/ntp_tiles/switches.h"
@@ -80,6 +79,10 @@ std::string StripFirstGenericPrefix(const std::string& host) {
     }
   }
   return host;
+}
+
+bool ShouldShowPopularSites() {
+  return base::FeatureList::IsEnabled(kUsePopularSitesSuggestions);
 }
 
 }  // namespace
@@ -563,8 +566,10 @@ void MostVisitedSites::SaveTilesAndNotify(NTPTilesVector personal_tiles) {
 
   int num_personal_tiles = 0;
   for (const auto& tile : *current_tiles_) {
-    if (tile.source != TileSource::POPULAR)
+    if (tile.source != TileSource::POPULAR &&
+        tile.source != TileSource::POPULAR_BAKED_IN) {
       num_personal_tiles++;
+    }
   }
   prefs_->SetInteger(prefs::kNumPersonalTiles, num_personal_tiles);
   if (!observer_)

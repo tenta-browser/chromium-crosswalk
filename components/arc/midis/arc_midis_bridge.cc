@@ -94,15 +94,15 @@ void ArcMidisBridge::Connect(mojom::MidisServerRequest request,
       mojo::InterfacePtrInfo<mojom::MidisHost>(std::move(server_pipe), 0u));
   DVLOG(1) << "Bound remote MidisHost interface to pipe.";
   midis_host_ptr_.set_connection_error_handler(
-      base::Bind(&mojo::InterfacePtr<mojom::MidisHost>::reset,
-                 base::Unretained(&midis_host_ptr_)));
+      base::BindOnce(&mojo::InterfacePtr<mojom::MidisHost>::reset,
+                     base::Unretained(&midis_host_ptr_)));
   chromeos::DBusThreadManager::Get()
       ->GetArcMidisClient()
       ->BootstrapMojoConnection(
           std::move(fd),
-          base::Bind(&ArcMidisBridge::OnBootstrapMojoConnection,
-                     weak_factory_.GetWeakPtr(), base::Passed(&request),
-                     base::Passed(&client_ptr)));
+          base::BindOnce(&ArcMidisBridge::OnBootstrapMojoConnection,
+                         weak_factory_.GetWeakPtr(), std::move(request),
+                         std::move(client_ptr)));
 }
 
 }  // namespace arc

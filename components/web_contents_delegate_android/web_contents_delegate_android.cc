@@ -19,6 +19,7 @@
 #include "content/public/browser/render_widget_host_view.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/referrer.h"
+#include "content/public/common/resource_request_body_android.h"
 #include "jni/WebContentsDelegateAndroid_jni.h"
 #include "ui/base/window_open_disposition.h"
 #include "ui/gfx/geometry/rect.h"
@@ -33,7 +34,6 @@ using content::ColorChooser;
 using content::RenderWidgetHostView;
 using content::WebContents;
 using content::WebContentsDelegate;
-using content::WebContentsUnresponsiveState;
 
 namespace web_contents_delegate_android {
 
@@ -54,9 +54,9 @@ WebContentsDelegateAndroid::GetJavaDelegate(JNIEnv* env) const {
 // ----------------------------------------------------------------------------
 
 ColorChooser* WebContentsDelegateAndroid::OpenColorChooser(
-      WebContents* source,
-      SkColor color,
-      const std::vector<content::ColorSuggestion>& suggestions)  {
+    WebContents* source,
+    SkColor color,
+    const std::vector<blink::mojom::ColorSuggestionPtr>& suggestions) {
   return new ColorChooserAndroid(source, color, suggestions);
 }
 
@@ -91,8 +91,10 @@ WebContents* WebContentsDelegateAndroid::OpenURLFromTab(
     ScopedJavaLocalRef<jstring> extra_headers =
             ConvertUTF8ToJavaString(env, params.extra_headers);
     ScopedJavaLocalRef<jobject> post_data;
-    if (params.uses_post && params.post_data)
-      post_data = params.post_data->ToJavaObject(env);
+    if (params.uses_post && params.post_data) {
+      post_data = content::ConvertResourceRequestBodyToJavaObject(
+          env, params.post_data);
+    }
     Java_WebContentsDelegateAndroid_openNewTab(
         env, obj, java_url, extra_headers, post_data,
         static_cast<int>(disposition), params.is_renderer_initiated);
@@ -167,7 +169,7 @@ void WebContentsDelegateAndroid::LoadProgressChanged(WebContents* source,
 
 void WebContentsDelegateAndroid::RendererUnresponsive(
     WebContents* source,
-    const WebContentsUnresponsiveState& unresponsive_state) {
+    content::RenderWidgetHost* render_widget_host) {
   JNIEnv* env = AttachCurrentThread();
   ScopedJavaLocalRef<jobject> obj = GetJavaDelegate(env);
   if (obj.is_null())
@@ -175,7 +177,9 @@ void WebContentsDelegateAndroid::RendererUnresponsive(
   Java_WebContentsDelegateAndroid_rendererUnresponsive(env, obj);
 }
 
-void WebContentsDelegateAndroid::RendererResponsive(WebContents* source) {
+void WebContentsDelegateAndroid::RendererResponsive(
+    WebContents* source,
+    content::RenderWidgetHost* render_widget_host) {
   JNIEnv* env = AttachCurrentThread();
   ScopedJavaLocalRef<jobject> obj = GetJavaDelegate(env);
   if (obj.is_null())

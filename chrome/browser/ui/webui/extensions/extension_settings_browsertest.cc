@@ -16,12 +16,15 @@
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/browser/ui/web_contents_sizer.h"
 #include "chrome/common/chrome_paths.h"
+#include "chrome/common/pref_names.h"
 #include "chrome/test/base/ui_test_utils.h"
+#include "components/prefs/pref_service.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/test/browser_test_utils.h"
 #include "extensions/browser/extension_dialog_auto_confirm.h"
 #include "extensions/browser/extension_system.h"
+#include "extensions/common/switches.h"
 
 using extensions::Extension;
 using extensions::TestManagementPolicyProvider;
@@ -36,6 +39,14 @@ ExtensionSettingsUIBrowserTest::ExtensionSettingsUIBrowserTest()
 
 ExtensionSettingsUIBrowserTest::~ExtensionSettingsUIBrowserTest() {}
 
+void ExtensionSettingsUIBrowserTest::SetUpCommandLine(
+    base::CommandLine* command_line) {
+  WebUIBrowserTest::SetUpCommandLine(command_line);
+  // TODO(devlin): Remove this. See https://crbug.com/816679.
+  command_line->AppendSwitch(
+      extensions::switches::kAllowLegacyExtensionManifests);
+}
+
 void ExtensionSettingsUIBrowserTest::InstallGoodExtension() {
   EXPECT_TRUE(InstallExtension(test_data_dir_.AppendASCII("good.crx")));
 }
@@ -44,6 +55,8 @@ void ExtensionSettingsUIBrowserTest::InstallErrorsExtension() {
   EXPECT_TRUE(
       InstallExtension(test_data_dir_.AppendASCII("error_console")
                            .AppendASCII("runtime_and_manifest_errors")));
+  EXPECT_TRUE(InstallExtension(test_data_dir_.AppendASCII("error_console")
+                                   .AppendASCII("deep_stack_trace")));
 }
 
 void ExtensionSettingsUIBrowserTest::InstallSharedModule() {
@@ -88,6 +101,11 @@ void ExtensionSettingsUIBrowserTest::SetAutoConfirmUninstall() {
 void ExtensionSettingsUIBrowserTest::EnableErrorConsole() {
   error_console_override_.reset(new extensions::FeatureSwitch::ScopedOverride(
       extensions::FeatureSwitch::error_console(), true));
+}
+
+void ExtensionSettingsUIBrowserTest::SetDevModeEnabled(bool enabled) {
+  browser()->profile()->GetPrefs()->SetBoolean(
+      prefs::kExtensionsUIDeveloperMode, enabled);
 }
 
 void ExtensionSettingsUIBrowserTest::ShrinkWebContentsView() {

@@ -42,8 +42,6 @@ TEST(CSPSourceList, AllowStar) {
                             std::vector<CSPSource>());  // source_list
   EXPECT_TRUE(Allow(source_list, GURL("http://not-example.com"), &context));
   EXPECT_TRUE(Allow(source_list, GURL("https://not-example.com"), &context));
-  EXPECT_TRUE(Allow(source_list, GURL("http-so://not-example.com"), &context));
-  EXPECT_TRUE(Allow(source_list, GURL("https-so://not-example.com"), &context));
   EXPECT_TRUE(Allow(source_list, GURL("ws://not-example.com"), &context));
   EXPECT_TRUE(Allow(source_list, GURL("wss://not-example.com"), &context));
   EXPECT_TRUE(Allow(source_list, GURL("ftp://not-example.com"), &context));
@@ -96,10 +94,10 @@ TEST(CSPSourceList, AllowSelfWithUnspecifiedPort) {
                             false,                      // allow_star:
                             std::vector<CSPSource>());  // source_list
 
-  EXPECT_TRUE(Allow(
-      source_list,
-      GURL("chrome://print/pdf_preview.html?chrome://print/1/0/print.pdf"),
-      &context));
+  EXPECT_TRUE(
+      Allow(source_list,
+            GURL("chrome://print/pdf/index.html?chrome://print/1/0/print.pdf"),
+            &context));
 }
 
 TEST(CSPSourceList, AllowNone) {

@@ -4,8 +4,11 @@
 
 #include "gpu/ipc/service/gpu_memory_buffer_factory_native_pixmap.h"
 
+#include "ui/gfx/buffer_format_util.h"
 #include "ui/gfx/client_native_pixmap.h"
+#include "ui/gfx/linux/native_pixmap_dmabuf.h"
 #include "ui/gfx/native_pixmap.h"
+#include "ui/gl/gl_bindings.h"
 #include "ui/gl/gl_image_native_pixmap.h"
 
 #if defined(USE_OZONE)
@@ -15,9 +18,11 @@
 
 namespace gpu {
 
-GpuMemoryBufferFactoryNativePixmap::GpuMemoryBufferFactoryNativePixmap() {}
+GpuMemoryBufferFactoryNativePixmap::GpuMemoryBufferFactoryNativePixmap() =
+    default;
 
-GpuMemoryBufferFactoryNativePixmap::~GpuMemoryBufferFactoryNativePixmap() {}
+GpuMemoryBufferFactoryNativePixmap::~GpuMemoryBufferFactoryNativePixmap() =
+    default;
 
 gfx::GpuMemoryBufferHandle
 GpuMemoryBufferFactoryNativePixmap::CreateGpuMemoryBuffer(
@@ -33,8 +38,8 @@ GpuMemoryBufferFactoryNativePixmap::CreateGpuMemoryBuffer(
           ->GetSurfaceFactoryOzone()
           ->CreateNativePixmap(surface_handle, size, format, usage);
   if (!pixmap.get()) {
-    DLOG(ERROR) << "Failed to create pixmap " << size.ToString() << " format "
-                << static_cast<int>(format) << ", usage "
+    DLOG(ERROR) << "Failed to create pixmap " << size.ToString() << ",  "
+                << gfx::BufferFormatToString(format) << ", usage "
                 << static_cast<int>(usage);
     return gfx::GpuMemoryBufferHandle();
   }
@@ -101,9 +106,9 @@ GpuMemoryBufferFactoryNativePixmap::CreateImageForGpuMemoryBuffer(
                  ->CreateNativePixmapFromHandle(surface_handle, size, format,
                                                 handle.native_pixmap_handle);
 #else
-    // TODO(j.isorce): implement this to enable glCreateImageCHROMIUM on Linux.
-    // On going in http://codereview.chromium.org/2705213005, crbug.com/584248.
-    NOTIMPLEMENTED();
+    DCHECK_EQ(surface_handle, gpu::kNullSurfaceHandle);
+    pixmap = base::WrapRefCounted(
+        new gfx::NativePixmapDmaBuf(size, format, handle.native_pixmap_handle));
 #endif
     if (!pixmap.get()) {
       DLOG(ERROR) << "Failed to create pixmap from handle";
@@ -120,8 +125,8 @@ GpuMemoryBufferFactoryNativePixmap::CreateImageForGpuMemoryBuffer(
   scoped_refptr<gl::GLImageNativePixmap> image(
       new gl::GLImageNativePixmap(size, internalformat));
   if (!image->Initialize(pixmap.get(), format)) {
-    LOG(ERROR) << "Failed to create GLImage " << size.ToString() << " format "
-               << static_cast<int>(format);
+    LOG(ERROR) << "Failed to create GLImage " << size.ToString() << ", "
+               << gfx::BufferFormatToString(format);
     return nullptr;
   }
   return image;
@@ -132,7 +137,8 @@ GpuMemoryBufferFactoryNativePixmap::CreateAnonymousImage(
     const gfx::Size& size,
     gfx::BufferFormat format,
     gfx::BufferUsage usage,
-    unsigned internalformat) {
+    unsigned internalformat,
+    bool* is_cleared) {
   scoped_refptr<gfx::NativePixmap> pixmap;
 #if defined(USE_OZONE)
   pixmap =
@@ -143,17 +149,18 @@ GpuMemoryBufferFactoryNativePixmap::CreateAnonymousImage(
   NOTIMPLEMENTED();
 #endif
   if (!pixmap.get()) {
-    LOG(ERROR) << "Failed to create pixmap " << size.ToString() << " format "
-               << static_cast<int>(format);
+    LOG(ERROR) << "Failed to create pixmap " << size.ToString() << ", "
+               << gfx::BufferFormatToString(format);
     return nullptr;
   }
   scoped_refptr<gl::GLImageNativePixmap> image(
       new gl::GLImageNativePixmap(size, internalformat));
   if (!image->Initialize(pixmap.get(), format)) {
-    LOG(ERROR) << "Failed to create GLImage " << size.ToString() << " format "
-               << static_cast<int>(format);
+    LOG(ERROR) << "Failed to create GLImage " << size.ToString() << ", "
+               << gfx::BufferFormatToString(format);
     return nullptr;
   }
+  *is_cleared = true;
   return image;
 }
 

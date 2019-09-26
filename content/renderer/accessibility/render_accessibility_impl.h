@@ -14,7 +14,7 @@
 #include "content/public/renderer/render_accessibility.h"
 #include "content/public/renderer/render_frame_observer.h"
 #include "content/renderer/accessibility/blink_ax_tree_source.h"
-#include "third_party/WebKit/public/web/WebAXObject.h"
+#include "third_party/blink/public/web/web_ax_object.h"
 #include "ui/accessibility/ax_relative_bounds.h"
 #include "ui/accessibility/ax_tree.h"
 #include "ui/accessibility/ax_tree_serializer.h"
@@ -61,9 +61,9 @@ class CONTENT_EXPORT RenderAccessibilityImpl
  public:
   // Request a one-time snapshot of the accessibility tree without
   // enabling accessibility if it wasn't already enabled.
-  static void SnapshotAccessibilityTree(
-      RenderFrameImpl* render_frame,
-      AXContentTreeUpdate* response);
+  static void SnapshotAccessibilityTree(RenderFrameImpl* render_frame,
+                                        AXContentTreeUpdate* response,
+                                        ui::AXMode ax_mode);
 
   RenderAccessibilityImpl(RenderFrameImpl* render_frame, ui::AXMode mode);
   ~RenderAccessibilityImpl() override;
@@ -97,7 +97,9 @@ class CONTENT_EXPORT RenderAccessibilityImpl
   // (when there'd be no point).
   void DisableAccessibility();
 
-  void HandleAXEvent(const blink::WebAXObject& obj, ui::AXEvent event);
+  void HandleAXEvent(const blink::WebAXObject& obj,
+                     ax::mojom::Event event,
+                     int action_request_id = -1);
 
  protected:
   // Returns the main top-level document for this page, or NULL if there's
@@ -122,7 +124,9 @@ class CONTENT_EXPORT RenderAccessibilityImpl
   void OnFatalError();
   void OnReset(int reset_token);
 
-  void OnHitTest(const gfx::Point& point, ui::AXEvent event_to_fire);
+  void OnHitTest(const gfx::Point& point,
+                 ax::mojom::Event event_to_fire,
+                 int action_request_id);
   void OnLoadInlineTextBoxes(const blink::WebAXObject& obj);
   void OnGetImageData(const blink::WebAXObject& obj, const gfx::Size& max_size);
   void AddPluginTreeToUpdate(AXContentTreeUpdate* update);

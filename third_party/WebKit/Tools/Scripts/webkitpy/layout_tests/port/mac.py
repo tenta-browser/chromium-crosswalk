@@ -40,27 +40,20 @@ class MacPort(base.Port):
     SUPPORTED_VERSIONS = ('mac10.10', 'mac10.11', 'mac10.12', 'mac10.13', 'retina')
     port_name = 'mac'
 
-    # FIXME: We treat Retina (High-DPI) devices as if they are running
-    # a different operating system version. This is lame and should be fixed.
-    # Note that the retina versions fallback to the non-retina versions and so no
-    # baselines are shared between retina versions; this keeps the fallback graph as a tree
-    # and maximizes the number of baselines we can share that way.
-    # We also currently only support Retina on 10.11.
+    # FIXME: We treat Retina (High-DPI) devices as if they are running a
+    # different operating system version. This is lame and should be fixed.
+    # Note that the retina versions fallback to the non-retina versions and so
+    # no baselines are shared between retina versions; this keeps the fallback
+    # graph as a tree and maximizes the number of baselines we can share that
+    # way. We also currently only support Retina on 10.12.
 
     FALLBACK_PATHS = {}
-    FALLBACK_PATHS['mac10.13'] = ['mac']
 
-    # FIXME(crbug.com/774301): ideally the 10.12 bots will fall back to the
-    # 10.13 bots, but we can't really make that happen until we have 10.13
-    # on the main waterfalls. For now, mac10.12 and mac10.13 will share
-    # the baselines in platform/mac, meaning that 10.13 will fail when
-    # the results differ. Uncomment the following line (and delete the
-    # current mac10.12 line) to fix this when ready.
-    # FALLBACK_PATHS['mac10.12'] = ['mac-mac10.12'] + FALLBACK_PATHS['mac10.13']
-    FALLBACK_PATHS['mac10.12'] = ['mac']
+    FALLBACK_PATHS['mac10.13'] = ['mac']
+    FALLBACK_PATHS['mac10.12'] = ['mac-mac10.12'] + FALLBACK_PATHS['mac10.13']
     FALLBACK_PATHS['mac10.11'] = ['mac-mac10.11'] + FALLBACK_PATHS['mac10.12']
     FALLBACK_PATHS['mac10.10'] = ['mac-mac10.10'] + FALLBACK_PATHS['mac10.11']
-    FALLBACK_PATHS['retina'] = ['mac-retina', 'mac']
+    FALLBACK_PATHS['retina'] = ['mac-retina'] + FALLBACK_PATHS['mac10.12']
 
     CONTENT_SHELL_NAME = 'Content Shell'
 
@@ -100,8 +93,10 @@ class MacPort(base.Port):
         return '/usr/sbin/httpd'
 
     def path_to_apache_config_file(self):
-        config_file_name = 'apache2-httpd-' + self._apache_version() + '.conf'
-        return self._filesystem.join(self.apache_config_directory(), config_file_name)
+        config_file_basename = 'apache2-httpd-' + self._apache_version()
+        if self.host.platform.os_version == 'mac10.13':
+            config_file_basename += '-php7'
+        return self._filesystem.join(self.apache_config_directory(), config_file_basename + '.conf')
 
     def _path_to_driver(self, target=None):
         return self._build_path_with_target(target, self.driver_name() + '.app', 'Contents', 'MacOS', self.driver_name())

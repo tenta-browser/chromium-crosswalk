@@ -18,6 +18,10 @@
 #include "ui/ozone/platform/drm/gpu/hardware_display_plane_manager.h"
 #include "ui/ozone/platform/drm/gpu/overlay_plane.h"
 
+namespace gfx {
+struct PresentationFeedback;
+}  // namespace gfx
+
 namespace ui {
 
 class DrmDevice;
@@ -55,10 +59,6 @@ class CrtcController : public base::SupportsWeakPtr<CrtcController> {
                         bool test_only,
                         scoped_refptr<PageFlipRequest> page_flip_request);
 
-  // Returns true if hardware plane with z_order equal to |z_order| can support
-  // |fourcc_format| format.
-  bool IsFormatSupported(uint32_t fourcc_format, uint32_t z_order) const;
-
   // Returns a vector of format modifiers for the given fourcc format
   // on this CRTCs primary plane. A format modifier describes the
   // actual layout of the buffer, such as whether it's linear, tiled
@@ -72,7 +72,8 @@ class CrtcController : public base::SupportsWeakPtr<CrtcController> {
   // Called if the page flip event wasn't scheduled (ie: page flip fails). This
   // will then signal the request such that the caller doesn't wait for the
   // event forever.
-  void SignalPageFlipRequest(gfx::SwapResult result);
+  void SignalPageFlipRequest(gfx::SwapResult result,
+                             const gfx::PresentationFeedback& feedback);
 
   // Called when the page flip event occurred. The event is provided by the
   // kernel when a VBlank event finished. This allows the controller to

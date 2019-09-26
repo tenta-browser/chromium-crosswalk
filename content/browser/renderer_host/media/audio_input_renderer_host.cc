@@ -17,6 +17,7 @@
 #include "content/browser/renderer_host/media/audio_input_delegate_impl.h"
 #include "content/browser/renderer_host/media/audio_input_device_manager.h"
 #include "content/browser/renderer_host/media/media_stream_manager.h"
+#include "content/public/browser/browser_thread.h"
 #include "media/audio/audio_manager.h"
 
 namespace content {
@@ -47,9 +48,7 @@ AudioInputRendererHost::AudioInputRendererHost(
       audio_manager_(audio_manager),
       media_stream_manager_(media_stream_manager),
       audio_mirroring_manager_(audio_mirroring_manager),
-      user_input_monitor_(user_input_monitor),
-      audio_log_(MediaInternals::GetInstance()->CreateAudioLog(
-          media::AudioLogFactory::AUDIO_INPUT_CONTROLLER)) {}
+      user_input_monitor_(user_input_monitor) {}
 
 AudioInputRendererHost::~AudioInputRendererHost() {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
@@ -138,6 +137,13 @@ void AudioInputRendererHost::OnCreateStream(
     const AudioInputHostMsg_CreateStream_Config& config) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
 
+  if (config.params.IsBitstreamFormat()) {
+    // Bitstream formats are only supported for output.
+    bad_message::ReceivedBadMessage(this,
+                                    bad_message::AIRH_UNEXPECTED_BITSTREAM);
+    return;
+  }
+
 #if defined(OS_CHROMEOS)
   if (config.params.channel_layout() ==
       media::CHANNEL_LAYOUT_STEREO_AND_KEYBOARD_MIC) {
@@ -169,15 +175,19 @@ void AudioInputRendererHost::DoCreateStream(
     return;
   }
 
+  media::mojom::AudioLogPtr audio_log_ptr =
+      MediaInternals::GetInstance()->CreateMojoAudioLog(
+          media::AudioLogFactory::AUDIO_INPUT_CONTROLLER, stream_id,
+          render_process_id_, render_frame_id);
+
   std::unique_ptr<media::AudioInputDelegate> delegate =
       AudioInputDelegateImpl::Create(
-          this, audio_manager_, audio_mirroring_manager_, user_input_monitor_,
+          audio_manager_, audio_mirroring_manager_, user_input_monitor_,
+          render_process_id_, render_frame_id,
           media_stream_manager_->audio_input_device_manager(),
-          MediaInternals::GetInstance()->CreateAudioLog(
-              media::AudioLogFactory::AUDIO_INPUT_CONTROLLER),
-          std::move(keyboard_mic_registration),
-          config.shared_memory_count, stream_id, session_id, render_process_id_,
-          render_frame_id, config.automatic_gain_control, config.params);
+          std::move(audio_log_ptr), std::move(keyboard_mic_registration),
+          config.shared_memory_count, stream_id, session_id,
+          config.automatic_gain_control, config.params, this);
 
   if (!delegate) {
     // Error was logged by AudioInputDelegateImpl::Create.

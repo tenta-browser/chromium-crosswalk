@@ -32,6 +32,7 @@
 #include "net/ssl/openssl_ssl_util.h"
 #include "net/ssl/ssl_client_cert_type.h"
 #include "net/ssl/ssl_config_service.h"
+#include "net/traffic_annotation/network_traffic_annotation.h"
 #include "third_party/boringssl/src/include/openssl/base.h"
 #include "third_party/boringssl/src/include/openssl/ssl.h"
 
@@ -88,7 +89,6 @@ class SSLClientSocketImpl : public SSLClientSocket,
                                  TokenBindingType tb_type,
                                  std::vector<uint8_t>* out) override;
   crypto::ECPrivateKey* GetChannelIDKey() const override;
-  SSLErrorDetails GetConnectErrorDetails() const override;
 
   // SSLSocket implementation.
   int ExportKeyingMaterial(const base::StringPiece& label,
@@ -116,6 +116,7 @@ class SSLClientSocketImpl : public SSLClientSocket,
   void AddConnectionAttempts(const ConnectionAttempts& attempts) override {}
   int64_t GetTotalReceivedBytes() const override;
   void DumpMemoryStats(SocketMemoryStats* stats) const override;
+  void ApplySocketTag(const SocketTag& tag) override;
 
   // Dumps memory allocation stats. |pmd| is the browser process memory dump.
   static void DumpSSLClientSessionMemoryStats(
@@ -130,7 +131,8 @@ class SSLClientSocketImpl : public SSLClientSocket,
                   const CompletionCallback& callback) override;
   int Write(IOBuffer* buf,
             int buf_len,
-            const CompletionCallback& callback) override;
+            const CompletionCallback& callback,
+            const NetworkTrafficAnnotationTag& traffic_annotation) override;
   int SetReceiveBufferSize(int32_t size) override;
   int SetSendBufferSize(int32_t size) override;
 
@@ -230,10 +232,6 @@ class SSLClientSocketImpl : public SSLClientSocket,
   // in a UMA histogram.
   void RecordNegotiatedProtocol() const;
 
-  // Records histograms for channel id support during full handshakes - resumed
-  // handshakes are ignored.
-  void RecordChannelIDSupport() const;
-
   // Returns whether TLS channel ID is enabled.
   bool IsChannelIDEnabled() const;
 
@@ -289,8 +287,6 @@ class SSLClientSocketImpl : public SSLClientSocket,
 
   // The service for retrieving Channel ID keys.  May be NULL.
   ChannelIDService* channel_id_service_;
-  bool tb_was_negotiated_;
-  TokenBindingParam tb_negotiated_param_;
   TokenBindingSignatureMap tb_signature_map_;
 
   // OpenSSL stuff
@@ -349,7 +345,9 @@ class SSLClientSocketImpl : public SSLClientSocket,
   // True if PKP is bypassed due to a local trust anchor.
   bool pkp_bypassed_;
 
-  SSLErrorDetails connect_error_details_;
+  // True if there was a certificate error which should be treated as fatal,
+  // and false otherwise.
+  bool is_fatal_cert_error_;
 
   NetLogWithSource net_log_;
   base::WeakPtrFactory<SSLClientSocketImpl> weak_factory_;

@@ -20,7 +20,6 @@ const char kAppThemeColor[] = "app.theme_color";
 const char kAutomation[] = "automation";
 const char kBackgroundAllowJsAccess[] = "background.allow_js_access";
 const char kBackgroundPage[] = "background.page";
-const char kBackgroundPageLegacy[] = "background_page";
 const char kBackgroundPersistent[] = "background.persistent";
 const char kBackgroundScripts[] = "background.scripts";
 const char kBluetooth[] = "bluetooth";
@@ -82,8 +81,6 @@ const char kKioskSecondaryApps[] = "kiosk_secondary_apps";
 const char kLanguage[] = "language";
 const char kLaunch[] = "app.launch";
 const char kLaunchContainer[] = "app.launch.container";
-const char kLauncherPage[] = "launcher_page";
-const char kLauncherPagePage[] = "launcher_page.page";
 const char kLaunchHeight[] = "app.launch.height";
 const char kLaunchLocalPath[] = "app.launch.local_path";
 const char kLaunchWebURL[] = "app.launch.web_url";
@@ -121,18 +118,12 @@ const char kPageAction[] = "page_action";
 const char kPageActionDefaultIcon[] = "default_icon";
 const char kPageActionDefaultPopup[] = "default_popup";
 const char kPageActionDefaultTitle[] = "default_title";
-const char kPageActionIcons[] = "icons";
 const char kPageActionId[] = "id";
-const char kPageActionPopup[] = "popup";
-const char kPageActionPopupPath[] = "path";
 const char kPermissions[] = "permissions";
 const char kPlatformAppBackground[] = "app.background";
 const char kPlatformAppBackgroundPage[] = "app.background.page";
 const char kPlatformAppBackgroundScripts[] = "app.background.scripts";
 const char kPlatformAppContentSecurityPolicy[] = "app.content_security_policy";
-const char kPlugins[] = "plugins";
-const char kPluginsPath[] = "path";
-const char kPluginsPublic[] = "public";
 const char kPublicKey[] = "key";
 const char kRemoveButton[] = "remove_button";
 const char kRequirements[] = "requirements";
@@ -507,12 +498,11 @@ const char kInvalidKioskRequiredPlatformVersion[] =
 const char kInvalidKioskSecondaryApps[] =
     "Invalid value for 'kiosk_secondary_apps'";
 const char kInvalidKioskSecondaryAppsBadAppEntry[] =
-    "Invalid app id item for 'kiosk_secondary_apps'";
-const char kInvalidKioskSecondaryAppsBadAppId[] =
-    "Invalid app id value for 'kiosk_secondary_apps'";
-const char kInvalidLauncherPage[] = "Invalid value for 'launcher_page'.";
-const char kInvalidLauncherPagePage[] =
-    "Invalid value for 'launcher_page.page'.";
+    "Invalid app item for 'kiosk_secondary_apps'";
+const char kInvalidKioskSecondaryAppsDuplicateApp[] =
+    "Duplicate app id in 'kiosk_secondary_apps': '*'.";
+const char kInvalidKioskSecondaryAppsPropertyUnavailable[] =
+    "Property '*' not allowed for 'kiosk_secondary_apps' item '*'.";
 const char kInvalidLaunchContainer[] =
     "Invalid value for 'app.launch.container'.";
 const char kInvalidLaunchValue[] =
@@ -527,8 +517,7 @@ const char kInvalidLinkedAppIconURL[] =
     "Invalid 'url' for linked app icon. Must be a string that is a valid URL";
 const char kInvalidLinkedAppIcons[] =
     "Invalid 'app.linked_icons'. Must be an array";
-const char kInvalidManifest[] =
-    "Manifest file is invalid.";
+const char kInvalidManifest[] = "Manifest file is invalid";
 const char kInvalidManifestVersion[] =
     "Invalid value for 'manifest_version'. Must be an integer greater than "
     "zero.";
@@ -586,11 +575,6 @@ const char kInvalidPageActionIconPath[] =
     "Invalid value for 'page_action.default_icon'.";
 const char kInvalidPageActionId[] =
     "Required value 'id' is missing or invalid.";
-const char kInvalidPageActionName[] =
-    "Invalid value for 'page_action.name'.";
-const char kInvalidPageActionOldAndNewKeys[] =
-    "Key \"*\" is deprecated.  Key \"*\" has the same meaning.  You can not "
-    "use both.";
 const char kInvalidPageActionPopup[] =
     "Invalid type for page action popup.";
 const char kInvalidPageActionPopupPath[] =
@@ -603,12 +587,6 @@ const char kInvalidPermissions[] =
     "Invalid value for 'permissions'.";
 const char kInvalidPermissionScheme[] =
     "Invalid scheme for 'permissions[*]'.";
-const char kInvalidPlugins[] =
-    "Invalid value for 'plugins'.";
-const char kInvalidPluginsPath[] =
-    "Invalid value for 'plugins[*].path'.";
-const char kInvalidPluginsPublic[] =
-    "Invalid value for 'plugins[*].public'.";
 const char kInvalidRequirement[] =
     "Invalid value for requirement \"*\"";
 const char kInvalidRequirements[] =
@@ -710,8 +688,6 @@ const char kInvalidZipHash[] =
     "Required key 'zip_hash' is missing or invalid.";
 const char kKeyIsDeprecatedWithReplacement[] =
     "Key \"*\" is deprecated.  Key \"*\" should be used instead.";
-const char kLauncherPagePageRequired[] =
-    "The 'launcher_page.page' key is required.";
 const char kLaunchPathAndExtentAreExclusive[] =
     "The 'app.launch.local_path' and 'app.urls' keys cannot both be set.";
 const char kLaunchPathAndURLAreExclusive[] =
@@ -731,14 +707,14 @@ const char kLocalesTreeMissing[] =
     "Default locale was specified, but _locales subtree is missing.";
 const char kManifestParseError[] =
     "Manifest is not valid JSON.";
-const char kManifestUnreadable[] =
-    "Manifest file is missing or unreadable.";
+const char kManifestUnreadable[] = "Manifest file is missing or unreadable";
 const char kMissingFile[] =
     "At least one js or css file is required for 'content_scripts[*]'.";
 const char kMultipleOverrides[] =
     "An extension cannot override more than one page.";
 const char kNoWildCardsInPaths[] =
   "Wildcards are not allowed in extent URL pattern paths.";
+const char kNPAPIPluginsNotSupported[] = "NPAPI plugins are not supported.";
 const char kOneUISurfaceOnly[] =
     "Only one of 'browser_action', 'page_action', and 'app' can be specified.";
 const char kPermissionMustBeOptional[] =
@@ -749,6 +725,8 @@ const char kPermissionNotAllowedInManifest[] =
     "Permission '*' cannot be specified in the manifest.";
 const char kPermissionUnknownOrMalformed[] =
     "Permission '*' is unknown or URL pattern is malformed.";
+const char kPluginsRequirementDeprecated[] =
+    "The \"plugins\" requirement is deprecated.";
 const char kReservedMessageFound[] =
     "Reserved key * found in message catalog.";
 const char kRulesFileIsInvalid[] =

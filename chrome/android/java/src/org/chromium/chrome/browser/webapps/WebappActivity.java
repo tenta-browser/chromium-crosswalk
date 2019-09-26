@@ -43,11 +43,12 @@ import org.chromium.chrome.browser.appmenu.AppMenuPropertiesDelegate;
 import org.chromium.chrome.browser.browserservices.BrowserSessionContentHandler;
 import org.chromium.chrome.browser.browserservices.BrowserSessionContentUtils;
 import org.chromium.chrome.browser.browserservices.BrowserSessionDataProvider;
+import org.chromium.chrome.browser.browserservices.Origin;
 import org.chromium.chrome.browser.browserservices.OriginVerifier;
 import org.chromium.chrome.browser.browserservices.OriginVerifier.OriginVerificationListener;
 import org.chromium.chrome.browser.compositor.layouts.LayoutManager;
 import org.chromium.chrome.browser.customtabs.CustomTabAppMenuPropertiesDelegate;
-import org.chromium.chrome.browser.customtabs.CustomTabLayoutManager;
+import org.chromium.chrome.browser.customtabs.CustomTabNavigationEventObserver;
 import org.chromium.chrome.browser.customtabs.CustomTabsConnection;
 import org.chromium.chrome.browser.document.ChromeLauncherActivity;
 import org.chromium.chrome.browser.document.DocumentUtils;
@@ -63,6 +64,7 @@ import org.chromium.chrome.browser.widget.TintedDrawable;
 import org.chromium.content.browser.ScreenOrientationProvider;
 import org.chromium.content_public.browser.LoadUrlParams;
 import org.chromium.content_public.browser.NavigationController;
+import org.chromium.content_public.browser.NavigationEntry;
 import org.chromium.net.NetworkChangeNotifier;
 import org.chromium.ui.base.PageTransition;
 
@@ -104,7 +106,7 @@ public class WebappActivity extends SingleTabActivity {
     private final WebappActionsNotificationManager mNotificationManager;
     private final WebappDirectoryManager mDirectoryManager;
 
-    protected WebappInfo mWebappInfo;
+    private WebappInfo mWebappInfo;
 
     private WebappSplashScreenController mSplashController;
 
@@ -149,10 +151,19 @@ public class WebappActivity extends SingleTabActivity {
         }
 
         @Override
+        @Nullable
         public String getCurrentUrl() {
             if (getActivityTab() == null) return null;
 
             return getActivityTab().getUrl();
+        }
+
+        @Override
+        @Nullable
+        public String getPendingUrl() {
+            NavigationEntry entry = getActivityTab().getWebContents().getNavigationController()
+                    .getPendingEntry();
+            return entry != null ? entry.getUrl() : null;
         }
 
         /**
@@ -163,13 +174,12 @@ public class WebappActivity extends SingleTabActivity {
         void verifyRelationship() {
             mOriginVerifier = new OriginVerifier(mTrustedWebContentProvider,
                     getNativeClientPackageName(), CustomTabsService.RELATION_HANDLE_ALL_URLS);
-            mOriginVerifier.start(mWebappInfo.uri());
+            mOriginVerifier.start(new Origin(mWebappInfo.uri()));
         }
 
         @Override
-        public void onOriginVerified(String packageName, Uri origin, boolean verified) {
+        public void onOriginVerified(String packageName, Origin origin, boolean verified) {
             mVerificationFailed = !verified;
-            mOriginVerifier.cleanUp();
             mOriginVerifier = null;
             if (mVerificationFailed) getFullscreenManager().setPositionsForTabToNonFullscreen();
         }
@@ -232,18 +242,32 @@ public class WebappActivity extends SingleTabActivity {
         return (intent == null) ? WebappInfo.createEmpty() : WebappInfo.create(intent);
     }
 
+    @Override
+    public void initializeState() {
+        super.initializeState();
+        initializeUI(getSavedInstanceState());
+    }
+
     protected void initializeUI(Bundle savedInstanceState) {
-        // We do not load URL when restoring from saved instance states.
-        if (savedInstanceState == null) {
-            getActivityTab().loadUrl(
-                    new LoadUrlParams(mWebappInfo.uri().toString(), PageTransition.AUTO_TOPLEVEL));
-        } else {
-            if (NetworkChangeNotifier.isOnline()) getActivityTab().reloadIgnoringCache();
+        Tab tab = getActivityTab();
+
+        // Make display mode available before page load.
+        tab.getTabWebContentsDelegateAndroid().setDisplayMode(mWebappInfo.displayMode());
+
+        // Add the navigation event observer before starting the load in order to capture the start
+        // event.
+        if (getBrowserSession() != null) {
+            tab.addObserver(new CustomTabNavigationEventObserver(getBrowserSession()));
         }
 
-        getActivityTab().addObserver(createTabObserver());
-        getActivityTab().getTabWebContentsDelegateAndroid().setDisplayMode(
-                mWebappInfo.displayMode());
+        // We do not load URL when restoring from saved instance states.
+        if (savedInstanceState == null) {
+            tab.loadUrl(
+                    new LoadUrlParams(mWebappInfo.uri().toString(), PageTransition.AUTO_TOPLEVEL));
+        } else {
+            if (NetworkChangeNotifier.isOnline()) tab.reloadIgnoringCache();
+        }
+        tab.addObserver(createTabObserver());
     }
 
     @Override
@@ -312,13 +336,7 @@ public class WebappActivity extends SingleTabActivity {
 
     @Override
     public void finishNativeInitialization() {
-        if (!mWebappInfo.isInitialized()) {
-            ApiCompatibilityUtils.finishAndRemoveTask(this);
-            return;
-        }
-
-        initializeUI(getSavedInstanceState());
-        LayoutManager layoutDriver = new CustomTabLayoutManager(getCompositorViewHolder());
+        LayoutManager layoutDriver = new LayoutManager(getCompositorViewHolder());
         initializeCompositorContent(layoutDriver, findViewById(R.id.url_bar),
                 (ViewGroup) findViewById(android.R.id.content),
                 (ToolbarControlContainer) findViewById(R.id.control_container));
@@ -504,16 +522,6 @@ public class WebappActivity extends SingleTabActivity {
                     mWebappInfo.id(), new WebappRegistry.FetchWebappDataStorageCallback() {
                         @Override
                         public void onWebappDataStorageRetrieved(WebappDataStorage storage) {
-                            // Initialize the time of the last is-update-needed check with the
-                            // registration time. This prevents checking for updates on the
-                            // first run.
-                            // TODO(yusufo): We should clearly define what can be
-                            // registered through the support library and what happens for Trusted
-                            // Web Activities here.
-                            if (getBrowserSession() == null) {
-                                storage.updateTimeOfLastCheckForUpdatedWebManifest();
-                            }
-
                             onDeferredStartupWithStorage(storage);
                         }
                     });
@@ -555,7 +563,7 @@ public class WebappActivity extends SingleTabActivity {
      * @return Structure containing data about the webapp currently displayed.
      *         The return value should not be cached.
      */
-    WebappInfo getWebappInfo() {
+    public WebappInfo getWebappInfo() {
         return mWebappInfo;
     }
 
@@ -596,7 +604,7 @@ public class WebappActivity extends SingleTabActivity {
         // with the heuristic.
         if (mWebappInfo.isLaunchedFromHomescreen()) {
             boolean previouslyLaunched = storage.hasBeenLaunched();
-            long previousUsageTimestamp = storage.getLastUsedTime();
+            long previousUsageTimestamp = storage.getLastUsedTimeMs();
             storage.setHasBeenLaunched();
             // TODO(yusufo): WebappRegistry#unregisterOldWebapps uses this information to delete
             // WebappDataStorage objects for legacy webapps which haven't been used in a while.
@@ -714,7 +722,7 @@ public class WebappActivity extends SingleTabActivity {
         };
     }
 
-    protected WebappScopePolicy scopePolicy() {
+    public WebappScopePolicy scopePolicy() {
         return isVerified() ? WebappScopePolicy.STRICT : WebappScopePolicy.LEGACY;
     }
 
@@ -820,7 +828,9 @@ public class WebappActivity extends SingleTabActivity {
         if (mBrandColor != null && mWebappInfo.displayMode() != WebDisplayMode.FULLSCREEN) {
             taskDescriptionColor = mBrandColor;
             statusBarColor = ColorUtils.getDarkenedColorForStatusBar(mBrandColor);
-            getToolbarManager().updatePrimaryColor(mBrandColor, false);
+            if (getToolbarManager() != null) {
+                getToolbarManager().updatePrimaryColor(mBrandColor, false);
+            }
         }
 
         ApiCompatibilityUtils.setTaskDescription(this, title, icon,

@@ -9,7 +9,6 @@
 
 #include "ash/accessibility/default_accessibility_delegate.h"
 #include "ash/screenshot_delegate.h"
-#include "ash/wallpaper/wallpaper_delegate_mus.h"
 #include "base/strings/string16.h"
 #include "base/strings/string_util.h"
 #include "components/user_manager/user_info_impl.h"
@@ -62,11 +61,6 @@ bool ShellDelegateMus::CanShowWindowForUser(aura::Window* window) const {
   return true;
 }
 
-bool ShellDelegateMus::IsForceMaximizeOnFirstRun() const {
-  NOTIMPLEMENTED_LOG_ONCE();
-  return false;
-}
-
 void ShellDelegateMus::PreInit() {
   NOTIMPLEMENTED_LOG_ONCE();
 }
@@ -96,22 +90,8 @@ ShellDelegateMus::CreateScreenshotDelegate() {
   return std::make_unique<ScreenshotDelegateMash>();
 }
 
-std::unique_ptr<WallpaperDelegate> ShellDelegateMus::CreateWallpaperDelegate() {
-  return std::make_unique<WallpaperDelegateMus>();
-}
-
 AccessibilityDelegate* ShellDelegateMus::CreateAccessibilityDelegate() {
   return new DefaultAccessibilityDelegate;
-}
-
-base::string16 ShellDelegateMus::GetProductName() const {
-  NOTIMPLEMENTED_LOG_ONCE();
-  return base::string16();
-}
-
-gfx::Image ShellDelegateMus::GetDeprecatedAcceleratorImage() const {
-  NOTIMPLEMENTED_LOG_ONCE();
-  return gfx::Image();
 }
 
 ui::InputDeviceControllerClient*

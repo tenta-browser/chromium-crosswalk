@@ -10,22 +10,25 @@
 #include "base/guid.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
+#include "build/build_config.h"
 #include "chrome/browser/download/download_service_factory.h"
 #include "chrome/browser/offline_items_collection/offline_content_aggregator_factory.h"
 #include "chrome/browser/profiles/profile.h"
-#include "components/download/public/download_params.h"
-#include "components/download/public/download_service.h"
+#include "components/download/public/background_service/download_params.h"
+#include "components/download/public/background_service/download_service.h"
 #include "components/offline_items_collection/core/offline_content_aggregator.h"
 #include "components/offline_items_collection/core/offline_item.h"
 #include "content/public/browser/background_fetch_response.h"
 #include "content/public/browser/browser_thread.h"
+#include "third_party/skia/include/core/SkBitmap.h"
+#include "ui/gfx/geometry/size.h"
+#include "ui/gfx/image/image_skia.h"
 
 BackgroundFetchDelegateImpl::BackgroundFetchDelegateImpl(Profile* profile)
     : download_service_(
           DownloadServiceFactory::GetInstance()->GetForBrowserContext(profile)),
       offline_content_aggregator_(
-          offline_items_collection::OfflineContentAggregatorFactory::
-              GetForBrowserContext(profile)),
+          OfflineContentAggregatorFactory::GetForBrowserContext(profile)),
       weak_ptr_factory_(this) {
   offline_content_aggregator_->RegisterProvider("background_fetch", this);
 }
@@ -46,10 +49,12 @@ BackgroundFetchDelegateImpl::JobDetails::JobDetails(
     const std::string& job_unique_id,
     const std::string& title,
     const url::Origin& origin,
+    const SkBitmap& icon,
     int completed_parts,
     int total_parts)
     : title(title),
       origin(origin),
+      icon(gfx::ImageSkia::CreateFrom1xBitmap(icon)),
       completed_parts(completed_parts),
       total_parts(total_parts),
       cancelled(false),
@@ -87,10 +92,27 @@ void BackgroundFetchDelegateImpl::JobDetails::UpdateOfflineItem() {
     offline_item.state = OfflineItemState::IN_PROGRESS;
 }
 
+void BackgroundFetchDelegateImpl::GetIconDisplaySize(
+    BackgroundFetchDelegate::GetIconDisplaySizeCallback callback) {
+  DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
+
+  // If Android, return 192x192, else return 0x0. 0x0 means not loading an
+  // icon at all, which is returned for all non-Android platforms as the
+  // icons can't be displayed on the UI yet.
+  // TODO(nator): Move this logic to OfflineItemsCollection, and return icon
+  // size based on display.
+  gfx::Size display_size;
+#if defined(OS_ANDROID)
+  display_size = gfx::Size(192, 192);
+#endif
+  std::move(callback).Run(display_size);
+}
+
 void BackgroundFetchDelegateImpl::CreateDownloadJob(
     const std::string& job_unique_id,
     const std::string& title,
     const url::Origin& origin,
+    const SkBitmap& icon,
     int completed_parts,
     int total_parts,
     const std::vector<std::string>& current_guids) {
@@ -99,8 +121,8 @@ void BackgroundFetchDelegateImpl::CreateDownloadJob(
   DCHECK(!job_details_map_.count(job_unique_id));
 
   auto emplace_result = job_details_map_.emplace(
-      job_unique_id,
-      JobDetails(job_unique_id, title, origin, completed_parts, total_parts));
+      job_unique_id, JobDetails(job_unique_id, title, origin, icon,
+                                completed_parts, total_parts));
 
   const JobDetails& details = emplace_result.first->second;
 
@@ -306,9 +328,11 @@ void BackgroundFetchDelegateImpl::OnDownloadReceived(
       // This really should never happen since we're supplying the
       // DownloadClient.
       NOTREACHED();
+      break;
     case StartResult::UNEXPECTED_GUID:
       // TODO(delphick): try again with a different GUID.
       NOTREACHED();
+      break;
     case StartResult::CLIENT_CANCELLED:
       // TODO(delphick): do we need to do anything here, since we will have
       // cancelled it?
@@ -316,8 +340,10 @@ void BackgroundFetchDelegateImpl::OnDownloadReceived(
     case StartResult::INTERNAL_ERROR:
       // TODO(delphick): We need to handle this gracefully.
       NOTREACHED();
+      break;
     case StartResult::COUNT:
       NOTREACHED();
+      break;
   }
 }
 
@@ -329,10 +355,6 @@ void BackgroundFetchDelegateImpl::UpdateOfflineItemAndUpdateObservers(
 
   for (auto* observer : observers_)
     observer->OnItemUpdated(job_details->offline_item);
-}
-
-bool BackgroundFetchDelegateImpl::AreItemsAvailable() {
-  return true;
 }
 
 void BackgroundFetchDelegateImpl::OpenItem(
@@ -396,19 +418,23 @@ void BackgroundFetchDelegateImpl::ResumeDownload(
   // TODO(delphick): Start new downloads that weren't started because of pause.
 }
 
-const offline_items_collection::OfflineItem*
-BackgroundFetchDelegateImpl::GetItemById(
-    const offline_items_collection::ContentId& id) {
+void BackgroundFetchDelegateImpl::GetItemById(
+    const offline_items_collection::ContentId& id,
+    SingleItemCallback callback) {
   auto it = job_details_map_.find(id.id);
-  return (it != job_details_map_.end()) ? &it->second.offline_item : nullptr;
+  base::Optional<offline_items_collection::OfflineItem> offline_item;
+  if (it != job_details_map_.end())
+    offline_item = it->second.offline_item;
+  base::ThreadTaskRunnerHandle::Get()->PostTask(
+      FROM_HERE, base::BindOnce(std::move(callback), offline_item));
 }
 
-BackgroundFetchDelegateImpl::OfflineItemList
-BackgroundFetchDelegateImpl::GetAllItems() {
+void BackgroundFetchDelegateImpl::GetAllItems(MultipleItemCallback callback) {
   OfflineItemList item_list;
   for (auto& entry : job_details_map_)
     item_list.push_back(entry.second.offline_item);
-  return item_list;
+  base::ThreadTaskRunnerHandle::Get()->PostTask(
+      FROM_HERE, base::BindOnce(std::move(callback), item_list));
 }
 
 void BackgroundFetchDelegateImpl::GetVisualsForItem(
@@ -416,25 +442,21 @@ void BackgroundFetchDelegateImpl::GetVisualsForItem(
     const VisualsCallback& callback) {
   // GetVisualsForItem mustn't be called directly since offline_items_collection
   // is not re-entrant and it must be called even if there are no visuals.
-  // TODO(delphick): Call with an image when that becomes available.
+  auto visuals =
+      std::make_unique<offline_items_collection::OfflineItemVisuals>();
+  auto it = job_details_map_.find(id.id);
+  if (it != job_details_map_.end()) {
+    visuals->icon = it->second.icon;
+  }
+
   base::ThreadTaskRunnerHandle::Get()->PostTask(
-      FROM_HERE, base::BindOnce(callback, id, nullptr));
+      FROM_HERE, base::BindOnce(callback, id, std::move(visuals)));
 }
 
 void BackgroundFetchDelegateImpl::AddObserver(Observer* observer) {
   DCHECK(!observers_.count(observer));
 
   observers_.insert(observer);
-  // OnItemsAvailable mustn't be called directly since offline_items_collection
-  // is not re-entrant.
-  base::ThreadTaskRunnerHandle::Get()->PostTask(
-      FROM_HERE, base::BindOnce(
-                     [](Observer* observer,
-                        base::WeakPtr<BackgroundFetchDelegateImpl> provider) {
-                       if (provider)
-                         observer->OnItemsAvailable(provider.get());
-                     },
-                     observer, weak_ptr_factory_.GetWeakPtr()));
 }
 
 void BackgroundFetchDelegateImpl::RemoveObserver(Observer* observer) {

@@ -16,7 +16,6 @@
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_contents_observer.h"
-#include "content/public/common/browser_side_navigation_policy.h"
 #include "content/public/test/browser_test_utils.h"
 #include "extensions/common/switches.h"
 #include "net/dns/mock_host_resolver.h"
@@ -42,11 +41,9 @@ class ExtensionResourceRequestPolicyTest : public ExtensionApiTest {
 // extension_resource_request_policy.*, but we have it as a browser test so that
 // can make sure it works end-to-end.
 IN_PROC_BROWSER_TEST_F(ExtensionResourceRequestPolicyTest, OriginPrivileges) {
-  ASSERT_TRUE(LoadExtensionWithFlags(test_data_dir_
-      .AppendASCII("extension_resource_request_policy")
-      .AppendASCII("extension"),
-      // Tests manifest_version 1 behavior, so warnings are expected.
-      ExtensionBrowserTest::kFlagIgnoreManifestWarnings));
+  ASSERT_TRUE(LoadExtension(
+      test_data_dir_.AppendASCII("extension_resource_request_policy")
+          .AppendASCII("extension")));
 
   GURL web_resource(embedded_test_server()->GetURL(
       "/extensions/api_test/extension_resource_request_policy/"
@@ -99,11 +96,9 @@ IN_PROC_BROWSER_TEST_F(ExtensionResourceRequestPolicyTest, OriginPrivileges) {
 
   // A different extension. Legacy (manifest_version 1) extensions should always
   // be able to load each other's resources.
-  ASSERT_TRUE(LoadExtensionWithFlags(test_data_dir_
-      .AppendASCII("extension_resource_request_policy")
-      .AppendASCII("extension2"),
-      // Tests manifest_version 1 behavior, so warnings are expected.
-      ExtensionBrowserTest::kFlagIgnoreManifestWarnings));
+  ASSERT_TRUE(LoadExtension(
+      test_data_dir_.AppendASCII("extension_resource_request_policy")
+          .AppendASCII("extension2")));
   ui_test_utils::NavigateToURL(
       browser(),
       GURL("chrome-extension://pbkkcbgdkliohhfaeefcijaghglkahja/index.html"));
@@ -116,25 +111,20 @@ IN_PROC_BROWSER_TEST_F(ExtensionResourceRequestPolicyTest, OriginPrivileges) {
 
 IN_PROC_BROWSER_TEST_F(ExtensionResourceRequestPolicyTest,
                        ExtensionCanLoadHostedAppIcons) {
-  ASSERT_TRUE(LoadExtensionWithFlags(test_data_dir_
-      .AppendASCII("extension_resource_request_policy")
-      .AppendASCII("extension"),
-      // Tests manifest_version 1 behavior, so warnings are expected.
-      ExtensionBrowserTest::kFlagIgnoreManifestWarnings));
+  ASSERT_TRUE(LoadExtension(
+      test_data_dir_.AppendASCII("extension_resource_request_policy")
+          .AppendASCII("hosted_app")));
 
-  ASSERT_TRUE(RunExtensionSubtest(
-      "extension_resource_request_policy/extension2/",
-      "can_load_icons_from_hosted_apps.html",
-      // Tests manifest_version 1 behavior, so warnings are expected.
-      ExtensionApiTest::kFlagIgnoreManifestWarnings)) << message_;
+  ASSERT_TRUE(
+      RunExtensionSubtest("extension_resource_request_policy/extension2/",
+                          "can_load_icons_from_hosted_apps.html"))
+      << message_;
 }
 
 IN_PROC_BROWSER_TEST_F(ExtensionResourceRequestPolicyTest, Audio) {
   EXPECT_TRUE(RunExtensionSubtest(
-      "extension_resource_request_policy/extension2",
-      "audio.html",
-      // Tests manifest_version 1 behavior, so warnings are expected.
-      ExtensionApiTest::kFlagIgnoreManifestWarnings)) << message_;
+      "extension_resource_request_policy/extension2", "audio.html"))
+      << message_;
 }
 
 #if defined(OS_MACOSX) || defined(OS_WIN)
@@ -146,10 +136,8 @@ IN_PROC_BROWSER_TEST_F(ExtensionResourceRequestPolicyTest, Audio) {
 
 IN_PROC_BROWSER_TEST_F(ExtensionResourceRequestPolicyTest, MAYBE_Video) {
   EXPECT_TRUE(RunExtensionSubtest(
-      "extension_resource_request_policy/extension2",
-      "video.html",
-      // Tests manifest_version 1 behavior, so warnings are expected.
-      ExtensionApiTest::kFlagIgnoreManifestWarnings)) << message_;
+      "extension_resource_request_policy/extension2", "video.html"))
+      << message_;
 }
 
 // This test times out regularly on win_rel trybots. See http://crbug.com/122154
@@ -253,11 +241,8 @@ IN_PROC_BROWSER_TEST_F(ExtensionResourceRequestPolicyTest,
   GURL nonaccessible_linked_resource(embedded_test_server()->GetURL(
       "/extensions/api_test/extension_resource_request_policy/"
       "web_accessible/nonaccessible_link_resource.html"));
-  // With PlzNavigate, the first DidStopLoading IPC is dropped because loading
-  // is delayed until the beforeunload handler ACK comes back.
-  ui_test_utils::NavigateToURLBlockUntilNavigationsComplete(browser(),
-      nonaccessible_linked_resource,
-      content::IsBrowserSideNavigationEnabled() ? 1 : 2);
+  ui_test_utils::NavigateToURLBlockUntilNavigationsComplete(
+      browser(), nonaccessible_linked_resource, 1);
   ASSERT_TRUE(content::ExecuteScriptAndExtractString(
       browser()->tab_strip_model()->GetActiveWebContents(),
       "window.domAutomationController.send(document.URL)",

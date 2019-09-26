@@ -6,18 +6,15 @@ package org.chromium.chrome.browser.vr_shell;
 
 import android.widget.FrameLayout;
 
-import org.chromium.chrome.browser.tab.Tab;
-
 /**
  * Abstracts away the VrShell class, which may or may not be present at runtime depending on
  * compile flags.
  */
-public interface VrShell {
+public interface VrShell extends VrDialogManager, VrToastManager {
     /**
      * Performs native VrShell initialization.
      */
-    void initializeNative(
-            Tab currentTab, boolean forWebVr, boolean webVrAutopresentationExpected, boolean inCct);
+    void initializeNative(boolean forWebVr, boolean webVrAutopresentationExpected, boolean inCct);
 
     /**
      * Pauses VrShell.
@@ -37,8 +34,7 @@ public interface VrShell {
     /**
      * Sets whether we're presenting WebVR content or not.
      */
-    // TODO: Refactor needed. See crbug.com/735169.
-    void setWebVrModeEnabled(boolean enabled, boolean showToast);
+    void setWebVrModeEnabled(boolean enabled);
 
     /**
      * Returns true if we're presenting WebVR content.
@@ -68,13 +64,7 @@ public interface VrShell {
     /**
      * Requests to exit VR.
      */
-    void requestToExitVr(@UiUnsupportedMode int reason);
-
-    /**
-     * Gives VrShell a chance to clean up any view-dependent state before removing
-     * VrShell from the view hierarchy.
-     */
-    void onBeforeWindowDetached();
+    void requestToExitVr(@UiUnsupportedMode int reason, boolean showExitPromptBeforeDoff);
 
     /**
      *  Triggers VrShell to navigate forward.
@@ -85,4 +75,29 @@ public interface VrShell {
      *  Triggers VrShell to navigate backward.
      */
     void navigateBack();
+
+    /**
+     *  Asks VrShell to reload the current page.
+     */
+    void reloadTab();
+
+    /**
+     *  Asks VrShell to open a new tab.
+     */
+    void openNewTab(boolean incognito);
+
+    /**
+     *  Asks VrShell to close all incognito tabs.
+     */
+    void closeAllIncognitoTabs();
+
+    /**
+     * Simulates a user accepting the currently visible DOFF prompt.
+     */
+    void acceptDoffPromptForTesting();
+
+    /**
+     * @param topContentOffset The content offset (usually applied by the omnibox).
+     */
+    void rawTopContentOffsetChanged(float topContentOffset);
 }

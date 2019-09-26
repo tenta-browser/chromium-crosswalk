@@ -19,7 +19,9 @@
       'pid': pid,
       'tid': mainThread,
       'ts': 100,
-      'args': {'sessionId': sessionId}
+      'args': {'data': {'sessionId': sessionId, 'frames': [
+        {'frame': 'frame1', 'url': 'frameurl', 'name': 'frame-name'}
+      ]}},
     },
     {
       'cat': 'disabled-by-default-devtools.timeline',
@@ -28,7 +30,7 @@
       'pid': pid,
       'tid': mainThread,
       'ts': 101,
-      'args': {'sessionId': sessionId, 'layerTreeId': 17}
+      'args': {'data': {'frame': 'frame1', 'layerTreeId': 17}}
     },
 
     {
@@ -109,7 +111,7 @@
     for (var endTime = startTime + 1000; endTime <= 109000; endTime += 1000) {
       dumpStats(
           startTime, endTime,
-          Timeline.TimelineUIUtils.statsForTimeRange(timelineModel, startTime / 1000, endTime / 1000));
+          Timeline.TimelineUIUtils.statsForTimeRange(PerformanceTestRunner.mainTrackEvents(), startTime / 1000, endTime / 1000));
     }
   }
   function dumpStats(t1, t2, obj) {

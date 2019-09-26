@@ -45,6 +45,7 @@ class CONTENT_EXPORT TouchSelectionControllerClientChildFrame
   void SelectBetweenCoordinates(const gfx::PointF& base,
                                 const gfx::PointF& extent) override;
   void OnSelectionEvent(ui::SelectionEventType event) override;
+  void OnDragUpdate(const gfx::PointF& position) override;
   std::unique_ptr<ui::TouchHandleDrawable> CreateDrawable() override;
   void DidScroll() override;
 
@@ -63,7 +64,7 @@ class CONTENT_EXPORT TouchSelectionControllerClientChildFrame
   gfx::SelectionBound selection_start_;
   gfx::SelectionBound selection_end_;
   // Keep track of the view origin as of the last time selection was updated.
-  gfx::Point view_origin_at_last_update_;
+  gfx::PointF view_origin_at_last_update_;
 
   DISALLOW_COPY_AND_ASSIGN(TouchSelectionControllerClientChildFrame);
 };

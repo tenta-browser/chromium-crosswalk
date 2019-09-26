@@ -11,7 +11,6 @@
 
 #include "base/bind.h"
 #include "base/location.h"
-#include "base/memory/ptr_util.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/stl_util.h"
 #include "base/strings/string_number_conversions.h"
@@ -55,7 +54,7 @@ void RecordFaviconFetchResult(FaviconFetchResult result) {
 
 ContentSuggestionsService::ContentSuggestionsService(
     State state,
-    SigninManagerBase* signin_manager,
+    identity::IdentityManager* identity_manager,
     history::HistoryService* history_service,
     favicon::LargeIconService* large_icon_service,
     PrefService* pref_service,
@@ -64,7 +63,7 @@ ContentSuggestionsService::ContentSuggestionsService(
     std::unique_ptr<RemoteSuggestionsScheduler> remote_suggestions_scheduler,
     std::unique_ptr<Logger> debug_logger)
     : state_(state),
-      signin_observer_(this),
+      identity_manager_observer_(this),
       history_service_observer_(this),
       remote_suggestions_provider_(nullptr),
       large_icon_service_(large_icon_service),
@@ -74,8 +73,8 @@ ContentSuggestionsService::ContentSuggestionsService(
       category_ranker_(std::move(category_ranker)),
       debug_logger_(std::move(debug_logger)) {
   // Can be null in tests.
-  if (signin_manager) {
-    signin_observer_.Add(signin_manager);
+  if (identity_manager) {
+    identity_manager_observer_.Add(identity_manager);
   }
 
   if (history_service) {
@@ -160,6 +159,20 @@ void ContentSuggestionsService::FetchSuggestionImage(
     return;
   }
   providers_by_category_[suggestion_id.category()]->FetchSuggestionImage(
+      suggestion_id, std::move(callback));
+}
+
+void ContentSuggestionsService::FetchSuggestionImageData(
+    const ContentSuggestion::ID& suggestion_id,
+    ImageDataFetchedCallback callback) {
+  if (!providers_by_category_.count(suggestion_id.category())) {
+    LOG(WARNING) << "Requested image for suggestion " << suggestion_id
+                 << " for unavailable category " << suggestion_id.category();
+    base::ThreadTaskRunnerHandle::Get()->PostTask(
+        FROM_HERE, base::BindOnce(std::move(callback), std::string()));
+    return;
+  }
+  providers_by_category_[suggestion_id.category()]->FetchSuggestionImageData(
       suggestion_id, std::move(callback));
 }
 
@@ -434,22 +447,6 @@ void ContentSuggestionsService::ReloadSuggestions() {
   }
 }
 
-void ContentSuggestionsService::OnChromeHomeStatusChanged(
-    bool is_chrome_home_enabled) {
-  debug_logger_->Log(
-      FROM_HERE, base::StringPrintf("Chrome Home enabled: %s",
-                                    is_chrome_home_enabled ? "true" : "false"));
-  if (is_chrome_home_enabled) {
-    // TODO(vitaliii): Make this code more general and do not hardcode specific
-    // categories.
-    DestroyCategoryAndItsProvider(
-        Category::FromKnownCategory(KnownCategories::BOOKMARKS));
-    DestroyCategoryAndItsProvider(
-        Category::FromKnownCategory(KnownCategories::DOWNLOADS));
-  }
-  // TODO(vitaliii): Recreate providers when Chrome Home is turned off.
-}
-
 bool ContentSuggestionsService::AreRemoteSuggestionsEnabled() const {
   return remote_suggestions_provider_ &&
          !remote_suggestions_provider_->IsDisabled();
@@ -521,17 +518,15 @@ void ContentSuggestionsService::OnSuggestionInvalidated(
     observer.OnSuggestionInvalidated(suggestion_id);
   }
 }
-
-// SigninManagerBase::Observer implementation
-void ContentSuggestionsService::GoogleSigninSucceeded(
-    const std::string& account_id,
-    const std::string& username) {
-  OnSignInStateChanged();
+// identity::IdentityManager::Observer implementation
+void ContentSuggestionsService::OnPrimaryAccountSet(
+    const AccountInfo& account_info) {
+  OnSignInStateChanged(/*has_signed_in=*/true);
 }
 
-void ContentSuggestionsService::GoogleSignedOut(const std::string& account_id,
-                                                const std::string& username) {
-  OnSignInStateChanged();
+void ContentSuggestionsService::OnPrimaryAccountCleared(
+    const AccountInfo& account_info) {
+  OnSignInStateChanged(/*has_signed_in=*/false);
 }
 
 // history::HistoryServiceObserver implementation.
@@ -659,10 +654,10 @@ void ContentSuggestionsService::NotifyCategoryStatusChanged(Category category) {
   }
 }
 
-void ContentSuggestionsService::OnSignInStateChanged() {
+void ContentSuggestionsService::OnSignInStateChanged(bool has_signed_in) {
   // First notify the providers, so they can make the required changes.
   for (const auto& provider : providers_) {
-    provider->OnSignInStateChanged();
+    provider->OnSignInStateChanged(has_signed_in);
   }
 
   // Finally notify the observers so they refresh only after the backend is

@@ -4,12 +4,12 @@
 
 #include "chrome/browser/ui/webui/device_log_ui.h"
 
+#include <memory>
 #include <string>
 
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/values.h"
 #include "chrome/common/url_constants.h"
 #include "chrome/grit/browser_resources.h"
@@ -33,7 +33,8 @@ class DeviceLogMessageHandler : public content::WebUIMessageHandler {
   void RegisterMessages() override {
     web_ui()->RegisterMessageCallback(
         "DeviceLog.getLog",
-        base::Bind(&DeviceLogMessageHandler::GetLog, base::Unretained(this)));
+        base::BindRepeating(&DeviceLogMessageHandler::GetLog,
+                            base::Unretained(this)));
   }
 
  private:
@@ -51,7 +52,7 @@ class DeviceLogMessageHandler : public content::WebUIMessageHandler {
 
 DeviceLogUI::DeviceLogUI(content::WebUI* web_ui)
     : content::WebUIController(web_ui) {
-  web_ui->AddMessageHandler(base::MakeUnique<DeviceLogMessageHandler>());
+  web_ui->AddMessageHandler(std::make_unique<DeviceLogMessageHandler>());
 
   content::WebUIDataSource* html =
       content::WebUIDataSource::Create(chrome::kChromeUIDeviceLogHost);

@@ -35,16 +35,6 @@ Polymer({
     },
 
     /**
-     * The route description to display. Uses the media route description if
-     * none is provided by the media route status object.
-     * @private {string}
-     */
-    routeDescription_: {
-      type: String,
-      value: '',
-    },
-
-    /**
      * The volume shown in the volume control, between 0 and 1.
      * @private {number}
      */
@@ -61,15 +51,6 @@ Polymer({
     hangoutsLocalPresent_: {
       type: Boolean,
       value: false,
-    },
-
-    /**
-     * Keep in sync with media remoting individual user setting.
-     * @private {boolean}
-     */
-    mediaRemotingEnabled_: {
-      type: Boolean,
-      value: true,
     },
 
     /**
@@ -130,12 +111,31 @@ Polymer({
     },
 
     /**
+     * Keep in sync with media remoting individual user setting.
+     * @private {boolean}
+     */
+    mediaRemotingEnabled_: {
+      type: Boolean,
+      value: true,
+    },
+
+    /**
      * The route currently associated with this controller.
      * @type {?media_router.Route|undefined}
      */
     route: {
       type: Object,
       observer: 'onRouteUpdated_',
+    },
+
+    /**
+     * The route description to display. Uses the media route description if
+     * none is provided by the media route status object.
+     * @private {string}
+     */
+    routeDescription_: {
+      type: String,
+      value: '',
     },
 
     /**
@@ -165,6 +165,15 @@ Polymer({
     timeIncrementsTimeoutId_: {
       type: Number,
       value: 0,
+    },
+
+    /**
+     * Whether the controls should show the media title.
+     * @private {boolean}
+     */
+    shouldShowRouteStatusTitle_: {
+      type: Boolean,
+      value: false,
     },
   },
 
@@ -370,9 +379,6 @@ Polymer({
     if (this.shouldAcceptVolumeUpdates_()) {
       this.displayedVolume_ = Math.round(newRouteStatus.volume * 100) / 100;
     }
-    if (newRouteStatus.description !== '') {
-      this.routeDescription_ = newRouteStatus.description;
-    }
     if (!this.initialLoadTime_) {
       this.initialLoadTime_ = Date.now();
       media_router.browserApi.reportWebUIRouteControllerLoaded(
@@ -395,6 +401,9 @@ Polymer({
           this.FullscreenVideoOption_.REMOTE_SCREEN :
           this.FullscreenVideoOption_.BOTH_SCREENS;
     }
+    this.shouldShowRouteStatusTitle_ = newRouteStatus.title &&
+        newRouteStatus.title != '' &&
+        newRouteStatus.title != this.routeDescription_;
   },
 
   /**
@@ -407,7 +416,7 @@ Polymer({
     if (!route) {
       this.stopIncrementingCurrentTime_();
     }
-    if (route && this.routeStatus.description === '') {
+    if (route) {
       this.routeDescription_ = route.description;
     }
   },

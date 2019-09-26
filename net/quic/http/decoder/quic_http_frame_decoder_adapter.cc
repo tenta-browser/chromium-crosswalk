@@ -22,6 +22,7 @@
 #include "net/quic/http/decoder/quic_http_frame_decoder_listener.h"
 #include "net/quic/http/quic_http_constants.h"
 #include "net/quic/http/quic_http_structures.h"
+#include "net/quic/platform/api/quic_flags.h"
 #include "net/quic/platform/api/quic_ptr_util.h"
 #include "net/quic/platform/api/quic_string_utils.h"
 #include "net/spdy/core/hpack/hpack_decoder_adapter.h"
@@ -401,10 +402,9 @@ void QuicHttpDecoderAdapter::OnContinuationEnd() {
 void QuicHttpDecoderAdapter::OnPadLength(size_t trailing_length) {
   DVLOG(1) << "OnPadLength: " << trailing_length;
   opt_pad_length_ = trailing_length;
+  DCHECK_LT(trailing_length, 256u);
   if (frame_header_.type == QuicHttpFrameType::DATA) {
-    visitor()->OnStreamPadding(stream_id(), 1);
-  } else if (frame_header_.type == QuicHttpFrameType::HEADERS) {
-    CHECK_LT(trailing_length, 256u);
+    visitor()->OnStreamPadLength(stream_id(), trailing_length);
   }
 }
 
@@ -442,7 +442,7 @@ void QuicHttpDecoderAdapter::OnSetting(
     const QuicHttpSettingFields& setting_fields) {
   DVLOG(1) << "OnSetting: " << setting_fields;
   const uint16_t parameter = static_cast<uint16_t>(setting_fields.parameter);
-  SpdySettingsIds setting_id;
+  SpdyKnownSettingsId setting_id;
   if (!ParseSettingsId(parameter, &setting_id)) {
     if (extension_ == nullptr) {
       DVLOG(1) << "Ignoring unknown setting id: " << setting_fields;
@@ -451,7 +451,13 @@ void QuicHttpDecoderAdapter::OnSetting(
     }
     return;
   }
-  visitor()->OnSetting(setting_id, setting_fields.value);
+  // TODO(quic): Consider whether to add support for handling unknown SETTINGS
+  //     IDs, which currently cause a connection close.
+  if (GetQuicRestartFlag(http2_propagate_unknown_settings)) {
+    visitor()->OnSetting(setting_id, setting_fields.value);
+  } else {
+    visitor()->OnSettingOld(setting_id, setting_fields.value);
+  }
 }
 
 void QuicHttpDecoderAdapter::OnSettingsEnd() {
@@ -769,7 +775,7 @@ void QuicHttpDecoderAdapter::ResetInternal() {
   CorruptFrameHeader(&frame_header_);
   CorruptFrameHeader(&hpack_first_frame_header_);
 
-  frame_decoder_.reset(new QuicHttpFrameDecoder(this));
+  frame_decoder_ = QuicMakeUnique<QuicHttpFrameDecoder>(this);
   hpack_decoder_ = nullptr;
 }
 

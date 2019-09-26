@@ -46,7 +46,8 @@ Polymer({
 
   listeners: {
     'click': 'deselectItems_',
-    'open-item-menu': 'onOpenItemMenu_',
+    'contextmenu': 'onContextMenu_',
+    'open-command-menu': 'onOpenCommandMenu_',
   },
 
   attached: function() {
@@ -141,7 +142,13 @@ Polymer({
 
   /** @private */
   emptyListMessage_: function() {
-    const emptyListMessage = this.searchTerm_ ? 'noSearchResults' : 'emptyList';
+    let emptyListMessage = 'noSearchResults';
+    if (!this.searchTerm_) {
+      emptyListMessage = bookmarks.util.canReorderChildren(
+                             this.getState(), this.getState().selectedFolder) ?
+          'emptyList' :
+          'emptyUnmodifiableList';
+    }
     return loadTimeData.getString(emptyListMessage);
   },
 
@@ -167,9 +174,10 @@ Polymer({
    * @param {Event} e
    * @private
    */
-  onOpenItemMenu_: function(e) {
+  onOpenCommandMenu_: function(e) {
     // If the item is not visible, scroll to it before rendering the menu.
-    this.scrollToId_(/** @type {BookmarksItemElement} */ (e.path[0]).itemId);
+    if (e.source == MenuSource.ITEM)
+      this.scrollToId_(/** @type {BookmarksItemElement} */ (e.path[0]).itemId);
   },
 
   /**
@@ -273,5 +281,20 @@ Polymer({
 
     if (handled)
       e.stopPropagation();
+  },
+
+  /**
+   * @param {Event} e
+   * @private
+   */
+  onContextMenu_: function(e) {
+    e.preventDefault();
+    this.deselectItems_();
+
+    this.fire('open-command-menu', {
+      x: e.clientX,
+      y: e.clientY,
+      source: MenuSource.LIST,
+    });
   },
 });

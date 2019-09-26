@@ -28,6 +28,7 @@
 #include "content/public/browser/navigation_handle.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/test/test_browser_thread_bundle.h"
+#include "content/public/test/test_renderer_host.h"
 #include "content/public/test/web_contents_tester.h"
 #include "net/base/net_errors.h"
 #include "net/http/http_response_headers.h"
@@ -65,6 +66,7 @@ class MockOfflinePageModel : public StubOfflinePageModel {
 
   void SavePage(const SavePageParams& save_page_params,
                 std::unique_ptr<OfflinePageArchiver> archiver,
+                content::WebContents* web_contents,
                 const SavePageCallback& callback) override {
     mock_saving_ = true;
     save_page_callback_ = callback;
@@ -134,6 +136,7 @@ class TestBackgroundLoaderOffliner : public BackgroundLoaderOffliner {
   }
 
   content::WebContents* web_contents() { return stub_->web_contents(); }
+  background_loader::BackgroundLoaderContents* stub() { return stub_; }
 
   bool is_loading() { return loader_ && stub_->is_loading(); }
 
@@ -159,6 +162,7 @@ TestBackgroundLoaderOffliner::~TestBackgroundLoaderOffliner() {}
 void TestBackgroundLoaderOffliner::ResetLoader() {
   stub_ = new background_loader::BackgroundLoaderContentsStub(browser_context_);
   loader_.reset(stub_);
+  loader_->SetDelegate(this);
 }
 
 class BackgroundLoaderOfflinerTest : public testing::Test {
@@ -181,10 +185,16 @@ class BackgroundLoaderOfflinerTest : public testing::Test {
     return base::Bind(&BackgroundLoaderOfflinerTest::OnCancel,
                       base::Unretained(this));
   }
+  base::Callback<void(bool)> const can_download_callback() {
+    return base::Bind(&BackgroundLoaderOfflinerTest::OnCanDownload,
+                      base::Unretained(this));
+  }
   Profile* profile() { return &profile_; }
   bool completion_callback_called() { return completion_callback_called_; }
   Offliner::RequestStatus request_status() { return request_status_; }
   bool cancel_callback_called() { return cancel_callback_called_; }
+  bool can_download_callback_called() { return can_download_callback_called_; }
+  bool can_download() { return can_download_; }
   bool SaveInProgress() const { return model_->mock_saving(); }
   bool DeleteCalled() const { return model_->mock_deleting(); }
   MockOfflinePageModel* model() const { return model_; }
@@ -222,7 +232,9 @@ class BackgroundLoaderOfflinerTest : public testing::Test {
                     Offliner::RequestStatus status);
   void OnProgress(const SavePageRequest& request, int64_t bytes);
   void OnCancel(const SavePageRequest& request);
+  void OnCanDownload(bool allowed);
   content::TestBrowserThreadBundle thread_bundle_;
+  content::RenderViewHostTestEnabler rvhte_;
   TestingProfile profile_;
   std::unique_ptr<OfflinerPolicy> policy_;
   TestLoadTerminationListener* load_termination_listener_;
@@ -230,6 +242,8 @@ class BackgroundLoaderOfflinerTest : public testing::Test {
   MockOfflinePageModel* model_;
   bool completion_callback_called_;
   bool cancel_callback_called_;
+  bool can_download_callback_called_;
+  bool can_download_;
   int64_t progress_;
   Offliner::RequestStatus request_status_;
   base::HistogramTester histogram_tester_;
@@ -243,6 +257,8 @@ BackgroundLoaderOfflinerTest::BackgroundLoaderOfflinerTest()
       model_(nullptr),
       completion_callback_called_(false),
       cancel_callback_called_(false),
+      can_download_callback_called_(false),
+      can_download_(false),
       progress_(0LL),
       request_status_(Offliner::RequestStatus::UNKNOWN) {}
 
@@ -250,7 +266,7 @@ BackgroundLoaderOfflinerTest::~BackgroundLoaderOfflinerTest() {}
 
 void BackgroundLoaderOfflinerTest::SetUp() {
   std::unique_ptr<TestLoadTerminationListener> listener =
-      base::MakeUnique<TestLoadTerminationListener>();
+      std::make_unique<TestLoadTerminationListener>();
   load_termination_listener_ = listener.get();
   model_ = new MockOfflinePageModel();
   policy_.reset(new OfflinerPolicy());
@@ -274,6 +290,11 @@ void BackgroundLoaderOfflinerTest::OnProgress(const SavePageRequest& request,
 void BackgroundLoaderOfflinerTest::OnCancel(const SavePageRequest& request) {
   DCHECK(!cancel_callback_called_);
   cancel_callback_called_ = true;
+}
+
+void BackgroundLoaderOfflinerTest::OnCanDownload(bool allowed) {
+  can_download_callback_called_ = true;
+  can_download_ = allowed;
 }
 
 TEST_F(BackgroundLoaderOfflinerTest, LoadTerminationListenerSetup) {
@@ -460,6 +481,7 @@ TEST_F(BackgroundLoaderOfflinerTest, LoadAndSaveSuccess) {
   EXPECT_TRUE(completion_callback_called());
   EXPECT_EQ(Offliner::RequestStatus::SAVED, request_status());
   EXPECT_FALSE(offliner()->is_loading());
+  EXPECT_FALSE(can_download_callback_called());
   EXPECT_FALSE(SaveInProgress());
 }
 
@@ -479,6 +501,36 @@ TEST_F(BackgroundLoaderOfflinerTest, LoadAndSaveAlreadyExists) {
   EXPECT_EQ(Offliner::RequestStatus::SAVED, request_status());
   EXPECT_FALSE(offliner()->is_loading());
   EXPECT_FALSE(SaveInProgress());
+}
+
+TEST_F(BackgroundLoaderOfflinerTest, ResetsWhenDownloadStarts) {
+  base::Time creation_time = base::Time::Now();
+  ClientId browser_actions("browser_actions", "123");
+  SavePageRequest request(kRequestId, kHttpUrl, browser_actions, creation_time,
+                          kUserRequested);
+  EXPECT_TRUE(offliner()->LoadAndSave(request, completion_callback(),
+                                      progress_callback()));
+  offliner()->stub()->CanDownload(kHttpUrl, "foo", can_download_callback());
+  PumpLoop();
+  EXPECT_TRUE(can_download_callback_called());
+  EXPECT_TRUE(can_download());
+  EXPECT_TRUE(completion_callback_called());
+  EXPECT_EQ(Offliner::RequestStatus::DOWNLOAD_THROTTLED, request_status());
+}
+
+TEST_F(BackgroundLoaderOfflinerTest, ResetsWhenDownloadEncountered) {
+  base::Time creation_time = base::Time::Now();
+  ClientId prefetching("suggested_articles", "123");
+  SavePageRequest request(kRequestId, kHttpUrl, prefetching, creation_time,
+                          kUserRequested);
+  EXPECT_TRUE(offliner()->LoadAndSave(request, completion_callback(),
+                                      progress_callback()));
+  offliner()->stub()->CanDownload(kHttpUrl, "foo", can_download_callback());
+  PumpLoop();
+  EXPECT_TRUE(can_download_callback_called());
+  EXPECT_FALSE(can_download());
+  EXPECT_TRUE(completion_callback_called());
+  EXPECT_EQ(Offliner::RequestStatus::LOADING_FAILED_DOWNLOAD, request_status());
 }
 
 TEST_F(BackgroundLoaderOfflinerTest, FailsOnInvalidURL) {
@@ -549,7 +601,8 @@ TEST_F(BackgroundLoaderOfflinerTest, FailsOnErrorPage) {
   PumpLoop();
 
   EXPECT_TRUE(completion_callback_called());
-  EXPECT_EQ(Offliner::RequestStatus::LOADING_FAILED, request_status());
+  EXPECT_EQ(Offliner::RequestStatus::LOADING_FAILED_NET_ERROR,
+            request_status());
 }
 
 TEST_F(BackgroundLoaderOfflinerTest, FailsOnInternetDisconnected) {
@@ -573,7 +626,8 @@ TEST_F(BackgroundLoaderOfflinerTest, FailsOnInternetDisconnected) {
   PumpLoop();
 
   EXPECT_TRUE(completion_callback_called());
-  EXPECT_EQ(Offliner::RequestStatus::LOADING_FAILED, request_status());
+  EXPECT_EQ(Offliner::RequestStatus::LOADING_FAILED_NET_ERROR,
+            request_status());
 }
 
 TEST_F(BackgroundLoaderOfflinerTest, DoesNotCrashWithNullResponseHeaders) {

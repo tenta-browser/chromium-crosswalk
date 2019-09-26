@@ -14,6 +14,14 @@
 
 namespace vr {
 
+namespace {
+
+void OnPresentedFrame(const gfx::PresentationFeedback& feedback) {
+  // Do nothing for now.
+}
+
+}  // namespace
+
 GlRenderer::GlRenderer(const scoped_refptr<gl::GLSurface>& surface,
                        vr::VrTestContext* vr)
     : surface_(surface), vr_(vr), weak_ptr_factory_(this) {}
@@ -41,15 +49,19 @@ bool GlRenderer::Initialize() {
 
 void GlRenderer::RenderFrame() {
   context_->MakeCurrent(surface_.get());
+
+  glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
+  glClear(GL_COLOR_BUFFER_BIT);
+
   vr_->DrawFrame();
   PostRenderFrameTask(
-      surface_->SwapBuffers(gl::GLSurface::PresentationCallback()));
+      surface_->SwapBuffers(base::BindRepeating(&OnPresentedFrame)));
 }
 
 void GlRenderer::PostRenderFrameTask(gfx::SwapResult result) {
   base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
       FROM_HERE,
-      base::Bind(&GlRenderer::RenderFrame, weak_ptr_factory_.GetWeakPtr()),
+      base::BindOnce(&GlRenderer::RenderFrame, weak_ptr_factory_.GetWeakPtr()),
       base::TimeDelta::FromSecondsD(1.0 / 60));
 }
 

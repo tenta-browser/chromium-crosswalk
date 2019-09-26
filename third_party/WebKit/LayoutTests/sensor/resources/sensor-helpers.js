@@ -221,6 +221,7 @@ function sensorMocks() {
       this.sharedBufferHandle_ = rv.handle;
       this.activeSensor_ = null;
       this.getSensorShouldFail_ = false;
+      this.permissionsDenied_ = false;
       this.resolveFunc_ = null;
       this.isContinuous_ = false;
       this.maxFrequency_ = 60;
@@ -238,8 +239,12 @@ function sensorMocks() {
     // Returns initialized Sensor proxy to the client.
     getSensor(type, request) {
       if (this.getSensorShouldFail_) {
-        var ignored = new device.mojom.SensorClientPtr();
-        return getSensorResponse(null, mojo.makeRequest(ignored));
+        return {result: device.mojom.SensorCreationResult.ERROR_NOT_AVAILABLE,
+                initParams: null};
+      }
+      if (this.permissionsDenied_) {
+        return {result: device.mojom.SensorCreationResult.ERROR_NOT_ALLOWED,
+                initParams: null};
       }
 
       let offset = (device.mojom.SensorType.LAST - type) *
@@ -281,9 +286,8 @@ function sensorMocks() {
         this.resolveFunc_(this.activeSensor_);
       }
 
-      this.activeSensor_.client_ = new device.mojom.SensorClientPtr();
-      return getSensorResponse(
-          initParams, mojo.makeRequest(this.activeSensor_.client_));
+      return {result: device.mojom.SensorCreationResult.SUCCESS,
+              initParams: initParams};
     }
 
     // Binds object to mojo message pipe
@@ -304,6 +308,7 @@ function sensorMocks() {
       }
 
       this.getSensorShouldFail_ = false;
+      this.permissionsDenied_ = false;
       this.resolveFunc_ = null;
       this.maxFrequency_ = 60;
       this.minFrequency_ = 1;
@@ -316,6 +321,10 @@ function sensorMocks() {
     // invoked.
     setGetSensorShouldFail(shouldFail) {
       this.getSensorShouldFail_ = shouldFail;
+    }
+
+    setPermissionsDenied(permissionsDenied) {
+      this.permissionsDenied_ = permissionsDenied;
     }
 
     // Returns mock sensor that was created in getSensor to the layout test.
@@ -363,4 +372,27 @@ function sensor_test(func, name, properties) {
       await new Promise(resolve => { setTimeout(resolve, 0); });
     };
   }, name, properties);
+}
+
+// TODO(Mikhail): Refactor further to remove code duplication
+// in <concrete sensor>.html files.
+function verify_sensor_reading(pattern, values, timestamp, is_null) {
+  function round(val) {
+    return Number.parseFloat(val).toPrecision(6);
+  }
+
+  if (is_null) {
+    return (values === null || values.every(r => r === null)) &&
+           timestamp === null;
+  }
+  return values.every((r, i) => round(r) === round(pattern[i])) &&
+         timestamp !== null;
+}
+
+function verify_xyz_sensor_reading(pattern, {x, y, z, timestamp}, is_null) {
+  return verify_sensor_reading(pattern, [x, y, z], timestamp, is_null);
+}
+
+function verify_quat_sensor_reading(pattern, {quaternion, timestamp}, is_null) {
+  return verify_sensor_reading(pattern, quaternion, timestamp, is_null);
 }

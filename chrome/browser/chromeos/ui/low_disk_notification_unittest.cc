@@ -11,14 +11,15 @@
 #include "base/test/scoped_task_environment.h"
 #include "base/threading/platform_thread.h"
 #include "base/time/time.h"
+#include "chrome/browser/chromeos/profiles/profile_helper.h"
+#include "chrome/browser/notifications/notification_display_service_tester.h"
 #include "chrome/grit/generated_resources.h"
 #include "chromeos/dbus/dbus_thread_manager.h"
 #include "chromeos/dbus/fake_cryptohome_client.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/resource/resource_bundle.h"
-#include "ui/message_center/fake_message_center.h"
-#include "ui/message_center/message_center.h"
+#include "ui/message_center/public/cpp/notification.h"
 
 namespace {
 
@@ -38,7 +39,13 @@ class LowDiskNotificationTest : public testing::Test,
   void SetUp() override {
     DBusThreadManager::GetSetterForTesting()->SetCryptohomeClient(
         std::unique_ptr<CryptohomeClient>(new FakeCryptohomeClient));
-    message_center::MessageCenter::Initialize();
+
+    BrowserWithTestWindowTest::SetUp();
+
+    tester_ = std::make_unique<NotificationDisplayServiceTester>(
+        ProfileHelper::GetSigninProfile());
+    tester_->SetNotificationAddedClosure(base::BindRepeating(
+        &LowDiskNotificationTest::OnNotificationAdded, base::Unretained(this)));
     low_disk_notification_.reset(new LowDiskNotification());
     low_disk_notification_->SetMessageCenterForTest(this);
     low_disk_notification_->SetNotificationIntervalForTest(

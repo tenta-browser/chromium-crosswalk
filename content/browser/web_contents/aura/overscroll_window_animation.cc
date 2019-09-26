@@ -91,10 +91,13 @@ void OverscrollWindowAnimation::OnImplicitAnimationsCompleted() {
 void OverscrollWindowAnimation::OnOverscrollModeChange(
     OverscrollMode old_mode,
     OverscrollMode new_mode,
-    OverscrollSource source) {
+    OverscrollSource source,
+    cc::OverscrollBehavior behavior) {
   DCHECK_NE(old_mode, new_mode);
   Direction new_direction = GetDirectionForMode(new_mode);
-  if (new_direction == SLIDE_NONE) {
+  if (new_direction == SLIDE_NONE ||
+      behavior.x != cc::OverscrollBehavior::OverscrollBehaviorType::
+                        kOverscrollBehaviorTypeAuto) {
     // The user cancelled the in progress animation.
     if (is_active())
       CancelSlide();

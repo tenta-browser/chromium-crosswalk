@@ -82,7 +82,8 @@ class AccountChooserViewControllerTest : public CocoaTest,
   // PasswordPromptBridgeInterface:
   void PerformClose() override;
   PasswordDialogController* GetDialogController() override;
-  net::URLRequestContextGetter* GetRequestContext() const override;
+  scoped_refptr<network::SharedURLLoaderFactory> GetURLLoaderFactory()
+      const override;
 
  private:
   PasswordDialogControllerMock dialog_controller_;
@@ -121,8 +122,8 @@ AccountChooserViewControllerTest::GetDialogController() {
   return &dialog_controller_;
 }
 
-net::URLRequestContextGetter*
-AccountChooserViewControllerTest::GetRequestContext() const {
+scoped_refptr<network::SharedURLLoaderFactory>
+AccountChooserViewControllerTest::GetURLLoaderFactory() const {
   NOTREACHED();
   return nullptr;
 }

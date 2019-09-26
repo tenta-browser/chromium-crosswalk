@@ -20,7 +20,6 @@
 #include "chrome/grit/theme_resources.h"
 #include "components/strings/grit/components_strings.h"
 #include "content/public/browser/notification_service.h"
-#include "ui/accessibility/ax_node_data.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/gfx/geometry/insets.h"
@@ -106,10 +105,6 @@ void ConflictingModuleView::ShowBubble() {
   bubble_shown.SetValue(bubble_shown.GetValue() + 1);
 }
 
-ui::AXRole ConflictingModuleView::GetAccessibleWindowRole() const {
-  return ui::AX_ROLE_ALERT_DIALOG;
-}
-
 void ConflictingModuleView::OnWidgetClosing(views::Widget* widget) {
   views::BubbleDialogDelegateView::OnWidgetClosing(widget);
   base::RecordAction(
@@ -135,10 +130,10 @@ base::string16 ConflictingModuleView::GetDialogButtonLabel(
 void ConflictingModuleView::Init() {
   ui::ResourceBundle& rb = ui::ResourceBundle::GetSharedInstance();
 
-  SetLayoutManager(
-      new views::BoxLayout(views::BoxLayout::kHorizontal, gfx::Insets(),
-                           ChromeLayoutProvider::Get()->GetDistanceMetric(
-                               views::DISTANCE_RELATED_LABEL_HORIZONTAL)));
+  SetLayoutManager(std::make_unique<views::BoxLayout>(
+      views::BoxLayout::kHorizontal, gfx::Insets(),
+      ChromeLayoutProvider::Get()->GetDistanceMetric(
+          views::DISTANCE_RELATED_LABEL_HORIZONTAL)));
 
   views::ImageView* icon = new views::ImageView();
   icon->SetImage(rb.GetImageSkiaNamed(IDR_INPUT_ALERT_MENU));

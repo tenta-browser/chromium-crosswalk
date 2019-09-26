@@ -5,11 +5,13 @@
 package org.chromium.chrome.browser.signin;
 
 import android.app.Activity;
-import android.app.FragmentManager;
 import android.content.Context;
+import android.os.AsyncTask;
+import android.os.Bundle;
 import android.os.SystemClock;
 import android.support.annotation.IntDef;
 import android.support.annotation.StringRes;
+import android.support.v4.app.FragmentManager;
 import android.support.v4.view.ViewCompat;
 import android.support.v7.app.AlertDialog;
 import android.text.method.LinkMovementMethod;
@@ -24,15 +26,17 @@ import org.chromium.base.Log;
 import org.chromium.base.metrics.RecordHistogram;
 import org.chromium.base.metrics.RecordUserAction;
 import org.chromium.chrome.R;
+import org.chromium.chrome.browser.consent_auditor.ConsentAuditorFeature;
 import org.chromium.chrome.browser.externalauth.UserRecoverableErrorHandler;
 import org.chromium.chrome.browser.preferences.PrefServiceBridge;
-import org.chromium.chrome.browser.profiles.Profile;
 import org.chromium.chrome.browser.signin.AccountTrackerService.OnSystemAccountsSeededListener;
 import org.chromium.chrome.browser.signin.ConfirmImportSyncDataDialog.ImportSyncType;
+import org.chromium.components.signin.AccountIdProvider;
 import org.chromium.components.signin.AccountManagerDelegateException;
 import org.chromium.components.signin.AccountManagerFacade;
 import org.chromium.components.signin.AccountManagerResult;
 import org.chromium.components.signin.AccountsChangeObserver;
+import org.chromium.components.signin.ChildAccountStatus;
 import org.chromium.components.signin.GmsAvailabilityException;
 import org.chromium.components.signin.GmsJustUpdatedException;
 import org.chromium.ui.text.NoUnderlineClickableSpan;
@@ -48,8 +52,7 @@ import java.util.concurrent.TimeUnit;
 
 /**
  * This view allows the user to select an account to log in to, add an account, cancel account
- * selection, etc. Users of this class should call {@link #initFromSelectionPage} or
- * {@link #initFromConfirmationPage} after the view has been inflated.
+ * selection, etc. Users of this class should call {@link #init} after the view has been inflated.
  */
 public class AccountSigninView extends FrameLayout {
     /**
@@ -94,17 +97,33 @@ public class AccountSigninView extends FrameLayout {
 
         /**
          * Provides a FragmentManager for the View to create dialogs. This is done through a
-         * different mechanism than getActivity().getFragmentManager() as a potential fix to
-         * https://crbug.com/646978 on the theory that getActivity() and getFragmentManager()
+         * different mechanism than getActivity().getSupportFragmentManager() as a potential fix to
+         * https://crbug.com/646978 on the theory that getActivity() and getSupportFragmentManager()
          * return null at different times.
          */
-        FragmentManager getFragmentManager();
+        FragmentManager getSupportFragmentManager();
     }
 
     private static final String TAG = "AccountSigninView";
 
     private static final String SETTINGS_LINK_OPEN = "<LINK1>";
     private static final String SETTINGS_LINK_CLOSE = "</LINK1>";
+
+    private static final String ARGUMENT_ACCESS_POINT = "AccountSigninView.AccessPoint";
+    private static final String ARGUMENT_SIGNIN_FLOW_TYPE = "AccountSigninView.FlowType";
+    private static final String ARGUMENT_ACCOUNT_NAME = "AccountSigninView.AccountName";
+    private static final String ARGUMENT_IS_DEFAULT_ACCOUNT = "AccountSigninView.IsDefaultAccount";
+    private static final String ARGUMENT_CHILD_ACCOUNT_STATUS =
+            "AccountSigninView.ChildAccountStatus";
+    private static final String ARGUMENT_UNDO_BEHAVIOR = "AccountSigninView.UndoBehavior";
+
+    @IntDef({SIGNIN_FLOW_DEFAULT, SIGNIN_FLOW_CONFIRMATION_ONLY, SIGNIN_FLOW_ADD_NEW_ACCOUNT})
+    @Retention(RetentionPolicy.SOURCE)
+    public @interface SigninFlowType {}
+
+    public static final int SIGNIN_FLOW_DEFAULT = 0;
+    public static final int SIGNIN_FLOW_CONFIRMATION_ONLY = 1;
+    public static final int SIGNIN_FLOW_ADD_NEW_ACCOUNT = 2;
 
     /** Specifies different behaviors for "Undo" button on signin confirmation page. */
     @IntDef({UNDO_INVISIBLE, UNDO_BACK_TO_SELECTION, UNDO_ABORT})
@@ -128,88 +147,152 @@ public class AccountSigninView extends FrameLayout {
     private Button mMoreButton;
     private Listener mListener;
     private Delegate mDelegate;
+    private @SigninAccessPoint int mSigninAccessPoint;
+    private @SigninFlowType int mSigninFlowType;
     private @UndoBehavior int mUndoBehavior;
     private String mSelectedAccountName;
     private boolean mIsDefaultAccountSelected;
-    private @StringRes int mCancelButtonTextId;
-    private boolean mIsChildAccount;
+    private @StringRes int mCancelButtonTextId = R.string.cancel;
+    private @ChildAccountStatus.Status int mChildAccountStatus;
     private UserRecoverableErrorHandler.ModalDialog mGooglePlayServicesUpdateErrorHandler;
     private AlertDialog mGmsIsUpdatingDialog;
     private long mGmsIsUpdatingDialogShowTime;
+    private boolean mShouldShowConfirmationPageWhenAttachedToWindow;
 
     private AccountSigninConfirmationView mSigninConfirmationView;
     private ImageView mSigninAccountImage;
     private TextView mSigninAccountName;
     private TextView mSigninAccountEmail;
+    private TextView mSigninSyncTitle;
+    private TextView mSigninSyncDescription;
+    private TextView mSigninPersonalizeServiceTitle;
     private TextView mSigninPersonalizeServiceDescription;
     private TextView mSigninSettingsControl;
     private ConfirmSyncDataStateMachine mConfirmSyncDataStateMachine;
+    private ConsentTextTracker mConsentTextTracker;
 
     public AccountSigninView(Context context, AttributeSet attrs) {
         super(context, attrs);
         mAccountsChangedObserver = this::triggerUpdateAccounts;
         mProfileDataCacheObserver = (String accountId) -> updateProfileData();
-        mProfileDataCache = new ProfileDataCache(context, Profile.getLastUsedProfile(),
+        mProfileDataCache = new ProfileDataCache(context,
                 context.getResources().getDimensionPixelSize(R.dimen.signin_account_image_size));
-
-        mCancelButtonTextId = R.string.no_thanks;
+        mConsentTextTracker = new ConsentTextTracker(context.getResources());
     }
 
     /**
-     * Initializes the view from account selection page. After selecting the account, signin
-     * confirmation page will be opened.
+     * Creates an argument bundle to start AccountSigninView from the account selection page.
      *
-     * @param isChildAccount Whether this view is for a child account.
-     * @param delegate The UI object creation delegate.
-     * @param listener The account selection event listener.
+     * @param accessPoint The access point for starting signin flow.
+     * @param childAccountStatus Whether this view is for a child account and of what type.
      */
-    public void initFromSelectionPage(
-            boolean isChildAccount, Delegate delegate, Listener listener) {
-        mIsChildAccount = isChildAccount;
-        mUndoBehavior = UNDO_BACK_TO_SELECTION;
-        mDelegate = delegate;
-        mListener = listener;
-        showSigninPage();
+    public static Bundle createArgumentsForDefaultFlow(
+            @SigninAccessPoint int accessPoint, @ChildAccountStatus.Status int childAccountStatus) {
+        Bundle result = new Bundle();
+        result.putInt(ARGUMENT_SIGNIN_FLOW_TYPE, SIGNIN_FLOW_DEFAULT);
+        result.putInt(ARGUMENT_ACCESS_POINT, accessPoint);
+        result.putInt(ARGUMENT_CHILD_ACCOUNT_STATUS, childAccountStatus);
+        result.putInt(ARGUMENT_UNDO_BEHAVIOR, UNDO_BACK_TO_SELECTION);
+        return result;
     }
 
     /**
-     * Initializes the view from account selection page. After selecting the account, signin
-     * confirmation page will be opened.
+     * Creates an argument bundle to start AccountSigninView from the new account creation screen.
      *
-     * @param delegate The UI object creation delegate.
-     * @param listener The account selection event listener.
+     * @param accessPoint The access point for starting signin flow.
      */
-    public void initFromAddAccountPage(Delegate delegate, Listener listener) {
-        mIsChildAccount = false; // Children profiles can't add accounts.
-        mUndoBehavior = UNDO_ABORT;
-        mDelegate = delegate;
-        mListener = listener;
-        showSigninPage();
-
-        RecordUserAction.record("Signin_AddAccountToDevice");
-        mListener.onNewAccount();
+    public static Bundle createArgumentsForAddAccountFlow(@SigninAccessPoint int accessPoint) {
+        Bundle result = new Bundle();
+        result.putInt(ARGUMENT_SIGNIN_FLOW_TYPE, SIGNIN_FLOW_ADD_NEW_ACCOUNT);
+        result.putInt(ARGUMENT_ACCESS_POINT, accessPoint);
+        result.putInt(ARGUMENT_CHILD_ACCOUNT_STATUS,
+                ChildAccountStatus.NOT_CHILD); // Children profiles can't add accounts
+        result.putInt(ARGUMENT_UNDO_BEHAVIOR, UNDO_ABORT);
+        return result;
     }
 
     /**
-     * Initializes the view from signin confirmation page. The account name should be provided by
-     * the caller.
+     * Creates an argument bundle to start AccountSigninView from the signin confirmation page.
      *
-     * @param isChildAccount Whether this view is for a child account.
+     * @param accessPoint The access point for starting signin flow.
+     * @param childAccountStatus Whether this view is for a child account and of what type.
      * @param accountName An account that should be used for confirmation page and signin.
      * @param isDefaultAccount Whether {@param accountName} is a default account, used for metrics.
      * @param undoBehavior "Undo" button behavior (see {@link UndoBehavior}).
+     */
+    public static Bundle createArgumentsForConfirmationFlow(@SigninAccessPoint int accessPoint,
+            @ChildAccountStatus.Status int childAccountStatus, String accountName,
+            boolean isDefaultAccount, @UndoBehavior int undoBehavior) {
+        Bundle result = new Bundle();
+        result.putInt(ARGUMENT_SIGNIN_FLOW_TYPE, SIGNIN_FLOW_CONFIRMATION_ONLY);
+        result.putInt(ARGUMENT_ACCESS_POINT, accessPoint);
+        result.putInt(ARGUMENT_CHILD_ACCOUNT_STATUS, childAccountStatus);
+        result.putString(ARGUMENT_ACCOUNT_NAME, accountName);
+        result.putBoolean(ARGUMENT_IS_DEFAULT_ACCOUNT, isDefaultAccount);
+        result.putInt(ARGUMENT_UNDO_BEHAVIOR, undoBehavior);
+        return result;
+    }
+
+    /**
+     * Initializes the view.
+     *
+     * @param arguments The argument bundle created by {@link #createArgumentsForDefaultFlow},
+     *         {@link #createArgumentsForAddAccountFlow} or
+     *         {@link #createArgumentsForConfirmationFlow}.
      * @param delegate The UI object creation delegate.
      * @param listener The account selection event listener.
      */
-    public void initFromConfirmationPage(boolean isChildAccount, String accountName,
-            boolean isDefaultAccount, @UndoBehavior int undoBehavior, Delegate delegate,
-            Listener listener) {
-        mIsChildAccount = isChildAccount;
-        mUndoBehavior = undoBehavior;
+    public void init(Bundle arguments, Delegate delegate, Listener listener) {
+        @SigninAccessPoint int accessPoint = arguments.getInt(ARGUMENT_ACCESS_POINT, -1);
+        assert accessPoint != -1;
+
+        initAccessPoint(accessPoint);
+        mChildAccountStatus =
+                arguments.getInt(ARGUMENT_CHILD_ACCOUNT_STATUS, ChildAccountStatus.NOT_CHILD);
+        mUndoBehavior = arguments.getInt(ARGUMENT_UNDO_BEHAVIOR, -1);
+        mSigninFlowType = arguments.getInt(ARGUMENT_SIGNIN_FLOW_TYPE, -1);
         mDelegate = delegate;
         mListener = listener;
-        showConfirmSigninPageAccountTrackerServiceCheck(accountName, isDefaultAccount);
-        triggerUpdateAccounts();
+
+        updateConsentText();
+
+        switch (mSigninFlowType) {
+            case SIGNIN_FLOW_DEFAULT:
+                showSigninPage();
+                break;
+            case SIGNIN_FLOW_CONFIRMATION_ONLY: {
+                String accountName = arguments.getString(ARGUMENT_ACCOUNT_NAME);
+                assert accountName != null;
+                boolean isDefaultAccount = arguments.getBoolean(ARGUMENT_IS_DEFAULT_ACCOUNT, false);
+                showConfirmationPageForAccount(accountName, isDefaultAccount);
+                triggerUpdateAccounts();
+                break;
+            }
+            case SIGNIN_FLOW_ADD_NEW_ACCOUNT:
+                showSigninPage();
+                RecordUserAction.record("Signin_AddAccountToDevice");
+                mListener.onNewAccount();
+                break;
+            default:
+                assert false : "Unknown or missing signin flow type: " + mSigninFlowType;
+                return;
+        }
+    }
+
+    public @SigninFlowType int getSigninFlowType() {
+        return mSigninFlowType;
+    }
+
+    public @SigninAccessPoint int getSigninAccessPoint() {
+        return mSigninAccessPoint;
+    }
+
+    private void initAccessPoint(@SigninAccessPoint int accessPoint) {
+        mSigninAccessPoint = accessPoint;
+        if (accessPoint == SigninAccessPoint.START_PAGE
+                || accessPoint == SigninAccessPoint.SIGNIN_PROMO) {
+            mCancelButtonTextId = R.string.no_thanks;
+        }
     }
 
     @Override
@@ -230,11 +313,51 @@ public class AccountSigninView extends FrameLayout {
         mSigninAccountImage = (ImageView) findViewById(R.id.signin_account_image);
         mSigninAccountName = (TextView) findViewById(R.id.signin_account_name);
         mSigninAccountEmail = (TextView) findViewById(R.id.signin_account_email);
+        mSigninSyncTitle = (TextView) findViewById(R.id.signin_sync_title);
+        mSigninSyncDescription = (TextView) findViewById(R.id.signin_sync_description);
+        mSigninPersonalizeServiceTitle =
+                (TextView) findViewById(R.id.signin_personalize_service_title);
         mSigninPersonalizeServiceDescription =
                 (TextView) findViewById(R.id.signin_personalize_service_description);
         mSigninSettingsControl = (TextView) findViewById(R.id.signin_settings_control);
         // For the spans to be clickable.
         mSigninSettingsControl.setMovementMethod(LinkMovementMethod.getInstance());
+    }
+
+    private void updateConsentText() {
+        // Static strings.
+        mConsentTextTracker.setText(mSigninSyncTitle, R.string.sync_confirmation_chrome_sync_title);
+        mConsentTextTracker.setText(
+                mSigninSyncDescription, R.string.sync_confirmation_chrome_sync_message);
+        mConsentTextTracker.setText(mSigninPersonalizeServiceTitle,
+                R.string.sync_confirmation_personalize_services_title);
+        mConsentTextTracker.setText(mSigninPersonalizeServiceDescription,
+                mChildAccountStatus == ChildAccountStatus.REGULAR_CHILD
+                        ? R.string.sync_confirmation_personalize_services_body_child_account
+                        : R.string.sync_confirmation_personalize_services_body);
+        mConsentTextTracker.setText(
+                mSigninSettingsControl, R.string.signin_signed_in_settings_description);
+        mConsentTextTracker.setText(mNegativeButton, mCancelButtonTextId);
+        mConsentTextTracker.setText(mPositiveButton, R.string.choose_account_sign_in);
+        mConsentTextTracker.setText(mMoreButton, R.string.more);
+
+        // The clickable "Settings" link.
+        NoUnderlineClickableSpan settingsSpan = new NoUnderlineClickableSpan() {
+            @Override
+            public void onClick(View widget) {
+                mListener.onAccountSelected(mSelectedAccountName, mIsDefaultAccountSelected, true);
+                RecordUserAction.record("Signin_Signin_WithAdvancedSyncSettings");
+
+                // Record the fact that the user consented to the consent text by clicking
+                // on |mSigninSettingsControl|.
+                recordConsent((TextView) widget);
+            }
+        };
+        mConsentTextTracker.setText(mSigninSettingsControl,
+                getSettingsControlDescription(mChildAccountStatus), input -> {
+                    return SpanApplier.applySpans(input.toString(),
+                            new SpanInfo(SETTINGS_LINK_OPEN, SETTINGS_LINK_CLOSE, settingsSpan));
+                });
     }
 
     @Override
@@ -243,12 +366,16 @@ public class AccountSigninView extends FrameLayout {
         triggerUpdateAccounts();
         AccountManagerFacade.get().addObserver(mAccountsChangedObserver);
         mProfileDataCache.addObserver(mProfileDataCacheObserver);
+        if (mShouldShowConfirmationPageWhenAttachedToWindow) {
+            // Can happen if init is invoked before attaching to window (https://crbug.com/800665).
+            seedAccountsAndShowConfirmationPage();
+        }
     }
 
     @Override
     protected void onDetachedFromWindow() {
         if (mConfirmSyncDataStateMachine != null) {
-            mConfirmSyncDataStateMachine.cancel(false /* dismissDialogs */);
+            mConfirmSyncDataStateMachine.cancel(/* isBeingDestroyed = */ true);
             mConfirmSyncDataStateMachine = null;
         }
         mProfileDataCache.removeObserver(mProfileDataCacheObserver);
@@ -270,13 +397,19 @@ public class AccountSigninView extends FrameLayout {
     }
 
     /**
-     * Changes the visuals slightly for when this view appears in the recent tabs page instead of
-     * in first run.
-     * This is currently used when signing in from the Recent Tabs or Bookmarks pages.
+     * @return Whether the view is in signed in mode.
      */
-    public void configureForRecentTabsOrBookmarksPage() {
-        mCancelButtonTextId = R.string.cancel;
-        setUpCancelButton();
+    public boolean isInConfirmationScreen() {
+        return mSelectedAccountName != null;
+    }
+
+    /**
+     * Cancels signin confirmation and shows account selection page.
+     */
+    public void cancelConfirmationScreen() {
+        assert isInConfirmationScreen();
+        mUndoBehavior = UNDO_BACK_TO_SELECTION;
+        showSigninPage();
     }
 
     private void setButtonsEnabled(boolean enabled) {
@@ -295,7 +428,7 @@ public class AccountSigninView extends FrameLayout {
         if (!ViewCompat.isAttachedToWindow(AccountSigninView.this)) {
             // This callback is invoked after AccountSigninView is detached from window
             // (e.g., Chrome is minimized). Updating view now is redundant and dangerous
-            // (getFragmentManager() can return null, etc.). See https://crbug.com/733117.
+            // (getSupportFragmentManager() can return null, etc.). See https://crbug.com/733117.
             return;
         }
 
@@ -355,12 +488,12 @@ public class AccountSigninView extends FrameLayout {
         if (selectedAccountChanged && mConfirmSyncDataStateMachine != null) {
             // Any dialogs that may have been showing are now invalid (they were created
             // for the previously selected account).
-            mConfirmSyncDataStateMachine.cancel(true /* dismissDialogs */);
+            mConfirmSyncDataStateMachine.cancel(/* isBeingDestroyed = */ false);
             mConfirmSyncDataStateMachine = null;
         }
 
         if (shouldJumpToConfirmationScreen) {
-            showConfirmSigninPageAccountTrackerServiceCheck();
+            showConfirmationPageForSelectedAccount();
         }
     }
 
@@ -373,7 +506,7 @@ public class AccountSigninView extends FrameLayout {
                 && mGooglePlayServicesUpdateErrorHandler.isShowing()) {
             return;
         }
-        boolean cancelable = !SigninManager.get(getContext()).isForceSigninEnabled();
+        boolean cancelable = !SigninManager.get().isForceSigninEnabled();
         mGooglePlayServicesUpdateErrorHandler =
                 new UserRecoverableErrorHandler.ModalDialog(mDelegate.getActivity(), cancelable);
         mGooglePlayServicesUpdateErrorHandler.handleError(getContext(), gmsErrorCode);
@@ -468,10 +601,13 @@ public class AccountSigninView extends FrameLayout {
                 mProfileDataCache.getProfileDataOrDefault(mSelectedAccountName);
         mSigninAccountImage.setImageDrawable(profileData.getImage());
         String name = null;
-        if (mIsChildAccount) name = profileData.getGivenName();
+        if (mChildAccountStatus == ChildAccountStatus.REGULAR_CHILD) {
+            name = profileData.getGivenName();
+        }
         if (name == null) name = profileData.getFullNameOrEmail();
-        mSigninAccountName.setText(getResources().getString(R.string.signin_hi_name, name));
-        mSigninAccountEmail.setText(mSelectedAccountName);
+        mConsentTextTracker.setTextNonRecordable(
+                mSigninAccountName, getResources().getString(R.string.signin_hi_name, name));
+        mConsentTextTracker.setTextNonRecordable(mSigninAccountEmail, mSelectedAccountName);
     }
 
     private void showSigninPage() {
@@ -484,7 +620,7 @@ public class AccountSigninView extends FrameLayout {
         triggerUpdateAccounts();
     }
 
-    private void showConfirmSigninPage() {
+    private void showConfirmationPage() {
         updateSignedInAccountInfo();
         mProfileDataCache.update(Collections.singletonList(mSelectedAccountName));
 
@@ -494,49 +630,44 @@ public class AccountSigninView extends FrameLayout {
         setButtonsEnabled(true);
         setUpConfirmButton();
         setUpUndoButton();
-
-        NoUnderlineClickableSpan settingsSpan = new NoUnderlineClickableSpan() {
-            @Override
-            public void onClick(View widget) {
-                mListener.onAccountSelected(mSelectedAccountName, mIsDefaultAccountSelected, true);
-                RecordUserAction.record("Signin_Signin_WithAdvancedSyncSettings");
-            }
-        };
-        if (mIsChildAccount) {
-            mSigninPersonalizeServiceDescription.setText(
-                    R.string.sync_confirmation_personalize_services_body_child_account);
-        }
-        mSigninSettingsControl.setText(
-                SpanApplier.applySpans(getSettingsControlDescription(mIsChildAccount),
-                        new SpanInfo(SETTINGS_LINK_OPEN, SETTINGS_LINK_CLOSE, settingsSpan)));
     }
 
-    private void showConfirmSigninPageAccountTrackerServiceCheck() {
+    private void showConfirmationPageForSelectedAccount() {
         int index = mSigninChooseView.getSelectedAccountPosition();
-        showConfirmSigninPageAccountTrackerServiceCheck(mAccountNames.get(index), index == 0);
+        showConfirmationPageForAccount(mAccountNames.get(index), index == 0);
     }
 
-    private void showConfirmSigninPageAccountTrackerServiceCheck(
-            final String accountName, final boolean isDefaultAccount) {
+    private void showConfirmationPageForAccount(String accountName, boolean isDefaultAccount) {
         assert accountName != null;
+
         // Disable the buttons to prevent them being clicked again while waiting for the callbacks.
         setButtonsEnabled(false);
 
         mSelectedAccountName = accountName;
         mIsDefaultAccountSelected = isDefaultAccount;
+        seedAccountsAndShowConfirmationPage();
+    }
 
+    private void seedAccountsAndShowConfirmationPage() {
         // Ensure that the AccountTrackerService has a fully up to date GAIA id <-> email mapping,
         // as this is needed for the previous account check.
         final long seedingStartTime = SystemClock.elapsedRealtime();
         if (AccountTrackerService.get().checkAndSeedSystemAccounts()) {
-            showConfirmSigninPagePreviousAccountCheck(seedingStartTime);
+            recordAccountTrackerServiceSeedingTime(seedingStartTime);
+            runStateMachineAndShowConfirmationPage();
         } else {
             AccountTrackerService.get().addSystemAccountsSeededListener(
                     new OnSystemAccountsSeededListener() {
                         @Override
                         public void onSystemAccountsSeedingComplete() {
                             AccountTrackerService.get().removeSystemAccountsSeededListener(this);
-                            showConfirmSigninPagePreviousAccountCheck(seedingStartTime);
+                            recordAccountTrackerServiceSeedingTime(seedingStartTime);
+                            // Don't show dialogs and confirmation page if activity was destroyed.
+                            if (ViewCompat.isAttachedToWindow(AccountSigninView.this)) {
+                                runStateMachineAndShowConfirmationPage();
+                            } else {
+                                mShouldShowConfirmationPageWhenAttachedToWindow = true;
+                            }
                         }
 
                         @Override
@@ -545,18 +676,16 @@ public class AccountSigninView extends FrameLayout {
         }
     }
 
-    private void showConfirmSigninPagePreviousAccountCheck(long seedingStartTime) {
-        RecordHistogram.recordTimesHistogram("Signin.AndroidAccountSigninViewSeedingTime",
-                SystemClock.elapsedRealtime() - seedingStartTime, TimeUnit.MILLISECONDS);
+    private void runStateMachineAndShowConfirmationPage() {
         mConfirmSyncDataStateMachine = new ConfirmSyncDataStateMachine(getContext(),
-                mDelegate.getFragmentManager(), ImportSyncType.PREVIOUS_DATA_FOUND,
+                mDelegate.getSupportFragmentManager(), ImportSyncType.PREVIOUS_DATA_FOUND,
                 PrefServiceBridge.getInstance().getSyncLastAccountName(), mSelectedAccountName,
                 new ConfirmImportSyncDataDialog.Listener() {
                     @Override
                     public void onConfirm(boolean wipeData) {
                         mConfirmSyncDataStateMachine = null;
                         SigninManager.wipeSyncUserDataIfRequired(wipeData).then(
-                                (Void v) -> showConfirmSigninPage());
+                                (Void v) -> showConfirmationPage());
                     }
 
                     @Override
@@ -568,10 +697,15 @@ public class AccountSigninView extends FrameLayout {
                 });
     }
 
+    private static void recordAccountTrackerServiceSeedingTime(long seedingStartTime) {
+        RecordHistogram.recordTimesHistogram("Signin.AndroidAccountSigninViewSeedingTime",
+                SystemClock.elapsedRealtime() - seedingStartTime, TimeUnit.MILLISECONDS);
+    }
+
     private void setUpCancelButton() {
         setNegativeButtonVisible(true);
 
-        mNegativeButton.setText(mCancelButtonTextId);
+        mConsentTextTracker.setText(mNegativeButton, mCancelButtonTextId);
         mNegativeButton.setOnClickListener(view -> {
             setButtonsEnabled(false);
             mListener.onAccountSelectionCanceled();
@@ -580,11 +714,10 @@ public class AccountSigninView extends FrameLayout {
 
     private void setUpSigninButton(boolean hasAccounts) {
         if (hasAccounts) {
-            mPositiveButton.setText(R.string.continue_sign_in);
-            mPositiveButton.setOnClickListener(
-                    view -> showConfirmSigninPageAccountTrackerServiceCheck());
+            mConsentTextTracker.setText(mPositiveButton, R.string.continue_sign_in);
+            mPositiveButton.setOnClickListener(view -> showConfirmationPageForSelectedAccount());
         } else {
-            mPositiveButton.setText(R.string.choose_account_sign_in);
+            mConsentTextTracker.setText(mPositiveButton, R.string.choose_account_sign_in);
             mPositiveButton.setOnClickListener(view -> {
                 if (hasGmsError()) return;
 
@@ -601,7 +734,7 @@ public class AccountSigninView extends FrameLayout {
             return;
         }
         setNegativeButtonVisible(true);
-        mNegativeButton.setText(getResources().getText(R.string.undo));
+        mConsentTextTracker.setText(mNegativeButton, R.string.undo);
         mNegativeButton.setOnClickListener(view -> {
             RecordUserAction.record("Signin_Undo_Signin");
             onSigninConfirmationCancel();
@@ -618,10 +751,14 @@ public class AccountSigninView extends FrameLayout {
     }
 
     private void setUpConfirmButton() {
-        mPositiveButton.setText(R.string.signin_accept);
+        mConsentTextTracker.setText(mPositiveButton, R.string.signin_accept);
         mPositiveButton.setOnClickListener(view -> {
             mListener.onAccountSelected(mSelectedAccountName, mIsDefaultAccountSelected, false);
             RecordUserAction.record("Signin_Signin_WithDefaultSyncSettings");
+
+            // Record the fact that the user consented to the consent text by clicking
+            // on |mPositiveButton|.
+            recordConsent((TextView) view);
         });
         setUpMoreButtonVisible(true);
     }
@@ -656,19 +793,35 @@ public class AccountSigninView extends FrameLayout {
         }
     }
 
-    private String getSettingsControlDescription(boolean childAccount) {
-        if (childAccount) {
-            return getResources().getString(
-                    R.string.signin_signed_in_settings_description_child_account);
+    private @StringRes int getSettingsControlDescription(
+            @ChildAccountStatus.Status int childAccountStatus) {
+        if (childAccountStatus == ChildAccountStatus.REGULAR_CHILD) {
+            return R.string.signin_signed_in_settings_description_child_account;
         } else {
-            return getResources().getString(R.string.signin_signed_in_settings_description);
+            return R.string.signin_signed_in_settings_description;
         }
     }
 
     /**
-     * @return Whether the view is in signed in mode.
+     * Records the Sync consent.
+     * @param confirmationView The view that the user clicked when consenting.
      */
-    public boolean isInConfirmationScreen() {
-        return mSelectedAccountName != null;
+    private void recordConsent(TextView confirmationView) {
+        // TODO(crbug.com/831257): Provide the account id synchronously from AccountManagerFacade.
+        final AccountIdProvider accountIdProvider = AccountIdProvider.getInstance();
+        new AsyncTask<Void, Void, String>() {
+            @Override
+            public String doInBackground(Void... params) {
+                return accountIdProvider.getAccountId(mSelectedAccountName);
+            }
+
+            @Override
+            public void onPostExecute(String accountId) {
+                mConsentTextTracker.recordConsent(accountId, ConsentAuditorFeature.CHROME_SYNC,
+                        confirmationView, findViewById(R.id.signin_confirmation_view),
+                        findViewById(R.id.button_bar));
+            }
+        }
+                .executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR);
     }
 }

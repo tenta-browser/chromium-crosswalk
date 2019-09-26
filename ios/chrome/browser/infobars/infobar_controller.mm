@@ -30,11 +30,6 @@
   return self;
 }
 
-- (instancetype)init {
-  NOTREACHED();
-  return nil;
-}
-
 - (void)dealloc {
   [_infoBarView removeFromSuperview];
 }
@@ -56,7 +51,7 @@
   return _infoBarView;
 }
 
-- (void)onHeightsRecalculated:(int)newHeight {
+- (void)onHeightRecalculated:(int)newHeight {
   [_infoBarView setVisibleHeight:newHeight];
 }
 

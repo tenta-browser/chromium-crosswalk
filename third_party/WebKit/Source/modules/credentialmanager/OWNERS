@@ -1,6 +1,0 @@
-mkwst@chromium.org
-
-per-file *TypeConverter*.*=set noparent
-per-file *TypeConverter*.*=file://ipc/SECURITY_OWNERS
-
-# COMPONENT: UI>Browser>Passwords

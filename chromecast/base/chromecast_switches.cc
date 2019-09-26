@@ -16,8 +16,8 @@ const char kSwitchValueTrue[] = "true";
 const char kSwitchValueFalse[] = "false";
 
 // Server url to upload crash data to.
-// Default is "http://clients2.google.com/cr/report" for prod devices.
-// Default is "http://clients2.google.com/cr/staging_report" for non prod.
+// Default is "https://clients2.google.com/cr/report" for prod devices.
+// Default is "https://clients2.google.com/cr/staging_report" for non prod.
 const char kCrashServerUrl[] = "crash-server-url";
 
 // Enable file accesses. It should not be enabled for most Cast devices.
@@ -69,6 +69,7 @@ const char kAlsaCheckCloseTimeout[] = "alsa-check-close-timeout";
 const char kAlsaEnableUpsampling[] = "alsa-enable-upsampling";
 
 // Optional flag to set a fixed sample rate for the alsa device.
+// Deprecated: Use --audio-output-sample-rate instead.
 const char kAlsaFixedOutputSampleRate[] = "alsa-fixed-output-sample-rate";
 
 // Name of the simple mixer control element that the ALSA-based media library
@@ -88,6 +89,14 @@ const char kAlsaMuteElementName[] = "alsa-mute-element-name";
 // specified it will default to the same device as kAlsaVolumeDeviceName.
 const char kAlsaMuteDeviceName[] = "alsa-mute-device-name";
 
+// Name of the simple mixer control element that the ALSA-based media library
+// should use to toggle powersave mode on the system.
+const char kAlsaAmpElementName[] = "alsa-amp-element-name";
+
+// Name of the device the amp mixer should be opened on. If this flag is not
+// specified it will default to the same device as kAlsaVolumeDeviceName.
+const char kAlsaAmpDeviceName[] = "alsa-amp-device-name";
+
 // Calibrated max output volume dBa for voice content at 1 meter, if known.
 const char kMaxOutputVolumeDba1m[] = "max-output-volume-dba1m";
 
@@ -95,6 +104,11 @@ const char kMaxOutputVolumeDba1m[] = "max-output-volume-dba1m";
 // specific number of channels to ALSA and generate loopback audio. Default
 // value is 2.
 const char kAudioOutputChannels[] = "audio-output-channels";
+
+// Specify fixed sample rate for audio output stream. If this flag is not
+// specified the StreamMixer will choose sample rate based on the sample rate of
+// the media stream.
+const char kAudioOutputSampleRate[] = "audio-output-sample-rate";
 
 // Some platforms typically have very little 'free' memory, but plenty is
 // available in buffers+cached.  For such platforms, configure this amount
@@ -109,12 +123,26 @@ const char kCastInitialScreenWidth[] = "cast-initial-screen-width";
 const char kCastInitialScreenHeight[] = "cast-initial-screen-height";
 const char kGraphicsBufferCount[] = "graphics-buffer-count";
 
+// Overrides the vsync interval used by the GPU process to refresh the display.
+const char kVSyncInterval[] = "vsync-interval";
+
 // When present, desktop cast_shell will create 1080p window (provided display
 // resolution is high enough).  Otherwise, cast_shell defaults to 720p.
 const char kDesktopWindow1080p[] = "desktop-window-1080p";
 
 // Enables input event handling by the window manager.
 const char kEnableInput[] = "enable-input";
+
+// Background color used when Chromium hasn't rendered anything yet.
+const char kCastAppBackgroundColor[] = "cast-app-background-color";
+
+// The number of pixels from the very left or right of the screen to consider as
+// a valid origin for the left or right swipe gesture.
+const char kSystemGestureStartWidth[] = "system-gesture-start-width";
+
+// The number of pixels from the very top or bottom of the screen to consider as
+// a valid origin for the top or bottom swipe gesture.
+const char kSystemGestureStartHeight[] = "system-gesture-start-height";
 
 }  // namespace switches
 
@@ -168,6 +196,26 @@ int GetSwitchValueNonNegativeInt(const std::string& switch_name,
     return default_value;
   }
   return value;
+}
+
+uint32_t GetSwitchValueColor(const std::string& switch_name,
+                             const uint32_t default_value) {
+  const base::CommandLine* command_line =
+      base::CommandLine::ForCurrentProcess();
+  if (!command_line->HasSwitch(switch_name)) {
+    return default_value;
+  }
+
+  uint32_t arg_value = 0;
+  if (!base::HexStringToUInt(
+          command_line->GetSwitchValueASCII(switch_name).substr(1),
+          &arg_value)) {
+    LOG(ERROR) << "Invalid value for " << switch_name << " ("
+               << command_line->GetSwitchValueASCII(switch_name)
+               << "), using default.";
+    return default_value;
+  }
+  return arg_value;
 }
 
 }  // namespace chromecast

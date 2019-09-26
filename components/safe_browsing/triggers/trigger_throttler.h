@@ -9,6 +9,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include "base/gtest_prod_util.h"
 #include "base/macros.h"
 #include "base/time/clock.h"
 
@@ -18,10 +19,14 @@ namespace safe_browsing {
 // types and daily quotas.
 extern const char kTriggerTypeAndQuotaParam[];
 
+// Default quota for ad sampler trigger.
+extern const size_t kAdSamplerTriggerDefaultQuota;
+
 enum class TriggerType {
   SECURITY_INTERSTITIAL = 1,
   AD_SAMPLE = 2,
   GAIA_PASSWORD_REUSE = 3,
+  SUSPICIOUS_SITE = 4,
 };
 
 struct TriggerTypeHash {
@@ -53,16 +58,20 @@ class TriggerThrottler {
   void TriggerFired(TriggerType trigger_type);
 
  protected:
-  void SetClockForTesting(std::unique_ptr<base::Clock> test_clock);
+  void SetClockForTesting(base::Clock* test_clock);
 
  private:
   friend class TriggerThrottlerTest;
+  friend class TriggerThrottlerTestFinch;
 
   // Called to periodically clean-up the list of event timestamps.
   void CleanupOldEvents();
 
+  // Returns the daily quota for the specified trigger.
+  size_t GetDailyQuotaForTrigger(const TriggerType trigger_type) const;
+
   // Can be set for testing.
-  std::unique_ptr<base::Clock> clock_;
+  base::Clock* clock_;
 
   // Stores each trigger type that fired along with the timestamps of when it
   // fired.

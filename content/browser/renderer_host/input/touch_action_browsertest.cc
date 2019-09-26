@@ -15,7 +15,6 @@
 #include "content/browser/renderer_host/input/synthetic_gesture_controller.h"
 #include "content/browser/renderer_host/input/synthetic_gesture_target.h"
 #include "content/browser/renderer_host/input/synthetic_smooth_scroll_gesture.h"
-#include "content/browser/renderer_host/input/touch_event_queue.h"
 #include "content/browser/renderer_host/render_widget_host_impl.h"
 #include "content/browser/renderer_host/render_widget_host_view_base.h"
 #include "content/browser/web_contents/web_contents_impl.h"
@@ -30,7 +29,7 @@
 #include "content/public/test/content_browser_test_utils.h"
 #include "content/public/test/test_utils.h"
 #include "content/shell/browser/shell.h"
-#include "third_party/WebKit/public/platform/WebInputEvent.h"
+#include "third_party/blink/public/platform/web_input_event.h"
 #include "ui/latency/latency_info.h"
 
 using blink::WebInputEvent;
@@ -92,7 +91,8 @@ class TouchActionBrowserTest : public ContentBrowserTest {
     NavigateToURL(shell(), data_url);
 
     RenderWidgetHostImpl* host = GetWidgetHost();
-    FrameWatcher frame_watcher(shell()->web_contents());
+    frame_observer_ = std::make_unique<RenderFrameSubmissionObserver>(
+        host->render_frame_metadata_provider());
     host->GetView()->SetSize(gfx::Size(400, 400));
 
     base::string16 ready_title(base::ASCIIToUTF16("ready"));
@@ -103,7 +103,7 @@ class TouchActionBrowserTest : public ContentBrowserTest {
     // otherwise the injection of the synthetic gestures may get
     // dropped because of MainThread/Impl thread sync of touch event
     // regions.
-    frame_watcher.WaitFrames(1);
+    frame_observer_->WaitForAnyFrameSubmission();
   }
 
   // ContentBrowserTest:
@@ -115,6 +115,13 @@ class TouchActionBrowserTest : public ContentBrowserTest {
     cmd->AppendSwitch(switches::kEnableExperimentalWebPlatformFeatures);
   }
 
+  // ContentBrowserTest:
+  void PostRunTestOnMainThread() override {
+    // Delete this before the WebContents is destroyed.
+    frame_observer_.reset();
+    ContentBrowserTest::PostRunTestOnMainThread();
+  }
+
   int ExecuteScriptAndExtractInt(const std::string& script) {
     int value = 0;
     EXPECT_TRUE(content::ExecuteScriptAndExtractInt(
@@ -122,8 +129,15 @@ class TouchActionBrowserTest : public ContentBrowserTest {
     return value;
   }
 
-  int GetScrollTop() {
-    return ExecuteScriptAndExtractInt("document.scrollingElement.scrollTop");
+  double ExecuteScriptAndExtractDouble(const std::string& script) {
+    double value = 0;
+    EXPECT_TRUE(content::ExecuteScriptAndExtractDouble(
+        shell(), "domAutomationController.send(" + script + ")", &value));
+    return value;
+  }
+
+  double GetScrollTop() {
+    return ExecuteScriptAndExtractDouble("document.scrollingElement.scrollTop");
   }
 
   // Generate touch events for a synthetic scroll from |point| for |distance|.
@@ -134,11 +148,9 @@ class TouchActionBrowserTest : public ContentBrowserTest {
                      bool wait_until_scrolled) {
     EXPECT_EQ(0, GetScrollTop());
 
-    int scrollHeight = ExecuteScriptAndExtractInt(
-        "document.documentElement.scrollHeight");
-    EXPECT_EQ(10200, scrollHeight);
-
-    FrameWatcher frame_watcher(shell()->web_contents());
+    int scroll_height =
+        ExecuteScriptAndExtractInt("document.documentElement.scrollHeight");
+    EXPECT_EQ(10200, scroll_height);
 
     SyntheticSmoothScrollGestureParams params;
     params.gesture_source_type = SyntheticGestureParams::TOUCH_INPUT;
@@ -160,23 +172,26 @@ class TouchActionBrowserTest : public ContentBrowserTest {
 
     // Expect that the compositor scrolled at least one pixel while the
     // main thread was in a busy loop.
+    gfx::Vector2dF default_scroll_offset;
     while (wait_until_scrolled &&
-           frame_watcher.LastMetadata().root_scroll_offset.y() <
-               (distance.y() / 2)) {
-      frame_watcher.WaitFrames(1);
+           frame_observer_->LastRenderFrameMetadata()
+                   .root_scroll_offset.value_or(default_scroll_offset)
+                   .y() < (distance.y() / 2)) {
+      frame_observer_->WaitForMetadataChange();
     }
 
     // Check the scroll offset
-    int scrollTop = GetScrollTop();
-    if (scrollTop == 0)
+    double scroll_top = GetScrollTop();
+    if (scroll_top == 0)
       return false;
 
     // Allow for 1px rounding inaccuracies for some screen sizes.
-    EXPECT_LT(distance.y() / 2, scrollTop);
+    EXPECT_LT(distance.y() / 2, scroll_top);
     return true;
   }
 
  private:
+  std::unique_ptr<RenderFrameSubmissionObserver> frame_observer_;
   scoped_refptr<MessageLoopRunner> runner_;
 
   DISALLOW_COPY_AND_ASSIGN(TouchActionBrowserTest);
@@ -185,11 +200,15 @@ class TouchActionBrowserTest : public ContentBrowserTest {
 // Mac doesn't yet have a gesture recognizer, so can't support turning touch
 // events into scroll gestures.
 // Will be fixed with http://crbug.com/337142
-// Flaky on all platforms: https://crbug.com/376668
+#if defined(OS_MACOSX)
+#define MAYBE_DefaultAuto DISABLED_DefaultAuto
+#else
+#define MAYBE_DefaultAuto DefaultAuto
+#endif
 //
 // Verify the test infrastructure works - we can touch-scroll the page and get a
 // touchcancel as expected.
-IN_PROC_BROWSER_TEST_F(TouchActionBrowserTest, DISABLED_DefaultAuto) {
+IN_PROC_BROWSER_TEST_F(TouchActionBrowserTest, MAYBE_DefaultAuto) {
   LoadURL();
 
   bool scrolled = DoTouchScroll(gfx::Point(50, 50), gfx::Vector2d(0, 45), true);

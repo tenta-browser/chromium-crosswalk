@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "base/logging.h"
+#include "base/metrics/histogram_functions.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/sha1.h"
 #include "base/strings/string_piece.h"
@@ -21,6 +22,7 @@
 #include "net/cert/cert_verify_result.h"
 #include "net/cert/internal/cert_errors.h"
 #include "net/cert/internal/parsed_certificate.h"
+#include "net/cert/known_roots.h"
 #include "net/cert/x509_certificate.h"
 #include "net/cert/x509_util.h"
 #include "url/gurl.h"
@@ -103,8 +105,8 @@ bool PerformAIAFetchAndAddResultToVector(scoped_refptr<CertNetFetcher> fetcher,
   Error error;
   std::vector<uint8_t> aia_fetch_bytes;
   request->WaitForResult(&error, &aia_fetch_bytes);
-  UMA_HISTOGRAM_SPARSE_SLOWLY("Net.Certificate.AndroidAIAFetchError",
-                              std::abs(error));
+  base::UmaHistogramSparse("Net.Certificate.AndroidAIAFetchError",
+                           std::abs(error));
   if (error != OK)
     return false;
   CertErrors errors;
@@ -299,10 +301,12 @@ bool VerifyFromAndroidTrustManager(
       verify_result->cert_status |= CERT_STATUS_INVALID;
   }
 
-  // Extract the public key hashes.
-  for (size_t i = 0; i < verified_chain.size(); i++) {
+  // Extract the public key hashes and check whether or not any are known
+  // roots. Walk from the end of the chain (root) to leaf, to optimize for
+  // known root checks.
+  for (auto it = verified_chain.rbegin(); it != verified_chain.rend(); ++it) {
     base::StringPiece spki_bytes;
-    if (!asn1::ExtractSPKIFromDERCert(verified_chain[i], &spki_bytes)) {
+    if (!asn1::ExtractSPKIFromDERCert(*it, &spki_bytes)) {
       verify_result->cert_status |= CERT_STATUS_INVALID;
       continue;
     }
@@ -310,19 +314,28 @@ bool VerifyFromAndroidTrustManager(
     HashValue sha256(HASH_VALUE_SHA256);
     crypto::SHA256HashString(spki_bytes, sha256.data(), crypto::kSHA256Length);
     verify_result->public_key_hashes.push_back(sha256);
+
+    if (!verify_result->is_issued_by_known_root) {
+      verify_result->is_issued_by_known_root =
+          GetNetTrustAnchorHistogramIdForSPKI(sha256) != 0;
+    }
   }
+
+  // Reverse the hash list, to maintain the leaf->root ordering.
+  std::reverse(verify_result->public_key_hashes.begin(),
+               verify_result->public_key_hashes.end());
 
   return true;
 }
 
 void GetChainDEREncodedBytes(X509Certificate* cert,
                              std::vector<std::string>* chain_bytes) {
-  chain_bytes->reserve(1 + cert->GetIntermediateCertificates().size());
+  chain_bytes->reserve(1 + cert->intermediate_buffers().size());
   chain_bytes->emplace_back(
-      net::x509_util::CryptoBufferAsStringPiece(cert->os_cert_handle()));
-  for (auto* handle : cert->GetIntermediateCertificates()) {
+      net::x509_util::CryptoBufferAsStringPiece(cert->cert_buffer()));
+  for (const auto& handle : cert->intermediate_buffers()) {
     chain_bytes->emplace_back(
-        net::x509_util::CryptoBufferAsStringPiece(handle));
+        net::x509_util::CryptoBufferAsStringPiece(handle.get()));
   }
 }
 

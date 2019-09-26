@@ -26,10 +26,6 @@
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/sqlite/sqlite3.h"
 
-#if defined(OS_IOS) && defined(USE_SYSTEM_SQLITE)
-#include "base/ios/ios_util.h"
-#endif  // defined(OS_IOS) && defined(USE_SYSTEM_SQLITE)
-
 namespace sql {
 namespace test {
 
@@ -94,8 +90,8 @@ class ScopedScalarFunction {
       sql::Connection& db,
       const char* function_name,
       int args,
-      base::Callback<void(sqlite3_context*,int,sqlite3_value**)> cb)
-      : db_(db.db_), function_name_(function_name), cb_(cb) {
+      base::RepeatingCallback<void(sqlite3_context*, int, sqlite3_value**)> cb)
+      : db_(db.db_), function_name_(function_name), cb_(std::move(cb)) {
     sqlite3_create_function_v2(db_, function_name, args, SQLITE_UTF8,
                                this, &Run, NULL, NULL, NULL);
   }
@@ -113,7 +109,7 @@ class ScopedScalarFunction {
 
   sqlite3* db_;
   const char* function_name_;
-  base::Callback<void(sqlite3_context*,int,sqlite3_value**)> cb_;
+  base::RepeatingCallback<void(sqlite3_context*, int, sqlite3_value**)> cb_;
 
   DISALLOW_COPY_AND_ASSIGN(ScopedScalarFunction);
 };
@@ -121,10 +117,8 @@ class ScopedScalarFunction {
 // Allow a test to add a SQLite commit hook in a scoped context.
 class ScopedCommitHook {
  public:
-  ScopedCommitHook(sql::Connection& db,
-                   base::Callback<int(void)> cb)
-      : db_(db.db_),
-        cb_(cb) {
+  ScopedCommitHook(sql::Connection& db, base::RepeatingCallback<int()> cb)
+      : db_(db.db_), cb_(std::move(cb)) {
     sqlite3_commit_hook(db_, &Run, this);
   }
   ~ScopedCommitHook() {
@@ -138,7 +132,7 @@ class ScopedCommitHook {
   }
 
   sqlite3* db_;
-  base::Callback<int(void)> cb_;
+  base::RepeatingCallback<int(void)> cb_;
 
   DISALLOW_COPY_AND_ASSIGN(ScopedCommitHook);
 };
@@ -191,7 +185,7 @@ void ErrorCallbackSetHelper(sql::Connection* db,
                             int error, sql::Statement* stmt) {
   // The ref count should not go to zero when changing the callback.
   EXPECT_GT(*counter, 0u);
-  db->set_error_callback(base::Bind(&IgnoreErrorCallback));
+  db->set_error_callback(base::BindRepeating(&IgnoreErrorCallback));
   EXPECT_GT(*counter, 0u);
 }
 
@@ -418,7 +412,7 @@ TEST_F(SQLConnectionTest, ErrorCallback) {
   int error = SQLITE_OK;
   {
     sql::ScopedErrorCallback sec(
-        &db(), base::Bind(&sql::CaptureErrorCallback, &error));
+        &db(), base::BindRepeating(&sql::CaptureErrorCallback, &error));
     EXPECT_FALSE(db().Execute("INSERT INTO foo (id) VALUES (12)"));
 
     // Later versions of SQLite throw SQLITE_CONSTRAINT_UNIQUE.  The specific
@@ -436,7 +430,7 @@ TEST_F(SQLConnectionTest, ErrorCallback) {
     EXPECT_EQ(SQLITE_OK, error);
   }
 
-  // base::Bind() can curry arguments to be passed by const reference
+  // base::BindRepeating() can curry arguments to be passed by const reference
   // to the callback function.  If the callback function calls
   // re/set_error_callback(), the storage for those arguments can be
   // deleted while the callback function is still executing.
@@ -448,8 +442,8 @@ TEST_F(SQLConnectionTest, ErrorCallback) {
   {
     size_t count = 0;
     sql::ScopedErrorCallback sec(
-        &db(), base::Bind(&ErrorCallbackSetHelper,
-                          &db(), &count, RefCounter(&count)));
+        &db(), base::BindRepeating(&ErrorCallbackSetHelper, &db(), &count,
+                                   RefCounter(&count)));
 
     EXPECT_FALSE(db().Execute("INSERT INTO foo (id) VALUES (12)"));
   }
@@ -458,8 +452,8 @@ TEST_F(SQLConnectionTest, ErrorCallback) {
   {
     size_t count = 0;
     sql::ScopedErrorCallback sec(
-        &db(), base::Bind(&ErrorCallbackResetHelper,
-                          &db(), &count, RefCounter(&count)));
+        &db(), base::BindRepeating(&ErrorCallbackResetHelper, &db(), &count,
+                                   RefCounter(&count)));
 
     EXPECT_FALSE(db().Execute("INSERT INTO foo (id) VALUES (12)"));
   }
@@ -670,14 +664,11 @@ TEST_F(SQLConnectionTest, RazeNOTADB) {
   {
     sql::test::ScopedErrorExpecter expecter;
 
-    // Earlier versions of Chromium compiled against SQLite 3.6.7.3, which
-    // returned SQLITE_IOERR_SHORT_READ in this case.  Some platforms may still
-    // compile against an earlier SQLite via USE_SYSTEM_SQLITE.
-    if (expecter.SQLiteLibVersionNumber() < 3008005) {
-      expecter.ExpectError(SQLITE_IOERR_SHORT_READ);
-    } else {
-      expecter.ExpectError(SQLITE_NOTADB);
-    }
+    // Old SQLite versions returned a different error code.
+    ASSERT_GE(expecter.SQLiteLibVersionNumber(), 3014000)
+        << "Chrome ships with SQLite 3.22.0+. The system SQLite version is "
+        << "only supported on iOS 10+, which ships with SQLite 3.14.0+";
+    expecter.ExpectError(SQLITE_NOTADB);
 
     EXPECT_TRUE(db().Open(db_path()));
     ASSERT_TRUE(expecter.SawExpectedErrors());
@@ -740,9 +731,8 @@ TEST_F(SQLConnectionTest, RazeCallbackReopen) {
     ASSERT_TRUE(expecter.SawExpectedErrors());
   }
 
-  db().set_error_callback(base::Bind(&RazeErrorCallback,
-                                     &db(),
-                                     SQLITE_CORRUPT));
+  db().set_error_callback(
+      base::BindRepeating(&RazeErrorCallback, &db(), SQLITE_CORRUPT));
 
   // When the PRAGMA calls in Open() raise SQLITE_CORRUPT, the error
   // callback will call RazeAndClose().  Open() will then fail and be
@@ -1021,9 +1011,8 @@ TEST_F(SQLConnectionTest, Poison) {
   // Test that poisoning the database during a transaction works (with errors).
   // RazeErrorCallback() poisons the database, the extra COMMIT causes
   // CommitTransaction() to throw an error while commiting.
-  db().set_error_callback(base::Bind(&RazeErrorCallback,
-                                     &db(),
-                                     SQLITE_ERROR));
+  db().set_error_callback(
+      base::BindRepeating(&RazeErrorCallback, &db(), SQLITE_ERROR));
   db().Close();
   ASSERT_TRUE(db().Open(db_path()));
   EXPECT_TRUE(db().BeginTransaction());
@@ -1081,31 +1070,6 @@ TEST_F(SQLConnectionTest, AttachDatabaseWithOpenTransaction) {
   // Cannot see the attached database, yet.
   EXPECT_FALSE(db().IsSQLValid("SELECT count(*) from other.bar"));
 
-#if defined(OS_IOS) && defined(USE_SYSTEM_SQLITE)
-  // SQLite before 3.21 does not support ATTACH and DETACH in transactions.
-
-  // Attach fails in a transaction.
-  EXPECT_TRUE(db().BeginTransaction());
-  {
-    sql::test::ScopedErrorExpecter expecter;
-    expecter.ExpectError(SQLITE_ERROR);
-    EXPECT_FALSE(db().AttachDatabase(attach_path, kAttachmentPoint));
-    EXPECT_FALSE(db().IsSQLValid("SELECT count(*) from other.bar"));
-    ASSERT_TRUE(expecter.SawExpectedErrors());
-  }
-
-  // Detach also fails in a transaction.
-  {
-    sql::test::ScopedErrorExpecter expecter;
-    expecter.ExpectError(SQLITE_ERROR);
-    EXPECT_FALSE(db().DetachDatabase(kAttachmentPoint));
-    ASSERT_TRUE(expecter.SawExpectedErrors());
-  }
-
-  db().RollbackTransaction();
-#else   // defined(OS_IOS) && defined(USE_SYSTEM_SQLITE)
-  // Chrome's SQLite (3.21+) supports ATTACH and DETACH in transactions.
-
   // Attach succeeds in a transaction.
   EXPECT_TRUE(db().BeginTransaction());
   EXPECT_TRUE(db().AttachDatabase(attach_path, kAttachmentPoint));
@@ -1132,7 +1096,6 @@ TEST_F(SQLConnectionTest, AttachDatabaseWithOpenTransaction) {
   db().RollbackTransaction();
   EXPECT_TRUE(db().DetachDatabase(kAttachmentPoint));
   EXPECT_FALSE(db().IsSQLValid("SELECT count(*) from other.bar"));
-#endif  // defined(OS_IOS) && defined(USE_SYSTEM_SQLITE)
 }
 
 TEST_F(SQLConnectionTest, Basic_QuickIntegrityCheck) {
@@ -1335,7 +1298,8 @@ TEST_F(SQLConnectionTest, TimeQuery) {
 
   // Function to inject pauses into statements.
   sql::test::ScopedScalarFunction scoper(
-      db(), "milliadjust", 1, base::Bind(&sqlite_adjust_millis, &time_mock));
+      db(), "milliadjust", 1,
+      base::BindRepeating(&sqlite_adjust_millis, &time_mock));
 
   base::HistogramTester tester;
 
@@ -1373,7 +1337,8 @@ TEST_F(SQLConnectionTest, TimeUpdateAutocommit) {
 
   // Function to inject pauses into statements.
   sql::test::ScopedScalarFunction scoper(
-      db(), "milliadjust", 1, base::Bind(&sqlite_adjust_millis, &time_mock));
+      db(), "milliadjust", 1,
+      base::BindRepeating(&sqlite_adjust_millis, &time_mock));
 
   base::HistogramTester tester;
 
@@ -1415,14 +1380,15 @@ TEST_F(SQLConnectionTest, TimeUpdateTransaction) {
 
   // Function to inject pauses into statements.
   sql::test::ScopedScalarFunction scoper(
-      db(), "milliadjust", 1, base::Bind(&sqlite_adjust_millis, &time_mock));
+      db(), "milliadjust", 1,
+      base::BindRepeating(&sqlite_adjust_millis, &time_mock));
 
   base::HistogramTester tester;
 
   {
     // Make the commit slow.
     sql::test::ScopedCommitHook scoped_hook(
-        db(), base::Bind(adjust_commit_hook, &time_mock, 100));
+        db(), base::BindRepeating(adjust_commit_hook, &time_mock, 100));
     ASSERT_TRUE(db().BeginTransaction());
     EXPECT_TRUE(db().Execute(
         "INSERT INTO foo VALUES (11, milliadjust(10))"));
@@ -1533,10 +1499,8 @@ TEST_F(SQLConnectionTest, RegisterIntentToUpload) {
 TEST_F(SQLConnectionTest, MmapInitiallyEnabled) {
   {
     sql::Statement s(db().GetUniqueStatement("PRAGMA mmap_size"));
-
-    // SQLite doesn't have mmap support (perhaps an early iOS release).
-    if (!s.Step())
-      return;
+    ASSERT_TRUE(s.Step())
+        << "All supported SQLite versions should have mmap support";
 
     // If mmap I/O is not on, attempt to turn it on.  If that succeeds, then
     // Open() should have turned it on.  If mmap support is disabled, 0 is
@@ -1569,10 +1533,8 @@ TEST_F(SQLConnectionTest, MmapInitiallyEnabledAltStatus) {
 
   {
     sql::Statement s(db().GetUniqueStatement("PRAGMA mmap_size"));
-
-    // SQLite doesn't have mmap support (perhaps an early iOS release).
-    if (!s.Step())
-      return;
+    ASSERT_TRUE(s.Step())
+        << "All supported SQLite versions should have mmap support";
 
     // If mmap I/O is not on, attempt to turn it on.  If that succeeds, then
     // Open() should have turned it on.  If mmap support is disabled, 0 is
@@ -1595,14 +1557,6 @@ TEST_F(SQLConnectionTest, MmapInitiallyEnabledAltStatus) {
 }
 
 TEST_F(SQLConnectionTest, GetAppropriateMmapSize) {
-#if defined(OS_IOS) && defined(USE_SYSTEM_SQLITE)
-  // Mmap is not supported on iOS9.
-  if (!base::ios::IsRunningOnIOS10OrLater()) {
-    ASSERT_EQ(0UL, db().GetAppropriateMmapSize());
-    return;
-  }
-#endif  // defined(OS_IOS) && defined(USE_SYSTEM_SQLITE)
-
   const size_t kMmapAlot = 25 * 1024 * 1024;
   int64_t mmap_status = MetaTable::kMmapFailure;
 
@@ -1646,15 +1600,6 @@ TEST_F(SQLConnectionTest, GetAppropriateMmapSize) {
 }
 
 TEST_F(SQLConnectionTest, GetAppropriateMmapSizeAltStatus) {
-#if defined(OS_IOS) && defined(USE_SYSTEM_SQLITE)
-  // Mmap is not supported on iOS9.  Make sure that test takes precedence.
-  if (!base::ios::IsRunningOnIOS10OrLater()) {
-    db().set_mmap_alt_status();
-    ASSERT_EQ(0UL, db().GetAppropriateMmapSize());
-    return;
-  }
-#endif  // defined(OS_IOS) && defined(USE_SYSTEM_SQLITE)
-
   const size_t kMmapAlot = 25 * 1024 * 1024;
 
   // At this point, Connection still expects a future [meta] table.
@@ -1697,7 +1642,7 @@ TEST_F(SQLConnectionTest, CompileError) {
   // DEATH tests not supported on Android, iOS, or Fuchsia.
 #if !defined(OS_ANDROID) && !defined(OS_IOS) && !defined(OS_FUCHSIA)
   if (DLOG_IS_ON(FATAL)) {
-    db().set_error_callback(base::Bind(&IgnoreErrorCallback));
+    db().set_error_callback(base::BindRepeating(&IgnoreErrorCallback));
     ASSERT_DEATH({
         db().GetUniqueStatement("SELECT x");
       }, "SQL compile error no such column: x");

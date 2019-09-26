@@ -2,7 +2,6 @@
 <title>Test that we can add a track dynamically and it is displayed on the track selection menu.</title>
 <script src="../../resources/testharness.js"></script>
 <script src="../../resources/testharnessreport.js"></script>
-<script src="../media-file.js"></script>
 <script src="../media-controls.js"></script>
 <!-- Width should be large enough to display closed captions button. -->
 <video controls style="width: 500px">
@@ -13,10 +12,10 @@ async_test(function(t) {
     var trackCueText = "Bonjour";
     var video = document.querySelector("video");
 
-    video.oncanplaythrough = t.step_func_done(function() {
+    video.oncanplaythrough = t.step_func(function() {
         var track = video.addTextTrack("captions", "French", "fr");
         track.addCue(new VTTCue(0, 1, trackCueText));
-        assert_true(isClosedCaptionsButtonVisible(video));
+        assert_true(isClosedCaptionsButtonEnabled(video));
         assert_equals(video.textTracks.length, 2);
         assert_equals(video.textTracks[0].mode, "showing");
         assert_equals(video.textTracks[1].mode, "hidden");
@@ -25,12 +24,13 @@ async_test(function(t) {
         assert_equals(textTrackDisplayElement(video).innerText, "Lorem");
 
         // Click the newly added track.
-        clickTextTrackAtIndex(video, 1);
-        assert_equals(video.textTracks[1].mode, "showing");
-        assert_equals(video.textTracks[0].mode, "disabled");
-        assert_equals(textTrackDisplayElement(video).innerText, trackCueText);
+        clickTextTrackAtIndex(video, 1, t.step_func_done(function() {
+          assert_equals(video.textTracks[1].mode, "showing");
+          assert_equals(video.textTracks[0].mode, "disabled");
+          assert_equals(textTrackDisplayElement(video).innerText, trackCueText);
+        }));
     });
 
-    video.src = findMediaFile("video", "../content/test");
+    video.src = "../content/test.ogv";
 })
 </script>

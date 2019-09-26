@@ -7,9 +7,11 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 
 #include "net/quic/core/quic_packets.h"
 #include "net/quic/platform/api/quic_export.h"
+#include "net/quic/platform/api/quic_string.h"
 #include "net/quic/platform/api/quic_string_piece.h"
 
 namespace net {
@@ -18,7 +20,13 @@ class QUIC_EXPORT_PRIVATE QuicDecrypter {
  public:
   virtual ~QuicDecrypter() {}
 
-  static QuicDecrypter* Create(QuicTag algorithm);
+  static std::unique_ptr<QuicDecrypter> Create(QuicTag algorithm);
+
+  // Creates an IETF QuicDecrypter based on |cipher_suite| which must be an id
+  // returned by SSL_CIPHER_get_id. The caller is responsible for taking
+  // ownership of the new QuicDecrypter.
+  static std::unique_ptr<QuicDecrypter> CreateFromCipherSuite(
+      uint32_t cipher_suite);
 
   // Sets the encryption key. Returns true on success, false on failure.
   //
@@ -102,6 +110,11 @@ class QUIC_EXPORT_PRIVATE QuicDecrypter {
                              size_t* output_length,
                              size_t max_output_length) = 0;
 
+  // Returns the size in bytes of a key for the algorithm.
+  virtual size_t GetKeySize() const = 0;
+  // Returns the size in bytes of an IV to use with the algorithm.
+  virtual size_t GetIVSize() const = 0;
+
   // The ID of the cipher. Return 0x03000000 ORed with the 'cryptographic suite
   // selector'.
   virtual uint32_t cipher_id() const = 0;
@@ -115,8 +128,8 @@ class QUIC_EXPORT_PRIVATE QuicDecrypter {
                                       const DiversificationNonce& nonce,
                                       size_t key_size,
                                       size_t nonce_prefix_size,
-                                      std::string* out_key,
-                                      std::string* out_nonce_prefix);
+                                      QuicString* out_key,
+                                      QuicString* out_nonce_prefix);
 };
 
 }  // namespace net

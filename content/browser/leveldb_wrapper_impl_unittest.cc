@@ -13,8 +13,8 @@
 #include "base/task_scheduler/post_task.h"
 #include "base/test/test_simple_task_runner.h"
 #include "base/threading/thread.h"
-#include "components/leveldb/public/cpp/util.h"
-#include "components/leveldb/public/interfaces/leveldb.mojom.h"
+#include "components/services/leveldb/public/cpp/util.h"
+#include "components/services/leveldb/public/interfaces/leveldb.mojom.h"
 #include "content/public/test/test_browser_thread_bundle.h"
 #include "content/test/fake_leveldb_database.h"
 #include "mojo/public/cpp/bindings/associated_binding.h"
@@ -193,8 +193,6 @@ base::OnceCallback<void(bool)> MakeSuccessCallback(base::OnceClosure callback,
                                                    bool* success_out) {
   return base::BindOnce(&SuccessCallback, std::move(callback), success_out);
 }
-
-void NoOpSuccessCallback(bool success) {}
 
 LevelDBWrapperImpl::Options GetDefaultTestingOptions(CacheMode cache_mode) {
   LevelDBWrapperImpl::Options options;
@@ -684,7 +682,7 @@ TEST_P(LevelDBWrapperImplParamTest, DeleteAllWithPendingMapLoad) {
   set_mock_data(dummy_key, value);
 
   wrapper()->Put(ToBytes(key), ToBytes(value), base::nullopt, kTestSource,
-                 base::BindOnce(&NoOpSuccessCallback));
+                 base::DoNothing());
 
   EXPECT_TRUE(DeleteAllSync());
   ASSERT_EQ(2u, observations().size());

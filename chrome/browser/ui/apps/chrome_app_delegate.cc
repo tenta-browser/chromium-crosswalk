@@ -40,7 +40,7 @@
 #include "content/public/browser/web_contents_delegate.h"
 #include "extensions/common/constants.h"
 #include "extensions/common/mojo/app_window.mojom.h"
-#include "printing/features/features.h"
+#include "printing/buildflags/buildflags.h"
 #include "services/service_manager/public/cpp/interface_provider.h"
 
 #if defined(OS_CHROMEOS)
@@ -65,22 +65,22 @@ content::WebContents* OpenURLFromTabInternal(
     const content::OpenURLParams& params) {
   // Force all links to open in a new tab, even if they were trying to open a
   // window.
-  chrome::NavigateParams new_tab_params(
-      static_cast<Browser*>(NULL), params.url, params.transition);
+  NavigateParams new_tab_params(static_cast<Browser*>(NULL), params.url,
+                                params.transition);
   if (params.disposition == WindowOpenDisposition::NEW_BACKGROUND_TAB) {
     new_tab_params.disposition = WindowOpenDisposition::NEW_BACKGROUND_TAB;
   } else {
     new_tab_params.disposition = WindowOpenDisposition::NEW_FOREGROUND_TAB;
-    new_tab_params.window_action = chrome::NavigateParams::SHOW_WINDOW;
+    new_tab_params.window_action = NavigateParams::SHOW_WINDOW;
   }
 
   new_tab_params.initiating_profile = Profile::FromBrowserContext(context);
-  chrome::Navigate(&new_tab_params);
+  Navigate(&new_tab_params);
 
   return new_tab_params.target_contents;
 }
 
-void OnCheckIsDefaultBrowserFinished(
+void OpenURLAfterCheckIsDefaultBrowser(
     std::unique_ptr<content::WebContents> source,
     const content::OpenURLParams& params,
     shell_integration::DefaultWebClientState state) {
@@ -142,7 +142,7 @@ ChromeAppDelegate::NewWindowContentsDelegate::OpenURLFromTab(
     // WebContents by being assigned as its delegate within
     // ChromeAppDelegate::AddNewContents(), but this is the first time
     // NewWindowContentsDelegate actually sees the WebContents. Here ownership
-    // is captured and passed to OnCheckIsDefaultBrowserFinished(), which
+    // is captured and passed to OpenURLAfterCheckIsDefaultBrowser(), which
     // destroys it after the default browser worker completes.
     std::unique_ptr<content::WebContents> source_ptr(source);
     // Object lifetime notes: StartCheckIsDefault() takes lifetime ownership of
@@ -151,7 +151,7 @@ ChromeAppDelegate::NewWindowContentsDelegate::OpenURLFromTab(
     scoped_refptr<shell_integration::DefaultBrowserWorker>
         check_if_default_browser_worker =
             new shell_integration::DefaultBrowserWorker(
-                base::Bind(&OnCheckIsDefaultBrowserFinished,
+                base::Bind(&OpenURLAfterCheckIsDefaultBrowser,
                            base::Passed(&source_ptr), params));
     check_if_default_browser_worker->StartCheckIsDefault();
   }
@@ -272,13 +272,13 @@ void ChromeAppDelegate::RequestMediaAccessPermission(
 }
 
 bool ChromeAppDelegate::CheckMediaAccessPermission(
-    content::WebContents* web_contents,
+    content::RenderFrameHost* render_frame_host,
     const GURL& security_origin,
     content::MediaStreamType type,
     const extensions::Extension* extension) {
   return MediaCaptureDevicesDispatcher::GetInstance()
-      ->CheckMediaAccessPermission(
-          web_contents, security_origin, type, extension);
+      ->CheckMediaAccessPermission(render_frame_host, security_origin, type,
+                                   extension);
 }
 
 int ChromeAppDelegate::PreferredIconSize() const {
@@ -298,7 +298,7 @@ void ChromeAppDelegate::SetWebContentsBlocked(
   content::RenderFrameHost* host = web_contents->GetMainFrame();
   if (host) {
     extensions::mojom::AppWindowPtr app_window;
-    BindInterface(host->GetProcess(), &app_window);
+    host->GetRemoteInterfaces()->GetInterface(&app_window);
     app_window->SetVisuallyDeemphasized(blocked);
   }
 }

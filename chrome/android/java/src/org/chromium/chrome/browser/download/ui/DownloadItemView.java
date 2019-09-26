@@ -7,6 +7,7 @@ package org.chromium.chrome.browser.download.ui;
 import android.content.Context;
 import android.content.res.ColorStateList;
 import android.graphics.Bitmap;
+import android.support.annotation.IntDef;
 import android.support.annotation.NonNull;
 import android.support.annotation.Nullable;
 import android.support.v4.graphics.drawable.RoundedBitmapDrawable;
@@ -19,23 +20,58 @@ import android.widget.LinearLayout;
 import android.widget.TextView;
 
 import org.chromium.base.ApiCompatibilityUtils;
+import org.chromium.base.Callback;
+import org.chromium.base.metrics.RecordHistogram;
+import org.chromium.base.metrics.RecordUserAction;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.download.DownloadUtils;
+import org.chromium.chrome.browser.download.items.OfflineContentAggregatorFactory;
+import org.chromium.chrome.browser.profiles.Profile;
 import org.chromium.chrome.browser.util.FeatureUtilities;
+import org.chromium.chrome.browser.widget.ListMenuButton;
+import org.chromium.chrome.browser.widget.ListMenuButton.Item;
 import org.chromium.chrome.browser.widget.MaterialProgressBar;
 import org.chromium.chrome.browser.widget.ThumbnailProvider;
 import org.chromium.chrome.browser.widget.TintedImageButton;
 import org.chromium.chrome.browser.widget.selection.SelectableItemView;
+import org.chromium.components.offline_items_collection.OfflineItem;
 import org.chromium.components.offline_items_collection.OfflineItem.Progress;
+import org.chromium.components.variations.VariationsAssociatedData;
 import org.chromium.ui.UiUtils;
 
-import java.util.Locale;
+import java.util.List;
 
 /**
  * The view for a downloaded item displayed in the Downloads list.
  */
 public class DownloadItemView extends SelectableItemView<DownloadHistoryItemWrapper>
-        implements ThumbnailProvider.ThumbnailRequest {
+        implements ThumbnailProvider.ThumbnailRequest, ListMenuButton.Delegate {
+    private static final String VARIATION_TRIAL_DOWNLOAD_HOME_MORE_BUTTON =
+            "DownloadHomeMoreButton";
+    private static final String VARIATION_PARAM_SHOW_MORE_BUTTON = "show_more_button";
+
+    // Please treat this list as append only and keep it in sync with
+    // Android.DownloadManager.List.View.Actions in enums.xml.
+    @IntDef({VIEW_ACTION_OPEN, VIEW_ACTION_RESUME, VIEW_ACTION_PAUSE, VIEW_ACTION_CANCEL,
+            VIEW_ACTION_MENU_SHARE, VIEW_ACTION_MENU_DELETE})
+    public @interface ViewAction {}
+
+    private static final int VIEW_ACTION_OPEN = 0;
+    private static final int VIEW_ACTION_RESUME = 1;
+    private static final int VIEW_ACTION_PAUSE = 2;
+    private static final int VIEW_ACTION_CANCEL = 3;
+    private static final int VIEW_ACTION_MENU_SHARE = 4;
+    private static final int VIEW_ACTION_MENU_DELETE = 5;
+    private static final int VIEW_ACTION_BOUNDARY = 6;
+
+    /**
+     * Set based on Chrome Variations to determine whether or not to show the "more" menu button on
+     * this item.  This will be set only once the first time it is queried through
+     * {@link #isMoreButtonEnabled()} and will not be set again for the current process lifetime to
+     * avoid hitting the Chrome Variations system for each list item.
+     */
+    private static Boolean sMoreButtonEnabled;
+
     private final int mMargin;
     private final int mMarginSubsection;
     private final int mIconBackgroundColor;
@@ -56,7 +92,8 @@ public class DownloadItemView extends SelectableItemView<DownloadHistoryItemWrap
     // Controls for completed downloads.
     private View mLayoutCompleted;
     private TextView mFilenameCompletedView;
-    private TextView mDescriptionView;
+    private TextView mDescriptionCompletedView;
+    private ListMenuButton mMoreButton;
 
     // Controls for in-progress downloads.
     private View mLayoutInProgress;
@@ -85,11 +122,30 @@ public class DownloadItemView extends SelectableItemView<DownloadHistoryItemWrap
 
         mIconBackgroundResId = R.drawable.list_item_icon_modern_bg;
 
-        if (FeatureUtilities.isChromeHomeEnabled()) {
+        if (FeatureUtilities.isChromeModernDesignEnabled()) {
             mIconForegroundColorList = ApiCompatibilityUtils.getColorStateList(
                     context.getResources(), R.color.dark_mode_tint);
         } else {
             mIconForegroundColorList = DownloadUtils.getIconForegroundColorList(context);
+        }
+    }
+
+    // ListMenuButton.Delegate implementation.
+    @Override
+    public Item[] getItems() {
+        return new Item[] {new Item(getContext(), R.string.share, true),
+                new Item(getContext(), R.string.delete, true)};
+    }
+
+    @Override
+    public void onItemSelected(Item item) {
+        if (item.getTextId() == R.string.share) {
+            recordViewActionHistogram(VIEW_ACTION_MENU_SHARE);
+            mItem.share();
+        } else if (item.getTextId() == R.string.delete) {
+            recordViewActionHistogram(VIEW_ACTION_MENU_DELETE);
+            mItem.startRemove();
+            RecordUserAction.record("Android.DownloadManager.RemoveItem");
         }
     }
 
@@ -103,7 +159,8 @@ public class DownloadItemView extends SelectableItemView<DownloadHistoryItemWrap
         mLayoutInProgress = findViewById(R.id.progress_layout);
 
         mFilenameCompletedView = (TextView) findViewById(R.id.filename_completed_view);
-        mDescriptionView = (TextView) findViewById(R.id.description_view);
+        mDescriptionCompletedView = (TextView) findViewById(R.id.description_view);
+        mMoreButton = (ListMenuButton) findViewById(R.id.more);
 
         mFilenameInProgressView = (TextView) findViewById(R.id.filename_progress_view);
         mDownloadStatusView = (TextView) findViewById(R.id.status_view);
@@ -112,21 +169,19 @@ public class DownloadItemView extends SelectableItemView<DownloadHistoryItemWrap
         mPauseResumeButton = (TintedImageButton) findViewById(R.id.pause_button);
         mCancelButton = findViewById(R.id.cancel_button);
 
-        mPauseResumeButton.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                if (mItem.isPaused()) {
-                    mItem.resume();
-                } else if (!mItem.isComplete()) {
-                    mItem.pause();
-                }
+        mMoreButton.setDelegate(this);
+        mPauseResumeButton.setOnClickListener(view -> {
+            if (mItem.isPaused()) {
+                recordViewActionHistogram(VIEW_ACTION_RESUME);
+                mItem.resume();
+            } else if (!mItem.isComplete()) {
+                recordViewActionHistogram(VIEW_ACTION_PAUSE);
+                mItem.pause();
             }
         });
-        mCancelButton.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                mItem.cancel();
-            }
+        mCancelButton.setOnClickListener(view -> {
+            recordViewActionHistogram(VIEW_ACTION_CANCEL);
+            mItem.cancel();
         });
     }
 
@@ -147,6 +202,21 @@ public class DownloadItemView extends SelectableItemView<DownloadHistoryItemWrap
             assert !thumbnail.isRecycled();
             setThumbnailBitmap(thumbnail);
         }
+    }
+
+    @Override
+    public boolean getThumbnail(Callback<Bitmap> callback) {
+        if (!mItem.isOfflinePage()) return false;
+        OfflineContentAggregatorFactory.forProfile(Profile.getLastUsedProfile())
+                .getVisualsForItem(((OfflineItem) mItem.getItem()).id, (id, visuals) -> {
+                    if (visuals == null) {
+                        callback.onResult(null);
+                    } else {
+                        callback.onResult(Bitmap.createScaledBitmap(
+                                visuals.icon, mIconSize, mIconSize, false));
+                    }
+                });
+        return true;
     }
 
     @Override
@@ -181,7 +251,8 @@ public class DownloadItemView extends SelectableItemView<DownloadHistoryItemWrap
         // immediately if the thumbnail is cached or asynchronously if it has to be fetched from a
         // remote source.
         mThumbnailBitmap = null;
-        if (fileType == DownloadFilter.FILTER_IMAGE && item.isComplete()) {
+        if (item.isOfflinePage()
+                || (fileType == DownloadFilter.FILTER_IMAGE && item.isComplete())) {
             thumbnailProvider.getThumbnail(this);
         } else {
             // TODO(dfalcantara): Get thumbnails for audio and video files when possible.
@@ -189,16 +260,21 @@ public class DownloadItemView extends SelectableItemView<DownloadHistoryItemWrap
 
         if (mThumbnailBitmap == null) updateIconView();
 
-        Context context = mDescriptionView.getContext();
+        Context context = mDescriptionCompletedView.getContext();
         mFilenameCompletedView.setText(item.getDisplayFileName());
         mFilenameInProgressView.setText(item.getDisplayFileName());
 
-        String description = String.format(Locale.getDefault(), "%s - %s",
-                Formatter.formatFileSize(context, item.getFileSize()), item.getDisplayHostname());
-        mDescriptionView.setText(description);
+        String description = context.getString(R.string.download_manager_list_item_description,
+                Formatter.formatFileSize(getContext(), item.getFileSize()),
+                item.getDisplayHostname());
+        mDescriptionCompletedView.setText(description);
 
         if (item.isComplete()) {
             showLayout(mLayoutCompleted);
+
+            // To ensure that text views have correct width after recycling, we have to request
+            // re-layout.
+            mFilenameCompletedView.requestLayout();
         } else {
             showLayout(mLayoutInProgress);
             mDownloadStatusView.setText(item.getStatusString());
@@ -209,11 +285,15 @@ public class DownloadItemView extends SelectableItemView<DownloadHistoryItemWrap
                 mPauseResumeButton.setImageResource(R.drawable.ic_play_arrow_white_24dp);
                 mPauseResumeButton.setContentDescription(
                         getContext().getString(R.string.download_notification_resume_button));
-                mProgressView.setIndeterminate(false);
             } else {
                 mPauseResumeButton.setImageResource(R.drawable.ic_pause_white_24dp);
                 mPauseResumeButton.setContentDescription(
                         getContext().getString(R.string.download_notification_pause_button));
+            }
+
+            if (item.isPaused() || item.isPending()) {
+                mProgressView.setIndeterminate(false);
+            } else {
                 mProgressView.setIndeterminate(progress.isIndeterminate());
             }
 
@@ -237,20 +317,31 @@ public class DownloadItemView extends SelectableItemView<DownloadHistoryItemWrap
             }
         }
 
+        mMoreButton.setContentDescriptionContext(item.getDisplayFileName());
+        boolean canShowMore = item.isComplete() && isMoreButtonEnabled();
+        mMoreButton.setVisibility(canShowMore ? View.VISIBLE : View.GONE);
+        mMoreButton.setClickable(item.isInteractive());
+
         setLongClickable(item.isComplete());
     }
 
-    /**
-     * @param thumbnail The Bitmap to use for the icon ImageView.
-     */
-    public void setThumbnailBitmap(Bitmap thumbnail) {
+    private void setThumbnailBitmap(Bitmap thumbnail) {
         mThumbnailBitmap = thumbnail;
         updateIconView();
     }
 
     @Override
+    public void onSelectionStateChange(List<DownloadHistoryItemWrapper> selectedItems) {
+        super.onSelectionStateChange(selectedItems);
+        mMoreButton.setClickable(mItem == null ? false : mItem.isInteractive());
+    }
+
+    @Override
     public void onClick() {
-        if (mItem != null && mItem.isComplete()) mItem.open();
+        if (mItem != null && mItem.isComplete()) {
+            recordViewActionHistogram(VIEW_ACTION_OPEN);
+            mItem.open();
+        }
     }
 
     @Override
@@ -265,19 +356,20 @@ public class DownloadItemView extends SelectableItemView<DownloadHistoryItemWrap
     @Override
     protected void updateIconView() {
         if (isChecked()) {
-            if (FeatureUtilities.isChromeHomeEnabled()) {
+            if (FeatureUtilities.isChromeModernDesignEnabled()) {
                 mIconView.setBackgroundResource(mIconBackgroundResId);
                 mIconView.getBackground().setLevel(
                         getResources().getInteger(R.integer.list_item_level_selected));
             } else {
                 mIconView.setBackgroundColor(mIconBackgroundColorSelected);
             }
-            mIconView.setImageResource(R.drawable.ic_check_googblue_24dp);
+            mIconView.setImageDrawable(mCheckDrawable);
             mIconView.setTint(mCheckedIconForegroundColorList);
+            mCheckDrawable.start();
         } else if (mThumbnailBitmap != null) {
             assert !mThumbnailBitmap.isRecycled();
             mIconView.setBackground(null);
-            if (FeatureUtilities.isChromeHomeEnabled()) {
+            if (FeatureUtilities.isChromeModernDesignEnabled()) {
                 RoundedBitmapDrawable roundedIcon = RoundedBitmapDrawableFactory.create(
                         getResources(),
                         Bitmap.createScaledBitmap(mThumbnailBitmap, mIconSize, mIconSize, false));
@@ -288,7 +380,7 @@ public class DownloadItemView extends SelectableItemView<DownloadHistoryItemWrap
             }
             mIconView.setTint(null);
         } else {
-            if (FeatureUtilities.isChromeHomeEnabled()) {
+            if (FeatureUtilities.isChromeModernDesignEnabled()) {
                 mIconView.setBackgroundResource(mIconBackgroundResId);
                 mIconView.getBackground().setLevel(
                         getResources().getInteger(R.integer.list_item_level_default));
@@ -309,6 +401,37 @@ public class DownloadItemView extends SelectableItemView<DownloadHistoryItemWrap
                     new LinearLayout.LayoutParams(0, LayoutParams.WRAP_CONTENT);
             params.weight = 1;
             mLayoutContainer.addView(layoutToShow, params);
+
+            // Move the menu button to the back of mLayoutContainer.
+            mLayoutContainer.removeView(mMoreButton);
+            mLayoutContainer.addView(mMoreButton);
         }
+    }
+
+    private static void recordViewActionHistogram(@ViewAction int action) {
+        RecordHistogram.recordEnumeratedHistogram(
+                "Android.DownloadManager.List.View.Action", action, VIEW_ACTION_BOUNDARY);
+    }
+
+    /**
+     * Uses Chrome Variations to determine whether or not to show the "more" menu button.  This
+     * value will be queried the first time this method is run and cached for future calls.  The
+     * default value will be {@code true} if no Chrome Variation is found for this value.
+     * @return Whether or not the "more" menu button should be shown.
+     */
+    private static boolean isMoreButtonEnabled() {
+        if (sMoreButtonEnabled == null) {
+            // Default the more button to true.  Any invalid non-empty value will set the result to
+            // false though.
+            sMoreButtonEnabled = true;
+
+            String variationResult = VariationsAssociatedData.getVariationParamValue(
+                    VARIATION_TRIAL_DOWNLOAD_HOME_MORE_BUTTON, VARIATION_PARAM_SHOW_MORE_BUTTON);
+            if (!TextUtils.isEmpty(variationResult)) {
+                sMoreButtonEnabled = Boolean.parseBoolean(variationResult);
+            }
+        }
+
+        return sMoreButtonEnabled;
     }
 }

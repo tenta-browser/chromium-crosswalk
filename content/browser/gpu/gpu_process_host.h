@@ -12,6 +12,7 @@
 #include <set>
 #include <string>
 
+#include "base/atomicops.h"
 #include "base/callback.h"
 #include "base/containers/hash_tables.h"
 #include "base/containers/queue.h"
@@ -79,13 +80,13 @@ class GpuProcessHost : public BrowserChildProcessHostDelegate,
     SUCCESS,
   };
   using CreateGpuMemoryBufferCallback =
-      base::Callback<void(const gfx::GpuMemoryBufferHandle& handle,
-                          BufferCreationStatus status)>;
+      base::OnceCallback<void(const gfx::GpuMemoryBufferHandle& handle,
+                              BufferCreationStatus status)>;
 
   using RequestGPUInfoCallback = base::Callback<void(const gpu::GPUInfo&)>;
   using RequestHDRStatusCallback = base::Callback<void(bool)>;
 
-  static int gpu_crash_count() { return gpu_crash_count_; }
+  static int GetGpuCrashCount();
 
   // Creates a new GpuProcessHost (if |force_create| is turned on) or gets an
   // existing one, resulting in the launching of a GPU process if required.
@@ -137,7 +138,7 @@ class GpuProcessHost : public BrowserChildProcessHostDelegate,
                              gfx::BufferUsage usage,
                              int client_id,
                              gpu::SurfaceHandle surface_handle,
-                             const CreateGpuMemoryBufferCallback& callback);
+                             CreateGpuMemoryBufferCallback callback);
 
   // Tells the GPU process to destroy GPU memory buffer.
   void DestroyGpuMemoryBuffer(gfx::GpuMemoryBufferId id,
@@ -149,8 +150,7 @@ class GpuProcessHost : public BrowserChildProcessHostDelegate,
   // browser must submit CompositorFrames over IPC.
   void ConnectFrameSinkManager(
       viz::mojom::FrameSinkManagerRequest request,
-      viz::mojom::FrameSinkManagerClientPtrInfo client,
-      viz::mojom::CompositingModeWatcherPtrInfo mode_watcher);
+      viz::mojom::FrameSinkManagerClientPtrInfo client);
 
   void RequestGPUInfo(RequestGPUInfoCallback request_cb);
   void RequestHDRStatus(RequestHDRStatusCallback request_cb);
@@ -182,10 +182,18 @@ class GpuProcessHost : public BrowserChildProcessHostDelegate,
 
   static bool ValidateHost(GpuProcessHost* host);
 
+  // Increments the given crash count. Also, for each hour passed since the
+  // previous crash, removes an old crash from the count.
+  static void IncrementCrashCount(int* crash_count);
+
   GpuProcessHost(int host_id, GpuProcessKind kind);
   ~GpuProcessHost() override;
 
   bool Init();
+
+#if defined(USE_OZONE)
+  void InitOzone();
+#endif  // defined(USE_OZONE)
 
   // BrowserChildProcessHostDelegate implementation.
   bool OnMessageReceived(const IPC::Message& message) override;
@@ -229,7 +237,7 @@ class GpuProcessHost : public BrowserChildProcessHostDelegate,
 
   bool LaunchGpuProcess();
 
-  void SendOutstandingReplies();
+  void SendOutstandingReplies(EstablishChannelStatus failure_status);
 
   void RunRequestGPUInfoCallbacks(const gpu::GPUInfo& gpu_info);
 
@@ -265,10 +273,7 @@ class GpuProcessHost : public BrowserChildProcessHostDelegate,
   // of a separate GPU process.
   bool in_process_;
 
-  bool swiftshader_rendering_;
   GpuProcessKind kind_;
-
-  std::unique_ptr<base::Thread> in_process_gpu_thread_;
 
   // Whether we actually launched a GPU process.
   bool process_launched_;
@@ -278,18 +283,20 @@ class GpuProcessHost : public BrowserChildProcessHostDelegate,
   // Time Init started.  Used to log total GPU process startup time to UMA.
   base::TimeTicks init_start_time_;
 
-  // Master switch for enabling/disabling GPU acceleration for the current
-  // browser session.
-  static bool gpu_enabled_;
-
-  static bool hardware_gpu_enabled_;
-
-  static int gpu_crash_count_;
+  static base::subtle::Atomic32 gpu_crash_count_;
   static int gpu_recent_crash_count_;
   static bool crashed_before_;
   static int swiftshader_crash_count_;
+  static int swiftshader_recent_crash_count_;
+  static int display_compositor_crash_count_;
+  static int display_compositor_recent_crash_count_;
 
+  // Here the bottom-up destruction order matters:
+  // The GPU thread depends on its host so stop the host last.
+  // Otherwise, under rare timings when the thread is still in Init(),
+  // it could crash as it fails to find a message pipe to the host.
   std::unique_ptr<BrowserChildProcessHostImpl> process_;
+  std::unique_ptr<base::Thread> in_process_gpu_thread_;
 
   // Track the URLs of the pages which have live offscreen contexts,
   // assumed to be associated with untrusted content such as WebGL.

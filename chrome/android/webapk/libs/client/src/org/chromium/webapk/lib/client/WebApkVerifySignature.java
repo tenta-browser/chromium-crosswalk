@@ -27,7 +27,9 @@ public class WebApkVerifySignature {
     @IntDef({
             ERROR_OK, ERROR_BAD_APK, ERROR_EXTRA_FIELD_TOO_LARGE, ERROR_FILE_COMMENT_TOO_LARGE,
             ERROR_INCORRECT_SIGNATURE, ERROR_SIGNATURE_NOT_FOUND, ERROR_TOO_MANY_META_INF_FILES,
+            ERROR_BAD_BLANK_SPACE, ERROR_BAD_V2_SIGNING_BLOCK,
     })
+    @SuppressWarnings("JavaLangClash")
     public @interface Error {}
     public static final int ERROR_OK = 0;
     public static final int ERROR_BAD_APK = 1;

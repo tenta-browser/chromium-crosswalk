@@ -11,7 +11,6 @@
 #include <string>
 
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/time/time.h"
 #include "cc/scheduler/compositor_timing_history.h"
 #include "cc/scheduler/scheduler.h"
@@ -33,8 +32,10 @@ class FakeCompositorTimingHistory : public CompositorTimingHistory {
   void SetBeginMainFrameQueueDurationCriticalEstimate(base::TimeDelta duration);
   void SetBeginMainFrameQueueDurationNotCriticalEstimate(
       base::TimeDelta duration);
-  void SetBeginMainFrameStartToCommitDurationEstimate(base::TimeDelta duration);
+  void SetBeginMainFrameStartToReadyToCommitDurationEstimate(
+      base::TimeDelta duration);
   void SetCommitToReadyToActivateDurationEstimate(base::TimeDelta duration);
+  void SetCommitDurationEstimate(base::TimeDelta duration);
   void SetPrepareTilesDurationEstimate(base::TimeDelta duration);
   void SetActivateDurationEstimate(base::TimeDelta duration);
   void SetDrawDurationEstimate(base::TimeDelta duration);
@@ -42,7 +43,9 @@ class FakeCompositorTimingHistory : public CompositorTimingHistory {
   base::TimeDelta BeginMainFrameQueueDurationCriticalEstimate() const override;
   base::TimeDelta BeginMainFrameQueueDurationNotCriticalEstimate()
       const override;
-  base::TimeDelta BeginMainFrameStartToCommitDurationEstimate() const override;
+  base::TimeDelta BeginMainFrameStartToReadyToCommitDurationEstimate()
+      const override;
+  base::TimeDelta CommitDurationEstimate() const override;
   base::TimeDelta CommitToReadyToActivateDurationEstimate() const override;
   base::TimeDelta PrepareTilesDurationEstimate() const override;
   base::TimeDelta ActivateDurationEstimate() const override;
@@ -58,7 +61,8 @@ class FakeCompositorTimingHistory : public CompositorTimingHistory {
 
   base::TimeDelta begin_main_frame_queue_duration_critical_;
   base::TimeDelta begin_main_frame_queue_duration_not_critical_;
-  base::TimeDelta begin_main_frame_start_to_commit_duration_;
+  base::TimeDelta begin_main_frame_start_to_ready_to_commit_duration_;
+  base::TimeDelta commit_duration_;
   base::TimeDelta commit_to_ready_to_activate_duration_;
   base::TimeDelta prepare_tiles_duration_;
   base::TimeDelta activate_duration_;
@@ -71,7 +75,7 @@ class FakeCompositorTimingHistory : public CompositorTimingHistory {
 class TestScheduler : public Scheduler {
  public:
   TestScheduler(
-      base::SimpleTestTickClock* now_src,
+      const base::TickClock* now_src,
       SchedulerClient* client,
       const SchedulerSettings& scheduler_settings,
       int layer_tree_host_id,
@@ -122,12 +126,14 @@ class TestScheduler : public Scheduler {
     return state_machine_.ImplLatencyTakesPriority();
   }
 
+  const SchedulerStateMachine& state_machine() const { return state_machine_; }
+
  protected:
   // Overridden from Scheduler.
   base::TimeTicks Now() const override;
 
  private:
-  base::SimpleTestTickClock* now_src_;
+  const base::TickClock* now_src_;
 
   DISALLOW_COPY_AND_ASSIGN(TestScheduler);
 };

@@ -13,7 +13,6 @@
 
 #include "base/callback.h"
 #include "base/lazy_instance.h"
-#include "base/memory/ptr_util.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "build/build_config.h"
 #include "cc/base/switches.h"
@@ -27,10 +26,10 @@
 #include "content/common/gpu_stream_constants.h"
 #include "content/common/renderer.mojom.h"
 #include "content/common/unique_name_helper.h"
+#include "content/public/browser/storage_partition.h"
 #include "content/public/common/page_state.h"
 #include "content/public/common/screen_info.h"
 #include "content/public/renderer/renderer_gamepad_provider.h"
-#include "content/renderer/fetchers/manifest_fetcher.h"
 #include "content/renderer/gpu/render_widget_compositor.h"
 #include "content/renderer/input/render_widget_input_handler_delegate.h"
 #include "content/renderer/layout_test_dependencies.h"
@@ -45,15 +44,16 @@
 #include "content/shell/test_runner/web_frame_test_proxy.h"
 #include "content/shell/test_runner/web_view_test_proxy.h"
 #include "content/shell/test_runner/web_widget_test_proxy.h"
-#include "device/sensors/public/cpp/motion_data.h"
-#include "device/sensors/public/cpp/orientation_data.h"
 #include "gpu/ipc/service/image_transport_surface.h"
+#include "services/device/public/cpp/generic_sensor/motion_data.h"
+#include "services/device/public/cpp/generic_sensor/orientation_data.h"
 #include "services/ui/public/cpp/gpu/context_provider_command_buffer.h"
-#include "third_party/WebKit/public/platform/WebFloatRect.h"
-#include "third_party/WebKit/public/platform/WebInputEvent.h"
-#include "third_party/WebKit/public/platform/WebRect.h"
-#include "third_party/WebKit/public/platform/scheduler/test/renderer_scheduler_test_support.h"
-#include "third_party/WebKit/public/web/WebView.h"
+#include "third_party/blink/public/platform/scheduler/test/renderer_scheduler_test_support.h"
+#include "third_party/blink/public/platform/web_float_rect.h"
+#include "third_party/blink/public/platform/web_input_event.h"
+#include "third_party/blink/public/platform/web_rect.h"
+#include "third_party/blink/public/web/web_view.h"
+#include "ui/base/ui_base_switches.h"
 #include "ui/events/blink/blink_event_util.h"
 #include "ui/gfx/geometry/vector2d.h"
 #include "ui/gfx/icc_profile.h"
@@ -63,7 +63,7 @@
 #include "content/browser/frame_host/popup_menu_helper_mac.h"
 #elif defined(OS_WIN)
 #include "content/child/font_warmup_win.h"
-#include "third_party/WebKit/public/web/win/WebFontRendering.h"
+#include "third_party/blink/public/web/win/web_font_rendering.h"
 #include "third_party/skia/include/core/SkRefCnt.h"
 #include "third_party/skia/include/ports/SkFontMgr.h"
 #include "third_party/skia/include/ports/SkTypeface_win.h"
@@ -91,27 +91,28 @@ base::LazyInstance<FrameProxyCreationCallback>::Leaky
 using WebViewTestProxyType =
     test_runner::WebViewTestProxy<RenderViewImpl,
                                   CompositorDependencies*,
-                                  const mojom::CreateViewParams&>;
-using WebWidgetTestProxyType =
-    test_runner::WebWidgetTestProxy<RenderWidget,
-                                    int32_t,
-                                    CompositorDependencies*,
-                                    blink::WebPopupType,
-                                    const ScreenInfo&,
-                                    bool,
-                                    bool,
-                                    bool>;
+                                  const mojom::CreateViewParams&,
+                                  scoped_refptr<base::SingleThreadTaskRunner>>;
+using WebWidgetTestProxyType = test_runner::WebWidgetTestProxy<
+    RenderWidget,
+    int32_t,
+    CompositorDependencies*,
+    blink::WebPopupType,
+    const ScreenInfo&,
+    bool,
+    bool,
+    bool,
+    scoped_refptr<base::SingleThreadTaskRunner>>;
 using WebFrameTestProxyType =
     test_runner::WebFrameTestProxy<RenderFrameImpl,
                                    RenderFrameImpl::CreateParams>;
 
 RenderViewImpl* CreateWebViewTestProxy(CompositorDependencies* compositor_deps,
                                        const mojom::CreateViewParams& params) {
-  WebViewTestProxyType* render_view_proxy =
-      new WebViewTestProxyType(compositor_deps, params);
-  if (g_view_test_proxy_callback == nullptr)
-    return render_view_proxy;
-  g_view_test_proxy_callback.Get().Run(render_view_proxy, render_view_proxy);
+  WebViewTestProxyType* render_view_proxy = new WebViewTestProxyType(
+      compositor_deps, params, base::ThreadTaskRunnerHandle::Get());
+  if (g_view_test_proxy_callback.IsCreated())
+    g_view_test_proxy_callback.Get().Run(render_view_proxy, render_view_proxy);
   return render_view_proxy;
 }
 
@@ -124,7 +125,7 @@ RenderWidget* CreateWebWidgetTestProxy(int32_t routing_id,
                                        bool never_visible) {
   WebWidgetTestProxyType* render_widget_proxy = new WebWidgetTestProxyType(
       routing_id, compositor_deps, popup_type, screen_info, swapped_out, hidden,
-      never_visible);
+      never_visible, base::ThreadTaskRunnerHandle::Get());
   return render_widget_proxy;
 }
 
@@ -140,9 +141,10 @@ void RenderWidgetInitialized(RenderWidget* render_widget) {
 RenderFrameImpl* CreateWebFrameTestProxy(RenderFrameImpl::CreateParams params) {
   WebFrameTestProxyType* render_frame_proxy =
       new WebFrameTestProxyType(std::move(params));
-  if (g_frame_test_proxy_callback == nullptr)
-    return render_frame_proxy;
-  g_frame_test_proxy_callback.Get().Run(render_frame_proxy, render_frame_proxy);
+  if (g_frame_test_proxy_callback.IsCreated()) {
+    g_frame_test_proxy_callback.Get().Run(render_frame_proxy,
+                                          render_frame_proxy);
+  }
   return render_frame_proxy;
 }
 
@@ -241,29 +243,10 @@ void EnableWebTestProxyCreation(
   RenderFrameImpl::InstallCreateHook(CreateWebFrameTestProxy);
 }
 
-void FetchManifestDoneCallback(std::unique_ptr<ManifestFetcher> fetcher,
-                               const FetchManifestCallback& callback,
-                               const blink::WebURLResponse& response,
-                               const std::string& data) {
-  // |fetcher| will be autodeleted here as it is going out of scope.
-  callback.Run(response, data);
-}
-
-void FetchManifest(blink::WebView* view, const GURL& url,
-                   const FetchManifestCallback& callback) {
-  ManifestFetcher* fetcher = new ManifestFetcher(url);
-  std::unique_ptr<ManifestFetcher> autodeleter(fetcher);
-
-  // Start is called on fetcher which is also bound to the callback.
-  // A raw pointer is used instead of a scoped_ptr as base::Passes passes
-  // ownership and thus nulls the scoped_ptr. On MSVS this happens before
-  // the call to Start, resulting in a crash.
-  CHECK(view->MainFrame()->IsWebLocalFrame())
-      << "This function cannot be called if the main frame is not a "
-         "local frame.";
-  fetcher->Start(view->MainFrame()->ToWebLocalFrame(), false,
-                 base::Bind(&FetchManifestDoneCallback,
-                            base::Passed(&autodeleter), callback));
+void FetchManifest(blink::WebView* view, FetchManifestCallback callback) {
+  RenderFrameImpl::FromWebFrame(view->MainFrame())
+      ->GetManifestManager()
+      .RequestManifest(std::move(callback));
 }
 
 void SetMockGamepadProvider(std::unique_ptr<RendererGamepadProvider> provider) {
@@ -303,7 +286,8 @@ class CopyRequestSwapPromise : public cc::SwapPromise {
     DCHECK(layer_tree_frame_sink_from_commit_);
   }
   void DidActivate() override {}
-  void WillSwap(viz::CompositorFrameMetadata*) override {
+  void WillSwap(viz::CompositorFrameMetadata*,
+                cc::FrameTokenAllocator*) override {
     layer_tree_frame_sink_from_commit_->RequestCopyOfOutput(
         std::move(copy_request_));
   }
@@ -330,13 +314,14 @@ class LayoutTestDependenciesImpl : public LayoutTestDependencies,
       int32_t routing_id,
       scoped_refptr<gpu::GpuChannelHost> gpu_channel,
       scoped_refptr<viz::ContextProvider> compositor_context_provider,
-      scoped_refptr<viz::ContextProvider> worker_context_provider,
+      scoped_refptr<viz::RasterContextProvider> worker_context_provider,
       gpu::GpuMemoryBufferManager* gpu_memory_buffer_manager,
       CompositorDependencies* deps) override {
     // This could override the GpuChannel for a LayerTreeFrameSink that was
     // previously being created but in that case the old GpuChannel would be
     // lost as would the LayerTreeFrameSink.
     gpu_channel_ = gpu_channel;
+    gpu_memory_buffer_manager_ = gpu_memory_buffer_manager;
 
     auto* task_runner = deps->GetCompositorImplThreadTaskRunner().get();
     bool synchronous_composite = !task_runner;
@@ -348,6 +333,11 @@ class LayoutTestDependenciesImpl : public LayoutTestDependencies,
     renderer_settings.allow_antialiasing &=
         !cmd->HasSwitch(cc::switches::kDisableCompositedAntialiasing);
     renderer_settings.highp_threshold_min = 2048;
+    // Keep texture sizes exactly matching the bounds of the RenderPass to avoid
+    // floating point badness in texcoords.
+    renderer_settings.dont_round_texture_sizes_for_pixel_tests = true;
+    renderer_settings.use_skia_renderer =
+        cmd->HasSwitch(switches::kUseSkiaRenderer);
 
     constexpr bool disable_display_vsync = false;
     constexpr double refresh_rate = 60.0;
@@ -383,7 +373,7 @@ class LayoutTestDependenciesImpl : public LayoutTestDependencies,
       override {
     // This is for an offscreen context for the compositor. So the default
     // framebuffer doesn't need alpha, depth, stencil, antialiasing.
-    gpu::gles2::ContextCreationAttribHelper attributes;
+    gpu::ContextCreationAttribs attributes;
     attributes.alpha_size = -1;
     attributes.depth_size = 0;
     attributes.stencil_size = 0;
@@ -393,17 +383,25 @@ class LayoutTestDependenciesImpl : public LayoutTestDependencies,
     attributes.lose_context_when_out_of_memory = true;
     const bool automatic_flushes = false;
     const bool support_locking = false;
+    const bool support_grcontext = true;
 
-    auto context_provider =
-        base::MakeRefCounted<ui::ContextProviderCommandBuffer>(
-            gpu_channel_, kGpuStreamIdDefault, kGpuStreamPriorityDefault,
-            gpu::kNullSurfaceHandle,
-            GURL("chrome://gpu/"
-                 "LayoutTestDependenciesImpl::CreateOutputSurface"),
-            automatic_flushes, support_locking, gpu::SharedMemoryLimits(),
-            attributes, nullptr,
-            ui::command_buffer_metrics::OFFSCREEN_CONTEXT_FOR_TESTING);
-    context_provider->BindToCurrentThread();
+    scoped_refptr<viz::ContextProvider> context_provider;
+
+    gpu::ContextResult context_result = gpu::ContextResult::kTransientFailure;
+    while (context_result != gpu::ContextResult::kSuccess) {
+      context_provider = base::MakeRefCounted<ui::ContextProviderCommandBuffer>(
+          gpu_channel_, gpu_memory_buffer_manager_, kGpuStreamIdDefault,
+          kGpuStreamPriorityDefault, gpu::kNullSurfaceHandle,
+          GURL("chrome://gpu/"
+               "LayoutTestDependenciesImpl::CreateOutputSurface"),
+          automatic_flushes, support_locking, support_grcontext,
+          gpu::SharedMemoryLimits(), attributes, nullptr,
+          ui::command_buffer_metrics::OFFSCREEN_CONTEXT_FOR_TESTING);
+      context_result = context_provider->BindToCurrentThread();
+
+      // Layout tests can't recover from a fatal failure.
+      CHECK_NE(context_result, gpu::ContextResult::kFatalFailure);
+    }
 
     bool flipped_output_surface = false;
     return std::make_unique<cc::PixelTestOutputSurface>(
@@ -431,6 +429,7 @@ class LayoutTestDependenciesImpl : public LayoutTestDependencies,
   std::unordered_map<int32_t, viz::TestLayerTreeFrameSink*>
       layer_tree_frame_sinks_;
   scoped_refptr<gpu::GpuChannelHost> gpu_channel_;
+  gpu::GpuMemoryBufferManager* gpu_memory_buffer_manager_ = nullptr;
 };
 
 void EnableRendererLayoutTestMode() {
@@ -452,8 +451,10 @@ void EnableBrowserLayoutTestMode() {
   RenderWidgetHostImpl::DisableResizeAckCheckForTesting();
 }
 
-void TerminateAllSharedWorkersForTesting(base::OnceClosure callback) {
-  static_cast<SharedWorkerServiceImpl*>(SharedWorkerService::GetInstance())
+void TerminateAllSharedWorkersForTesting(StoragePartition* storage_partition,
+                                         base::OnceClosure callback) {
+  static_cast<SharedWorkerServiceImpl*>(
+      storage_partition->GetSharedWorkerService())
       ->TerminateAllWorkersForTesting(std::move(callback));
 }
 
@@ -516,8 +517,19 @@ void SetDeviceColorSpace(RenderView* render_view,
       ->SetDeviceColorSpaceForTesting(color_space);
 }
 
-void SetTestBluetoothScanDuration() {
-  BluetoothDeviceChooserController::SetTestScanDurationForTesting();
+void SetTestBluetoothScanDuration(BluetoothTestScanDurationSetting setting) {
+  switch (setting) {
+    case BluetoothTestScanDurationSetting::kImmediateTimeout:
+      BluetoothDeviceChooserController::SetTestScanDurationForTesting(
+          BluetoothDeviceChooserController::TestScanDurationSetting::
+              IMMEDIATE_TIMEOUT);
+      break;
+    case BluetoothTestScanDurationSetting::kNeverTimeout:
+      BluetoothDeviceChooserController::SetTestScanDurationForTesting(
+          BluetoothDeviceChooserController::TestScanDurationSetting::
+              NEVER_TIMEOUT);
+      break;
+  }
 }
 
 void UseSynchronousResizeMode(RenderView* render_view, bool enable) {
@@ -538,8 +550,8 @@ void DisableAutoResizeMode(RenderView* render_view, const WebSize& new_size) {
 }
 
 void SchedulerRunIdleTasks(const base::Closure& callback) {
-  blink::scheduler::RendererScheduler* scheduler =
-      content::RenderThreadImpl::current()->GetRendererScheduler();
+  blink::scheduler::WebMainThreadScheduler* scheduler =
+      content::RenderThreadImpl::current()->GetWebMainThreadScheduler();
   blink::scheduler::RunIdleTasksForTesting(scheduler, callback);
 }
 

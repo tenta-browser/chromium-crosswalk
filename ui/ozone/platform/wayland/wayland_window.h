@@ -11,6 +11,7 @@
 #include "ui/gfx/native_widget_types.h"
 #include "ui/ozone/platform/wayland/wayland_object.h"
 #include "ui/platform_window/platform_window.h"
+#include "ui/platform_window/platform_window_delegate.h"
 
 namespace ui {
 
@@ -34,7 +35,7 @@ class WaylandWindow : public PlatformWindow, public PlatformEventDispatcher {
 
   bool Initialize();
 
-  wl_surface* surface() { return surface_.get(); }
+  wl_surface* surface() const { return surface_.get(); }
 
   // Apply the bounds specified in the most recent configure event. This should
   // be called after processing all pending events in the wayland connection.
@@ -42,9 +43,20 @@ class WaylandWindow : public PlatformWindow, public PlatformEventDispatcher {
 
   // Set whether this window has pointer focus and should dispatch mouse events.
   void set_pointer_focus(bool focus) { has_pointer_focus_ = focus; }
+  bool has_pointer_focus() const { return has_pointer_focus_; }
 
   // Set whether this window has keyboard focus and should dispatch key events.
   void set_keyboard_focus(bool focus) { has_keyboard_focus_ = focus; }
+
+  // Set whether this window has touch focus and should dispatch touch events.
+  void set_touch_focus(bool focus) { has_touch_focus_ = focus; }
+
+  // Set whether this window has an implicit grab (often referred to as capture
+  // in Chrome code). Implicit grabs happen while a pointer is down.
+  void set_has_implicit_grab(bool value) { has_implicit_grab_ = value; }
+  bool has_implicit_grab() const { return has_implicit_grab_; }
+
+  bool is_active() const { return is_active_; }
 
   // PlatformWindow
   void Show() override;
@@ -56,6 +68,7 @@ class WaylandWindow : public PlatformWindow, public PlatformEventDispatcher {
   void SetTitle(const base::string16& title) override;
   void SetCapture() override;
   void ReleaseCapture() override;
+  bool HasCapture() const override;
   void ToggleFullscreen() override;
   void Maximize() override;
   void Minimize() override;
@@ -69,11 +82,21 @@ class WaylandWindow : public PlatformWindow, public PlatformEventDispatcher {
   bool CanDispatchEvent(const PlatformEvent& event) override;
   uint32_t DispatchEvent(const PlatformEvent& event) override;
 
-  void HandleSurfaceConfigure(int32_t widht, int32_t height);
+  void HandleSurfaceConfigure(int32_t widht,
+                              int32_t height,
+                              bool is_maximized,
+                              bool is_fullscreen,
+                              bool is_activated);
 
   void OnCloseRequest();
 
  private:
+  bool IsMinimized() const;
+  bool IsMaximized() const;
+  bool IsFullscreen() const;
+
+  void SetPendingBounds(int32_t width, int32_t height);
+
   // Creates a surface window, which is visible as a main window.
   void CreateXdgSurface();
 
@@ -94,8 +117,17 @@ class WaylandWindow : public PlatformWindow, public PlatformEventDispatcher {
 
   gfx::Rect bounds_;
   gfx::Rect pending_bounds_;
+  // The bounds of our window before we were maximized or fullscreen.
+  gfx::Rect restored_bounds_;
   bool has_pointer_focus_ = false;
   bool has_keyboard_focus_ = false;
+  bool has_touch_focus_ = false;
+  bool has_implicit_grab_ = false;
+
+  // Stores current states of the window.
+  ui::PlatformWindowState state_;
+
+  bool is_active_ = false;
 
   DISALLOW_COPY_AND_ASSIGN(WaylandWindow);
 };

@@ -15,6 +15,7 @@
 #include "chrome/browser/ui/browser_window.h"
 #import "chrome/browser/ui/cocoa/accelerators_cocoa.h"
 #import "chrome/browser/ui/cocoa/browser_window_controller.h"
+#import "chrome/browser/ui/cocoa/browser_window_views_mac.h"
 #import "chrome/browser/ui/cocoa/fast_resize_view.h"
 #import "chrome/browser/ui/cocoa/last_active_browser_cocoa.h"
 #include "chrome/grit/generated_resources.h"
@@ -65,6 +66,21 @@ NSString* const kRemindersSharingServiceName =
 }
 
 // NSMenuDelegate
+
+- (BOOL)menuHasKeyEquivalent:(NSMenu*)menu
+                    forEvent:(NSEvent*)event
+                      target:(id*)target
+                      action:(SEL*)action {
+  // Load the menu if it hasn't loaded already.
+  if ([menu numberOfItems] == 0) {
+    [self menuNeedsUpdate:menu];
+  }
+  // Per tapted@'s comment in BookmarkMenuCocoaController, it's fine
+  // to return NO here if an item will handle this. This is why it's
+  // necessary to ensure the menu is loaded above.
+  return NO;
+}
+
 - (void)menuNeedsUpdate:(NSMenu*)menu {
   [menu removeAllItems];
   [menu setAutoenablesItems:NO];
@@ -140,7 +156,9 @@ NSString* const kRemindersSharingServiceName =
 - (void)saveTransitionDataFromBrowser:(Browser*)browser {
   windowForShare_ = browser->window()->GetNativeWindow();
 
-  NSView* contentsView = [[windowForShare_ windowController] tabContentArea];
+  TabWindowController* tabWindowController =
+      TabWindowControllerForWindow(windowForShare_);
+  NSView* contentsView = [tabWindowController tabContentArea];
   NSRect rectInWindow =
       [[contentsView superview] convertRect:[contentsView frame] toView:nil];
   rectForShare_ = [windowForShare_ convertRectToScreen:rectInWindow];

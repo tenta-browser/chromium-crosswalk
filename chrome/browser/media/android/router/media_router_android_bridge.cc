@@ -6,12 +6,15 @@
 
 #include "base/android/jni_android.h"
 #include "base/android/jni_string.h"
+#include "chrome/browser/media/android/remote/media_controller_bridge.h"
 #include "chrome/browser/media/android/router/media_router_android.h"
+#include "content/public/browser/media_controller.h"
 #include "jni/ChromeMediaRouter_jni.h"
 
 using base::android::ConvertUTF8ToJavaString;
 using base::android::ConvertJavaStringToUTF8;
 using base::android::JavaRef;
+using base::android::ScopedJavaGlobalRef;
 using base::android::ScopedJavaLocalRef;
 using base::android::AttachCurrentThread;
 
@@ -24,7 +27,14 @@ MediaRouterAndroidBridge::MediaRouterAndroidBridge(MediaRouterAndroid* router)
       Java_ChromeMediaRouter_create(env, reinterpret_cast<jlong>(this)));
 }
 
-MediaRouterAndroidBridge::~MediaRouterAndroidBridge() = default;
+MediaRouterAndroidBridge::~MediaRouterAndroidBridge() {
+  JNIEnv* env = base::android::AttachCurrentThread();
+  // When |this| is destroyed, there might still pending runnables on the Java
+  // side, that are keeping the Java object alive. These runnables might try to
+  // call back to the native side when executed. We need to signal to the Java
+  // counterpart that it can't call back into native anymore.
+  Java_ChromeMediaRouter_teardown(env, java_media_router_);
+}
 
 void MediaRouterAndroidBridge::CreateRoute(const MediaSource::Id& source_id,
                                            const MediaSink::Id& sink_id,
@@ -108,6 +118,23 @@ void MediaRouterAndroidBridge::StopObservingMediaSinks(
       base::android::ConvertUTF8ToJavaString(env, source_id);
   Java_ChromeMediaRouter_stopObservingMediaSinks(env, java_media_router_,
                                                  jsource_id);
+}
+
+std::unique_ptr<content::MediaController>
+MediaRouterAndroidBridge::GetMediaController(const MediaRoute::Id& route_id) {
+  JNIEnv* env = base::android::AttachCurrentThread();
+  ScopedJavaLocalRef<jstring> jroute_id =
+      base::android::ConvertUTF8ToJavaString(env, route_id);
+
+  ScopedJavaGlobalRef<jobject> media_controller;
+
+  media_controller.Reset(Java_ChromeMediaRouter_getMediaControllerBridge(
+      env, java_media_router_, jroute_id));
+
+  if (media_controller.is_null())
+    return nullptr;
+
+  return std::make_unique<MediaControllerBridge>(media_controller);
 }
 
 void MediaRouterAndroidBridge::OnSinksReceived(

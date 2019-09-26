@@ -83,26 +83,21 @@ DateTimeHandler* DateTimeHandler::Create(
       "timeZoneID",
       system::TimezoneSettings::GetInstance()->GetCurrentTimezoneID());
 
-  if (!IsTimezoneAutomaticDetectionUserEditable()) {
-    html_source->AddBoolean("timeZoneAutoDetectValueFromPolicy",
-                            g_browser_process->platform_part()
-                                ->GetTimezoneResolverManager()
-                                ->ShouldApplyResolvedTimezone());
-  }
-
   return new DateTimeHandler;
 }
 
 void DateTimeHandler::RegisterMessages() {
   web_ui()->RegisterMessageCallback(
-      "dateTimePageReady", base::Bind(&DateTimeHandler::HandleDateTimePageReady,
-                                      base::Unretained(this)));
+      "dateTimePageReady",
+      base::BindRepeating(&DateTimeHandler::HandleDateTimePageReady,
+                          base::Unretained(this)));
   web_ui()->RegisterMessageCallback(
-      "getTimeZones",
-      base::Bind(&DateTimeHandler::HandleGetTimeZones, base::Unretained(this)));
+      "getTimeZones", base::BindRepeating(&DateTimeHandler::HandleGetTimeZones,
+                                          base::Unretained(this)));
   web_ui()->RegisterMessageCallback(
-      "showSetDateTimeUI", base::Bind(&DateTimeHandler::HandleShowSetDateTimeUI,
-                                      base::Unretained(this)));
+      "showSetDateTimeUI",
+      base::BindRepeating(&DateTimeHandler::HandleShowSetDateTimeUI,
+                          base::Unretained(this)));
 }
 
 void DateTimeHandler::OnJavascriptAllowed() {

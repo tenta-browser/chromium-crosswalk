@@ -101,6 +101,14 @@
   [self start];
 }
 
+- (void)dismissLanguageSelector {
+  if (!self.started)
+    return;
+
+  [self.selectionDelegate languageSelectorClosedWithoutSelection];
+  [self.presenter dismissAnimated:NO];
+}
+
 #pragma mark - LanguageSelectionViewControllerDelegate
 
 - (void)languageSelectedAtIndex:(int)index {
@@ -116,6 +124,10 @@
 }
 
 #pragma mark - ContainedPresenterDelegate
+
+- (void)containedPresenterDidPresent:(id<ContainedPresenter>)presenter {
+  DCHECK(presenter == self.presenter);
+}
 
 - (void)containedPresenterDidDismiss:(id<ContainedPresenter>)presenter {
   DCHECK(presenter == self.presenter);

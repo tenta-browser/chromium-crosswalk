@@ -15,6 +15,7 @@
 #include "chrome/browser/media/webrtc/media_stream_capture_indicator.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/themes/theme_properties.h"
+#include "chrome/browser/ui/layout_constants.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/browser/usb/usb_tab_helper.h"
 #include "chrome/common/chrome_switches.h"
@@ -116,14 +117,17 @@ bool ShouldTabShowFavicon(int capacity,
                           TabAlertState alert_state) {
   if (!has_favicon)
     return false;
-  int required_capacity = 1;
+
+  int other_icons = 0;
   if (ShouldTabShowCloseButton(capacity, is_pinned_tab, is_active_tab))
-    ++required_capacity;
+    ++other_icons;
   if (ShouldTabShowAlertIndicator(capacity, is_pinned_tab, is_active_tab,
-                                  has_favicon, alert_state)) {
-    ++required_capacity;
-  }
-  return capacity >= required_capacity;
+                                  has_favicon, alert_state))
+    ++other_icons;
+
+  // The favicon can be centered and clipped when it's alone, so if there are no
+  // other icons to show, we can show the favicon even when there's no capacity.
+  return !other_icons || (capacity > other_icons);
 }
 
 bool ShouldTabShowAlertIndicator(int capacity,
@@ -170,10 +174,11 @@ TabAlertState GetTabAlertStateForContents(content::WebContents* contents) {
   if (usb_tab_helper && usb_tab_helper->IsDeviceConnected())
     return TabAlertState::USB_CONNECTED;
 
-  if (contents->IsAudioMuted())
-    return TabAlertState::AUDIO_MUTING;
-  if (contents->WasRecentlyAudible())
+  if (contents->WasRecentlyAudible()) {
+    if (contents->IsAudioMuted())
+      return TabAlertState::AUDIO_MUTING;
     return TabAlertState::AUDIO_PLAYING;
+  }
 
   return TabAlertState::NONE;
 }
@@ -181,18 +186,26 @@ TabAlertState GetTabAlertStateForContents(content::WebContents* contents) {
 gfx::Image GetTabAlertIndicatorImage(TabAlertState alert_state,
                                      SkColor button_color) {
   const gfx::VectorIcon* icon = nullptr;
+  int image_width = GetLayoutConstant(TAB_ALERT_INDICATOR_ICON_WIDTH);
+  const bool is_touch_optimized_ui =
+      ui::MaterialDesignController::IsTouchOptimizedUiEnabled();
   switch (alert_state) {
     case TabAlertState::AUDIO_PLAYING:
-      icon = &kTabAudioIcon;
+      icon = is_touch_optimized_ui ? &kTabAudioRoundedIcon : &kTabAudioIcon;
       break;
     case TabAlertState::AUDIO_MUTING:
-      icon = &kTabAudioMutingIcon;
+      icon = is_touch_optimized_ui ? &kTabAudioMutingRoundedIcon
+                                   : &kTabAudioMutingIcon;
       break;
     case TabAlertState::MEDIA_RECORDING:
       icon = &kTabMediaRecordingIcon;
       break;
     case TabAlertState::TAB_CAPTURING:
-      icon = &kTabMediaCapturingIcon;
+      icon = is_touch_optimized_ui ? &kTabMediaCapturingWithArrowIcon
+                                   : &kTabMediaCapturingIcon;
+      // Tab capturing and presenting icon uses a different width compared to
+      // the other tab alert indicator icons.
+      image_width = GetLayoutConstant(TAB_ALERT_INDICATOR_CAPTURE_ICON_WIDTH);
       break;
     case TabAlertState::BLUETOOTH_CONNECTED:
       icon = &kTabBluetoothConnectedIcon;
@@ -204,7 +217,7 @@ gfx::Image GetTabAlertIndicatorImage(TabAlertState alert_state,
       return gfx::Image();
   }
   DCHECK(icon);
-  return gfx::Image(gfx::CreateVectorIcon(*icon, 16, button_color));
+  return gfx::Image(gfx::CreateVectorIcon(*icon, image_width, button_color));
 }
 
 gfx::Image GetTabAlertIndicatorAffordanceImage(TabAlertState alert_state,

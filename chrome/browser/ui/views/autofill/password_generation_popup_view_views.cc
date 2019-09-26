@@ -6,10 +6,12 @@
 
 #include "base/macros.h"
 #include "base/strings/string16.h"
+#include "build/build_config.h"
 #include "chrome/app/vector_icons/vector_icons.h"
 #include "chrome/browser/ui/autofill/password_generation_popup_controller.h"
 #include "chrome/browser/ui/autofill/popup_constants.h"
 #include "chrome/browser/ui/views/harmony/chrome_typography.h"
+#include "chrome/browser/ui/views_mode_controller.h"
 #include "ui/accessibility/ax_node_data.h"
 #include "ui/base/material_design/material_design_controller.h"
 #include "ui/base/resource/resource_bundle.h"
@@ -45,11 +47,11 @@ class PasswordTextBox : public views::View {
   // |generated_password| is the generated password.
   void Init(const base::string16& suggestion_text,
             const base::string16& generated_password) {
-    views::BoxLayout* box_layout = new views::BoxLayout(
+    auto box_layout = std::make_unique<views::BoxLayout>(
         views::BoxLayout::kVertical, gfx::Insets(12, 0), 5);
     box_layout->set_main_axis_alignment(
         views::BoxLayout::MAIN_AXIS_ALIGNMENT_START);
-    SetLayoutManager(box_layout);
+    SetLayoutManager(std::move(box_layout));
 
     views::Label* suggestion_label = new views::Label(
         suggestion_text, CONTEXT_DEPRECATED_SMALL, STYLE_EMPHASIZED);
@@ -88,13 +90,13 @@ class PasswordGenerationPopupViewViews::PasswordBox : public views::View {
   // |password| is the generated password, |suggestion| is the text prompting
   // the user to select the password.
   void Init(const base::string16& password, const base::string16& suggestion) {
-    views::BoxLayout* box_layout = new views::BoxLayout(
+    auto box_layout = std::make_unique<views::BoxLayout>(
         views::BoxLayout::kHorizontal,
         gfx::Insets(0, PasswordGenerationPopupController::kHorizontalPadding),
         PasswordGenerationPopupController::kHorizontalPadding);
     box_layout->set_main_axis_alignment(
         views::BoxLayout::MAIN_AXIS_ALIGNMENT_START);
-    SetLayoutManager(box_layout);
+    SetLayoutManager(std::move(box_layout));
 
     views::ImageView* key_image = new views::ImageView();
     key_image->SetImage(
@@ -202,7 +204,7 @@ void PasswordGenerationPopupViewViews::PasswordSelectionUpdated() {
     return;
 
   if (controller_->password_selected())
-    NotifyAccessibilityEvent(ui::AX_EVENT_SELECTION, true);
+    NotifyAccessibilityEvent(ax::mojom::Event::kSelection, true);
 
   password_view_->SetBackground(views::CreateThemedSolidBackground(
       password_view_,
@@ -261,6 +263,10 @@ bool PasswordGenerationPopupViewViews::IsPointInPasswordBounds(
 
 PasswordGenerationPopupView* PasswordGenerationPopupView::Create(
     PasswordGenerationPopupController* controller) {
+#if defined(OS_MACOSX)
+  if (views_mode_controller::IsViewsBrowserCocoa())
+    return CreateCocoa(controller);
+#endif
   views::Widget* observing_widget =
       views::Widget::GetTopLevelWidgetForNativeView(
           controller->container_view());
@@ -276,7 +282,7 @@ PasswordGenerationPopupView* PasswordGenerationPopupView::Create(
 void PasswordGenerationPopupViewViews::GetAccessibleNodeData(
     ui::AXNodeData* node_data) {
   node_data->SetName(controller_->SuggestedText());
-  node_data->role = ui::AX_ROLE_MENU_ITEM;
+  node_data->role = ax::mojom::Role::kMenuItem;
 }
 
 }  // namespace autofill

@@ -64,7 +64,7 @@ class AwAutofillClient : public autofill::AutofillClient,
   scoped_refptr<autofill::AutofillWebDataService> GetDatabase() override;
   PrefService* GetPrefs() override;
   syncer::SyncService* GetSyncService() override;
-  IdentityProvider* GetIdentityProvider() override;
+  identity::IdentityManager* GetIdentityManager() override;
   ukm::UkmRecorder* GetUkmRecorder() override;
   autofill::AddressNormalizer* GetAddressNormalizer() override;
   autofill::SaveCardBubbleController* GetSaveCardBubbleController() override;
@@ -106,6 +106,7 @@ class AwAutofillClient : public autofill::AutofillClient,
   bool IsContextSecure() override;
   bool ShouldShowSigninPromo() override;
   bool IsAutofillSupported() override;
+  bool AreServerCardsSupported() override;
   void ExecuteCommand(int id) override;
 
   void Dismissed(JNIEnv* env, const base::android::JavaParamRef<jobject>& obj);

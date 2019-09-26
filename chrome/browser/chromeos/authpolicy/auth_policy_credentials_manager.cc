@@ -4,14 +4,14 @@
 
 #include "chrome/browser/chromeos/authpolicy/auth_policy_credentials_manager.h"
 
-#include "base/files/file_util.h"
+#include "ash/public/cpp/vector_icons/vector_icons.h"
+#include "base/files/important_file_writer.h"
 #include "base/location.h"
 #include "base/memory/singleton.h"
 #include "base/path_service.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/task_scheduler/post_task.h"
-#include "chrome/app/vector_icons/vector_icons.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/chromeos/profiles/profile_helper.h"
 #include "chrome/browser/lifetime/application_lifetime.h"
@@ -31,10 +31,8 @@
 #include "dbus/message.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/resource/resource_bundle.h"
-#include "ui/message_center/notification.h"
-#include "ui/message_center/notification_delegate.h"
-#include "ui/message_center/public/cpp/message_center_constants.h"
-#include "ui/message_center/public/cpp/message_center_switches.h"
+#include "ui/message_center/public/cpp/notification.h"
+#include "ui/message_center/public/cpp/notification_delegate.h"
 
 namespace {
 
@@ -55,35 +53,8 @@ constexpr char kKrb5ConfEnvName[] = "KRB5_CONFIG";
 // Kerberos config file name.
 constexpr char kKrb5ConfFile[] = "krb5.conf";
 
-// A notification delegate for the sign-out button.
-// TODO(estade): Can this be a HandleNotificationButtonClickDelegate?
-class SigninNotificationDelegate : public message_center::NotificationDelegate {
- public:
-  SigninNotificationDelegate();
-
-  // NotificationDelegate:
-  void Click() override;
-  void ButtonClick(int button_index) override;
-
- protected:
-  ~SigninNotificationDelegate() override = default;
-
- private:
-  DISALLOW_COPY_AND_ASSIGN(SigninNotificationDelegate);
-};
-
-SigninNotificationDelegate::SigninNotificationDelegate() {}
-
-void SigninNotificationDelegate::Click() {
-  chrome::AttemptUserExit();
-}
-
-void SigninNotificationDelegate::ButtonClick(int button_index) {
-  chrome::AttemptUserExit();
-}
-
 // Writes |blob| into file <UserPath>/kerberos/|file_name|. First writes into
-// temporary file and then replace existing one.
+// temporary file and then replaces existing one.
 void WriteFile(const std::string& file_name, const std::string& blob) {
   base::FilePath dir;
   PathService::Get(base::DIR_HOME, &dir);
@@ -94,22 +65,9 @@ void WriteFile(const std::string& file_name, const std::string& blob) {
                << "' directory: " << base::File::ErrorToString(error);
     return;
   }
-
-  base::FilePath temp_file;
-  if (!base::CreateTemporaryFileInDir(dir, &temp_file))
-    return;
-
-  if (base::WriteFile(temp_file, blob.data(), blob.size()) !=
-      static_cast<int>(blob.size())) {
-    LOG(ERROR) << "Failed to write file: " << temp_file.value();
-    return;
-  }
-
   base::FilePath dest_file = dir.Append(file_name);
-  if (!base::ReplaceFile(temp_file, dest_file, &error)) {
-    LOG(ERROR) << "Failed to replace '" << dest_file.value() << "' with '"
-               << temp_file.value()
-               << "' :" << base::File::ErrorToString(error);
+  if (!base::ImportantFileWriter::WriteFileAtomically(dest_file, blob)) {
+    LOG(ERROR) << "Failed to write file " << dest_file.value();
   }
 }
 
@@ -172,8 +130,11 @@ void AuthPolicyCredentialsManager::GetUserStatus() {
   is_get_status_in_progress_ = true;
   rerun_get_status_on_error_ = false;
   scheduled_get_user_status_call_.Cancel();
+  authpolicy::GetUserStatusRequest request;
+  request.set_user_principal_name(account_id_.GetUserEmail());
+  request.set_account_id(account_id_.GetObjGuid());
   chromeos::DBusThreadManager::Get()->GetAuthPolicyClient()->GetUserStatus(
-      account_id_.GetObjGuid(),
+      request,
       base::BindOnce(&AuthPolicyCredentialsManager::OnGetUserStatusCallback,
                      weak_factory_.GetWeakPtr()));
 }
@@ -193,39 +154,45 @@ void AuthPolicyCredentialsManager::OnGetUserStatusCallback(
     }
     return;
   }
-  CHECK(user_status.account_info().account_id() == account_id_.GetObjGuid());
   rerun_get_status_on_error_ = false;
-  if (user_status.has_account_info())
-    UpdateDisplayAndGivenName(user_status.account_info());
 
-  DCHECK(user_status.has_password_status());
-  switch (user_status.password_status()) {
-    case authpolicy::ActiveDirectoryUserStatus::PASSWORD_VALID:
-      // do nothing
-      break;
-    case authpolicy::ActiveDirectoryUserStatus::PASSWORD_EXPIRED:
-      ShowNotification(IDS_ACTIVE_DIRECTORY_PASSWORD_EXPIRED);
-      break;
-    case authpolicy::ActiveDirectoryUserStatus::PASSWORD_CHANGED:
-      ShowNotification(IDS_ACTIVE_DIRECTORY_PASSWORD_CHANGED);
-      break;
+  // user_status.account_info() is missing if the TGT is invalid.
+  if (user_status.has_account_info()) {
+    CHECK(user_status.account_info().account_id() == account_id_.GetObjGuid());
+    UpdateDisplayAndGivenName(user_status.account_info());
   }
 
+  // user_status.password_status() is missing if the TGT is invalid or device is
+  // offline.
+  bool force_online_signin = false;
+  if (user_status.has_password_status()) {
+    switch (user_status.password_status()) {
+      case authpolicy::ActiveDirectoryUserStatus::PASSWORD_VALID:
+        break;
+      case authpolicy::ActiveDirectoryUserStatus::PASSWORD_EXPIRED:
+        ShowNotification(IDS_ACTIVE_DIRECTORY_PASSWORD_EXPIRED);
+        force_online_signin = true;
+        break;
+      case authpolicy::ActiveDirectoryUserStatus::PASSWORD_CHANGED:
+        ShowNotification(IDS_ACTIVE_DIRECTORY_PASSWORD_CHANGED);
+        force_online_signin = true;
+        break;
+    }
+  }
+
+  // user_status.tgt_status() is always present.
   DCHECK(user_status.has_tgt_status());
   switch (user_status.tgt_status()) {
     case authpolicy::ActiveDirectoryUserStatus::TGT_VALID:
-      // do nothing
       break;
     case authpolicy::ActiveDirectoryUserStatus::TGT_EXPIRED:
     case authpolicy::ActiveDirectoryUserStatus::TGT_NOT_FOUND:
       ShowNotification(IDS_ACTIVE_DIRECTORY_REFRESH_AUTH_TOKEN);
       break;
   }
-  const bool ok = user_status.tgt_status() ==
-                      authpolicy::ActiveDirectoryUserStatus::TGT_VALID &&
-                  user_status.password_status() ==
-                      authpolicy::ActiveDirectoryUserStatus::PASSWORD_VALID;
-  user_manager::UserManager::Get()->SaveForceOnlineSignin(account_id_, !ok);
+
+  user_manager::UserManager::Get()->SaveForceOnlineSignin(account_id_,
+                                                          force_online_signin);
 }
 
 void AuthPolicyCredentialsManager::GetUserKerberosFiles() {
@@ -243,12 +210,16 @@ void AuthPolicyCredentialsManager::OnGetUserKerberosFilesCallback(
     const authpolicy::KerberosFiles& kerberos_files) {
   if (kerberos_files.has_krb5cc()) {
     base::PostTaskWithTraits(
-        FROM_HERE, {base::MayBlock(), base::TaskPriority::BACKGROUND},
+        FROM_HERE,
+        {base::MayBlock(), base::TaskPriority::BACKGROUND,
+         base::TaskShutdownBehavior::SKIP_ON_SHUTDOWN},
         base::BindOnce(&WriteFile, kKrb5CCFile, kerberos_files.krb5cc()));
   }
   if (kerberos_files.has_krb5conf()) {
     base::PostTaskWithTraits(
-        FROM_HERE, {base::MayBlock(), base::TaskPriority::BACKGROUND},
+        FROM_HERE,
+        {base::MayBlock(), base::TaskPriority::BACKGROUND,
+         base::TaskShutdownBehavior::SKIP_ON_SHUTDOWN},
         base::BindOnce(&WriteFile, kKrb5ConfFile, kerberos_files.krb5conf()));
   }
 }
@@ -317,30 +288,26 @@ void AuthPolicyCredentialsManager::ShowNotification(int message_id) {
   // Set |profile_id| for multi-user notification blocker.
   notifier_id.profile_id = profile_->GetProfileUserName();
 
-  message_center::Notification notification(
-      message_center::NOTIFICATION_TYPE_SIMPLE, notification_id,
-      l10n_util::GetStringUTF16(IDS_SIGNIN_ERROR_BUBBLE_VIEW_TITLE),
-      l10n_util::GetStringUTF16(message_id),
-      message_center::IsNewStyleNotificationEnabled()
-          ? gfx::Image()
-          : ui::ResourceBundle::GetSharedInstance().GetImageNamed(
-                IDR_NOTIFICATION_ALERT),
-      l10n_util::GetStringUTF16(IDS_SIGNIN_ERROR_DISPLAY_SOURCE),
-      GURL(notification_id), notifier_id, data,
-      new SigninNotificationDelegate());
-  if (message_center::IsNewStyleNotificationEnabled()) {
-    notification.set_accent_color(
-        message_center::kSystemNotificationColorCriticalWarning);
-    notification.set_small_image(gfx::Image(gfx::CreateVectorIcon(
-        kNotificationWarningIcon, message_center::kSmallImageSizeMD,
-        message_center::kSystemNotificationColorWarning)));
-    notification.set_vector_small_image(kNotificationWarningIcon);
-  }
-  notification.SetSystemPriority();
+  auto delegate =
+      base::MakeRefCounted<message_center::HandleNotificationClickDelegate>(
+          base::BindRepeating([](base::Optional<int> button_index) {
+            chrome::AttemptUserExit();
+          }));
+
+  std::unique_ptr<message_center::Notification> notification =
+      message_center::Notification::CreateSystemNotification(
+          message_center::NOTIFICATION_TYPE_SIMPLE, notification_id,
+          l10n_util::GetStringUTF16(IDS_SIGNIN_ERROR_BUBBLE_VIEW_TITLE),
+          l10n_util::GetStringUTF16(message_id), gfx::Image(),
+          l10n_util::GetStringUTF16(IDS_SIGNIN_ERROR_DISPLAY_SOURCE),
+          GURL(notification_id), notifier_id, data, std::move(delegate),
+          ash::kNotificationWarningIcon,
+          message_center::SystemNotificationWarningLevel::WARNING);
+  notification->SetSystemPriority();
 
   // Add the notification.
   NotificationDisplayServiceFactory::GetForProfile(profile_)->Display(
-      NotificationHandler::Type::TRANSIENT, notification);
+      NotificationHandler::Type::TRANSIENT, *notification);
   shown_notifications_.insert(message_id);
 }
 

@@ -5,6 +5,7 @@
 #include "media/audio/fuchsia/audio_output_stream_fuchsia.h"
 
 #include <media/audio.h>
+#include <zircon/syscalls.h>
 
 #include "media/audio/fuchsia/audio_manager_fuchsia.h"
 #include "media/base/audio_sample_types.h"
@@ -57,7 +58,6 @@ void AudioOutputStreamFuchsia::Start(AudioSourceCallback* callback) {
 }
 
 void AudioOutputStreamFuchsia::Stop() {
-  DCHECK(callback_);
   callback_ = nullptr;
   started_time_ = base::TimeTicks();
   timer_.Stop();
@@ -138,8 +138,8 @@ void AudioOutputStreamFuchsia::PumpSamples() {
       // Presentation time (PTS) needs to be specified only for the first frame
       // after stream is started or restarted. Mixer will calculate PTS for all
       // following frames. 1us is added to account for the time passed between
-      // zx_time_get() and fuchsia_audio_output_stream_write().
-      zx_time_t zx_now = zx_time_get(ZX_CLOCK_MONOTONIC);
+      // zx_clock_get() and fuchsia_audio_output_stream_write().
+      zx_time_t zx_now = zx_clock_get(ZX_CLOCK_MONOTONIC);
       presentation_time = zx_now + presentation_delay_ns_ + ZX_USEC(1);
       started_time_ = base::TimeTicks::FromZxTime(zx_now);
       stream_position_samples_ = 0;

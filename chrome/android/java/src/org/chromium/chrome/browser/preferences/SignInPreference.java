@@ -16,7 +16,6 @@ import android.view.View;
 import org.chromium.base.metrics.RecordUserAction;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.firstrun.FirstRunSignInProcessor;
-import org.chromium.chrome.browser.profiles.Profile;
 import org.chromium.chrome.browser.signin.AccountManagementFragment;
 import org.chromium.chrome.browser.signin.AccountSigninActivity;
 import org.chromium.chrome.browser.signin.DisplayableProfileData;
@@ -57,7 +56,7 @@ public class SignInPreference
         super(context, attrs);
 
         int imageSize = context.getResources().getDimensionPixelSize(R.dimen.user_picture_size);
-        mProfileDataCache = new ProfileDataCache(context, Profile.getLastUsedProfile(), imageSize);
+        mProfileDataCache = new ProfileDataCache(context, imageSize);
 
         setOnPreferenceClickListener(preference
                 -> AccountSigninActivity.startIfAllowed(getContext(), SigninAccessPoint.SETTINGS));
@@ -68,9 +67,9 @@ public class SignInPreference
      */
     void registerForUpdates() {
         AccountManagerFacade.get().addObserver(this);
-        SigninManager.get(getContext()).addSignInAllowedObserver(this);
+        SigninManager.get().addSignInAllowedObserver(this);
         mProfileDataCache.addObserver(this);
-        FirstRunSignInProcessor.updateSigninManagerFirstRunCheckDone(getContext());
+        FirstRunSignInProcessor.updateSigninManagerFirstRunCheckDone();
         AndroidSyncSettings.registerObserver(getContext(), this);
         ProfileSyncService syncService = ProfileSyncService.get();
         if (syncService != null) {
@@ -86,7 +85,7 @@ public class SignInPreference
      */
     void unregisterForUpdates() {
         AccountManagerFacade.get().removeObserver(this);
-        SigninManager.get(getContext()).removeSignInAllowedObserver(this);
+        SigninManager.get().removeSignInAllowedObserver(this);
         mProfileDataCache.removeObserver(this);
         AndroidSyncSettings.unregisterObserver(getContext(), this);
         ProfileSyncService syncService = ProfileSyncService.get();
@@ -109,7 +108,7 @@ public class SignInPreference
      * Updates the title, summary, and image based on the current sign-in state.
      */
     private void update() {
-        if (SigninManager.get(getContext()).isSigninDisabledByPolicy()) {
+        if (SigninManager.get().isSigninDisabledByPolicy()) {
             setupSigninDisabled();
             return;
         }
@@ -132,8 +131,7 @@ public class SignInPreference
             return;
         }
 
-        if (SigninPromoController.hasNotReachedImpressionLimit(SigninAccessPoint.SETTINGS)
-                && SigninPromoController.arePersonalizedPromosEnabled()) {
+        if (SigninPromoController.hasNotReachedImpressionLimit(SigninAccessPoint.SETTINGS)) {
             setupPersonalizedPromo();
             return;
         }

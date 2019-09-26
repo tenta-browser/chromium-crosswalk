@@ -89,9 +89,12 @@ NSString* const kSignInSkipButtonAccessibilityIdentifier =
 
   if (!_hasRecordedSigninStarted) {
     _hasRecordedSigninStarted = YES;
-    base::RecordAction(base::UserMetricsAction("Signin_Signin_FromStartPage"));
     signin_metrics::LogSigninAccessPointStarted(
-        signin_metrics::AccessPoint::ACCESS_POINT_START_PAGE);
+        signin_metrics::AccessPoint::ACCESS_POINT_START_PAGE,
+        signin_metrics::PromoAction::PROMO_ACTION_NO_SIGNIN_PROMO);
+    signin_metrics::RecordSigninUserActionForAccessPoint(
+        signin_metrics::AccessPoint::ACCESS_POINT_START_PAGE,
+        signin_metrics::PromoAction::PROMO_ACTION_NO_SIGNIN_PROMO);
   }
 
   // Save the version number to prevent showing the SSO Recall promo on the next
@@ -119,7 +122,7 @@ NSString* const kSignInSkipButtonAccessibilityIdentifier =
 
 - (void)willStartSignIn:(ChromeSigninViewController*)controller {
   DCHECK_EQ(self, controller);
-  controller.shouldClearData = SHOULD_CLEAR_DATA_CLEAR_DATA;
+  controller.shouldClearData = SHOULD_CLEAR_DATA_MERGE_DATA;
   [_firstRunConfig setSignInAttempted:YES];
 }
 

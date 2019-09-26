@@ -40,8 +40,6 @@ class InputHandlerWrapper : public ui::InputHandlerProxyClient {
 
   // InputHandlerProxyClient implementation.
   void WillShutdown() override;
-  void TransferActiveWheelFlingAnimation(
-      const blink::WebActiveWheelFlingParameters& params) override;
   void DispatchNonBlockingEventToMainThread(
       ui::WebScopedInputEvent event,
       const ui::LatencyInfo& latency_info) override;
@@ -57,6 +55,7 @@ class InputHandlerWrapper : public ui::InputHandlerProxyClient {
       const cc::OverscrollBehavior& overscroll_behavior) override;
   void DidStopFlinging() override;
   void DidAnimateForInput() override;
+  void DidStartScrollingViewport() override;
   void GenerateScrollBeginAndSendToMainThread(
       const blink::WebGestureEvent& update_event) override;
   void SetWhiteListedTouchAction(

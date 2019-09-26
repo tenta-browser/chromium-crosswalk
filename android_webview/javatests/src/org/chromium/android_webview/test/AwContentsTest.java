@@ -137,6 +137,8 @@ public class AwContentsTest {
             // we fail gracefully and do not crash when APIs are invoked after destruction.
             // Due to the large number of APIs we only test a representative selection here.
             awContents.clearHistory();
+            Assert.assertNull(awContents.getOriginalUrl());
+            Assert.assertNull(awContents.getNavigationHistory());
             awContents.loadUrl("http://www.google.com");
             awContents.findAllAsync("search");
             Assert.assertNull(awContents.getUrl());
@@ -377,7 +379,7 @@ public class AwContentsTest {
         AwContents awContents = testView.getAwContents();
         String script = "navigator.onLine";
 
-        mActivityTestRule.enableJavaScriptOnUiThread(awContents);
+        AwActivityTestRule.enableJavaScriptOnUiThread(awContents);
         mActivityTestRule.loadUrlSync(awContents, mContentsClient.getOnPageFinishedHelper(),
                 ContentUrlConstants.ABOUT_BLANK_DISPLAY_URL);
 
@@ -387,13 +389,13 @@ public class AwContentsTest {
                         awContents, mContentsClient, script));
 
         // Forcing "offline".
-        mActivityTestRule.setNetworkAvailableOnUiThread(awContents, false);
+        AwActivityTestRule.setNetworkAvailableOnUiThread(awContents, false);
         Assert.assertEquals("false",
                 mActivityTestRule.executeJavaScriptAndWaitForResult(
                         awContents, mContentsClient, script));
 
         // Forcing "online".
-        mActivityTestRule.setNetworkAvailableOnUiThread(awContents, true);
+        AwActivityTestRule.setNetworkAvailableOnUiThread(awContents, true);
         Assert.assertEquals("true",
                 mActivityTestRule.executeJavaScriptAndWaitForResult(
                         awContents, mContentsClient, script));
@@ -439,7 +441,7 @@ public class AwContentsTest {
         AwContents awContents = testView.getAwContents();
         String script = "window.failed == true";
 
-        mActivityTestRule.enableJavaScriptOnUiThread(awContents);
+        AwActivityTestRule.enableJavaScriptOnUiThread(awContents);
         CallbackHelper onPageFinishedHelper = mContentsClient.getOnPageFinishedHelper();
         int currentCallCount = onPageFinishedHelper.getCallCount();
         mActivityTestRule.loadUrlAsync(awContents,
@@ -460,7 +462,7 @@ public class AwContentsTest {
                 mActivityTestRule.createAwTestContainerViewOnMainSync(mContentsClient);
         final AwContents awContents = testContainer.getAwContents();
 
-        mActivityTestRule.enableJavaScriptOnUiThread(awContents);
+        AwActivityTestRule.enableJavaScriptOnUiThread(awContents);
 
         EmbeddedTestServer testServer = EmbeddedTestServer.createAndStartServer(
                 InstrumentationRegistry.getInstrumentation().getContext());
@@ -575,7 +577,7 @@ public class AwContentsTest {
 
         String script = "window.Notification || window.PushManager";
 
-        mActivityTestRule.enableJavaScriptOnUiThread(awContents);
+        AwActivityTestRule.enableJavaScriptOnUiThread(awContents);
         mActivityTestRule.loadUrlSync(awContents, mContentsClient.getOnPageFinishedHelper(),
                 ContentUrlConstants.ABOUT_BLANK_DISPLAY_URL);
         Assert.assertEquals("null",

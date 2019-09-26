@@ -26,8 +26,8 @@
 namespace media {
 
 class AudioRendererSink;
+class CdmContextRef;
 class MediaResourceShim;
-class ContentDecryptionModule;
 class MojoCdmServiceContext;
 class Renderer;
 class VideoRendererSink;
@@ -46,7 +46,20 @@ class MEDIA_MOJO_EXPORT MojoRendererService : public mojom::Renderer,
       scoped_refptr<AudioRendererSink> audio_sink,
       std::unique_ptr<VideoRendererSink> video_sink,
       std::unique_ptr<media::Renderer> renderer,
-      InitiateSurfaceRequestCB initiate_surface_request_cb,
+      const InitiateSurfaceRequestCB& initiate_surface_request_cb,
+      mojo::InterfaceRequest<mojom::Renderer> request);
+
+  // Helper function to bind MojoRendererService with a StrongBinding,
+  // which is safely accessible via the returned StrongBindingPtr.
+  // NOTE: Some media::Renderers don't need Audio/VideoRendererSinks, and don't
+  // support encrypted content. For example, MediaPlayerRenderer instead uses a
+  // StreamTextureWrapper, and FlingingRenderer does not need to render any
+  // video on the local device. This function serves the same purpose as the one
+  // above, but without forcing classes to define the forward declared
+  // AudioRendererSink, VideoRendererSink and MojoCdmServiceContext.
+  static mojo::StrongBindingPtr<mojom::Renderer> Create(
+      std::unique_ptr<media::Renderer> renderer,
+      const InitiateSurfaceRequestCB& initiate_surface_request_cb,
       mojo::InterfaceRequest<mojom::Renderer> request);
 
   // |mojo_cdm_service_context| can be used to find the CDM to support
@@ -119,9 +132,7 @@ class MEDIA_MOJO_EXPORT MojoRendererService : public mojom::Renderer,
   void OnFlushCompleted(FlushCallback callback);
 
   // Callback executed once SetCdm() completes.
-  void OnCdmAttached(scoped_refptr<ContentDecryptionModule> cdm,
-                     base::OnceCallback<void(bool)> callback,
-                     bool success);
+  void OnCdmAttached(base::OnceCallback<void(bool)> callback, bool success);
 
   MojoCdmServiceContext* const mojo_cdm_service_context_ = nullptr;
 
@@ -135,9 +146,9 @@ class MEDIA_MOJO_EXPORT MojoRendererService : public mojom::Renderer,
 
   mojom::RendererClientAssociatedPtr client_;
 
-  // Hold a reference to the CDM set on the |renderer_| so that the CDM won't be
-  // destructed while the |renderer_| is still using it.
-  scoped_refptr<ContentDecryptionModule> cdm_;
+  // Holds the CdmContextRef to keep the CdmContext alive for the lifetime of
+  // the |renderer_|.
+  std::unique_ptr<CdmContextRef> cdm_context_ref_;
 
   // Audio and Video sinks.
   // May be null if underlying |renderer_| does not use them.

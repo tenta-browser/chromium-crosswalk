@@ -5,19 +5,37 @@
 #include "ash/login/login_screen_controller.h"
 
 #include "ash/login/mock_login_screen_client.h"
+#include "ash/login/ui/lock_screen.h"
 #include "ash/public/cpp/ash_pref_names.h"
+#include "ash/root_window_controller.h"
 #include "ash/session/session_controller.h"
+#include "ash/session/test_session_controller_client.h"
 #include "ash/shell.h"
+#include "ash/system/status_area_widget.h"
+#include "ash/system/tray/system_tray.h"
 #include "ash/test/ash_test_base.h"
 #include "base/run_loop.h"
 #include "components/prefs/pref_service.h"
+#include "components/session_manager/session_manager_types.h"
 
 using ::testing::_;
+using namespace session_manager;
 
 namespace ash {
 
 namespace {
 using LoginScreenControllerTest = AshTestBase;
+using LoginScreenControllerNoSessionTest = NoSessionAshTestBase;
+
+// Enum instead of enum class, because it is used for indexing.
+enum WindowType { kPrimary = 0, kSecondary = 1 };
+
+bool IsSystemTrayForWindowVisible(WindowType index) {
+  aura::Window::Windows root_windows = Shell::GetAllRootWindows();
+  return RootWindowController::ForWindow(root_windows[index])
+      ->GetSystemTray()
+      ->visible();
+}
 
 TEST_F(LoginScreenControllerTest, RequestAuthentication) {
   LoginScreenController* controller = Shell::Get()->login_screen_controller();
@@ -34,15 +52,19 @@ TEST_F(LoginScreenControllerTest, RequestAuthentication) {
 
   // Verify AuthenticateUser mojo call is run with the same account id, a
   // (hashed) password, and the correct PIN state.
-  EXPECT_CALL(*client, AuthenticateUser_(id, hashed_password, false, _));
+  EXPECT_CALL(*client, AuthenticateUser_(id, hashed_password, _, false, _));
   base::Optional<bool> callback_result;
+  base::RunLoop run_loop1;
   controller->AuthenticateUser(
       id, password, false,
-      base::BindOnce([](base::Optional<bool>* result,
-                        base::Optional<bool> did_auth) { *result = *did_auth; },
-                     &callback_result));
-
-  base::RunLoop().RunUntilIdle();
+      base::BindOnce(
+          [](base::Optional<bool>* result, base::RunLoop* run_loop1,
+             base::Optional<bool> did_auth) {
+            *result = *did_auth;
+            run_loop1->Quit();
+          },
+          &callback_result, &run_loop1));
+  run_loop1.Run();
 
   EXPECT_TRUE(callback_result.has_value());
   EXPECT_TRUE(*callback_result);
@@ -59,14 +81,18 @@ TEST_F(LoginScreenControllerTest, RequestAuthentication) {
   std::string hashed_pin = "cqgMB9rwrcE35iFxm+4vP2toO6qkzW+giCnCcEou92Y=";
   EXPECT_NE(pin, hashed_pin);
 
-  EXPECT_CALL(*client, AuthenticateUser_(id, hashed_pin, true, _));
+  base::RunLoop run_loop2;
+  EXPECT_CALL(*client, AuthenticateUser_(id, hashed_pin, _, true, _));
   controller->AuthenticateUser(
       id, pin, true,
-      base::BindOnce([](base::Optional<bool>* result,
-                        base::Optional<bool> did_auth) { *result = *did_auth; },
-                     &callback_result));
-
-  base::RunLoop().RunUntilIdle();
+      base::BindOnce(
+          [](base::Optional<bool>* result, base::RunLoop* run_loop2,
+             base::Optional<bool> did_auth) {
+            *result = *did_auth;
+            run_loop2->Quit();
+          },
+          &callback_result, &run_loop2));
+  run_loop2.Run();
 
   EXPECT_TRUE(callback_result.has_value());
   EXPECT_TRUE(*callback_result);
@@ -109,6 +135,109 @@ TEST_F(LoginScreenControllerTest, RequestUserPodFocus) {
   EXPECT_CALL(*client, OnNoPodFocused());
   controller->OnNoPodFocused();
   base::RunLoop().RunUntilIdle();
+}
+
+TEST_F(LoginScreenControllerTest,
+       ShowLoginScreenRequiresLoginPrimarySessionState) {
+  auto show_login = [&](session_manager::SessionState state) {
+    EXPECT_FALSE(ash::LockScreen::IsShown());
+
+    LoginScreenController* controller = Shell::Get()->login_screen_controller();
+
+    GetSessionControllerClient()->SetSessionState(state);
+    base::Optional<bool> result;
+    base::RunLoop run_loop;
+    controller->ShowLoginScreen(base::BindOnce(
+        [](base::Optional<bool>* result, base::RunLoop* run_loop,
+           bool did_show) {
+          *result = did_show;
+          run_loop->Quit();
+        },
+        &result, &run_loop));
+    run_loop.Run();
+
+    EXPECT_TRUE(result.has_value());
+
+    // Verify result matches actual ash::LockScreen state.
+    EXPECT_EQ(*result, ash::LockScreen::IsShown());
+
+    // Destroy login if we created it.
+    if (*result)
+      ash::LockScreen::Get()->Destroy();
+
+    return *result;
+  };
+
+  EXPECT_FALSE(show_login(session_manager::SessionState::UNKNOWN));
+  EXPECT_FALSE(show_login(session_manager::SessionState::OOBE));
+  EXPECT_TRUE(show_login(session_manager::SessionState::LOGIN_PRIMARY));
+  EXPECT_FALSE(show_login(session_manager::SessionState::LOGGED_IN_NOT_ACTIVE));
+  EXPECT_FALSE(show_login(session_manager::SessionState::ACTIVE));
+  EXPECT_FALSE(show_login(session_manager::SessionState::LOCKED));
+  EXPECT_FALSE(show_login(session_manager::SessionState::LOGIN_SECONDARY));
+}
+
+TEST_F(LoginScreenControllerNoSessionTest, ShowSystemTrayOnPrimaryLoginScreen) {
+  // Create setup with 2 displays primary and secondary.
+  UpdateDisplay("800x600,800x600");
+  aura::Window::Windows root_windows = Shell::GetAllRootWindows();
+  ASSERT_EQ(2u, root_windows.size());
+
+  EXPECT_FALSE(ash::LockScreen::IsShown());
+  EXPECT_FALSE(IsSystemTrayForWindowVisible(WindowType::kPrimary));
+  EXPECT_FALSE(IsSystemTrayForWindowVisible(WindowType::kSecondary));
+
+  // Show login screen.
+  GetSessionControllerClient()->SetSessionState(SessionState::LOGIN_PRIMARY);
+  base::Optional<bool> result;
+  base::RunLoop run_loop;
+  Shell::Get()->login_screen_controller()->ShowLoginScreen(base::BindOnce(
+      [](base::Optional<bool>* result, base::RunLoop* run_loop, bool did_show) {
+        *result = did_show;
+        run_loop->Quit();
+      },
+      &result, &run_loop));
+  run_loop.Run();
+  EXPECT_TRUE(result.has_value());
+
+  EXPECT_TRUE(ash::LockScreen::IsShown());
+  EXPECT_TRUE(IsSystemTrayForWindowVisible(WindowType::kPrimary));
+  EXPECT_FALSE(IsSystemTrayForWindowVisible(WindowType::kSecondary));
+
+  if (*result)
+    ash::LockScreen::Get()->Destroy();
+}
+
+TEST_F(LoginScreenControllerTest, ShowSystemTrayOnPrimaryLockScreen) {
+  // Create setup with 2 displays primary and secondary.
+  UpdateDisplay("800x600,800x600");
+  aura::Window::Windows root_windows = Shell::GetAllRootWindows();
+  ASSERT_EQ(2u, root_windows.size());
+
+  GetSessionControllerClient()->SetSessionState(SessionState::ACTIVE);
+  EXPECT_FALSE(ash::LockScreen::IsShown());
+  EXPECT_TRUE(IsSystemTrayForWindowVisible(WindowType::kPrimary));
+  EXPECT_TRUE(IsSystemTrayForWindowVisible(WindowType::kSecondary));
+
+  // Show lock screen.
+  GetSessionControllerClient()->SetSessionState(SessionState::LOCKED);
+  base::Optional<bool> result;
+  base::RunLoop run_loop;
+  Shell::Get()->login_screen_controller()->ShowLockScreen(base::BindOnce(
+      [](base::Optional<bool>* result, base::RunLoop* run_loop, bool did_show) {
+        *result = did_show;
+        run_loop->Quit();
+      },
+      &result, &run_loop));
+  run_loop.Run();
+  EXPECT_TRUE(result.has_value());
+
+  EXPECT_TRUE(ash::LockScreen::IsShown());
+  EXPECT_TRUE(IsSystemTrayForWindowVisible(WindowType::kPrimary));
+  EXPECT_FALSE(IsSystemTrayForWindowVisible(WindowType::kSecondary));
+
+  if (*result)
+    ash::LockScreen::Get()->Destroy();
 }
 
 }  // namespace

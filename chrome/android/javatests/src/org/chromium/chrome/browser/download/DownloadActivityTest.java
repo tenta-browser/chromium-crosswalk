@@ -8,6 +8,7 @@ import android.content.Intent;
 import android.content.SharedPreferences.Editor;
 import android.os.Handler;
 import android.os.Looper;
+import android.support.annotation.StringRes;
 import android.support.test.InstrumentationRegistry;
 import android.support.test.filters.MediumTest;
 import android.support.test.rule.ActivityTestRule;
@@ -22,6 +23,7 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
+import org.junit.rules.TestRule;
 import org.junit.runner.RunWith;
 
 import org.chromium.base.ContextUtils;
@@ -33,6 +35,7 @@ import org.chromium.chrome.R;
 import org.chromium.chrome.browser.download.ui.DownloadHistoryAdapter;
 import org.chromium.chrome.browser.download.ui.DownloadHistoryItemViewHolder;
 import org.chromium.chrome.browser.download.ui.DownloadHistoryItemWrapper;
+import org.chromium.chrome.browser.download.ui.DownloadHistoryItemWrapper.OfflineItemWrapper;
 import org.chromium.chrome.browser.download.ui.DownloadItemView;
 import org.chromium.chrome.browser.download.ui.DownloadManagerToolbar;
 import org.chromium.chrome.browser.download.ui.DownloadManagerUi;
@@ -40,13 +43,17 @@ import org.chromium.chrome.browser.download.ui.SpaceDisplay;
 import org.chromium.chrome.browser.download.ui.StubbedProvider;
 import org.chromium.chrome.browser.snackbar.SnackbarManager;
 import org.chromium.chrome.browser.util.IntentUtils;
+import org.chromium.chrome.browser.widget.ListMenuButton.Item;
 import org.chromium.chrome.browser.widget.selection.SelectionDelegate.SelectionObserver;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
+import org.chromium.chrome.test.util.browser.Features;
+import org.chromium.chrome.test.util.browser.Features.EnableFeatures;
 import org.chromium.components.offline_items_collection.OfflineItem;
 import org.chromium.content.browser.test.util.Criteria;
 import org.chromium.content.browser.test.util.CriteriaHelper;
 import org.chromium.ui.test.util.UiRestriction;
 
+import java.util.HashMap;
 import java.util.List;
 
 /**
@@ -58,6 +65,9 @@ public class DownloadActivityTest {
     @Rule
     public ActivityTestRule<DownloadActivity> mActivityTestRule =
             new ActivityTestRule<>(DownloadActivity.class);
+
+    @Rule
+    public TestRule mProcessor = new Features.InstrumentationProcessor();
 
     private static class TestObserver extends RecyclerView.AdapterDataObserver
             implements SelectionObserver<DownloadHistoryItemWrapper>,
@@ -126,6 +136,7 @@ public class DownloadActivityTest {
 
         startDownloadActivity();
         mUi = mActivityTestRule.getActivity().getDownloadManagerUiForTests();
+        mStubbedProvider.setUIDelegate(mUi);
         mAdapter = mUi.getDownloadHistoryAdapterForTests();
         mAdapter.registerAdapterDataObserver(mAdapterObserver);
 
@@ -271,6 +282,40 @@ public class DownloadActivityTest {
     @Test
     @MediumTest
     @RetryOnFailure
+    public void testDeleteFileFromMenu() throws Exception {
+        SnackbarManager.setDurationForTesting(1);
+
+        // This first check is a Criteria because initialization of the Adapter is asynchronous.
+        CriteriaHelper.pollUiThread(new Criteria() {
+            @Override
+            public boolean isSatisfied() {
+                return TextUtils.equals("6.00 GB downloaded", mSpaceUsedDisplay.getText());
+            }
+        });
+
+        Assert.assertEquals(12, mAdapter.getItemCount());
+        // checkForExternallyRemovedFiles() should have been called once already in onResume().
+        Assert.assertEquals(
+                1, mStubbedProvider.getDownloadDelegate().checkExternalCallback.getCallCount());
+        Assert.assertEquals(
+                0, mStubbedProvider.getDownloadDelegate().removeDownloadCallback.getCallCount());
+        Assert.assertEquals(
+                0, mStubbedProvider.getOfflineContentProvider().deleteItemCallback.getCallCount());
+        int callCount = mAdapterObserver.onSpaceDisplayUpdatedCallback.getCallCount();
+
+        // Simulate a delete context menu action on the item.
+        simulateContextMenu(2, R.string.delete);
+        mAdapterObserver.onSpaceDisplayUpdatedCallback.waitForCallback(callCount);
+        Assert.assertEquals(
+                1, mStubbedProvider.getDownloadDelegate().checkExternalCallback.getCallCount());
+        Assert.assertFalse(mStubbedProvider.getSelectionDelegate().isSelectionEnabled());
+        Assert.assertEquals(11, mAdapter.getItemCount());
+        Assert.assertEquals("5.00 GB downloaded", mSpaceUsedDisplay.getText());
+    }
+
+    @Test
+    @MediumTest
+    @RetryOnFailure
     public void testUndoDelete() throws Exception {
         // Adapter positions:
         // 0 = space display
@@ -318,6 +363,71 @@ public class DownloadActivityTest {
         // one duplicate item, and one date bucket should be removed.
         Assert.assertEquals(11, mAdapter.getItemCount());
         Assert.assertEquals("1.00 GB downloaded", mSpaceUsedDisplay.getText());
+
+        // Click "Undo" on the snackbar.
+        callCount = mAdapterObserver.onSpaceDisplayUpdatedCallback.getCallCount();
+        final View rootView = mUi.getView().getRootView();
+        Assert.assertNotNull(rootView.findViewById(R.id.snackbar));
+        ThreadUtils.runOnUiThread(
+                (Runnable) () -> rootView.findViewById(R.id.snackbar_button).callOnClick());
+
+        mAdapterObserver.onSpaceDisplayUpdatedCallback.waitForCallback(callCount);
+
+        // Assert that items are restored.
+        Assert.assertEquals(
+                0, mStubbedProvider.getDownloadDelegate().removeDownloadCallback.getCallCount());
+        Assert.assertEquals(
+                0, mStubbedProvider.getOfflineContentProvider().deleteItemCallback.getCallCount());
+        Assert.assertFalse(mStubbedProvider.getSelectionDelegate().isSelectionEnabled());
+        Assert.assertEquals(15, mAdapter.getItemCount());
+        Assert.assertEquals("6.50 GB downloaded", mSpaceUsedDisplay.getText());
+    }
+
+    @Test
+    @MediumTest
+    @RetryOnFailure
+    public void testUndoDeleteFromMenu() throws Exception {
+        // Adapter positions:
+        // 0 = space display
+        // 1 = date
+        // 2 = download item #7
+        // 3 = download item #8
+        // 4 = date
+        // 5 = download item #6
+        // 6 = offline page #3
+
+        SnackbarManager.setDurationForTesting(5000);
+
+        // Add duplicate items.
+        int callCount = mAdapterObserver.onSpaceDisplayUpdatedCallback.getCallCount();
+        final DownloadItem item7 = StubbedProvider.createDownloadItem(7, "20161021 07:28");
+        final DownloadItem item8 = StubbedProvider.createDownloadItem(8, "20161021 17:28");
+        ThreadUtils.runOnUiThread(() -> {
+            mAdapter.onDownloadItemCreated(item7);
+            mAdapter.onDownloadItemCreated(item8);
+        });
+
+        // The criteria is needed because an AsyncTask is fired to update the space display, which
+        // can result in either 1 or 2 updates.
+        mAdapterObserver.onSpaceDisplayUpdatedCallback.waitForCallback(callCount);
+        CriteriaHelper.pollUiThread(new Criteria() {
+            @Override
+            public boolean isSatisfied() {
+                return TextUtils.equals("6.50 GB downloaded", mSpaceUsedDisplay.getText());
+            }
+        });
+
+        Assert.assertEquals(15, mAdapter.getItemCount());
+        callCount = mAdapterObserver.onSpaceDisplayUpdatedCallback.getCallCount();
+
+        // Simulate a delete context menu action on the item.
+        simulateContextMenu(2, R.string.delete);
+        mAdapterObserver.onSpaceDisplayUpdatedCallback.waitForCallback(callCount);
+
+        // Assert that items are temporarily removed from the adapter. The two selected items,
+        // one duplicate item, and one date bucket should be removed.
+        Assert.assertEquals(12, mAdapter.getItemCount());
+        Assert.assertEquals("6.00 GB downloaded", mSpaceUsedDisplay.getText());
 
         // Click "Undo" on the snackbar.
         callCount = mAdapterObserver.onSpaceDisplayUpdatedCallback.getCallCount();
@@ -419,7 +529,8 @@ public class DownloadActivityTest {
 
         // Select an image, download item #6.
         toggleItemSelection(2);
-        Intent shareIntent = mUi.createShareIntent();
+        Intent shareIntent = DownloadUtils.createShareIntent(
+                mUi.getBackendProvider().getSelectionDelegate().getSelectedItems(), null);
         Assert.assertEquals("Incorrect intent action", Intent.ACTION_SEND, shareIntent.getAction());
         Assert.assertEquals("Incorrect intent mime type", "image/png", shareIntent.getType());
         Assert.assertNotNull(
@@ -433,7 +544,8 @@ public class DownloadActivityTest {
 
         // Select another image, download item #0.
         toggleItemSelection(9);
-        shareIntent = mUi.createShareIntent();
+        shareIntent = DownloadUtils.createShareIntent(
+                mUi.getBackendProvider().getSelectionDelegate().getSelectedItems(), null);
         Assert.assertEquals(
                 "Incorrect intent action", Intent.ACTION_SEND_MULTIPLE, shareIntent.getAction());
         Assert.assertEquals("Incorrect intent mime type", "image/*", shareIntent.getType());
@@ -446,7 +558,8 @@ public class DownloadActivityTest {
 
         // Select non-image item, download item #4.
         toggleItemSelection(6);
-        shareIntent = mUi.createShareIntent();
+        shareIntent = DownloadUtils.createShareIntent(
+                mUi.getBackendProvider().getSelectionDelegate().getSelectedItems(), null);
         Assert.assertEquals(
                 "Incorrect intent action", Intent.ACTION_SEND_MULTIPLE, shareIntent.getAction());
         Assert.assertEquals("Incorrect intent mime type", "*/*", shareIntent.getType());
@@ -459,7 +572,8 @@ public class DownloadActivityTest {
 
         // Select an offline page #3.
         toggleItemSelection(3);
-        shareIntent = mUi.createShareIntent();
+        shareIntent = DownloadUtils.createShareIntent(
+                mUi.getBackendProvider().getSelectionDelegate().getSelectedItems(), null);
         Assert.assertEquals(
                 "Incorrect intent action", Intent.ACTION_SEND_MULTIPLE, shareIntent.getAction());
         Assert.assertEquals("Incorrect intent mime type", "*/*", shareIntent.getType());
@@ -467,6 +581,50 @@ public class DownloadActivityTest {
                 shareIntent.getParcelableArrayListExtra(Intent.EXTRA_STREAM).size());
         Assert.assertEquals("Intent expected to have plain text for offline page URL",
                 "https://thangs.com",
+                IntentUtils.safeGetStringExtra(shareIntent, Intent.EXTRA_TEXT));
+    }
+
+    // TODO(carlosk): OfflineItems used here come from StubbedProvider so this might not be the best
+    // place to test peer-2-peer sharing.
+    @Test
+    @MediumTest
+    @EnableFeatures("OfflinePagesSharing")
+    public void testShareOfflinePageWithP2PSharingEnabled() throws Exception {
+        // Scroll to ensure the item at position 2 is visible.
+        ThreadUtils.runOnUiThread(() -> mRecyclerView.scrollToPosition(3));
+        InstrumentationRegistry.getInstrumentation().waitForIdleSync();
+
+        // Select the offline page located at position #3.
+        toggleItemSelection(3);
+        List<DownloadHistoryItemWrapper> selected_items =
+                mUi.getBackendProvider().getSelectionDelegate().getSelectedItems();
+        Assert.assertEquals("There should be only one item selected", 1, selected_items.size());
+        Intent shareIntent = DownloadUtils.createShareIntent(selected_items, null);
+
+        Assert.assertEquals("Incorrect intent action", Intent.ACTION_SEND, shareIntent.getAction());
+        Assert.assertEquals("Incorrect intent mime type", "*/*", shareIntent.getType());
+        Assert.assertNotNull("Intent expected to have parcelable ArrayList",
+                shareIntent.getParcelableExtra(Intent.EXTRA_STREAM));
+        Assert.assertEquals("Intent expected to have parcelable Uri",
+                "file:///data/fake_path/Downloads/4",
+                shareIntent.getParcelableExtra(Intent.EXTRA_STREAM).toString());
+        Assert.assertNull("Intent expected to not have any text for offline page",
+                IntentUtils.safeGetStringExtra(shareIntent, Intent.EXTRA_TEXT));
+
+        // Pass a map that contains a new file path.
+        HashMap<String, String> newFilePathMap = new HashMap<String, String>();
+        newFilePathMap.put(((OfflineItemWrapper) selected_items.get(0)).getId(),
+                "/data/new_fake_path/Downloads/4");
+        shareIntent = DownloadUtils.createShareIntent(selected_items, newFilePathMap);
+
+        Assert.assertEquals("Incorrect intent action", Intent.ACTION_SEND, shareIntent.getAction());
+        Assert.assertEquals("Incorrect intent mime type", "*/*", shareIntent.getType());
+        Assert.assertNotNull("Intent expected to have parcelable ArrayList",
+                shareIntent.getParcelableExtra(Intent.EXTRA_STREAM));
+        Assert.assertEquals("Intent expected to have parcelable Uri",
+                "file:///data/new_fake_path/Downloads/4",
+                shareIntent.getParcelableExtra(Intent.EXTRA_STREAM).toString());
+        Assert.assertNull("Intent expected to not have any text for offline page",
                 IntentUtils.safeGetStringExtra(shareIntent, Intent.EXTRA_TEXT));
     }
 
@@ -596,12 +754,29 @@ public class DownloadActivityTest {
 
     private void toggleItemSelection(int position) throws Exception {
         int callCount = mAdapterObserver.onSelectionCallback.getCallCount();
-        ViewHolder mostRecentHolder = mRecyclerView.findViewHolderForAdapterPosition(position);
-        Assert.assertTrue(mostRecentHolder instanceof DownloadHistoryItemViewHolder);
-        final DownloadItemView itemView =
-                ((DownloadHistoryItemViewHolder) mostRecentHolder).getItemView();
-
+        final DownloadItemView itemView = getView(position);
         ThreadUtils.runOnUiThread((Runnable) () -> itemView.performLongClick());
         mAdapterObserver.onSelectionCallback.waitForCallback(callCount, 1);
+    }
+
+    private void simulateContextMenu(int position, @StringRes int text) throws Exception {
+        final DownloadItemView view = getView(position);
+        ThreadUtils.runOnUiThread((Runnable) () -> {
+            Item[] items = view.getItems();
+            for (Item item : items) {
+                if (item.getTextId() == text) {
+                    view.onItemSelected(item);
+                    return;
+                }
+            }
+            throw new IllegalStateException("Context menu option not found " + text);
+        });
+    }
+
+    private DownloadItemView getView(int position) throws Exception {
+        int callCount = mAdapterObserver.onSelectionCallback.getCallCount();
+        ViewHolder mostRecentHolder = mRecyclerView.findViewHolderForAdapterPosition(position);
+        Assert.assertTrue(mostRecentHolder instanceof DownloadHistoryItemViewHolder);
+        return ((DownloadHistoryItemViewHolder) mostRecentHolder).getItemView();
     }
 }

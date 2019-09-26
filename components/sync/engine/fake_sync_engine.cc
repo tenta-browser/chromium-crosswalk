@@ -24,6 +24,8 @@ void FakeSyncEngine::TriggerRefresh(const ModelTypeSet& types) {}
 
 void FakeSyncEngine::UpdateCredentials(const SyncCredentials& credentials) {}
 
+void FakeSyncEngine::InvalidateCredentials() {}
+
 void FakeSyncEngine::StartConfiguration() {}
 
 void FakeSyncEngine::StartSyncingWithServer() {}
@@ -77,8 +79,6 @@ bool FakeSyncEngine::IsCryptographerReady(const BaseTransaction* trans) const {
 void FakeSyncEngine::GetModelSafeRoutingInfo(ModelSafeRoutingInfo* out) const {}
 
 void FakeSyncEngine::FlushDirectory() const {}
-
-void FakeSyncEngine::RefreshTypesForTest(ModelTypeSet types) {}
 
 void FakeSyncEngine::RequestBufferedProtocolEventsAndEnableForwarding() {}
 

@@ -4,14 +4,17 @@
 
 #include "components/safe_browsing/db/v4_store.h"
 
+#include <algorithm>
+#include <utility>
+
 #include "base/base64.h"
 #include "base/bind.h"
 #include "base/files/file_util.h"
-#include "base/memory/ptr_util.h"
+#include "base/metrics/histogram_functions.h"
 #include "base/metrics/histogram_macros.h"
-#include "base/metrics/sparse_histogram.h"
 #include "base/stl_util.h"
 #include "base/strings/stringprintf.h"
+#include "components/safe_browsing/db/prefix_iterator.h"
 #include "components/safe_browsing/db/v4_rice.h"
 #include "components/safe_browsing/db/v4_store.pb.h"
 #include "components/safe_browsing/proto/webui.pb.h"
@@ -47,6 +50,10 @@ const char kTime[] = ".Time";
 
 const uint32_t kFileMagic = 0x600D71FE;
 const uint32_t kFileVersion = 9;
+
+// Set a common sense limit on the store file size we try to read.
+// The maximum store file size, as of today, is about 6MB.
+constexpr size_t kMaxStoreSizeBytes = 50 * 1000 * 1000;
 
 void RecordTimeWithAndWithoutSuffix(const std::string& metric,
                                     base::TimeDelta time,
@@ -178,7 +185,7 @@ std::ostream& operator<<(std::ostream& os, const V4Store& store) {
 std::unique_ptr<V4Store> V4StoreFactory::CreateV4Store(
     const scoped_refptr<base::SequencedTaskRunner>& task_runner,
     const base::FilePath& store_path) {
-  auto new_store = base::MakeUnique<V4Store>(task_runner, store_path);
+  auto new_store = std::make_unique<V4Store>(task_runner, store_path);
   new_store->Initialize();
   return new_store;
 }
@@ -394,7 +401,7 @@ void V4Store::ApplyUpdate(
   // happens, the old store will get destoyed and can lead to use-after-free in
   // this function.
   callback_task_runner->PostTask(
-      FROM_HERE, base::Bind(callback, base::Passed(&new_store)));
+      FROM_HERE, base::BindOnce(callback, std::move(new_store)));
 }
 
 ApplyUpdateResult V4Store::UpdateHashPrefixMapFromAdditions(
@@ -494,9 +501,12 @@ bool V4Store::GetNextSmallestUnmergedPrefix(
 
   for (const auto& iterator_pair : iterator_map) {
     PrefixSize prefix_size = iterator_pair.first;
+    CHECK_GE(prefix_size, 4u);  // Convert to DCHECK after fixing 787460.
     HashPrefixes::const_iterator start = iterator_pair.second;
 
-    CHECK(hash_prefix_map.end() != hash_prefix_map.find(prefix_size));
+    CHECK(hash_prefix_map.end() !=
+          hash_prefix_map.find(
+              prefix_size));  // Convert to DCHECK after fixing 787460.
     const HashPrefixes& hash_prefixes = hash_prefix_map.at(prefix_size);
 
     PrefixSize distance = std::distance(start, hash_prefixes.end());
@@ -600,12 +610,14 @@ ApplyUpdateResult V4Store::MergeUpdate(const HashPrefixMap& old_prefixes_map,
 
       // Update the iterator map, which means that we have merged one hash
       // prefix of size |next_smallest_prefix_size| from the old store.
-      old_iterator_map[next_smallest_prefix_size] += next_smallest_prefix_size;
+      old_iterator_map.at(next_smallest_prefix_size) +=
+          next_smallest_prefix_size;
 
       if (!raw_removals || removals_iter == raw_removals->end() ||
           *removals_iter != total_picked_from_old) {
         // Append the smallest hash to the appropriate list.
-        hash_prefix_map_[next_smallest_prefix_size] += next_smallest_prefix_old;
+        hash_prefix_map_.at(next_smallest_prefix_size) +=
+            next_smallest_prefix_old;
 
         if (calculate_checksum) {
           checksum_ctx->Update(next_smallest_prefix_old.data(),
@@ -625,7 +637,7 @@ ApplyUpdateResult V4Store::MergeUpdate(const HashPrefixMap& old_prefixes_map,
       next_smallest_prefix_size = next_smallest_prefix_additions.size();
 
       // Append the smallest hash to the appropriate list.
-      hash_prefix_map_[next_smallest_prefix_size] +=
+      hash_prefix_map_.at(next_smallest_prefix_size) +=
           next_smallest_prefix_additions;
 
       if (calculate_checksum) {
@@ -635,7 +647,7 @@ ApplyUpdateResult V4Store::MergeUpdate(const HashPrefixMap& old_prefixes_map,
 
       // Update the iterator map, which means that we have merged one hash
       // prefix of size |next_smallest_prefix_size| from the update.
-      additions_iterator_map[next_smallest_prefix_size] +=
+      additions_iterator_map.at(next_smallest_prefix_size) +=
           next_smallest_prefix_size;
 
       // Find the next smallest unmerged element in the additions map.
@@ -681,8 +693,8 @@ StoreReadResult V4Store::ReadFromDisk() {
     // A temporary scope to make sure that |contents| get destroyed as soon as
     // we are doing using it.
     std::string contents;
-    bool read_success = base::ReadFileToString(store_path_, &contents);
-    if (!read_success) {
+    if (!base::ReadFileToStringWithMaxSize(store_path_, &contents,
+                                           kMaxStoreSizeBytes)) {
       return FILE_UNREADABLE_FAILURE;
     }
 
@@ -700,8 +712,8 @@ StoreReadResult V4Store::ReadFromDisk() {
     return UNEXPECTED_MAGIC_NUMBER_FAILURE;
   }
 
-  UMA_HISTOGRAM_SPARSE_SLOWLY("SafeBrowsing.V4StoreVersionRead",
-                              file_format.version_number());
+  base::UmaHistogramSparse("SafeBrowsing.V4StoreVersionRead",
+                           file_format.version_number());
   if (file_format.version_number() != kFileVersion) {
     return FILE_VERSION_INCOMPATIBLE_FAILURE;
   }
@@ -769,6 +781,10 @@ StoreWriteResult V4Store::WriteToDisk(const Checksum& checksum) {
 }
 
 HashPrefix V4Store::GetMatchingHashPrefix(const FullHash& full_hash) {
+  return GetMatchingHashPrefix(base::StringPiece(full_hash));
+}
+
+HashPrefix V4Store::GetMatchingHashPrefix(base::StringPiece full_hash) {
   // It should never be the case that more than one hash prefixes match a given
   // full hash. However, if that happens, this method returns any one of them.
   // It does not guarantee which one of those will be returned.
@@ -776,37 +792,19 @@ HashPrefix V4Store::GetMatchingHashPrefix(const FullHash& full_hash) {
   checks_attempted_++;
   for (const auto& pair : hash_prefix_map_) {
     const PrefixSize& prefix_size = pair.first;
-    const HashPrefixes& hash_prefixes = pair.second;
-    HashPrefix hash_prefix = full_hash.substr(0, prefix_size);
-    if (HashPrefixMatches(hash_prefix, hash_prefixes.begin(),
-                          hash_prefixes.end())) {
-      return hash_prefix;
-    }
+    base::StringPiece hash_prefix = full_hash.substr(0, prefix_size);
+    if (HashPrefixMatches(hash_prefix, pair.second, prefix_size))
+      return hash_prefix.as_string();
   }
   return HashPrefix();
 }
 
-// static
-bool V4Store::HashPrefixMatches(const HashPrefix& hash_prefix,
-                                const HashPrefixes::const_iterator& begin,
-                                const HashPrefixes::const_iterator& end) {
-  if (begin == end) {
-    return false;
-  }
-  size_t distance = std::distance(begin, end);
-  const PrefixSize prefix_size = hash_prefix.length();
-  DCHECK_EQ(0u, distance % prefix_size);
-  size_t mid_prefix_index = ((distance / prefix_size) / 2) * prefix_size;
-  HashPrefixes::const_iterator mid = begin + mid_prefix_index;
-  HashPrefix mid_prefix = HashPrefix(mid, mid + prefix_size);
-  int result = hash_prefix.compare(mid_prefix);
-  if (result == 0) {
-    return true;
-  } else if (result < 0) {
-    return HashPrefixMatches(hash_prefix, begin, mid);
-  } else {
-    return HashPrefixMatches(hash_prefix, mid + prefix_size, end);
-  }
+bool V4Store::HashPrefixMatches(base::StringPiece prefix,
+                                const HashPrefixes& prefixes,
+                                const PrefixSize& size) {
+  return std::binary_search(
+      PrefixIterator(prefixes, 0, size),
+      PrefixIterator(prefixes, prefixes.size() / size, size), prefix);
 }
 
 bool V4Store::VerifyChecksum() {
@@ -821,6 +819,7 @@ bool V4Store::VerifyChecksum() {
   IteratorMap iterator_map;
   HashPrefix next_smallest_prefix;
   InitializeIteratorMap(hash_prefix_map_, &iterator_map);
+  CHECK_EQ(hash_prefix_map_.size(), iterator_map.size());
   bool has_unmerged = GetNextSmallestUnmergedPrefix(
       hash_prefix_map_, iterator_map, &next_smallest_prefix);
 
@@ -832,7 +831,7 @@ bool V4Store::VerifyChecksum() {
 
     // Update the iterator map, which means that we have read one hash
     // prefix of size |next_smallest_prefix_size| from hash_prefix_map_.
-    iterator_map[next_smallest_prefix_size] += next_smallest_prefix_size;
+    iterator_map.at(next_smallest_prefix_size) += next_smallest_prefix_size;
 
     checksum_ctx->Update(next_smallest_prefix.data(),
                          next_smallest_prefix_size);

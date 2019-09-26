@@ -276,6 +276,18 @@
       <message desc="The description of the skipToColEnd key. Displayed in the Options page." name="IDS_CHROMEVOX_SKIP_TO_COL_END">
         Go to end of the current column
       </message>
+      <message desc="Describes the command to move to the previous row. Displayed in a help menu." name="IDS_CHROMEVOX_SKIP_TO_PREV_ROW">
+        Go to the previous row
+      </message>
+      <message desc="Describes the command to move to the next row. Displayed in a help menu." name="IDS_CHROMEVOX_SKIP_TO_NEXT_ROW">
+        Go to the next row
+      </message>
+      <message desc="Describes the command to move to the previous column. Displayed in a help menu." name="IDS_CHROMEVOX_SKIP_TO_PREV_COL">
+        Go to the previous column
+      </message>
+      <message desc="Describes the command to move to the next column. Displayed in a help menu." name="IDS_CHROMEVOX_SKIP_TO_NEXT_COL">
+        Go to the next column
+      </message>
       <message desc='The description of the nextHeading1 key. In most cases, "level 1 heading" is a H1 HTML tag.  ChromeVox will search, from the current focus, for the next heading on the page.  If a heading is found, ChromeVox will focus on the heading. Displayed in the Options page.' name="IDS_CHROMEVOX_NEXT_HEADING1">
         Next level 1 heading
       </message>
@@ -2782,6 +2794,27 @@ If you're done with the tutorial, use ChromeVox to navigate to the Close button 
       </message>
       <message desc="Shown to a user when they invoke the read current title command in a context without a title." name="IDS_CHROMEVOX_NO_TITLE">
         No title
+      </message>
+      <message desc="Spoken when a user issues a command when nothing is focused." name="IDS_CHROMEVOX_WARNING_NO_CURRENT_RANGE">
+        No focus. Press Ctrl+T to open a new tab.
+      </message>
+      <message desc="A hint to the user that the current control is checkable." name="IDS_CHROMEVOX_HINT_CHECKABLE">
+        Press Search+Space to toggle.
+      </message>
+      <message desc="A hint to the user that the current control is clickable." name="IDS_CHROMEVOX_HINT_CLICKABLE">
+        Press Search+Space to activate.
+      </message>
+      <message desc="A hint to the user that the current control has a list of auto completions." name="IDS_CHROMEVOX_HINT_AUTOCOMPLETE_LIST">
+        Press up or down arrow for auto completions.
+      </message>
+      <message desc="A hint to the user that the current control has inline auto completions." name="IDS_CHROMEVOX_HINT_AUTOCOMPLETE_INLINE">
+        Type to auto complete.
+      </message>
+      <message desc="A hint to the user for interacting with the table control." name="IDS_CHROMEVOX_HINT_TABLE">
+        Press Search+Ctrl+Alt with arrows to navigate by cell.
+      </message>
+      <message desc="A hint to the user for interacting with the menu control." name="IDS_CHROMEVOX_HINT_MENU">
+        Press up or down arrow to navigate; enter to activate.
       </message>
     </messages>
   </release>

@@ -11,13 +11,12 @@
 #include "base/bind.h"
 #include "base/command_line.h"
 #include "base/logging.h"
-#include "base/memory/ptr_util.h"
 #include "base/memory/ref_counted.h"
 #include "base/strings/string_piece.h"
 #include "base/strings/string_util.h"
 #include "build/build_config.h"
 #include "gpu/command_buffer/common/constants.h"
-#include "gpu/command_buffer/common/gles2_cmd_utils.h"
+#include "gpu/command_buffer/common/context_creation_attribs.h"
 #include "gpu/command_buffer/common/sync_token.h"
 #include "gpu/command_buffer/service/buffer_manager.h"
 #include "gpu/command_buffer/service/command_buffer_direct.h"
@@ -227,7 +226,7 @@ struct Config {
     attrib_helper.single_buffer = it.GetBit();
     bool es3 = it.GetBit();
     attrib_helper.context_type =
-        es3 ? gles2::CONTEXT_TYPE_OPENGLES3 : gles2::CONTEXT_TYPE_OPENGLES2;
+        es3 ? CONTEXT_TYPE_OPENGLES3 : CONTEXT_TYPE_OPENGLES2;
 
 #if defined(GPU_FUZZER_USE_STUB)
     std::vector<base::StringPiece> enabled_extensions;
@@ -255,7 +254,7 @@ struct Config {
   };
 
   GpuDriverBugWorkarounds workarounds;
-  gles2::ContextCreationAttribHelper attrib_helper;
+  ContextCreationAttribs attrib_helper;
 #if defined(GPU_FUZZER_USE_STUB)
   const char* version;
   std::string extensions;
@@ -458,7 +457,7 @@ class CommandBufferSetup {
                                          GLenum severity,
                                          GLsizei length,
                                          const GLchar* message,
-                                         GLvoid* user_param) {
+                                         const GLvoid* user_param) {
     LOG_IF(FATAL, (id != GL_OUT_OF_MEMORY)) << "GL Driver Message: " << message;
   }
 

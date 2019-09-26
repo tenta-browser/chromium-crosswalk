@@ -24,6 +24,7 @@ class ApplicationDragAndDropHost;
 namespace ash {
 enum class AnimationChangeType;
 class AppListButton;
+class BackButton;
 class FocusCycler;
 class LoginShelfView;
 class Shelf;
@@ -43,8 +44,17 @@ class ASH_EXPORT ShelfWidget : public views::Widget,
   ShelfWidget(aura::Window* shelf_container, Shelf* shelf);
   ~ShelfWidget() override;
 
-  // Returns true if the views-based login shelf is being shown.
-  static bool IsUsingMdLoginShelf();
+  // Sets the initial session state and show the UI. Not part of the constructor
+  // because showing the UI triggers the accessibility checks in browser_tests,
+  // which will crash unless the constructor returns, allowing the caller
+  // to store the constructed widget.
+  void Initialize();
+
+  // Clean up prior to deletion.
+  void Shutdown();
+
+  // Returns true if the views-based shelf is being shown.
+  static bool IsUsingViewsShelf();
 
   void CreateStatusAreaWidget(aura::Window* status_container);
 
@@ -59,7 +69,9 @@ class ASH_EXPORT ShelfWidget : public views::Widget,
   int GetBackgroundAlphaValue(ShelfBackgroundType background_type) const;
 
   ShelfLayoutManager* shelf_layout_manager() { return shelf_layout_manager_; }
-  StatusAreaWidget* status_area_widget() const { return status_area_widget_; }
+  StatusAreaWidget* status_area_widget() const {
+    return status_area_widget_.get();
+  }
 
   void PostCreateShelf();
 
@@ -71,9 +83,6 @@ class ASH_EXPORT ShelfWidget : public views::Widget,
   void SetFocusCycler(FocusCycler* focus_cycler);
   FocusCycler* GetFocusCycler();
 
-  // Clean up prior to deletion.
-  void Shutdown();
-
   // See Shelf::UpdateIconPositionForPanel().
   void UpdateIconPositionForPanel(aura::Window* panel);
 
@@ -82,6 +91,9 @@ class ASH_EXPORT ShelfWidget : public views::Widget,
 
   // Returns the button that opens the app launcher.
   AppListButton* GetAppListButton() const;
+
+  // Returns the browser back button.
+  BackButton* GetBackButton() const;
 
   // Returns the ApplicationDragAndDropHost for this shelf.
   app_list::ApplicationDragAndDropHost* GetDragAndDropHostForAppList();
@@ -112,13 +124,18 @@ class ASH_EXPORT ShelfWidget : public views::Widget,
   class DelegateView;
   friend class DelegateView;
 
+  // Hides shelf widget if IsVisible() returns true.
+  void HideIfShown();
+
+  // Shows shelf widget if IsVisible() returns false.
+  void ShowIfHidden();
+
   Shelf* shelf_;
 
   // Owned by the shelf container's window.
   ShelfLayoutManager* shelf_layout_manager_;
 
-  // Owned by the native widget.
-  StatusAreaWidget* status_area_widget_;
+  std::unique_ptr<StatusAreaWidget> status_area_widget_;
 
   // |delegate_view_| is the contents view of this widget and is cleaned up
   // during CloseChildWindows of the associated RootWindowController.

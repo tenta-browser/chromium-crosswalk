@@ -10,8 +10,8 @@ namespace switches {
 // TODO(rjkroege): Some of these have an "ash" prefix. When ChromeOS startup
 // scripts have been updated, the leading "ash" prefix should be removed.
 
-// Enables mirroring across multiple displays.
-const char kEnableMultiMirroring[] = "enable-multi-mirroring";
+// Disables mirroring across multiple displays.
+const char kDisableMultiMirroring[] = "disable-multi-mirroring";
 
 // Enables software based mirroring.
 const char kEnableSoftwareMirroring[] = "ash-enable-software-mirroring";
@@ -53,12 +53,8 @@ const char kScreenConfig[] = "screen-config";
 const char kUseFirstDisplayAsInternal[] = "use-first-display-as-internal";
 
 #if defined(OS_CHROMEOS)
-
 // Enables unified desktop mode.
 const char kEnableUnifiedDesktop[] = "ash-enable-unified-desktop";
-
-// Enables using the monitor's provided color space information when rendering.
-const char kUseMonitorColorSpace[] = "use-monitor-color-space";
 #endif
 
 }  // namespace switches
@@ -67,5 +63,23 @@ namespace features {
 
 const base::Feature kHighDynamicRange{"HighDynamicRange",
                                       base::FEATURE_ENABLED_BY_DEFAULT};
+
+#if defined(OS_CHROMEOS)
+// Enables using the monitor's provided color space information when
+// rendering.
+// TODO(mcasas): remove this flag http://crbug.com/771345.
+const base::Feature kUseMonitorColorSpace{"UseMonitorColorSpace",
+                                          base::FEATURE_ENABLED_BY_DEFAULT};
+#endif  // OS_CHROMEOS
+
+// Enables the slider in display settings to modify the display zoom/size.
+// TODO(malaykeshav): Remove this in M68 when the feature has been in stable for
+// atleast one milestone.
+constexpr base::Feature kEnableDisplayZoomSetting{
+    "EnableDisplayZoomSetting", base::FEATURE_DISABLED_BY_DEFAULT};
+
+bool IsDisplayZoomSettingEnabled() {
+  return base::FeatureList::IsEnabled(kEnableDisplayZoomSetting);
+}
 
 }  // namespace features

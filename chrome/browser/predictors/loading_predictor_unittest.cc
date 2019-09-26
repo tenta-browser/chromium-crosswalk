@@ -28,7 +28,7 @@ namespace predictors {
 
 namespace {
 
-// First two are prefetchable, last one is not (see SetUp()).
+// First two are preconnectable, last one is not (see SetUp()).
 const char kUrl[] = "http://www.google.com/cats";
 const char kUrl2[] = "http://www.google.com/dogs";
 const char kUrl3[] =
@@ -81,22 +81,16 @@ class LoadingPredictorTest : public testing::Test {
 };
 
 LoadingPredictorTest::LoadingPredictorTest()
-    : profile_(base::MakeUnique<TestingProfile>()) {}
+    : profile_(std::make_unique<TestingProfile>()) {}
 
 LoadingPredictorTest::~LoadingPredictorTest() = default;
 
 void LoadingPredictorTest::SetUp() {
   auto config = CreateConfig();
-  predictor_ = base::MakeUnique<LoadingPredictor>(config, profile_.get());
+  predictor_ = std::make_unique<LoadingPredictor>(config, profile_.get());
 
-  auto mock = base::MakeUnique<StrictMock<MockResourcePrefetchPredictor>>(
+  auto mock = std::make_unique<StrictMock<MockResourcePrefetchPredictor>>(
       config, profile_.get());
-  EXPECT_CALL(*mock, GetPrefetchData(GURL(kUrl), _))
-      .WillRepeatedly(Return(true));
-  EXPECT_CALL(*mock, GetPrefetchData(GURL(kUrl2), _))
-      .WillRepeatedly(Return(true));
-  EXPECT_CALL(*mock, GetPrefetchData(GURL(kUrl3), _))
-      .WillRepeatedly(Return(false));
   EXPECT_CALL(*mock, PredictPreconnectOrigins(GURL(kUrl), _))
       .WillRepeatedly(Return(true));
   EXPECT_CALL(*mock, PredictPreconnectOrigins(GURL(kUrl2), _))
@@ -133,13 +127,10 @@ class LoadingPredictorPreconnectTest : public LoadingPredictorTest {
 void LoadingPredictorPreconnectTest::SetUp() {
   LoadingPredictorTest::SetUp();
   auto mock_preconnect_manager =
-      base::MakeUnique<StrictMock<MockPreconnectManager>>(
+      std::make_unique<StrictMock<MockPreconnectManager>>(
           predictor_->GetWeakPtr(), profile_->GetRequestContext());
   mock_preconnect_manager_ = mock_preconnect_manager.get();
   predictor_->set_mock_preconnect_manager(std::move(mock_preconnect_manager));
-
-  EXPECT_CALL(*mock_predictor_, GetPrefetchData(_, _))
-      .WillRepeatedly(Return(false));
 }
 
 LoadingPredictorConfig LoadingPredictorPreconnectTest::CreateConfig() {
@@ -185,7 +176,8 @@ TEST_F(LoadingPredictorTest, TestMainFrameResponseCancelsHint) {
   predictor_->PrepareForPageLoad(url, HintOrigin::EXTERNAL);
   EXPECT_EQ(1UL, predictor_->active_hints_.size());
 
-  auto summary = CreateURLRequestSummary(12, url.spec());
+  auto summary =
+      CreateURLRequestSummary(SessionID::FromSerializedValue(12), url.spec());
   predictor_->OnMainFrameResponse(summary);
   EXPECT_TRUE(predictor_->active_hints_.empty());
 }
@@ -193,7 +185,7 @@ TEST_F(LoadingPredictorTest, TestMainFrameResponseCancelsHint) {
 TEST_F(LoadingPredictorTest, TestMainFrameRequestCancelsStaleNavigations) {
   const std::string url = kUrl;
   const std::string url2 = kUrl2;
-  const int tab_id = 12;
+  const SessionID tab_id = SessionID::FromSerializedValue(12);
   const auto& active_navigations = predictor_->active_navigations_;
   const auto& active_hints = predictor_->active_hints_;
 
@@ -216,7 +208,7 @@ TEST_F(LoadingPredictorTest, TestMainFrameRequestCancelsStaleNavigations) {
 TEST_F(LoadingPredictorTest, TestMainFrameResponseClearsNavigations) {
   const std::string url = kUrl;
   const std::string redirected = kUrl2;
-  const int tab_id = 12;
+  const SessionID tab_id = SessionID::FromSerializedValue(12);
   const auto& active_navigations = predictor_->active_navigations_;
   const auto& active_hints = predictor_->active_hints_;
 
@@ -249,7 +241,7 @@ TEST_F(LoadingPredictorTest, TestMainFrameResponseClearsNavigations) {
 
 TEST_F(LoadingPredictorTest, TestMainFrameRequestDoesntCancelExternalHint) {
   const GURL url = GURL(kUrl);
-  const int tab_id = 12;
+  const SessionID tab_id = SessionID::FromSerializedValue(12);
   const auto& active_navigations = predictor_->active_navigations_;
   auto& active_hints = predictor_->active_hints_;
 

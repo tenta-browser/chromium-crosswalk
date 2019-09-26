@@ -44,6 +44,7 @@
         'linux/auxiliary_vector_test.cc',
         'linux/memory_map_test.cc',
         'linux/proc_stat_reader_test.cc',
+        'linux/ptrace_broker_test.cc',
         'linux/ptracer_test.cc',
         'linux/scoped_ptrace_attach_test.cc',
         'mac/launchd_test.mm',
@@ -66,6 +67,11 @@
         'mach/symbolic_constants_mach_test.cc',
         'mach/task_memory_test.cc',
         'misc/arraysize_unsafe_test.cc',
+        'misc/capture_context_test.cc',
+        'misc/capture_context_test_util.h',
+        'misc/capture_context_test_util_linux.cc',
+        'misc/capture_context_test_util_mac.cc',
+        'misc/capture_context_test_util_win.cc',
         'misc/clock_test.cc',
         'misc/from_pointer_cast_test.cc',
         'misc/initialization_state_dcheck_test.cc',
@@ -104,7 +110,6 @@
         'thread/thread_log_messages_test.cc',
         'thread/thread_test.cc',
         'thread/worker_thread_test.cc',
-        'win/capture_context_test.cc',
         'win/command_line_test.cc',
         'win/critical_section_with_debug_info_test.cc',
         'win/exception_handler_server_test.cc',
@@ -155,6 +160,7 @@
         ['OS=="android"', {
           'sources/': [
             ['include', '^linux/'],
+            ['include', '^misc/capture_context_test_util_linux\\.cc$'],
           ],
         }],
       ],
@@ -169,18 +175,6 @@
           'sources': [
             'win/process_info_test_child.cc',
           ],
-          # Set an unusually high load address to make sure that the main
-          # executable still appears as the first element in
-          # ProcessInfo::Modules().
-          'msvs_settings': {
-            'VCLinkerTool': {
-              'AdditionalOptions': [
-                '/BASE:0x78000000',
-              ],
-              'RandomizedBaseAddress': '1',  # /DYNAMICBASE:NO.
-              'FixedBaseAddress': '2',  # /FIXED.
-            },
-          },
         },
         {
           'target_name': 'crashpad_util_test_safe_terminate_process_test_child',

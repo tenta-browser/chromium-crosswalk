@@ -7,13 +7,11 @@
 #include "base/command_line.h"
 #include "base/feature_list.h"
 #include "base/files/file_util.h"
-#include "base/ios/ios_util.h"
+#include "base/json/json_reader.h"
 #include "base/mac/bundle_locations.h"
-#include "base/memory/ptr_util.h"
 #include "base/strings/sys_string_conversions.h"
 #include "components/dom_distiller/core/url_constants.h"
 #include "components/payments/core/features.h"
-#include "components/prefs/pref_service.h"
 #include "components/strings/grit/components_strings.h"
 #include "components/version_info/version_info.h"
 #include "ios/chrome/browser/application_context.h"
@@ -24,13 +22,15 @@
 #include "ios/chrome/browser/experimental_flags.h"
 #include "ios/chrome/browser/ios_chrome_main_parts.h"
 #include "ios/chrome/browser/passwords/credential_manager_features.h"
-#include "ios/chrome/browser/pref_names.h"
 #include "ios/chrome/browser/ssl/ios_ssl_error_handler.h"
 #import "ios/chrome/browser/ui/chrome_web_view_factory.h"
+#include "ios/chrome/browser/unzip/unzip_service_creator.h"
+#include "ios/chrome/grit/ios_resources.h"
 #include "ios/public/provider/chrome/browser/chrome_browser_provider.h"
 #include "ios/public/provider/chrome/browser/voice/audio_session_controller.h"
 #include "ios/public/provider/chrome/browser/voice/voice_search_provider.h"
 #include "ios/web/public/browser_url_rewriter.h"
+#include "ios/web/public/service_names.mojom.h"
 #include "ios/web/public/user_agent.h"
 #include "net/http/http_util.h"
 #include "ui/base/l10n/l10n_util.h"
@@ -67,7 +67,7 @@ ChromeWebClient::ChromeWebClient() {}
 ChromeWebClient::~ChromeWebClient() {}
 
 std::unique_ptr<web::WebMainParts> ChromeWebClient::CreateWebMainParts() {
-  return base::MakeUnique<IOSChromeMainParts>(
+  return std::make_unique<IOSChromeMainParts>(
       *base::CommandLine::ForCurrentProcess());
 }
 
@@ -88,12 +88,6 @@ void ChromeWebClient::PreWebViewCreation() const {
 void ChromeWebClient::AddAdditionalSchemes(Schemes* schemes) const {
   schemes->standard_schemes.push_back(kChromeUIScheme);
   schemes->secure_schemes.push_back(kChromeUIScheme);
-}
-
-std::string ChromeWebClient::GetAcceptLangs(web::BrowserState* state) const {
-  ios::ChromeBrowserState* chrome_browser_state =
-      ios::ChromeBrowserState::FromBrowserState(state);
-  return chrome_browser_state->GetPrefs()->GetString(prefs::kAcceptLanguages);
 }
 
 std::string ChromeWebClient::GetApplicationLocale() const {
@@ -153,6 +147,21 @@ base::RefCountedMemory* ChromeWebClient::GetDataResourceBytes(
       resource_id);
 }
 
+std::unique_ptr<base::Value> ChromeWebClient::GetServiceManifestOverlay(
+    base::StringPiece name) {
+  int identifier = -1;
+  if (name == web::mojom::kBrowserServiceName)
+    identifier = IDR_CHROME_BROWSER_MANIFEST_OVERLAY;
+
+  if (identifier == -1)
+    return nullptr;
+
+  base::StringPiece manifest_contents =
+      ui::ResourceBundle::GetSharedInstance().GetRawDataResourceForScale(
+          identifier, ui::ScaleFactor::SCALE_FACTOR_NONE);
+  return base::JSONReader::Read(manifest_contents);
+}
+
 void ChromeWebClient::GetAdditionalWebUISchemes(
     std::vector<std::string>* additional_schemes) {
   additional_schemes->push_back(dom_distiller::kDomDistillerScheme);
@@ -163,10 +172,15 @@ void ChromeWebClient::PostBrowserURLRewriterCreation(
   rewriter->AddURLRewriter(&WillHandleWebBrowserAboutURL);
 }
 
-NSString* ChromeWebClient::GetEarlyPageScript(
+NSString* ChromeWebClient::GetDocumentStartScriptForAllFrames(
+    web::BrowserState* browser_state) const {
+  return GetPageScript(@"chrome_bundle_all_frames");
+}
+
+NSString* ChromeWebClient::GetDocumentStartScriptForMainFrame(
     web::BrowserState* browser_state) const {
   NSMutableArray* scripts = [NSMutableArray array];
-  [scripts addObject:GetPageScript(@"chrome_bundle")];
+  [scripts addObject:GetPageScript(@"chrome_bundle_main_frame")];
 
   if (base::FeatureList::IsEnabled(features::kCredentialManager)) {
     [scripts addObject:GetPageScript(@"credential_manager")];
@@ -192,4 +206,9 @@ void ChromeWebClient::AllowCertificateError(
   // or web_state used to fetch offline content in Reading List.
   IOSSSLErrorHandler::HandleSSLError(web_state, cert_error, info, request_url,
                                      overridable, callback);
+}
+
+void ChromeWebClient::RegisterServices(StaticServiceMap* services) {
+  // The Unzip service is used by the component updater.
+  RegisterUnzipService(services);
 }

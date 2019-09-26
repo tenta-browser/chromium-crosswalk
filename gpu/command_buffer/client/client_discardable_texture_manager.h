@@ -17,9 +17,9 @@ namespace gpu {
 // ClientDiscardableManager. Used by the GLES2 Implementation.
 //
 // NOTE: The presence of locking on this class does not make it threadsafe.
-// The underlying locking *only* allows calling TextureIsValid and
-// LockTexture without holding the GL context lock. All other calls still
-// require that the context lock be held.
+// The underlying locking *only* allows calling TextureIsValid,
+// LockTexture, and TextureIsDeletedForTracing without holding the GL context
+// lock. All other calls still require that the context lock be held.
 class GPU_EXPORT ClientDiscardableTextureManager {
  public:
   ClientDiscardableTextureManager();
@@ -27,10 +27,14 @@ class GPU_EXPORT ClientDiscardableTextureManager {
   ClientDiscardableHandle InitializeTexture(CommandBuffer* command_buffer,
                                             uint32_t texture_id);
   bool LockTexture(uint32_t texture_id);
+  void UnlockTexture(uint32_t texture_id, bool* should_unbind_texture);
   // Must be called by the GLES2Implementation when a texture is being deleted
   // to allow tracking memory to be reclaimed.
   void FreeTexture(uint32_t texture_id);
   bool TextureIsValid(uint32_t texture_id) const;
+
+  // Tracing only functions.
+  bool TextureIsDeletedForTracing(uint32_t texture_id) const;
 
   // Test only functions.
   ClientDiscardableManager* DiscardableManagerForTesting() {
@@ -39,9 +43,20 @@ class GPU_EXPORT ClientDiscardableTextureManager {
   ClientDiscardableHandle GetHandleForTesting(uint32_t texture_id);
 
  private:
+  struct TextureEntry {
+    TextureEntry(ClientDiscardableHandle::Id id);
+    TextureEntry(const TextureEntry& other);
+    TextureEntry& operator=(const TextureEntry& other);
+
+    ClientDiscardableHandle::Id id;
+    // Tracks the lock count of the given texture. Used to unbind texture
+    // the texture when fully unlocked.
+    uint32_t client_lock_count = 1;
+  };
+
   // Access to other members must always be done with |lock_| held.
   mutable base::Lock lock_;
-  std::map<uint32_t, ClientDiscardableHandle::Id> texture_id_to_handle_id_;
+  std::map<uint32_t, TextureEntry> texture_entries_;
   ClientDiscardableManager discardable_manager_;
 
   DISALLOW_COPY_AND_ASSIGN(ClientDiscardableTextureManager);

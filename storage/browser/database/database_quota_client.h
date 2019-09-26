@@ -13,7 +13,8 @@
 #include "base/single_thread_task_runner.h"
 #include "storage/browser/quota/quota_client.h"
 #include "storage/browser/storage_browser_export.h"
-#include "storage/common/quota/quota_types.h"
+#include "third_party/blink/public/mojom/quota/quota_types.mojom.h"
+#include "url/origin.h"
 
 namespace storage {
 
@@ -30,18 +31,18 @@ class STORAGE_EXPORT DatabaseQuotaClient : public storage::QuotaClient {
   // QuotaClient method overrides
   ID id() const override;
   void OnQuotaManagerDestroyed() override;
-  void GetOriginUsage(const GURL& origin_url,
-                      storage::StorageType type,
-                      const GetUsageCallback& callback) override;
-  void GetOriginsForType(storage::StorageType type,
-                         const GetOriginsCallback& callback) override;
-  void GetOriginsForHost(storage::StorageType type,
+  void GetOriginUsage(const url::Origin& origin,
+                      blink::mojom::StorageType type,
+                      GetUsageCallback callback) override;
+  void GetOriginsForType(blink::mojom::StorageType type,
+                         GetOriginsCallback callback) override;
+  void GetOriginsForHost(blink::mojom::StorageType type,
                          const std::string& host,
-                         const GetOriginsCallback& callback) override;
-  void DeleteOriginData(const GURL& origin,
-                        storage::StorageType type,
-                        const DeletionCallback& callback) override;
-  bool DoesSupport(storage::StorageType type) const override;
+                         GetOriginsCallback callback) override;
+  void DeleteOriginData(const url::Origin& origin,
+                        blink::mojom::StorageType type,
+                        DeletionCallback callback) override;
+  bool DoesSupport(blink::mojom::StorageType type) const override;
 
  private:
   scoped_refptr<DatabaseTracker> db_tracker_;  // only used on its sequence

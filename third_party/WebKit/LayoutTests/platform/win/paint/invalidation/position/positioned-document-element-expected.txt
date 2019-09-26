@@ -3,48 +3,43 @@
     {
       "name": "LayoutView #document",
       "bounds": [800, 600],
+      "drawsContent": false,
+      "backgroundColor": "#008000"
+    },
+    {
+      "name": "Scrolling Layer",
+      "bounds": [800, 600],
+      "drawsContent": false
+    },
+    {
+      "name": "Scrolling Contents Layer",
+      "bounds": [800, 600],
       "contentsOpaque": true,
       "backgroundColor": "#008000",
       "paintInvalidations": [
         {
-          "object": "LayoutView #document",
+          "object": "Scrolling Contents Layer",
           "rect": [0, 0, 800, 600],
-          "reason": "style change"
+          "reason": "background on scrolling contents layer"
         },
         {
-          "object": "LayoutBlockFlow (positioned) HTML class='changed'",
-          "rect": [0, 0, 800, 52],
-          "reason": "style change"
-        },
-        {
-          "object": "LayoutBlockFlow P",
-          "rect": [8, 16, 784, 20],
-          "reason": "geometry"
-        },
-        {
-          "object": "LayoutBlockFlow (positioned) HTML class='changed'",
-          "rect": [100, 100, 418, 52],
-          "reason": "style change"
-        },
-        {
-          "object": "LayoutBlockFlow P",
-          "rect": [108, 116, 402, 20],
-          "reason": "geometry"
-        },
-        {
-          "object": "LayoutText #text",
+          "object": "InlineTextBox 'Tests that the entire viewport is painted with a floated html element.'",
           "rect": [108, 116, 402, 19],
-          "reason": "geometry"
+          "reason": "appeared"
         },
         {
-          "object": "LayoutText #text",
+          "object": "InlineTextBox 'Tests that the entire viewport is painted with a floated html element.'",
           "rect": [8, 16, 402, 19],
-          "reason": "geometry"
+          "reason": "disappeared"
         }
       ]
     }
   ],
   "objectPaintInvalidations": [
+    {
+      "object": "Scrolling Contents Layer",
+      "reason": "background on scrolling contents layer"
+    },
     {
       "object": "LayoutView #document",
       "reason": "style change"

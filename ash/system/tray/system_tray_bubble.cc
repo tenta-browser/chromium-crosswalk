@@ -7,6 +7,7 @@
 #include <utility>
 #include <vector>
 
+#include "ash/public/cpp/ash_features.h"
 #include "ash/session/session_controller.h"
 #include "ash/shell.h"
 #include "ash/shell_port.h"
@@ -142,7 +143,14 @@ void SystemTrayBubble::UpdateView(
   }
 
   UpdateBottomPadding();
+
+  // Enfore relayout of |bubble_view_|. The view code will skip the relayout of
+  // |bubble_view_| if its bounds does not change. However, we need to
+  // force |bubble_view_| relayout in order to set the bounds of its newly
+  // created children view to preferred sizes.
+  bubble_view_->InvalidateLayout();
   bubble_view_->GetWidget()->GetContentsView()->Layout();
+
   // Make sure that the bubble is large enough for the default view.
   if (system_tray_type == SystemTrayView::SYSTEM_TRAY_TYPE_DEFAULT) {
     bubble_view_->SetMaxHeight(0);  // Clear max height limit.
@@ -198,13 +206,15 @@ void SystemTrayBubble::InitView(views::View* anchor,
   init_params->parent_window = tray_->GetBubbleWindowContainer();
   init_params->anchor_view = anchor;
   bubble_view_ = new TrayBubbleView(*init_params);
+  if (features::IsSystemTrayUnifiedEnabled())
+    bubble_view_->set_color(kUnifiedMenuBackgroundColor);
   bubble_view_->AddChildView(system_tray_view_);
   UpdateBottomPadding();
   bubble_view_->set_adjust_if_offscreen(false);
   CreateItemViews(login_status);
 
   if (bubble_view_->CanActivate()) {
-    bubble_view_->NotifyAccessibilityEvent(ui::AX_EVENT_ALERT, true);
+    bubble_view_->NotifyAccessibilityEvent(ax::mojom::Event::kAlert, true);
   }
 }
 

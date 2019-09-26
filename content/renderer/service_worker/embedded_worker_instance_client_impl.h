@@ -12,7 +12,8 @@
 #include "content/child/scoped_child_process_reference.h"
 #include "content/common/service_worker/embedded_worker.mojom.h"
 #include "mojo/public/cpp/bindings/associated_binding.h"
-#include "third_party/WebKit/public/web/worker_content_settings_proxy.mojom.h"
+#include "third_party/blink/public/mojom/service_worker/service_worker_installed_scripts_manager.mojom.h"
+#include "third_party/blink/public/web/worker_content_settings_proxy.mojom.h"
 
 namespace blink {
 
@@ -22,7 +23,6 @@ class WebEmbeddedWorker;
 
 namespace content {
 
-class EmbeddedWorkerDevToolsAgent;
 class ServiceWorkerContextClient;
 
 // This class exposes interfaces of WebEmbeddedWorker to the browser process.
@@ -45,6 +45,13 @@ class ServiceWorkerContextClient;
 class EmbeddedWorkerInstanceClientImpl
     : public mojom::EmbeddedWorkerInstanceClient {
  public:
+  // Enum for UMA to record when StartWorker is received.
+  enum class StartWorkerHistogramEnum {
+    RECEIVED_ON_INSTALLED = 0,
+    RECEIVED_ON_UNINSTALLED = 1,
+    NUM_TYPES
+  };
+
   // Creates a new EmbeddedWorkerInstanceClientImpl instance bound to
   // |request|. The instance destroys itself when needed, see the class
   // documentation.
@@ -57,28 +64,20 @@ class EmbeddedWorkerInstanceClientImpl
 
   // Called from ServiceWorkerContextClient.
   void WorkerContextDestroyed();
-  EmbeddedWorkerDevToolsAgent* devtools_agent() {
-    return wrapper_->devtools_agent();
-  };
 
  private:
   // A thin wrapper of WebEmbeddedWorker which also adds and releases process
   // references automatically.
   class WorkerWrapper {
    public:
-    WorkerWrapper(std::unique_ptr<blink::WebEmbeddedWorker> worker,
-                  int devtools_agent_route_id);
+    explicit WorkerWrapper(std::unique_ptr<blink::WebEmbeddedWorker> worker);
     ~WorkerWrapper();
 
     blink::WebEmbeddedWorker* worker() { return worker_.get(); }
-    EmbeddedWorkerDevToolsAgent* devtools_agent() {
-      return devtools_agent_.get();
-    }
 
    private:
     ScopedChildProcessReference process_ref_;
     std::unique_ptr<blink::WebEmbeddedWorker> worker_;
-    std::unique_ptr<EmbeddedWorkerDevToolsAgent> devtools_agent_;
   };
 
   EmbeddedWorkerInstanceClientImpl(
@@ -86,29 +85,20 @@ class EmbeddedWorkerInstanceClientImpl
       mojom::EmbeddedWorkerInstanceClientAssociatedRequest request);
 
   // mojom::EmbeddedWorkerInstanceClient implementation
-  void StartWorker(
-      const EmbeddedWorkerStartParams& params,
-      mojom::ServiceWorkerEventDispatcherRequest dispatcher_request,
-      mojom::ControllerServiceWorkerRequest controller_request,
-      mojom::ServiceWorkerInstalledScriptsInfoPtr installed_scripts_info,
-      blink::mojom::ServiceWorkerHostAssociatedPtrInfo service_worker_host,
-      mojom::EmbeddedWorkerInstanceHostAssociatedPtrInfo instance_host,
-      mojom::ServiceWorkerProviderInfoForStartWorkerPtr provider_info,
-      blink::mojom::WorkerContentSettingsProxyPtr content_settings_proxy)
-      override;
+  void StartWorker(mojom::EmbeddedWorkerStartParamsPtr params) override;
   void StopWorker() override;
   void ResumeAfterDownload() override;
   void AddMessageToConsole(blink::WebConsoleMessage::Level level,
                            const std::string& message) override;
+  void BindDevToolsAgent(
+      blink::mojom::DevToolsAgentAssociatedRequest request) override;
 
   // Handler of connection error bound to |binding_|.
   void OnError();
 
   std::unique_ptr<WorkerWrapper> StartWorkerContext(
-      const EmbeddedWorkerStartParams& params,
-      mojom::ServiceWorkerInstalledScriptsInfoPtr installed_scripts_info,
+      mojom::EmbeddedWorkerStartParamsPtr params,
       std::unique_ptr<ServiceWorkerContextClient> context_client,
-      blink::mojom::WorkerContentSettingsProxyPtr content_settings_proxy,
       service_manager::mojom::InterfaceProviderPtr interface_provider);
 
   mojo::AssociatedBinding<mojom::EmbeddedWorkerInstanceClient> binding_;

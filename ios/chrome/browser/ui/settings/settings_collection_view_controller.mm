@@ -7,7 +7,6 @@
 #include <memory>
 
 #import "base/mac/foundation_util.h"
-#include "base/metrics/user_metrics.h"
 #include "base/strings/sys_string_conversions.h"
 #include "components/autofill/core/common/autofill_pref_names.h"
 #include "components/browser_sync/profile_sync_service.h"
@@ -17,6 +16,7 @@
 #include "components/prefs/pref_service.h"
 #include "components/search_engines/util.h"
 #include "components/signin/core/browser/signin_manager.h"
+#include "components/signin/core/browser/signin_metrics.h"
 #include "components/strings/grit/components_strings.h"
 #include "ios/chrome/browser/application_context.h"
 #include "ios/chrome/browser/browser_state/chrome_browser_state.h"
@@ -54,6 +54,7 @@
 #import "ios/chrome/browser/ui/settings/save_passwords_collection_view_controller.h"
 #import "ios/chrome/browser/ui/settings/search_engine_settings_collection_view_controller.h"
 #import "ios/chrome/browser/ui/settings/sync_utils/sync_util.h"
+#import "ios/chrome/browser/ui/settings/table_cell_catalog_view_controller.h"
 #import "ios/chrome/browser/ui/settings/utils/pref_backed_boolean.h"
 #import "ios/chrome/browser/ui/settings/voicesearch_collection_view_controller.h"
 #import "ios/chrome/browser/ui/signin_interaction/public/signin_presenter.h"
@@ -73,6 +74,7 @@
 #endif
 
 NSString* const kSettingsCollectionViewId = @"kSettingsCollectionViewId";
+NSString* const kSettingsDoneButtonId = @"kSettingsDoneButtonId";
 NSString* const kSettingsSignInCellId = @"kSettingsSignInCellId";
 NSString* const kSettingsAccountCellId = @"kSettingsAccountCellId";
 NSString* const kSettingsSearchEngineCellId = @"Search Engine";
@@ -111,15 +113,14 @@ typedef NS_ENUM(NSInteger, ItemType) {
   ItemTypeMemoryDebugging,
   ItemTypeViewSource,
   ItemTypeLogJavascript,
-  ItemTypeShowAutofillTypePredictions,
-  ItemTypeCellCatalog,
+  ItemTypeCollectionCellCatalog,
+  ItemTypeTableCellCatalog,
   ItemTypeArticlesForYou,
 };
 
 #if CHROMIUM_BUILD && !defined(NDEBUG)
 NSString* kDevViewSourceKey = @"DevViewSource";
 NSString* kLogJavascriptKey = @"LogJavascript";
-NSString* kShowAutofillTypePredictionsKey = @"ShowAutofillTypePredictions";
 #endif  // CHROMIUM_BUILD && !defined(NDEBUG)
 
 #pragma mark - SigninObserverBridge Class
@@ -425,9 +426,9 @@ void SigninObserverBridge::GoogleSignedOut(const std::string& account_id,
       toSectionWithIdentifier:SectionIdentifierDebug];
   [model addItem:[self logJavascriptConsoleSwitchItem]
       toSectionWithIdentifier:SectionIdentifierDebug];
-  [model addItem:[self showAutofillTypePredictionsSwitchItem]
+  [model addItem:[self collectionViewCatalogDetailItem]
       toSectionWithIdentifier:SectionIdentifierDebug];
-  [model addItem:[self materialCatalogDetailItem]
+  [model addItem:[self tableViewCatalogDetailItem]
       toSectionWithIdentifier:SectionIdentifierDebug];
 #endif  // CHROMIUM_BUILD && !defined(NDEBUG)
 }
@@ -446,8 +447,8 @@ void SigninObserverBridge::GoogleSignedOut(const std::string& account_id,
   if (!_hasRecordedSigninImpression) {
     // Once the Settings are open, this button impression will at most be
     // recorded once until they are closed.
-    base::RecordAction(
-        base::UserMetricsAction("Signin_Impression_FromSettings"));
+    signin_metrics::RecordSigninImpressionUserActionForAccessPoint(
+        signin_metrics::AccessPoint::ACCESS_POINT_SETTINGS);
     _hasRecordedSigninImpression = YES;
   }
   AccountSignInItem* signInTextItem =
@@ -487,16 +488,10 @@ void SigninObserverBridge::GoogleSignedOut(const std::string& account_id,
 }
 
 - (CollectionViewItem*)savePasswordsDetailItem {
-  BOOL savePasswordsEnabled = _browserState->GetPrefs()->GetBoolean(
-      password_manager::prefs::kCredentialsEnableService);
-  NSString* passwordsDetail = savePasswordsEnabled
-                                  ? l10n_util::GetNSString(IDS_IOS_SETTING_ON)
-                                  : l10n_util::GetNSString(IDS_IOS_SETTING_OFF);
-
   _savePasswordsDetailItem =
       [self detailItemWithType:ItemTypeSavedPasswords
-                          text:l10n_util::GetNSString(IDS_IOS_SAVE_PASSWORDS)
-                    detailText:passwordsDetail];
+                          text:l10n_util::GetNSString(IDS_IOS_PASSWORDS)
+                    detailText:nil];
 
   return _savePasswordsDetailItem;
 }
@@ -594,15 +589,15 @@ void SigninObserverBridge::GoogleSignedOut(const std::string& account_id,
                   withDefaultsKey:kLogJavascriptKey];
 }
 
-- (CollectionViewSwitchItem*)showAutofillTypePredictionsSwitchItem {
-  return [self switchItemWithType:ItemTypeShowAutofillTypePredictions
-                            title:@"Show Autofill type predictions"
-                  withDefaultsKey:kShowAutofillTypePredictionsKey];
+- (CollectionViewDetailItem*)collectionViewCatalogDetailItem {
+  return [self detailItemWithType:ItemTypeCollectionCellCatalog
+                             text:@"Collection Cell Catalog"
+                       detailText:nil];
 }
 
-- (CollectionViewDetailItem*)materialCatalogDetailItem {
-  return [self detailItemWithType:ItemTypeCellCatalog
-                             text:@"Cell Catalog"
+- (CollectionViewDetailItem*)tableViewCatalogDetailItem {
+  return [self detailItemWithType:ItemTypeTableCellCatalog
+                             text:@"TableView Cell Catalog"
                        detailText:nil];
 }
 #endif  // CHROMIUM_BUILD && !defined(NDEBUG)
@@ -728,18 +723,6 @@ void SigninObserverBridge::GoogleSignedOut(const std::string& account_id,
 #endif  // CHROMIUM_BUILD && !defined(NDEBUG)
       break;
     }
-    case ItemTypeShowAutofillTypePredictions: {
-#if CHROMIUM_BUILD && !defined(NDEBUG)
-      CollectionViewSwitchCell* switchCell =
-          base::mac::ObjCCastStrict<CollectionViewSwitchCell>(cell);
-      [switchCell.switchView addTarget:self
-                                action:@selector(showAutoFillSwitchToggled:)
-                      forControlEvents:UIControlEventValueChanged];
-#else
-      NOTREACHED();
-#endif  // CHROMIUM_BUILD && !defined(NDEBUG)
-      break;
-    }
     default:
       break;
   }
@@ -767,7 +750,9 @@ void SigninObserverBridge::GoogleSignedOut(const std::string& account_id,
 
   switch (itemType) {
     case ItemTypeSignInButton:
-      base::RecordAction(base::UserMetricsAction("Signin_Signin_FromSettings"));
+      signin_metrics::RecordSigninUserActionForAccessPoint(
+          signin_metrics::AccessPoint::ACCESS_POINT_SETTINGS,
+          signin_metrics::PromoAction::PROMO_ACTION_NO_SIGNIN_PROMO);
       [self showSignInWithIdentity:nil
                        promoAction:signin_metrics::PromoAction::
                                        PROMO_ACTION_NO_SIGNIN_PROMO
@@ -813,12 +798,16 @@ void SigninObserverBridge::GoogleSignedOut(const std::string& account_id,
     case ItemTypeMemoryDebugging:
     case ItemTypeViewSource:
     case ItemTypeLogJavascript:
-    case ItemTypeShowAutofillTypePredictions:
       // Taps on these don't do anything. They have a switch as accessory view
       // and only the switch is tappable.
       break;
-    case ItemTypeCellCatalog:
+    case ItemTypeCollectionCellCatalog:
       [self.settingsMainPageDispatcher showMaterialCellCatalog];
+      break;
+    case ItemTypeTableCellCatalog:
+      [self.navigationController
+          pushViewController:[[TableCellCatalogViewController alloc] init]
+                    animated:YES];
       break;
     default:
       break;
@@ -860,7 +849,6 @@ void SigninObserverBridge::GoogleSignedOut(const std::string& account_id,
   switch (type) {
     case ItemTypeLogJavascript:
     case ItemTypeMemoryDebugging:
-    case ItemTypeShowAutofillTypePredictions:
     case ItemTypeSigninPromo:
     case ItemTypeViewSource:
       return YES;
@@ -926,21 +914,6 @@ void SigninObserverBridge::GoogleSignedOut(const std::string& account_id,
   BOOL newSwitchValue = sender.isOn;
   switchItem.on = newSwitchValue;
   [self setBooleanNSUserDefaultsValue:newSwitchValue forKey:kLogJavascriptKey];
-}
-
-- (void)showAutoFillSwitchToggled:(UISwitch*)sender {
-  NSIndexPath* switchPath = [self.collectionViewModel
-      indexPathForItemType:ItemTypeShowAutofillTypePredictions
-         sectionIdentifier:SectionIdentifierDebug];
-
-  CollectionViewSwitchItem* switchItem =
-      base::mac::ObjCCastStrict<CollectionViewSwitchItem>(
-          [self.collectionViewModel itemAtIndexPath:switchPath]);
-
-  BOOL newSwitchValue = sender.isOn;
-  switchItem.on = newSwitchValue;
-  [self setBooleanNSUserDefaultsValue:newSwitchValue
-                               forKey:kShowAutofillTypePredictionsKey];
 }
 #endif  // CHROMIUM_BUILD && !defined(NDEBUG)
 

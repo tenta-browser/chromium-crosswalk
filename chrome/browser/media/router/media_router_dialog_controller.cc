@@ -17,7 +17,7 @@
 #if defined(OS_ANDROID)
 #include "chrome/browser/media/android/router/media_router_dialog_controller_android.h"
 #else
-#include "chrome/browser/ui/webui/media_router/media_router_dialog_controller_impl.h"
+#include "chrome/browser/ui/media_router/media_router_dialog_controller_impl_base.h"
 #endif
 
 namespace media_router {
@@ -30,7 +30,8 @@ MediaRouterDialogController::GetOrCreateForWebContents(
   return MediaRouterDialogControllerAndroid::GetOrCreateForWebContents(
       contents);
 #else
-  return MediaRouterDialogControllerImpl::GetOrCreateForWebContents(contents);
+  return MediaRouterDialogControllerImplBase::GetOrCreateForWebContents(
+      contents);
 #endif
 }
 
@@ -140,7 +141,7 @@ bool MediaRouterDialogController::ShowMediaRouterDialogForPresentation(
     return false;
   }
 
-  start_presentation_context_ = base::MakeUnique<StartPresentationContext>(
+  start_presentation_context_ = std::make_unique<StartPresentationContext>(
       presentation_request, std::move(success_cb), std::move(error_cb));
   MediaRouterMetrics::RecordMediaRouterDialogOrigin(
       MediaRouterDialogOpenOrigin::PAGE);

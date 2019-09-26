@@ -3,38 +3,49 @@
     {
       "name": "LayoutView #document",
       "bounds": [800, 600],
+      "drawsContent": false,
+      "backgroundColor": "#FFFFFF"
+    },
+    {
+      "name": "Scrolling Layer",
+      "bounds": [800, 600],
+      "drawsContent": false
+    },
+    {
+      "name": "Scrolling Contents Layer",
+      "bounds": [800, 600],
       "contentsOpaque": true,
       "backgroundColor": "#FFFFFF",
       "paintInvalidations": [
         {
-          "object": "LayoutSVGRect rect id='clipper'",
-          "rect": [0, 100, 300, 200],
-          "reason": "subtree"
-        },
-        {
-          "object": "LayoutSVGRect rect id='masker'",
-          "rect": [0, 0, 300, 100],
-          "reason": "subtree"
-        },
-        {
-          "object": "LayoutSVGRect rect id='clipper'",
-          "rect": [100, 0, 200, 300],
-          "reason": "subtree"
-        },
-        {
-          "object": "LayoutSVGRect rect id='masker'",
-          "rect": [100, 0, 200, 300],
-          "reason": "subtree"
-        },
-        {
           "object": "LayoutSVGContainer g",
           "rect": [150, 50, 100, 100],
-          "reason": "geometry"
+          "reason": "paint property change"
+        },
+        {
+          "object": "LayoutSVGRect rect id='masker'",
+          "rect": [150, 50, 100, 100],
+          "reason": "appeared"
+        },
+        {
+          "object": "LayoutSVGRect rect id='clipper'",
+          "rect": [50, 150, 100, 100],
+          "reason": "appeared"
         },
         {
           "object": "LayoutSVGContainer g",
-          "rect": [50, 150, 100, 100],
-          "reason": "geometry"
+          "rect": [150, 50, 100, 50],
+          "reason": "disappeared"
+        },
+        {
+          "object": "LayoutSVGContainer g",
+          "rect": [150, 50, 100, 50],
+          "reason": "paint property change"
+        },
+        {
+          "object": "LayoutSVGContainer g",
+          "rect": [100, 150, 50, 100],
+          "reason": "disappeared"
         }
       ]
     }
@@ -46,7 +57,7 @@
     },
     {
       "object": "LayoutSVGRect rect id='masker'",
-      "reason": "subtree"
+      "reason": "full"
     },
     {
       "object": "LayoutSVGContainer g",
@@ -54,7 +65,7 @@
     },
     {
       "object": "LayoutSVGRect rect id='clipper'",
-      "reason": "subtree"
+      "reason": "full"
     }
   ]
 }

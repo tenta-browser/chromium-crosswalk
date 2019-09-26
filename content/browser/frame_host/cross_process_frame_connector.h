@@ -12,6 +12,7 @@
 #include "components/viz/common/surfaces/surface_id.h"
 #include "content/browser/renderer_host/frame_connector_delegate.h"
 #include "content/common/content_export.h"
+#include "content/common/frame_resize_params.h"
 
 namespace IPC {
 class Message;
@@ -19,7 +20,6 @@ class Message;
 
 namespace content {
 class RenderFrameProxyHost;
-struct ScreenInfo;
 
 // CrossProcessFrameConnector provides the platform view abstraction for
 // RenderWidgetHostViewChildFrame allowing RWHVChildFrame to remain ignorant
@@ -76,8 +76,10 @@ class CONTENT_EXPORT CrossProcessFrameConnector
   RenderWidgetHostViewBase* GetParentRenderWidgetHostView() override;
   RenderWidgetHostViewBase* GetRootRenderWidgetHostView() override;
   void RenderProcessGone() override;
-  void SetChildFrameSurface(const viz::SurfaceInfo& surface_info,
-                            const viz::SurfaceSequence& sequence) override;
+  void SetChildFrameSurface(const viz::SurfaceInfo& surface_info) override;
+  void SendIntrinsicSizingInfoToParent(
+      const blink::WebIntrinsicSizingInfo&) override;
+
   void UpdateCursor(const WebCursor& cursor) override;
   gfx::PointF TransformPointToRootCoordSpace(
       const gfx::PointF& point,
@@ -98,6 +100,9 @@ class CONTENT_EXPORT CrossProcessFrameConnector
   void FocusRootView() override;
   bool LockMouse() override;
   void UnlockMouse() override;
+  void EnableAutoResize(const gfx::Size& min_size,
+                        const gfx::Size& max_size) override;
+  void DisableAutoResize() override;
   bool IsInert() const override;
   bool IsHidden() const override;
   bool IsThrottled() const override;
@@ -113,7 +118,7 @@ class CONTENT_EXPORT CrossProcessFrameConnector
   // is |view_|.
   void SetVisibilityForChildViews(bool visible) const override;
 
-  void SetRect(const gfx::Rect& frame_rect_in_pixels) override;
+  void SetScreenSpaceRect(const gfx::Rect& screen_space_rect) override;
 
   // Exposed for tests.
   RenderWidgetHostViewBase* GetRootRenderWidgetHostViewForTesting() {
@@ -125,28 +130,21 @@ class CONTENT_EXPORT CrossProcessFrameConnector
 
   // Resets the rect and the viz::LocalSurfaceId of the connector to ensure the
   // unguessable surface ID is not reused after a cross-process navigation.
-  void ResetFrameRect();
+  void ResetScreenSpaceRect();
 
   // Handlers for messages received from the parent frame.
-  void OnUpdateResizeParams(const gfx::Rect& frame_rect,
-                            const ScreenInfo& screen_info,
-                            uint64_t sequence_number,
-                            const viz::SurfaceId& surface_id);
-  void OnUpdateViewportIntersection(const gfx::Rect& viewport_intersection);
+  void OnUpdateResizeParams(const viz::SurfaceId& surface_id,
+                            const FrameResizeParams& frame_resize_params);
+  void OnUpdateViewportIntersection(const gfx::Rect& viewport_intersection,
+                                    const gfx::Rect& compositor_visible_rect);
   void OnVisibilityChanged(bool visible);
   void OnSetIsInert(bool);
   void OnUpdateRenderThrottlingStatus(bool is_throttled,
                                       bool subtree_throttled);
-  void OnSatisfySequence(const viz::SurfaceSequence& sequence);
-  void OnRequireSequence(const viz::SurfaceId& id,
-                         const viz::SurfaceSequence& sequence);
 
   // The RenderFrameProxyHost that routes messages to the parent frame's
   // renderer process.
   RenderFrameProxyHost* frame_proxy_in_parent_renderer_;
-
-  // The RenderWidgetHostView for the frame. Initially NULL.
-  RenderWidgetHostViewChildFrame* view_;
 
   bool is_inert_ = false;
 
@@ -159,9 +157,10 @@ class CONTENT_EXPORT CrossProcessFrameConnector
 
   bool is_scroll_bubbling_;
 
-  // The last frame rect received from the parent renderer.
-  // |last_received_frame_rect_| may be in DIP if use zoom for DSF is off.
-  gfx::Rect last_received_frame_rect_;
+  // The last pre-transform frame size received from the parent renderer.
+  // |last_received_local_frame_size_| may be in DIP if use zoom for DSF is
+  // off.
+  gfx::Size last_received_local_frame_size_;
 
   DISALLOW_COPY_AND_ASSIGN(CrossProcessFrameConnector);
 };

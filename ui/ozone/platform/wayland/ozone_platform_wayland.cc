@@ -4,7 +4,6 @@
 
 #include "ui/ozone/platform/wayland/ozone_platform_wayland.h"
 
-#include "base/memory/ptr_util.h"
 #include "ui/base/cursor/ozone/bitmap_cursor_factory_ozone.h"
 #include "ui/base/ui_features.h"
 #include "ui/display/manager/fake_display_delegate.h"
@@ -75,10 +74,6 @@ class OzonePlatformWayland : public OzonePlatform {
   }
 
   void InitializeUI(const InitParams& args) override {
-    connection_.reset(new WaylandConnection);
-    if (!connection_->Initialize())
-      LOG(FATAL) << "Failed to initialize Wayland platform";
-
 #if BUILDFLAG(USE_XKBCOMMON)
     KeyboardLayoutEngineManager::SetKeyboardLayoutEngine(
         std::make_unique<WaylandXkbKeyboardLayoutEngine>(
@@ -87,6 +82,9 @@ class OzonePlatformWayland : public OzonePlatform {
     KeyboardLayoutEngineManager::SetKeyboardLayoutEngine(
         std::make_unique<StubKeyboardLayoutEngine>());
 #endif
+    connection_.reset(new WaylandConnection);
+    if (!connection_->Initialize())
+      LOG(FATAL) << "Failed to initialize Wayland platform";
 
     cursor_factory_.reset(new BitmapCursorFactoryOzone);
     overlay_manager_.reset(new StubOverlayManager);

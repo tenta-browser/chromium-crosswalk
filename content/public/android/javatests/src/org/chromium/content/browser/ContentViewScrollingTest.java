@@ -22,9 +22,9 @@ import org.chromium.base.test.BaseJUnit4ClassRunner;
 import org.chromium.base.test.util.Feature;
 import org.chromium.base.test.util.RetryOnFailure;
 import org.chromium.base.test.util.UrlUtils;
-import org.chromium.content.browser.ContentViewCore.InternalAccessDelegate;
 import org.chromium.content.browser.test.util.Criteria;
 import org.chromium.content.browser.test.util.CriteriaHelper;
+import org.chromium.content_public.browser.ContentViewCore.InternalAccessDelegate;
 import org.chromium.content_shell_apk.ContentShellActivityTestRule;
 import org.chromium.content_shell_apk.ContentShellActivityTestRule.RerunWithUpdatedContainerView;
 
@@ -78,16 +78,6 @@ public class ContentViewScrollingTest {
             }
         }
 
-        @Override
-        public boolean awakenScrollBars() {
-            return false;
-        }
-
-        @Override
-        public boolean super_awakenScrollBars(int startDelay, boolean invalidate) {
-            return false;
-        }
-
         /**
          * @return Whether OnScrollChanged() has been called.
          */
@@ -130,7 +120,7 @@ public class ContentViewScrollingTest {
         InstrumentationRegistry.getInstrumentation().runOnMainSync(new Runnable() {
             @Override
             public void run() {
-                mActivityTestRule.getContentViewCore().flingViewport(
+                mActivityTestRule.getWebContents().getEventForwarder().startFling(
                         SystemClock.uptimeMillis(), vx, vy, false);
             }
         });

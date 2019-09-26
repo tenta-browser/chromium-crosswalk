@@ -6,6 +6,7 @@
 
 #include "base/bind.h"
 #include "base/bind_helpers.h"
+#include "base/callback_helpers.h"
 #include "base/compiler_specific.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/strings/string_number_conversions.h"
@@ -254,11 +255,14 @@ int FtpNetworkTransaction::Stop(int error) {
   return OK;
 }
 
-int FtpNetworkTransaction::Start(const FtpRequestInfo* request_info,
-                                 const CompletionCallback& callback,
-                                 const NetLogWithSource& net_log) {
+int FtpNetworkTransaction::Start(
+    const FtpRequestInfo* request_info,
+    const CompletionCallback& callback,
+    const NetLogWithSource& net_log,
+    const NetworkTrafficAnnotationTag& traffic_annotation) {
   net_log_ = net_log;
   request_ = request_info;
+  traffic_annotation_ = MutableNetworkTrafficAnnotationTag(traffic_annotation);
 
   ctrl_response_buffer_ = std::make_unique<FtpCtrlResponseBuffer>(net_log_);
 
@@ -371,9 +375,7 @@ void FtpNetworkTransaction::DoCallback(int rv) {
   DCHECK(!user_callback_.is_null());
 
   // Since Run may result in Read being called, clear callback_ up front.
-  CompletionCallback c = user_callback_;
-  user_callback_.Reset();
-  c.Run(rv);
+  base::ResetAndReturn(&user_callback_).Run(rv);
 }
 
 void FtpNetworkTransaction::OnIOComplete(int result) {
@@ -736,8 +738,9 @@ int FtpNetworkTransaction::DoCtrlReadComplete(int result) {
 int FtpNetworkTransaction::DoCtrlWrite() {
   next_state_ = STATE_CTRL_WRITE_COMPLETE;
 
-  return ctrl_socket_->Write(
-      write_buf_.get(), write_buf_->BytesRemaining(), io_callback_);
+  return ctrl_socket_->Write(write_buf_.get(), write_buf_->BytesRemaining(),
+                             io_callback_,
+                             NetworkTrafficAnnotationTag(traffic_annotation_));
 }
 
 int FtpNetworkTransaction::DoCtrlWriteComplete(int result) {

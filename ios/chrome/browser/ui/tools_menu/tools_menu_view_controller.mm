@@ -4,9 +4,9 @@
 
 #import "ios/chrome/browser/ui/tools_menu/tools_menu_view_controller.h"
 
+#import <QuartzCore/QuartzCore.h>
 #include <stdint.h>
 
-#include "base/ios/ios_util.h"
 #include "base/logging.h"
 #include "base/metrics/field_trial.h"
 #include "base/metrics/histogram_macros.h"
@@ -17,6 +17,7 @@
 #import "ios/chrome/browser/ui/animation_util.h"
 #import "ios/chrome/browser/ui/colors/MDCPalette+CrAdditions.h"
 #import "ios/chrome/browser/ui/commands/browser_commands.h"
+#import "ios/chrome/browser/ui/popup_menu/popup_menu_constants.h"
 #import "ios/chrome/browser/ui/reading_list/reading_list_menu_notification_delegate.h"
 #import "ios/chrome/browser/ui/reading_list/reading_list_menu_notifier.h"
 #import "ios/chrome/browser/ui/tools_menu/public/tools_menu_constants.h"
@@ -25,7 +26,6 @@
 #import "ios/chrome/browser/ui/tools_menu/tools_menu_model.h"
 #import "ios/chrome/browser/ui/tools_menu/tools_menu_view_item.h"
 #import "ios/chrome/browser/ui/tools_menu/tools_menu_view_tools_cell.h"
-#import "ios/chrome/browser/ui/tools_menu/tools_popup_controller.h"
 #include "ios/chrome/browser/ui/ui_util.h"
 #import "ios/chrome/browser/ui/uikit_ui_util.h"
 #import "ios/chrome/browser/ui/util/constraints_ui_util.h"
@@ -114,6 +114,8 @@ NS_INLINE void AnimateInViews(NSArray* views,
   // Weak pointer to ReadingListMenuNotifier, used to set the starting values
   // for the reading list badge.
   __weak ReadingListMenuNotifier* _readingListMenuNotifier;
+  // YES if NSLayoutConstraits were added.
+  BOOL _addedConstraints;
 }
 
 // Determines if the reading list should display a new feature badge. Defaults
@@ -361,7 +363,7 @@ NS_INLINE void AnimateInViews(NSArray* views,
   _menuView = [[ToolsMenuCollectionView alloc] initWithFrame:[rootView bounds]
                                         collectionViewLayout:menuItemsLayout];
   [_menuView setAccessibilityLabel:l10n_util::GetNSString(IDS_IOS_TOOLS_MENU)];
-  [_menuView setAccessibilityIdentifier:kToolsMenuTableViewId];
+  [_menuView setAccessibilityIdentifier:kPopupMenuToolsMenuTableViewId];
   [_menuView setTranslatesAutoresizingMaskIntoConstraints:NO];
   [_menuView setBackgroundColor:[UIColor whiteColor]];
   [_menuView setDataSource:self];
@@ -401,12 +403,15 @@ NS_INLINE void AnimateInViews(NSArray* views,
 }
 
 - (void)updateViewConstraints {
+  if (!_addedConstraints) {
+    UIView* rootView = [self view];
+    NSDictionary* view = @{@"menu" : _menuView};
+    NSArray* constraints =
+        @[ @"V:|-(0)-[menu]-(0)-|", @"H:|-(0)-[menu]-(0)-|" ];
+    ApplyVisualConstraints(constraints, view, rootView);
+    _addedConstraints = YES;
+  }
   [super updateViewConstraints];
-
-  UIView* rootView = [self view];
-  NSDictionary* view = @{ @"menu" : _menuView };
-  NSArray* constraints = @[ @"V:|-(0)-[menu]-(0)-|", @"H:|-(0)-[menu]-(0)-|" ];
-  ApplyVisualConstraints(constraints, view, rootView);
 }
 
 #pragma mark - Content Animation Stuff
@@ -693,20 +698,19 @@ NS_INLINE void AnimateInViews(NSArray* views,
       // Set the label's background color to be clear so that the highlight is
       // is not covered by the label.
       visibleCell.title.backgroundColor = [UIColor clearColor];
-      [UIView animateWithDuration:ios::material::kDuration5
-          delay:0.0
-          options:UIViewAnimationOptionAllowUserInteraction |
-                  UIViewAnimationOptionRepeat |
-                  UIViewAnimationOptionAutoreverse |
-                  UIViewAnimationOptionCurveEaseInOut
-          animations:^{
-            [UIView setAnimationRepeatCount:2];
-            visibleCell.contentView.backgroundColor =
-                [[MDCPalette cr_bluePalette] tint100];
-          }
-          completion:^(BOOL finished) {
-            visibleCell.contentView.backgroundColor = [UIColor whiteColor];
-          }];
+
+      CABasicAnimation* highlightAnimation =
+          [CABasicAnimation animationWithKeyPath:@"backgroundColor"];
+      highlightAnimation.duration = ios::material::kDuration5;
+      highlightAnimation.repeatCount = 2;
+      highlightAnimation.autoreverses = YES;
+      highlightAnimation.toValue =
+          static_cast<id>([[MDCPalette cr_bluePalette] tint100].CGColor);
+      highlightAnimation.timingFunction = [CAMediaTimingFunction
+          functionWithName:kCAMediaTimingFunctionEaseInEaseOut];
+      [visibleCell.contentView.layer addAnimation:highlightAnimation
+                                           forKey:nil];
+
       self.highlightNewIncognitoTabCell = NO;
       break;
     }

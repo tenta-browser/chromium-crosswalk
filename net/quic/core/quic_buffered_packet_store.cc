@@ -7,6 +7,7 @@
 #include "net/quic/platform/api/quic_bug_tracker.h"
 #include "net/quic/platform/api/quic_flags.h"
 #include "net/quic/platform/api/quic_map_util.h"
+#include "net/quic/platform/api/quic_string.h"
 
 namespace net {
 
@@ -53,7 +54,8 @@ BufferedPacket& BufferedPacket::operator=(BufferedPacket&& other) = default;
 
 BufferedPacket::~BufferedPacket() {}
 
-BufferedPacketList::BufferedPacketList() : creation_time(QuicTime::Zero()) {}
+BufferedPacketList::BufferedPacketList()
+    : creation_time(QuicTime::Zero()), ietf_quic(false) {}
 
 BufferedPacketList::BufferedPacketList(BufferedPacketList&& other) = default;
 
@@ -77,11 +79,12 @@ QuicBufferedPacketStore::~QuicBufferedPacketStore() {}
 
 EnqueuePacketResult QuicBufferedPacketStore::EnqueuePacket(
     QuicConnectionId connection_id,
+    bool ietf_quic,
     const QuicReceivedPacket& packet,
     QuicSocketAddress server_address,
     QuicSocketAddress client_address,
     bool is_chlo,
-    const std::string& alpn) {
+    const QuicString& alpn) {
   QUIC_BUG_IF(!FLAGS_quic_allow_chlo_buffering)
       << "Shouldn't buffer packets if disabled via flag.";
   QUIC_BUG_IF(is_chlo && QuicContainsKey(connections_with_chlo_, connection_id))
@@ -97,6 +100,7 @@ EnqueuePacketResult QuicBufferedPacketStore::EnqueuePacket(
   } else if (!QuicContainsKey(undecryptable_packets_, connection_id)) {
     undecryptable_packets_.emplace(
         std::make_pair(connection_id, BufferedPacketList()));
+    undecryptable_packets_.back().second.ietf_quic = ietf_quic;
   }
   CHECK(QuicContainsKey(undecryptable_packets_, connection_id));
   BufferedPacketList& queue =

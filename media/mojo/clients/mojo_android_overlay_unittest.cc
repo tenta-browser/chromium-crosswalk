@@ -15,7 +15,7 @@
 #include "media/mojo/clients/mojo_android_overlay.h"
 #include "mojo/public/cpp/bindings/interface_request.h"
 #include "mojo/public/cpp/bindings/strong_binding.h"
-#include "services/service_manager/public/interfaces/interface_provider.mojom.h"
+#include "services/service_manager/public/mojom/interface_provider.mojom.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/gl/android/scoped_java_surface.h"
 #include "ui/gl/android/surface_texture.h"
@@ -111,7 +111,7 @@ class MojoAndroidOverlayTest : public ::testing::Test {
     provider_binding_.Bind(mojo::MakeRequest(&provider_ptr));
 
     overlay_client_.reset(new MojoAndroidOverlay(
-        std::move(provider_ptr), std::move(config_), routing_token, nullptr));
+        std::move(provider_ptr), std::move(config_), routing_token));
     overlay_client_->AddSurfaceDestroyedCallback(base::Bind(
         &MockClientCallbacks::OnDestroyed, base::Unretained(&callbacks_)));
     base::RunLoop().RunUntilIdle();

@@ -9,9 +9,11 @@
 #include <vector>
 
 #include "base/macros.h"
-#include "chrome/browser/vr/controller_mesh.h"
 #include "chrome/browser/vr/elements/controller.h"
-#include "chrome/browser/vr/elements/grid.h"
+#include "chrome/browser/vr/elements/environment/background.h"
+#include "chrome/browser/vr/elements/environment/grid.h"
+#include "chrome/browser/vr/elements/environment/stars.h"
+#include "chrome/browser/vr/elements/keyboard.h"
 #include "chrome/browser/vr/elements/laser.h"
 #include "chrome/browser/vr/elements/reticle.h"
 #include "chrome/browser/vr/elements/shadow.h"
@@ -58,19 +60,20 @@ class UiElementRenderer {
 
   VIRTUAL_FOR_MOCKS void DrawTexturedQuad(
       int texture_data_handle,
+      int overlay_texture_data_handle,
       TextureLocation texture_location,
       const gfx::Transform& model_view_proj_matrix,
       const gfx::RectF& copy_rect,
       float opacity,
-      gfx::SizeF element_size,
+      const gfx::SizeF& element_size,
       float corner_radius);
   VIRTUAL_FOR_MOCKS void DrawGradientQuad(
       const gfx::Transform& model_view_proj_matrix,
       const SkColor edge_color,
       const SkColor center_color,
       float opacity,
-      gfx::SizeF element_size,
-      float corner_radius);
+      const gfx::SizeF& element_size,
+      const CornerRadii& radii);
   VIRTUAL_FOR_MOCKS void DrawGradientGridQuad(
       const gfx::Transform& model_view_proj_matrix,
       const SkColor edge_color,
@@ -79,9 +82,7 @@ class UiElementRenderer {
       int gridline_count,
       float opacity);
 
-  // TODO(crbug/779108) This presumes a Daydream controller.
   VIRTUAL_FOR_MOCKS void DrawController(
-      ControllerMesh::State state,
       float opacity,
       const gfx::Transform& model_view_proj_matrix);
 
@@ -93,7 +94,7 @@ class UiElementRenderer {
       float opacity,
       const gfx::Transform& model_view_proj_matrix);
 
-  VIRTUAL_FOR_MOCKS void DrawWebVr(int texture_data_handle);
+  VIRTUAL_FOR_MOCKS void DrawWebVr(int texture_data_handle, float y_sign);
 
   VIRTUAL_FOR_MOCKS void DrawShadow(
       const gfx::Transform& model_view_proj_matrix,
@@ -105,8 +106,24 @@ class UiElementRenderer {
       float opacity,
       float corner_radius);
 
+  VIRTUAL_FOR_MOCKS void DrawStars(
+      float t,
+      const gfx::Transform& model_view_proj_matrix);
+
+  VIRTUAL_FOR_MOCKS void DrawBackground(
+      const gfx::Transform& model_view_proj_matrix,
+      int texture_data_handle,
+      int normal_gradient_texture_data_handle,
+      int incognito_gradient_texture_data_handle,
+      int fullscreen_gradient_texture_data_handle,
+      float normal_factor,
+      float incognito_factor,
+      float fullscreen_factor);
+
+  VIRTUAL_FOR_MOCKS void DrawKeyboard(const CameraModel& camera_model,
+                                      KeyboardDelegate* delegate);
+
   void Flush();
-  void SetUpController(std::unique_ptr<ControllerMesh> mesh);
 
  protected:
   explicit UiElementRenderer(bool use_gl);
@@ -127,6 +144,9 @@ class UiElementRenderer {
   std::unique_ptr<Controller::Renderer> controller_renderer_;
   std::unique_ptr<Grid::Renderer> gradient_grid_renderer_;
   std::unique_ptr<Shadow::Renderer> shadow_renderer_;
+  std::unique_ptr<Stars::Renderer> stars_renderer_;
+  std::unique_ptr<Background::Renderer> background_renderer_;
+  std::unique_ptr<Keyboard::Renderer> keyboard_renderer_;
 
   DISALLOW_COPY_AND_ASSIGN(UiElementRenderer);
 };

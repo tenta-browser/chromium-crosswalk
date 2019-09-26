@@ -33,8 +33,6 @@ source_set("web_state") {
     "web_state_observer.mm",
     "web_state_observer_bridge.mm",
     "web_state_policy_decider.mm",
-    "web_state_weak_ptr_factory.h",
-    "web_state_weak_ptr_factory.mm",
   ]
 
   libs = [ "WebKit.framework" ]
@@ -95,21 +93,6 @@ source_set("session_certificate_policy_cache") {
     "session_certificate_policy_cache_impl.mm",
     "session_certificate_policy_cache_storage_builder.h",
     "session_certificate_policy_cache_storage_builder.mm",
-  ]
-
-  configs += [ "//build/config/compiler:enable_arc" ]
-}
-
-source_set("crw_pass_kit_downloader") {
-  deps = [
-    "//base",
-    "//components/url_formatter",
-    "//ios/web/public",
-  ]
-
-  sources = [
-    "crw_pass_kit_downloader.h",
-    "crw_pass_kit_downloader.mm",
   ]
 
   configs += [ "//build/config/compiler:enable_arc" ]

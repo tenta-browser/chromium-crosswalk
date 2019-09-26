@@ -7,8 +7,8 @@
 #include "base/command_line.h"
 #include "base/memory/singleton.h"
 #include "base/strings/string_number_conversions.h"
+#include "chrome/browser/chromeos/cryptauth/chrome_cryptauth_service_factory.h"
 #include "chrome/browser/chromeos/tether/fake_tether_service.h"
-#include "chrome/browser/cryptauth/chrome_cryptauth_service_factory.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/common/pref_names.h"
 #include "chromeos/chromeos_switches.h"
@@ -17,6 +17,7 @@
 #include "chromeos/network/network_state_handler.h"
 #include "components/keyed_service/content/browser_context_dependency_manager.h"
 #include "components/pref_registry/pref_registry_syncable.h"
+#include "components/session_manager/core/session_manager.h"
 
 // static
 TetherServiceFactory* TetherServiceFactory::GetInstance() {
@@ -35,7 +36,7 @@ TetherServiceFactory::TetherServiceFactory()
     : BrowserContextKeyedServiceFactory(
           "TetherService",
           BrowserContextDependencyManager::GetInstance()) {
-  DependsOn(ChromeCryptAuthServiceFactory::GetInstance());
+  DependsOn(chromeos::ChromeCryptAuthServiceFactory::GetInstance());
 }
 
 TetherServiceFactory::~TetherServiceFactory() {}
@@ -49,9 +50,10 @@ KeyedService* TetherServiceFactory::BuildServiceInstanceFor(
     FakeTetherService* fake_tether_service = new FakeTetherService(
         Profile::FromBrowserContext(context),
         chromeos::DBusThreadManager::Get()->GetPowerManagerClient(),
-        ChromeCryptAuthServiceFactory::GetForBrowserContext(
+        chromeos::ChromeCryptAuthServiceFactory::GetForBrowserContext(
             Profile::FromBrowserContext(context)),
-        chromeos::NetworkHandler::Get()->network_state_handler());
+        chromeos::NetworkHandler::Get()->network_state_handler(),
+        session_manager::SessionManager::Get());
 
     int num_tether_networks = 0;
     base::StringToInt(
@@ -65,9 +67,10 @@ KeyedService* TetherServiceFactory::BuildServiceInstanceFor(
   return new TetherService(
       Profile::FromBrowserContext(context),
       chromeos::DBusThreadManager::Get()->GetPowerManagerClient(),
-      ChromeCryptAuthServiceFactory::GetForBrowserContext(
+      chromeos::ChromeCryptAuthServiceFactory::GetForBrowserContext(
           Profile::FromBrowserContext(context)),
-      chromeos::NetworkHandler::Get()->network_state_handler());
+      chromeos::NetworkHandler::Get()->network_state_handler(),
+      session_manager::SessionManager::Get());
 }
 
 void TetherServiceFactory::RegisterProfilePrefs(

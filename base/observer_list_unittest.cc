@@ -23,6 +23,7 @@
 #include "base/test/scoped_task_environment.h"
 #include "base/threading/platform_thread.h"
 #include "base/threading/thread_restrictions.h"
+#include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace base {
@@ -210,7 +211,7 @@ TEST(ObserverListTest, BasicTest) {
     EXPECT_EQ(it3, it1);
     EXPECT_EQ(it3, it2);
     // Self assignment.
-    it3 = it3;
+    it3 = *&it3;  // The *& defeats Clang's -Wself-assign warning.
     EXPECT_EQ(it3, it1);
     EXPECT_EQ(it3, it2);
   }
@@ -227,7 +228,7 @@ TEST(ObserverListTest, BasicTest) {
     EXPECT_EQ(it3, it1);
     EXPECT_EQ(it3, it2);
     // Self assignment.
-    it3 = it3;
+    it3 = *&it3;  // The *& defeats Clang's -Wself-assign warning.
     EXPECT_EQ(it3, it1);
     EXPECT_EQ(it3, it2);
   }
@@ -254,9 +255,14 @@ TEST(ObserverListTest, BasicTest) {
     EXPECT_EQ(it3, it1);
     EXPECT_EQ(it3, it2);
     // Self assignment.
-    it3 = it3;
+    it3 = *&it3;  // The *& defeats Clang's -Wself-assign warning.
     EXPECT_EQ(it3, it1);
     EXPECT_EQ(it3, it2);
+    // Iterator post increment.
+    ObserverList<Foo>::const_iterator it4 = it3++;
+    EXPECT_EQ(it4, it1);
+    EXPECT_EQ(it4, it2);
+    EXPECT_NE(it4, it3);
   }
 
   {
@@ -272,9 +278,14 @@ TEST(ObserverListTest, BasicTest) {
     EXPECT_EQ(it3, it1);
     EXPECT_EQ(it3, it2);
     // Self assignment.
-    it3 = it3;
+    it3 = *&it3;  // The *& defeats Clang's -Wself-assign warning.
     EXPECT_EQ(it3, it1);
     EXPECT_EQ(it3, it2);
+    // Iterator post increment.
+    ObserverList<Foo>::iterator it4 = it3++;
+    EXPECT_EQ(it4, it1);
+    EXPECT_EQ(it4, it2);
+    EXPECT_NE(it4, it3);
   }
 
   for (auto& observer : observer_list)
@@ -891,8 +902,10 @@ TEST(ObserverListTest, IteratorOutlivesList) {
 
   for (auto& observer : *observer_list)
     observer.Observe(0);
-  // If this test fails, there'll be Valgrind errors when this function goes out
-  // of scope.
+
+  // There are no EXPECT* statements for this test, if we catch
+  // use-after-free errors for observer_list (eg with ASan) then
+  // this test has failed.  See http://crbug.com/85296.
 }
 
 TEST(ObserverListTest, BasicStdIterator) {
@@ -1214,5 +1227,53 @@ TEST(ObserverListTest, AddObserverInTheLastObserve) {
 
   EXPECT_EQ(-10, b.total);
 }
+
+class MockLogAssertHandler {
+ public:
+  MOCK_METHOD4(
+      HandleLogAssert,
+      void(const char*, int, const base::StringPiece, const base::StringPiece));
+};
+
+#if DCHECK_IS_ON()
+TEST(ObserverListTest, NonReentrantObserverList) {
+  using ::testing::_;
+
+  ObserverList<Foo, /*check_empty=*/false, /*allow_reentrancy=*/false>
+      non_reentrant_observer_list;
+  Adder a(1);
+  non_reentrant_observer_list.AddObserver(&a);
+
+  ::testing::StrictMock<MockLogAssertHandler> handler;
+  EXPECT_CALL(handler, HandleLogAssert(_, _, _, _)).Times(1);
+  {
+    logging::ScopedLogAssertHandler scoped_handler_b(base::BindRepeating(
+        &MockLogAssertHandler::HandleLogAssert, base::Unretained(&handler)));
+    for (const Foo& a : non_reentrant_observer_list) {
+      for (const Foo& b : non_reentrant_observer_list) {
+        std::ignore = a;
+        std::ignore = b;
+      }
+    }
+  }
+}
+
+TEST(ObserverListTest, ReentrantObserverList) {
+  using ::testing::_;
+
+  ReentrantObserverList<Foo> reentrant_observer_list;
+  Adder a(1);
+  reentrant_observer_list.AddObserver(&a);
+  bool passed = false;
+  for (const Foo& a : reentrant_observer_list) {
+    for (const Foo& b : reentrant_observer_list) {
+      std::ignore = a;
+      std::ignore = b;
+      passed = true;
+    }
+  }
+  EXPECT_TRUE(passed);
+}
+#endif
 
 }  // namespace base

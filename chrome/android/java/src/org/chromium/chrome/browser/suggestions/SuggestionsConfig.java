@@ -38,7 +38,7 @@ public final class SuggestionsConfig {
         // The scroll to load feature does not work well for users who require accessibility mode.
         if (AccessibilityUtil.isAccessibilityEnabled()) return false;
 
-        return FeatureUtilities.isChromeHomeEnabled()
+        return ChromeFeatureList.isEnabled(ChromeFeatureList.NTP_SHORTCUTS)
                 && ChromeFeatureList.isEnabled(
                            ChromeFeatureList.CONTENT_SUGGESTIONS_SCROLL_TO_LOAD);
     }
@@ -78,8 +78,11 @@ public final class SuggestionsConfig {
                 PARAM_CONDENSED_TILE_LAYOUT_FOR_LARGE_SCREENS_ENABLED, false);
     }
 
+    /**
+     * @return Whether the modern layout should be used for suggestions.
+     */
     public static boolean useModernLayout() {
-        return FeatureUtilities.isChromeHomeEnabled()
+        return FeatureUtilities.isChromeModernDesignEnabled()
                 || ChromeFeatureList.isEnabled(ChromeFeatureList.NTP_MODERN_LAYOUT);
     }
 }

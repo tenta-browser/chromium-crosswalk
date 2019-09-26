@@ -11,17 +11,16 @@
 #include <map>
 #include <memory>
 
-#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
-#include "base/strings/string_piece.h"
-#include "base/threading/thread_checker.h"
 #include "base/time/time.h"
 #include "base/timer/timer.h"
-#include "net/base/net_export.h"
 #include "net/base/network_change_notifier.h"
+#include "net/dns/dns_config_service.h"
 #include "net/dns/host_cache.h"
 #include "net/dns/host_resolver.h"
 #include "net/dns/host_resolver_proc.h"
+#include "net/url_request/url_request_context_getter.h"
+#include "url/gurl.h"
 
 namespace net {
 
@@ -32,11 +31,11 @@ class NetLog;
 class NetLogWithSource;
 
 // For each hostname that is requested, HostResolver creates a
-// HostResolverImpl::Job. When this job gets dispatched it creates a ProcTask
-// which runs the given HostResolverProc in TaskScheduler. If requests for that
-// same host are made during the job's lifetime, they are attached to the
-// existing job rather than creating a new one. This avoids doing parallel
-// resolves for the same host.
+// HostResolverImpl::Job. When this job gets dispatched it creates a task
+// (ProcTask for the system resolver or DnsTask for the async resolver) which
+// resolves the hostname. If requests for that same host are made during the
+// job's lifetime, they are attached to the existing job rather than creating a
+// new one. This avoids doing parallel resolves for the same host.
 //
 // The way these classes fit together is illustrated by:
 //
@@ -141,29 +140,31 @@ class NET_EXPORT HostResolverImpl
   int ResolveFromCache(const RequestInfo& info,
                        AddressList* addresses,
                        const NetLogWithSource& source_net_log) override;
-  void SetDnsClientEnabled(bool enabled) override;
-  HostCache* GetHostCache() override;
-  std::unique_ptr<base::Value> GetDnsConfigAsValue() const override;
-
-  // Like |ResolveFromCache()|, but can return a stale result if the
-  // implementation supports it. Fills in |*stale_info| if a response is
-  // returned to indicate how stale (or not) it is.
   int ResolveStaleFromCache(const RequestInfo& info,
                             AddressList* addresses,
                             HostCache::EntryStaleness* stale_info,
-                            const NetLogWithSource& source_net_log);
+                            const NetLogWithSource& source_net_log) override;
+  void SetDnsClientEnabled(bool enabled) override;
+
+  HostCache* GetHostCache() override;
+  bool HasCached(base::StringPiece hostname,
+                 HostCache::Entry::Source* source_out,
+                 HostCache::EntryStaleness* stale_out) const override;
+
+  std::unique_ptr<base::Value> GetDnsConfigAsValue() const override;
+
   // Returns the number of host cache entries that were restored, or 0 if there
   // is no cache.
   size_t LastRestoredCacheSize() const;
   // Returns the number of entries in the host cache, or 0 if there is no cache.
   size_t CacheSize() const;
 
-  void InitializePersistence(
-      const PersistCallback& persist_callback,
-      std::unique_ptr<const base::Value> old_data) override;
-
   void SetNoIPv6OnWifi(bool no_ipv6_on_wifi) override;
   bool GetNoIPv6OnWifi() override;
+
+  void SetRequestContext(URLRequestContext* request_context) override;
+  void AddDnsOverHttpsServer(std::string server, bool use_post) override;
+  void ClearDnsOverHttpsServers() override;
 
   void set_proc_params_for_test(const ProcTaskParams& proc_params) {
     proc_params_ = proc_params;
@@ -311,12 +312,6 @@ class NET_EXPORT HostResolverImpl
   // and resulted in |net_error|.
   void OnDnsTaskResolve(int net_error);
 
-  void ApplyPersistentData(std::unique_ptr<const base::Value>);
-  std::unique_ptr<const base::Value> GetPersistentData();
-
-  void SchedulePersist();
-  void DoPersist();
-
   // Allows the tests to catch slots leaking out of the dispatcher.  One
   // HostResolverImpl::Job could occupy multiple PrioritizedDispatcher job
   // slots.
@@ -372,9 +367,8 @@ class NET_EXPORT HostResolverImpl
   // TaskScheduler task runner, but can be overridden for tests.
   scoped_refptr<base::TaskRunner> proc_task_runner_;
 
-  bool persist_initialized_;
-  PersistCallback persist_callback_;
-  base::OneShotTimer persist_timer_;
+  URLRequestContext* url_request_context_;
+  std::vector<DnsConfig::DnsOverHttpsServerConfig> dns_over_https_servers_;
 
   THREAD_CHECKER(thread_checker_);
 

@@ -9,8 +9,8 @@
 #include <stdint.h>
 
 #include "base/memory/ref_counted.h"
-#include "third_party/WebKit/public/platform/WebStorageArea.h"
-#include "third_party/WebKit/public/platform/WebString.h"
+#include "third_party/blink/public/platform/web_storage_area.h"
+#include "third_party/blink/public/platform/web_string.h"
 
 class GURL;
 
@@ -22,7 +22,7 @@ class WebStorageAreaImpl : public blink::WebStorageArea {
  public:
   static WebStorageAreaImpl* FromConnectionId(int id);
 
-  WebStorageAreaImpl(int64_t namespace_id, const GURL& origin);
+  WebStorageAreaImpl(const std::string& namespace_id, const GURL& origin);
   ~WebStorageAreaImpl() override;
 
   // See WebStorageArea.h for documentation on these functions.

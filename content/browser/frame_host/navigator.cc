@@ -17,10 +17,12 @@ NavigationController* Navigator::GetController() {
   return nullptr;
 }
 
-bool Navigator::NavigateToPendingEntry(FrameTreeNode* frame_tree_node,
-                                       const FrameNavigationEntry& frame_entry,
-                                       ReloadType reload_type,
-                                       bool is_same_document_history_load) {
+bool Navigator::NavigateToPendingEntry(
+    FrameTreeNode* frame_tree_node,
+    const FrameNavigationEntry& frame_entry,
+    ReloadType reload_type,
+    bool is_same_document_history_load,
+    std::unique_ptr<NavigationUIData> navigation_ui_data) {
   return false;
 }
 
@@ -33,8 +35,10 @@ base::TimeTicks Navigator::GetCurrentLoadStart() {
   return base::TimeTicks::Now();
 }
 
-void Navigator::OnBeginNavigation(FrameTreeNode* frame_tree_node,
-                                  const CommonNavigationParams& common_params,
-                                  const BeginNavigationParams& begin_params) {}
+void Navigator::OnBeginNavigation(
+    FrameTreeNode* frame_tree_node,
+    const CommonNavigationParams& common_params,
+    mojom::BeginNavigationParamsPtr begin_params,
+    scoped_refptr<network::SharedURLLoaderFactory> blob_url_loader_factory) {}
 
 }  // namespace content

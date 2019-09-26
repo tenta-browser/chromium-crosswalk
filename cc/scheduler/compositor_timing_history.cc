@@ -16,7 +16,7 @@ namespace cc {
 
 class CompositorTimingHistory::UMAReporter {
  public:
-  virtual ~UMAReporter() {}
+  virtual ~UMAReporter() = default;
 
   // Throughput measurements
   virtual void AddBeginMainFrameIntervalCritical(base::TimeDelta interval) = 0;
@@ -71,7 +71,8 @@ const size_t kDurationHistorySize = 60;
 const double kBeginMainFrameQueueDurationEstimationPercentile = 90.0;
 const double kBeginMainFrameQueueDurationCriticalEstimationPercentile = 90.0;
 const double kBeginMainFrameQueueDurationNotCriticalEstimationPercentile = 90.0;
-const double kBeginMainFrameStartToCommitEstimationPercentile = 90.0;
+const double kBeginMainFrameStartToReadyToCommitEstimationPercentile = 90.0;
+const double kCommitEstimatePercentile = 90.0;
 const double kCommitToReadyToActivateEstimationPercentile = 90.0;
 const double kPrepareTilesEstimationPercentile = 90.0;
 const double kActivateEstimationPercentile = 90.0;
@@ -163,7 +164,7 @@ const int kUMADurationBuckets[] = {
 
 class RendererUMAReporter : public CompositorTimingHistory::UMAReporter {
  public:
-  ~RendererUMAReporter() override {}
+  ~RendererUMAReporter() override = default;
 
   void AddBeginMainFrameIntervalCritical(base::TimeDelta interval) override {
     UMA_HISTOGRAM_CUSTOM_TIMES_VSYNC_ALIGNED(
@@ -288,7 +289,7 @@ class RendererUMAReporter : public CompositorTimingHistory::UMAReporter {
 
 class BrowserUMAReporter : public CompositorTimingHistory::UMAReporter {
  public:
-  ~BrowserUMAReporter() override {}
+  ~BrowserUMAReporter() override = default;
 
   void AddBeginMainFrameIntervalCritical(base::TimeDelta interval) override {
     UMA_HISTOGRAM_CUSTOM_TIMES_VSYNC_ALIGNED(
@@ -417,7 +418,7 @@ class BrowserUMAReporter : public CompositorTimingHistory::UMAReporter {
 
 class NullUMAReporter : public CompositorTimingHistory::UMAReporter {
  public:
-  ~NullUMAReporter() override {}
+  ~NullUMAReporter() override = default;
   void AddBeginMainFrameIntervalCritical(base::TimeDelta interval) override {}
   void AddBeginMainFrameIntervalNotCritical(base::TimeDelta interval) override {
   }
@@ -469,7 +470,9 @@ CompositorTimingHistory::CompositorTimingHistory(
       begin_main_frame_queue_duration_critical_history_(kDurationHistorySize),
       begin_main_frame_queue_duration_not_critical_history_(
           kDurationHistorySize),
-      begin_main_frame_start_to_commit_duration_history_(kDurationHistorySize),
+      begin_main_frame_start_to_ready_to_commit_duration_history_(
+          kDurationHistorySize),
+      commit_duration_history_(kDurationHistorySize),
       commit_to_ready_to_activate_duration_history_(kDurationHistorySize),
       prepare_tiles_duration_history_(kDurationHistorySize),
       activate_duration_history_(kDurationHistorySize),
@@ -479,8 +482,7 @@ CompositorTimingHistory::CompositorTimingHistory(
       uma_reporter_(CreateUMAReporter(uma_category)),
       rendering_stats_instrumentation_(rendering_stats_instrumentation) {}
 
-CompositorTimingHistory::~CompositorTimingHistory() {
-}
+CompositorTimingHistory::~CompositorTimingHistory() = default;
 
 std::unique_ptr<CompositorTimingHistory::UMAReporter>
 CompositorTimingHistory::CreateUMAReporter(UMACategory category) {
@@ -508,8 +510,8 @@ void CompositorTimingHistory::AsValueInto(
       "begin_main_frame_queue_not_critical_estimate_ms",
       BeginMainFrameQueueDurationNotCriticalEstimate().InMillisecondsF());
   state->SetDouble(
-      "begin_main_frame_start_to_commit_estimate_ms",
-      BeginMainFrameStartToCommitDurationEstimate().InMillisecondsF());
+      "begin_main_frame_start_to_ready_to_commit_estimate_ms",
+      BeginMainFrameStartToReadyToCommitDurationEstimate().InMillisecondsF());
   state->SetDouble("commit_to_ready_to_activate_estimate_ms",
                    CommitToReadyToActivateDurationEstimate().InMillisecondsF());
   state->SetDouble("prepare_tiles_estimate_ms",
@@ -577,9 +579,14 @@ CompositorTimingHistory::BeginMainFrameQueueDurationNotCriticalEstimate()
 }
 
 base::TimeDelta
-CompositorTimingHistory::BeginMainFrameStartToCommitDurationEstimate() const {
-  return begin_main_frame_start_to_commit_duration_history_.Percentile(
-      kBeginMainFrameStartToCommitEstimationPercentile);
+CompositorTimingHistory::BeginMainFrameStartToReadyToCommitDurationEstimate()
+    const {
+  return begin_main_frame_start_to_ready_to_commit_duration_history_.Percentile(
+      kBeginMainFrameStartToReadyToCommitEstimationPercentile);
+}
+
+base::TimeDelta CompositorTimingHistory::CommitDurationEstimate() const {
+  return commit_duration_history_.Percentile(kCommitEstimatePercentile);
 }
 
 base::TimeDelta
@@ -678,13 +685,27 @@ void CompositorTimingHistory::BeginMainFrameAborted() {
   begin_main_frame_frame_time_ = base::TimeTicks();
 }
 
+void CompositorTimingHistory::NotifyReadyToCommit() {
+  DCHECK_NE(begin_main_frame_start_time_, base::TimeTicks());
+  begin_main_frame_start_to_ready_to_commit_duration_history_.InsertSample(
+      Now() - begin_main_frame_start_time_);
+}
+
+void CompositorTimingHistory::WillCommit() {
+  DCHECK_NE(begin_main_frame_start_time_, base::TimeTicks());
+  commit_start_time_ = Now();
+}
+
 void CompositorTimingHistory::DidCommit() {
   DCHECK_EQ(base::TimeTicks(), pending_tree_main_frame_time_);
   DCHECK_EQ(pending_tree_creation_time_, base::TimeTicks());
+  DCHECK_NE(commit_start_time_, base::TimeTicks());
 
   SetBeginMainFrameCommittingContinuously(true);
   base::TimeTicks begin_main_frame_end_time = Now();
   DidBeginMainFrame(begin_main_frame_end_time);
+  commit_duration_history_.InsertSample(begin_main_frame_end_time -
+                                        commit_start_time_);
 
   pending_tree_is_impl_side_ = false;
   pending_tree_creation_time_ = begin_main_frame_end_time;
@@ -737,8 +758,6 @@ void CompositorTimingHistory::DidBeginMainFrame(
       begin_main_frame_queue_duration_not_critical_history_.InsertSample(
           begin_main_frame_queue_duration);
     }
-    begin_main_frame_start_to_commit_duration_history_.InsertSample(
-        begin_main_frame_start_to_commit_duration);
   }
 
   if (begin_main_frame_needed_continuously_) {
@@ -864,7 +883,9 @@ void CompositorTimingHistory::DidDraw(
     base::TimeTicks impl_frame_time,
     size_t composited_animations_count,
     size_t main_thread_animations_count,
-    size_t main_thread_compositable_animations_count) {
+    size_t main_thread_compositable_animations_count,
+    bool current_frame_had_raf,
+    bool next_frame_has_pending_raf) {
   DCHECK_NE(base::TimeTicks(), draw_start_time_);
   base::TimeTicks draw_end_time = Now();
   base::TimeDelta draw_duration = draw_end_time - draw_start_time_;
@@ -905,8 +926,12 @@ void CompositorTimingHistory::DidDraw(
     uma_reporter_->AddMainAndImplFrameTimeDelta(main_and_impl_delta);
     active_tree_main_frame_time_ = base::TimeTicks();
 
-    if (main_thread_animations_count > 0 &&
-        previous_frame_had_main_thread_animations_) {
+    bool current_main_frame_had_visual_update =
+        main_thread_animations_count > 0 || current_frame_had_raf;
+    bool previous_main_frame_had_visual_update =
+        previous_frame_had_main_thread_animations_ || previous_frame_had_raf_;
+    if (current_main_frame_had_visual_update &&
+        previous_main_frame_had_visual_update) {
       base::TimeDelta draw_interval =
           draw_end_time - new_active_tree_draw_end_time_prev_;
       uma_reporter_->AddDrawIntervalWithMainThreadAnimations(draw_interval);
@@ -922,6 +947,14 @@ void CompositorTimingHistory::DidDraw(
         main_thread_animations_count > 0;
     previous_frame_had_main_thread_compositable_animations_ =
         main_thread_compositable_animations_count > 0;
+    // It's possible that two consecutive main frames both run a rAF but are
+    // separated by idle time (for example: calling requestAnimationFrame from a
+    // setInterval function, with nothing else producing a main frame
+    // in-between). To avoid incorrectly counting those cases as long draw
+    // intervals, we only update previous_frame_had_raf_ if the current frame
+    // also already has a future raf scheduled.
+    previous_frame_had_raf_ =
+        current_frame_had_raf && next_frame_has_pending_raf;
 
     new_active_tree_draw_end_time_prev_ = draw_end_time;
 
@@ -960,6 +993,21 @@ void CompositorTimingHistory::DidReceiveCompositorFrameAck() {
 
 void CompositorTimingHistory::SetTreePriority(TreePriority priority) {
   tree_priority_ = priority;
+}
+
+void CompositorTimingHistory::ClearHistoryOnNavigation() {
+  TRACE_EVENT0("cc,benchmark",
+               "CompositorTimingHistory::ClearHistoryOnNavigation");
+
+  begin_main_frame_queue_duration_history_.Clear();
+  begin_main_frame_queue_duration_critical_history_.Clear();
+  begin_main_frame_queue_duration_not_critical_history_.Clear();
+  begin_main_frame_start_to_ready_to_commit_duration_history_.Clear();
+  commit_duration_history_.Clear();
+  commit_to_ready_to_activate_duration_history_.Clear();
+  prepare_tiles_duration_history_.Clear();
+  activate_duration_history_.Clear();
+  draw_duration_history_.Clear();
 }
 
 }  // namespace cc

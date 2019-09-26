@@ -25,7 +25,7 @@ SearchResultContainerView::~SearchResultContainerView() {
 }
 
 void SearchResultContainerView::SetResults(
-    AppListModel::SearchResults* results) {
+    SearchModel::SearchResults* results) {
   if (results_)
     results_->RemoveObserver(this);
 
@@ -91,8 +91,8 @@ void SearchResultContainerView::ScheduleUpdate() {
   // request. Consolidates those update requests into one Update call.
   if (!update_factory_.HasWeakPtrs()) {
     base::ThreadTaskRunnerHandle::Get()->PostTask(
-        FROM_HERE, base::Bind(&SearchResultContainerView::Update,
-                              update_factory_.GetWeakPtr()));
+        FROM_HERE, base::BindOnce(&SearchResultContainerView::Update,
+                                  update_factory_.GetWeakPtr()));
   }
 }
 

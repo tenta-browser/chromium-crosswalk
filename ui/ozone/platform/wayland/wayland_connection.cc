@@ -92,7 +92,8 @@ void WaylandConnection::ScheduleFlush() {
     return;
   DCHECK(base::MessageLoopForUI::IsCurrent());
   base::ThreadTaskRunnerHandle::Get()->PostTask(
-      FROM_HERE, base::Bind(&WaylandConnection::Flush, base::Unretained(this)));
+      FROM_HERE,
+      base::BindOnce(&WaylandConnection::Flush, base::Unretained(this)));
   scheduled_flush_ = true;
 }
 
@@ -107,6 +108,8 @@ void WaylandConnection::AddWindow(gfx::AcceleratedWidget widget,
 }
 
 void WaylandConnection::RemoveWindow(gfx::AcceleratedWidget widget) {
+  if (touch_)
+    touch_->RemoveTouchPoints(window_map_[widget]);
   window_map_.erase(widget);
 }
 
@@ -251,8 +254,8 @@ void WaylandConnection::Capabilities(void* data,
         return;
       }
       connection->pointer_ = std::make_unique<WaylandPointer>(
-          pointer, base::Bind(&WaylandConnection::DispatchUiEvent,
-                              base::Unretained(connection)));
+          pointer, base::BindRepeating(&WaylandConnection::DispatchUiEvent,
+                                       base::Unretained(connection)));
       connection->pointer_->set_connection(connection);
     }
   } else if (connection->pointer_) {
@@ -266,12 +269,27 @@ void WaylandConnection::Capabilities(void* data,
         return;
       }
       connection->keyboard_ = std::make_unique<WaylandKeyboard>(
-          keyboard, base::Bind(&WaylandConnection::DispatchUiEvent,
-                               base::Unretained(connection)));
+          keyboard, base::BindRepeating(&WaylandConnection::DispatchUiEvent,
+                                        base::Unretained(connection)));
       connection->keyboard_->set_connection(connection);
     }
   } else if (connection->keyboard_) {
     connection->keyboard_.reset();
+  }
+  if (capabilities & WL_SEAT_CAPABILITY_TOUCH) {
+    if (!connection->touch_) {
+      wl_touch* touch = wl_seat_get_touch(connection->seat_.get());
+      if (!touch) {
+        LOG(ERROR) << "Failed to get wl_touch from seat";
+        return;
+      }
+      connection->touch_ = std::make_unique<WaylandTouch>(
+          touch, base::BindRepeating(&WaylandConnection::DispatchUiEvent,
+                                     base::Unretained(connection)));
+      connection->touch_->set_connection(connection);
+    }
+  } else if (connection->touch_) {
+    connection->touch_.reset();
   }
   connection->ScheduleFlush();
 }

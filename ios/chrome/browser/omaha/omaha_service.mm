@@ -13,7 +13,6 @@
 #include "base/i18n/time_formatting.h"
 #include "base/ios/device_util.h"
 #include "base/logging.h"
-#include "base/memory/ptr_util.h"
 #include "base/metrics/field_trial.h"
 #include "base/rand_util.h"
 #include "base/strings/stringprintf.h"
@@ -235,7 +234,7 @@ class XmlWrapper : public OmahaXmlWriter {
         urlIsParsed_ = YES;
         manifestIsParsed_ = YES;
       } else if ([status isEqualToString:@"ok"]) {
-        updateInformation_ = base::MakeUnique<UpgradeRecommendedDetails>();
+        updateInformation_ = std::make_unique<UpgradeRecommendedDetails>();
       } else {
         hasError_ = YES;
       }
@@ -373,7 +372,7 @@ void OmahaService::Initialize() {
   }
 
   // Fire a ping as early as possible if the version changed.
-  base::Version current_version(version_info::GetVersionNumber());
+  const base::Version& current_version = version_info::GetVersion();
   if (last_sent_version_ < current_version) {
     next_tries_time_ = base::Time::Now() - base::TimeDelta::FromSeconds(1);
     number_of_tries_ = 0;
@@ -507,7 +506,7 @@ std::string OmahaService::GetPingContent(const std::string& requestId,
 }
 
 std::string OmahaService::GetCurrentPingContent() {
-  base::Version current_version(version_info::GetVersionNumber());
+  const base::Version& current_version = version_info::GetVersion();
   sending_install_event_ = last_sent_version_ < current_version;
   PingContent ping_content =
       sending_install_event_ ? INSTALL_EVENT : USAGE_PING;
@@ -622,7 +621,7 @@ void OmahaService::OnURLFetchComplete(const net::URLFetcher* fetcher) {
                                                    kHoursBetweenRequests);
   current_ping_time_ = next_tries_time_;
   last_sent_time_ = base::Time::Now();
-  last_sent_version_ = base::Version(version_info::GetVersionNumber());
+  last_sent_version_ = version_info::GetVersion();
   sending_install_event_ = false;
   ClearInstallRetryRequestId();
   PersistStates();
@@ -639,7 +638,7 @@ void OmahaService::OnURLFetchComplete(const net::URLFetcher* fetcher) {
 
 void OmahaService::GetDebugInformationOnIOThread(
     const base::Callback<void(base::DictionaryValue*)> callback) {
-  auto result = base::MakeUnique<base::DictionaryValue>();
+  auto result = std::make_unique<base::DictionaryValue>();
 
   result->SetString("message", GetCurrentPingContent());
   result->SetString("last_sent_time",

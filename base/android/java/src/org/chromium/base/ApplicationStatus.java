@@ -8,14 +8,12 @@ import android.annotation.SuppressLint;
 import android.app.Activity;
 import android.app.Application;
 import android.app.Application.ActivityLifecycleCallbacks;
-import android.os.Build;
 import android.os.Bundle;
 import android.support.annotation.Nullable;
 import android.view.Window;
 
 import org.chromium.base.annotations.CalledByNative;
 import org.chromium.base.annotations.JNINamespace;
-import org.chromium.base.annotations.MainDex;
 
 import java.lang.ref.WeakReference;
 import java.lang.reflect.InvocationHandler;
@@ -32,7 +30,6 @@ import java.util.concurrent.ConcurrentHashMap;
  * to register / unregister listeners for state changes.
  */
 @JNINamespace("base::android")
-@MainDex
 public class ApplicationStatus {
     private static final String TOOLBAR_CALLBACK_INTERNAL_WRAPPER_CLASS =
             "android.support.v7.internal.app.ToolbarActionBar$ToolbarCallbackWrapper";
@@ -68,6 +65,15 @@ public class ApplicationStatus {
         public ObserverList<ActivityStateListener> getListeners() {
             return mListeners;
         }
+    }
+
+    static {
+        // Chrome initializes this only for the main process. This assert aims to try and catch
+        // usages from GPU / renderers, while still allowing tests.
+        assert ContextUtils.isMainProcess()
+                || ContextUtils.getProcessName().contains(":test")
+            : "Cannot use ApplicationState from process: "
+                        + ContextUtils.getProcessName();
     }
 
     private static final Object sCachedApplicationStateLock = new Object();
@@ -298,7 +304,9 @@ public class ApplicationStatus {
      * Asserts that initialize method has been called.
      */
     private static void assertInitialized() {
-        assert sIsInitialized;
+        if (!sIsInitialized) {
+            throw new IllegalStateException("ApplicationStatus has not been initialized yet.");
+        }
     }
 
     /**
@@ -320,13 +328,7 @@ public class ApplicationStatus {
         int oldApplicationState = getStateForApplication();
 
         if (newState == ActivityState.CREATED) {
-            // TODO(tedchoc): crbug/691100.  The timing of application callback lifecycles were
-            //                changed in O and the activity info may have been lazily created
-            //                on first access to avoid a crash on startup.  This should be removed
-            //                once the new lifecycle APIs are available.
-            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
-                assert !sActivityInfo.containsKey(activity);
-            }
+            assert !sActivityInfo.containsKey(activity);
             sActivityInfo.put(activity, new ActivityInfo());
         }
 
@@ -511,19 +513,17 @@ public class ApplicationStatus {
     @SuppressLint("NewApi")
     public static void registerStateListenerForActivity(ActivityStateListener listener,
             Activity activity) {
-        assert activity != null;
+        if (activity == null) {
+            throw new IllegalStateException("Attempting to register listener on a null activity.");
+        }
         ApplicationStatus.assertInitialized();
 
         ActivityInfo info = sActivityInfo.get(activity);
-        // TODO(tedchoc): crbug/691100.  The timing of application callback lifecycles were changed
-        //                in O and the activity info may need to be lazily created if the onCreate
-        //                event has not yet been received.
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && info == null
-                && !activity.isDestroyed()) {
-            info = new ActivityInfo();
-            sActivityInfo.put(activity, info);
+        if (info == null) {
+            throw new IllegalStateException(
+                    "Attempting to register listener on an untracked activity.");
         }
-        assert info != null && info.getStatus() != ActivityState.DESTROYED;
+        assert info.getStatus() != ActivityState.DESTROYED;
         info.getListeners().addObserver(listener);
     }
 

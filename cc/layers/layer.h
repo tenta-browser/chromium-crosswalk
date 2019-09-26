@@ -22,6 +22,7 @@
 #include "cc/cc_export.h"
 #include "cc/input/input_handler.h"
 #include "cc/input/overscroll_behavior.h"
+#include "cc/input/scroll_snap_data.h"
 #include "cc/layers/layer_collections.h"
 #include "cc/layers/layer_position_constraint.h"
 #include "cc/layers/touch_action_region.h"
@@ -121,6 +122,11 @@ class CC_EXPORT Layer : public base::RefCounted<Layer> {
   void SetOverscrollBehavior(const OverscrollBehavior& behavior);
   OverscrollBehavior overscroll_behavior() const {
     return inputs_.overscroll_behavior;
+  }
+
+  void SetSnapContainerData(base::Optional<SnapContainerData> data);
+  const base::Optional<SnapContainerData>& snap_container_data() const {
+    return inputs_.snap_container_data;
   }
 
   void SetMasksToBounds(bool masks_to_bounds);
@@ -329,7 +335,7 @@ class CC_EXPORT Layer : public base::RefCounted<Layer> {
   TakeDebugInfo();
   virtual void didUpdateMainThreadScrollingReasons();
 
-  void SetLayerClient(LayerClient* client) { inputs_.client = client; }
+  void SetLayerClient(base::WeakPtr<LayerClient> client);
 
   virtual bool IsSnapped();
 
@@ -621,12 +627,18 @@ class CC_EXPORT Layer : public base::RefCounted<Layer> {
     bool hide_layer_and_subtree : 1;
 
     // The following elements can not and are not serialized.
-    LayerClient* client;
+    base::WeakPtr<LayerClient> client;
+    // During commit, the main thread is blocked on the compositor thread, so
+    // we use the raw pointer to the LayerClient.
+    LayerClient* client_rawptr;
+
     base::Callback<void(const gfx::ScrollOffset&, const ElementId&)>
         did_scroll_callback;
     std::vector<std::unique_ptr<viz::CopyOutputRequest>> copy_requests;
 
     OverscrollBehavior overscroll_behavior;
+
+    base::Optional<SnapContainerData> snap_container_data;
   };
 
   Layer* parent_;

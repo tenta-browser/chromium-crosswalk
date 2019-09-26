@@ -11,18 +11,19 @@
 #include <string>
 
 #include "content/common/content_export.h"
+#include "mojo/public/cpp/system/data_pipe.h"
 
 namespace net {
 struct RedirectInfo;
 }
 
 namespace network {
+struct ResourceResponseInfo;
 struct URLLoaderCompletionStatus;
 }
 
 namespace content {
 
-struct ResourceResponseInfo;
 
 // This is implemented by our custom resource loader within content. The Peer
 // and it's bridge should have identical lifetimes as they represent each end of
@@ -60,12 +61,21 @@ class CONTENT_EXPORT RequestPeer {
   // suppress the redirect.  The ResourceResponseInfo provides information about
   // the redirect response and the RedirectInfo includes information about the
   // request to be made if the method returns true.
-  virtual bool OnReceivedRedirect(const net::RedirectInfo& redirect_info,
-                                  const ResourceResponseInfo& info) = 0;
+  virtual bool OnReceivedRedirect(
+      const net::RedirectInfo& redirect_info,
+      const network::ResourceResponseInfo& info) = 0;
 
   // Called when response headers are available (after all redirects have
   // been followed).
-  virtual void OnReceivedResponse(const ResourceResponseInfo& info) = 0;
+  virtual void OnReceivedResponse(
+      const network::ResourceResponseInfo& info) = 0;
+
+  // Called when the response body becomes available. This method is only called
+  // if |pass_response_pipe_to_peer| was set to true when calling StartAsync.
+  // TODO(mek): Deprecate OnReceivedData in favor of this method, and always use
+  // this codepath.
+  virtual void OnStartLoadingResponseBody(
+      mojo::ScopedDataPipeConsumerHandle body) = 0;
 
   // Called when a chunk of response data is downloaded.  This method may be
   // called multiple times or not at all if an error occurs.  This method is

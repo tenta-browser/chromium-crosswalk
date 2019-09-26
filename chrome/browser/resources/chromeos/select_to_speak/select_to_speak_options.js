@@ -21,8 +21,22 @@ SelectToSpeakOptionsPage.prototype = {
       this.populateVoiceList_('voice');
     }.bind(this));
     this.syncSelectControlToPref_('voice', 'voice');
-    this.syncSelectControlToPref_('rate', 'rate');
-    this.syncCheckboxControlToPref_('wordHighlight', 'wordHighlight');
+    this.syncRangeControlToPref_('rate', 'rate');
+    this.syncSelectControlToPref_('pitch', 'pitch');
+    this.syncCheckboxControlToPref_(
+        'wordHighlight', 'wordHighlight', function(checked) {
+          let elem = document.getElementById('highlightSubOption');
+          let select = document.getElementById('highlightColor');
+          if (checked) {
+            elem.classList.remove('hidden');
+            elem.setAttribute('aria-hidden', false);
+            select.disabled = false;
+          } else {
+            elem.classList.add('hidden');
+            elem.setAttribute('aria-hidden', true);
+            select.disabled = true;
+          }
+        });
     this.setUpHighlightListener_();
     chrome.metricsPrivate.recordUserAction(
         'Accessibility.CrosSelectToSpeak.LoadSettings');
@@ -75,6 +89,13 @@ SelectToSpeakOptionsPage.prototype = {
       voices.forEach(function(voice) {
         if (!voice.voiceName)
           return;
+        if (!voice.eventTypes.includes('start') ||
+            !voice.eventTypes.includes('end') ||
+            !voice.eventTypes.includes('word') ||
+            !voice.eventTypes.includes('cancelled')) {
+          // Required event types for Select-to-Speak.
+          return;
+        }
         var option = document.createElement('option');
         option.voiceName = voice.voiceName;
         option.innerText = option.voiceName;
@@ -89,9 +110,12 @@ SelectToSpeakOptionsPage.prototype = {
   /**
    * Populate a checkbox with its current setting.
    * @param {string} checkboxId The id of the checkbox element.
+   * @param {string} pref The name for a chrome.storage pref.
+   * @param {?function(boolean): undefined=} opt_onChange A function
+   * to be called every time the checkbox state is changed.
    * @private
    */
-  syncCheckboxControlToPref_: function(checkboxId, pref) {
+  syncCheckboxControlToPref_: function(checkboxId, pref, opt_onChange) {
     let checkbox = document.getElementById(checkboxId);
 
     function updateFromPref() {
@@ -99,6 +123,9 @@ SelectToSpeakOptionsPage.prototype = {
         let value = items[pref];
         if (value != null) {
           checkbox.checked = value;
+          if (opt_onChange) {
+            opt_onChange(checkbox.checked);
+          }
         }
       });
     }
@@ -119,10 +146,10 @@ SelectToSpeakOptionsPage.prototype = {
    * pref, sync them both ways.
    * @param {string} selectId The id of the select element.
    * @param {string} pref The name of a chrome.storage pref.
-   * @param {?function(string): undefined=} onChange Optional change
+   * @param {?function(string): undefined=} opt_onChange Optional change
    *     listener to call when the setting has been changed.
    */
-  syncSelectControlToPref_: function(selectId, pref, onChange) {
+  syncSelectControlToPref_: function(selectId, pref, opt_onChange) {
     var element = document.getElementById(selectId);
 
     function updateFromPref() {
@@ -135,8 +162,8 @@ SelectToSpeakOptionsPage.prototype = {
             break;
           }
         }
-        if (onChange) {
-          onChange(value);
+        if (opt_onChange) {
+          opt_onChange(value);
         }
       });
     }
@@ -154,12 +181,47 @@ SelectToSpeakOptionsPage.prototype = {
   },
 
   /**
+   * Given the id of an HTML range element and the name of a chrome.storage
+   * pref, sync them both ways.
+   * @param {string} rangeId The id of the range element.
+   * @param {string} pref The name of a chrome.storage pref.
+   * @param {?function(string): undefined=} opt_onChange Optional change
+   *     listener to call when the setting has been changed.
+   */
+  syncRangeControlToPref_: function(rangeId, pref, opt_onChange) {
+    var element = document.getElementById(rangeId);
+
+    function updateFromPref() {
+      chrome.storage.sync.get(pref, function(items) {
+        var value = items[pref];
+        element.value = value;
+        if (opt_onChange) {
+          opt_onChange(value);
+        }
+      });
+    }
+
+    element.addEventListener('change', function() {
+      var newValue = element.value;
+      var setParams = {};
+      setParams[pref] = newValue;
+      chrome.storage.sync.set(setParams);
+    });
+
+    element.updateFunction = updateFromPref;
+    updateFromPref();
+    chrome.storage.onChanged.addListener(updateFromPref);
+  },
+
+  /**
    * Sets up the highlight listeners and preferences.
    */
   setUpHighlightListener_: function() {
     let onChange = function(value) {
-      let example = document.getElementById('highlightExample');
-      example.style.background = value;
+      let examples = document.getElementsByClassName('highlight');
+      for (let i = 0; i < examples.length; i++) {
+        examples[i].style.background = value;
+      }
     };
 
     this.syncSelectControlToPref_('highlightColor', 'highlightColor', onChange);

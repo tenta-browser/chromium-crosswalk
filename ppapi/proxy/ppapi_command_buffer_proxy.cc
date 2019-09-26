@@ -17,22 +17,22 @@ namespace proxy {
 
 PpapiCommandBufferProxy::PpapiCommandBufferProxy(
     const ppapi::HostResource& resource,
-    PluginDispatcher* dispatcher,
+    InstanceData::FlushInfo* flush_info,
+    LockedSender* sender,
     const gpu::Capabilities& capabilities,
     const SerializedHandle& shared_state,
     gpu::CommandBufferId command_buffer_id)
     : command_buffer_id_(command_buffer_id),
       capabilities_(capabilities),
       resource_(resource),
-      dispatcher_(dispatcher),
+      flush_info_(flush_info),
+      sender_(sender),
       next_fence_sync_release_(1),
       pending_fence_sync_release_(0),
       flushed_fence_sync_release_(0),
       validated_fence_sync_release_(0) {
   shared_state_shm_.reset(new base::SharedMemory(shared_state.shmem(), false));
   shared_state_shm_->Map(shared_state.size());
-  InstanceData* data = dispatcher->GetInstanceData(resource.instance());
-  flush_info_ = &data->flush_info_;
 }
 
 PpapiCommandBufferProxy::~PpapiCommandBufferProxy() {
@@ -170,6 +170,11 @@ void PpapiCommandBufferProxy::SetLock(base::Lock*) {
 }
 
 void PpapiCommandBufferProxy::EnsureWorkVisible() {
+  if (last_state_.error != gpu::error::kNoError)
+    return;
+
+  if (flush_info_->flush_pending)
+    FlushInternal();
   DCHECK_GE(flushed_fence_sync_release_, validated_fence_sync_release_);
   Send(new PpapiHostMsg_PPBGraphics3D_EnsureWorkVisible(
       ppapi::API_ID_PPB_GRAPHICS_3D, resource_));
@@ -185,30 +190,14 @@ gpu::CommandBufferId PpapiCommandBufferProxy::GetCommandBufferID() const {
 }
 
 void PpapiCommandBufferProxy::FlushPendingWork() {
-  // This is only relevant for out-of-process command buffers.
+  if (last_state_.error != gpu::error::kNoError)
+    return;
+  if (flush_info_->flush_pending)
+    FlushInternal();
 }
 
 uint64_t PpapiCommandBufferProxy::GenerateFenceSyncRelease() {
   return next_fence_sync_release_++;
-}
-
-bool PpapiCommandBufferProxy::IsFenceSyncRelease(uint64_t release) {
-  return release != 0 && release < next_fence_sync_release_;
-}
-
-bool PpapiCommandBufferProxy::IsFenceSyncFlushed(uint64_t release) {
-  return release <= flushed_fence_sync_release_;
-}
-
-bool PpapiCommandBufferProxy::IsFenceSyncFlushReceived(uint64_t release) {
-  if (!IsFenceSyncFlushed(release))
-    return false;
-
-  if (release <= validated_fence_sync_release_)
-    return true;
-
-  EnsureWorkVisible();
-  return release <= validated_fence_sync_release_;
 }
 
 bool PpapiCommandBufferProxy::IsFenceSyncReleased(uint64_t release) {
@@ -217,7 +206,7 @@ bool PpapiCommandBufferProxy::IsFenceSyncReleased(uint64_t release) {
 }
 
 void PpapiCommandBufferProxy::SignalSyncToken(const gpu::SyncToken& sync_token,
-                                              const base::Closure& callback) {
+                                              base::OnceClosure callback) {
   NOTIMPLEMENTED();
 }
 
@@ -234,8 +223,19 @@ bool PpapiCommandBufferProxy::CanWaitUnverifiedSyncToken(
 void PpapiCommandBufferProxy::SetSnapshotRequested() {}
 
 void PpapiCommandBufferProxy::SignalQuery(uint32_t query,
-                                          const base::Closure& callback) {
+                                          base::OnceClosure callback) {
   NOTREACHED();
+}
+
+void PpapiCommandBufferProxy::CreateGpuFence(uint32_t gpu_fence_id,
+                                             ClientGpuFence source) {
+  NOTIMPLEMENTED();
+}
+
+void PpapiCommandBufferProxy::GetGpuFence(
+    uint32_t gpu_fence_id,
+    base::OnceCallback<void(std::unique_ptr<gfx::GpuFence>)> callback) {
+  NOTIMPLEMENTED();
 }
 
 void PpapiCommandBufferProxy::SetGpuControlClient(gpu::GpuControlClient*) {
@@ -266,7 +266,7 @@ bool PpapiCommandBufferProxy::Send(IPC::Message* msg) {
   // buffer may use a sync IPC with another lock held which could lead to lock
   // and deadlock if we dropped the proxy lock here.
   // http://crbug.com/418651
-  if (dispatcher_->SendAndStayLocked(msg))
+  if (sender_->SendAndStayLocked(msg))
     return true;
 
   last_state_.error = gpu::error::kLostContext;

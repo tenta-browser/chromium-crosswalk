@@ -6,7 +6,6 @@
 
 #import <NotificationCenter/NotificationCenter.h>
 
-#include "base/ios/ios_util.h"
 #import "ios/chrome/browser/ui/favicon/favicon_view.h"
 #import "ios/chrome/browser/ui/util/constraints_ui_util.h"
 
@@ -39,15 +38,8 @@ const CGFloat kTileWidth = 73;
 - (instancetype)init {
   self = [super initWithFrame:CGRectZero];
   if (self) {
-    UIVibrancyEffect* labelEffect;
-    if (@available(iOS 10, *)) {
-      labelEffect = [UIVibrancyEffect widgetSecondaryVibrancyEffect];
-    }
-#if !defined(__IPHONE_10_0) || __IPHONE_OS_VERSION_MIN_REQUIRED < __IPHONE_10_0
-    else {
-      labelEffect = [UIVibrancyEffect notificationCenterVibrancyEffect];
-    }
-#endif
+    UIVibrancyEffect* labelEffect =
+        [UIVibrancyEffect widgetSecondaryVibrancyEffect];
 
     UIVisualEffectView* titleLabelEffectView =
         [[UIVisualEffectView alloc] initWithEffect:labelEffect];

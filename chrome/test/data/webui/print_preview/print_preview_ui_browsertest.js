@@ -4,7 +4,7 @@
 
 /** @fileoverview Runs the Print Preview tests. */
 
-var ROOT_PATH = '../../../../../';
+const ROOT_PATH = '../../../../../';
 
 /**
  * @constructor
@@ -51,14 +51,18 @@ PrintPreviewUIBrowserTest.prototype = {
 
   extraLibraries: [
     ROOT_PATH + 'ui/webui/resources/js/cr.js',
+    ROOT_PATH + 'ui/webui/resources/js/cr/event_target.js',
     ROOT_PATH + 'ui/webui/resources/js/promise_resolver.js',
     ROOT_PATH + 'third_party/mocha/mocha.js',
     ROOT_PATH + 'chrome/test/data/webui/mocha_adapter.js',
     ROOT_PATH + 'ui/webui/resources/js/util.js',
     ROOT_PATH + 'chrome/test/data/webui/test_browser_proxy.js',
+    ROOT_PATH + 'chrome/test/data/webui/settings/test_util.js',
     'print_preview_tests.js',
     'native_layer_stub.js',
+    'cloud_print_interface_stub.js',
     'plugin_stub.js',
+    'print_preview_test_utils.js',
   ],
 };
 
@@ -114,6 +118,18 @@ PrintPreviewUIBrowserTest.prototype = {
   'AdvancedSettings2Options',
 ].forEach(function(testName) {
   TEST_F('PrintPreviewUIBrowserTest', testName, function() {
+    this.accessibilityIssuesAreErrors = false;
+    runMochaTest(print_preview_test.suiteName, testName);
+  });
+});
+
+[
+  'InvalidCertificateError',
+  'InvalidCertificateErrorReselectDestination',
+  'InvalidCertificateErrorNoPreview',
+].forEach(function(testName) {
+  TEST_F('PrintPreviewUIBrowserTest', testName, function() {
+    loadTimeData.overrideValues({isEnterpriseManaged: false});
     this.accessibilityIssuesAreErrors = false;
     runMochaTest(print_preview_test.suiteName, testName);
   });

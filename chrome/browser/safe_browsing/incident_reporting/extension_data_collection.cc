@@ -17,9 +17,9 @@
 #include "extensions/browser/extension_prefs_factory.h"
 #include "extensions/browser/extension_registry.h"
 #include "extensions/browser/extension_registry_factory.h"
+#include "extensions/buildflags/buildflags.h"
 #include "extensions/common/extension_set.h"
 #include "extensions/common/manifest_constants.h"
-#include "extensions/features/features.h"
 
 namespace safe_browsing {
 
@@ -34,7 +34,7 @@ void PopulateExtensionInfo(
     ClientIncidentReport_ExtensionData_ExtensionInfo* extension_info) {
   std::string extension_id = extension.id();
   extension_info->set_id(extension_id);
-  extension_info->set_version(extension.version()->GetString());
+  extension_info->set_version(extension.version().GetString());
   extension_info->set_name(extension.name());
   extension_info->set_description(extension.description());
 

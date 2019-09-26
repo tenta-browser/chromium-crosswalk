@@ -9,7 +9,6 @@
 
 #include "base/feature_list.h"
 #include "base/logging.h"
-#include "base/memory/ptr_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/sys_string_conversions.h"
 #include "components/autofill/core/browser/autofill_profile.h"
@@ -36,20 +35,20 @@ namespace {
 const NSTimeInterval kPDMMaxDelaySeconds = 10.0;
 }
 
-@interface PaymentRequestEGTestBase ()
+@interface PaymentRequestEGTestBase () {
+  // The PersonalDataManager instance for the current browser state.
+  autofill::PersonalDataManager* _personalDataManager;
 
-// Returns the PersonalDataManager instance for the current browser state.
-- (autofill::PersonalDataManager*)personalDataManager;
+  // Profiles added to the PersonalDataManager.
+  std::vector<autofill::AutofillProfile> _profiles;
+
+  // Credit Cards added to the PersonalDataManager.
+  std::vector<autofill::CreditCard> _cards;
+}
 
 @end
 
 @implementation PaymentRequestEGTestBase
-
-// Profiles added to the PersonalDataManager.
-std::vector<autofill::AutofillProfile> _profiles;
-
-// Credit Cards added to the PersonalDataManager.
-std::vector<autofill::CreditCard> _cards;
 
 #pragma mark - XCTestCase
 
@@ -61,6 +60,14 @@ std::vector<autofill::CreditCard> _cards;
     // order to run this test.
     DCHECK(false);
   }
+}
+
+- (void)setUp {
+  [super setUp];
+  _personalDataManager =
+      autofill::PersonalDataManagerFactory::GetForBrowserState(
+          chrome_test_util::GetOriginalBrowserState());
+  _personalDataManager->SetSyncingForTest(true);
 }
 
 - (void)tearDown {
@@ -108,7 +115,7 @@ std::vector<autofill::CreditCard> _cards;
 - (void)addServerCreditCard:(const autofill::CreditCard&)card {
   DCHECK(card.record_type() != autofill::CreditCard::LOCAL_CARD);
   [self personalDataManager]->AddServerCreditCardForTest(
-      base::MakeUnique<autofill::CreditCard>(card));
+      std::make_unique<autofill::CreditCard>(card));
 }
 
 - (payments::PaymentRequestCache::PaymentRequestSet&)paymentRequestsForWebState:
@@ -124,8 +131,7 @@ std::vector<autofill::CreditCard> _cards;
 }
 
 - (autofill::PersonalDataManager*)personalDataManager {
-  return autofill::PersonalDataManagerFactory::GetForBrowserState(
-      chrome_test_util::GetOriginalBrowserState());
+  return _personalDataManager;
 }
 
 - (void)loadTestPage:(const std::string&)page {

@@ -8,18 +8,16 @@
 
 #include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
+#include "device/vr/public/mojom/vr_service.mojom.h"
 #include "device/vr/test/fake_vr_device.h"
 #include "device/vr/test/fake_vr_service_client.h"
 #include "device/vr/test/mock_vr_display_impl.h"
 #include "device/vr/vr_device_base.h"
-#include "device/vr/vr_service.mojom.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace device {
 
 namespace {
-
-void DoNothing(bool will_not_present) {}
 
 class VRDeviceBaseForTesting : public VRDeviceBase {
  public:
@@ -31,8 +29,7 @@ class VRDeviceBaseForTesting : public VRDeviceBase {
   }
 
   void FireDisplayActivate() {
-    OnActivate(device::mojom::VRDisplayEventReason::MOUNTED,
-               base::Bind(&DoNothing));
+    OnActivate(device::mojom::VRDisplayEventReason::MOUNTED, base::DoNothing());
   }
 
   bool ListeningForActivate() { return listening_for_activate; }
@@ -129,7 +126,7 @@ TEST_F(VRDeviceTest, DisplayActivateRegsitered) {
   device->OnListeningForActivateChanged(display2.get());
   EXPECT_TRUE(device->ListeningForActivate());
 
-  EXPECT_CALL(*display2, OnActivate(mounted, testing::_)).Times(3);
+  EXPECT_CALL(*display2, OnActivate(mounted, testing::_)).Times(2);
   device->FireDisplayActivate();
 
   EXPECT_CALL(*display1, ListeningForActivate())
@@ -144,15 +141,13 @@ TEST_F(VRDeviceTest, DisplayActivateRegsitered) {
   device->OnListeningForActivateChanged(display2.get());
   EXPECT_FALSE(device->ListeningForActivate());
 
-  // Even though the device says it's not listening for activate, we still send
-  // it the activation to handle raciness on Android.
+  // Make sure we don't send the DisplayActivate event.
   device->FireDisplayActivate();
 
   EXPECT_CALL(*display2, InFocusedFrame())
       .WillRepeatedly(testing::Return(false));
   device->OnFrameFocusChanged(display2.get());
 
-  // Now we no longer fire the activation.
   device->FireDisplayActivate();
 }
 

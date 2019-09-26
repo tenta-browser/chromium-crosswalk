@@ -5,5 +5,8 @@ include_rules = [
   "+components/metrics",
   "+content/public/child",
   "+content/public/gpu",
+  "+media/cdm",
+  "+media/gpu",
   "+services/service_manager/public/cpp",
+  "+third_party/widevine/cdm/widevine_cdm_common.h",
 ]

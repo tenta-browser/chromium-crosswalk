@@ -13,7 +13,6 @@
 #include "base/files/scoped_temp_dir.h"
 #include "base/format_macros.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/run_loop.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/stringprintf.h"
@@ -87,7 +86,7 @@ class RegisterAppTaskTest : public testing::Test {
     leveldb::Status status = leveldb_env::OpenDB(
         options, database_dir_.GetPath().AsUTF8Unsafe(), &db);
     EXPECT_TRUE(status.ok());
-    return base::MakeUnique<LevelDBWrapper>(std::move(db));
+    return std::make_unique<LevelDBWrapper>(std::move(db));
   }
 
   void SetUpInitialData(LevelDBWrapper* db) {

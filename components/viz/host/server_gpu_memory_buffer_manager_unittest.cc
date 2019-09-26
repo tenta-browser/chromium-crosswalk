@@ -4,9 +4,12 @@
 
 #include "components/viz/host/server_gpu_memory_buffer_manager.h"
 
+#include <utility>
+
 #include "base/run_loop.h"
 #include "base/threading/thread.h"
 #include "build/build_config.h"
+#include "gpu/ipc/common/gpu_memory_buffer_support.h"
 #include "gpu/ipc/host/gpu_memory_buffer_support.h"
 #include "services/viz/privileged/interfaces/gl/gpu_service.mojom.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -58,18 +61,24 @@ class TestGpuService : public mojom::GpuService {
                            EstablishGpuChannelCallback callback) override {}
 
   void CloseChannel(int32_t client_id) override {}
-
+#if defined(OS_CHROMEOS)
   void CreateArcVideoDecodeAccelerator(
       arc::mojom::VideoDecodeAcceleratorRequest vda_request) override {}
 
   void CreateArcVideoEncodeAccelerator(
       arc::mojom::VideoEncodeAcceleratorRequest vea_request) override {}
 
+  void CreateArcVideoProtectedBufferAllocator(
+      arc::mojom::VideoProtectedBufferAllocatorRequest pba_request) override {}
+
   void CreateArcProtectedBufferManager(
       arc::mojom::ProtectedBufferManagerRequest pbm_request) override {}
-
+#endif  // defined(OS_CHROMEOS)
   void CreateJpegDecodeAccelerator(
       media::mojom::JpegDecodeAcceleratorRequest jda_request) override {}
+
+  void CreateJpegEncodeAccelerator(
+      media::mojom::JpegEncodeAcceleratorRequest jea_request) override {}
 
   void CreateVideoEncodeAcceleratorProvider(
       media::mojom::VideoEncodeAcceleratorProviderRequest request) override {}
@@ -97,6 +106,8 @@ class TestGpuService : public mojom::GpuService {
   void RequestCompleteGpuInfo(
       RequestCompleteGpuInfoCallback callback) override {}
 
+  void GetGpuSupportedRuntimeVersion() override {}
+
   void RequestHDRStatus(RequestHDRStatusCallback callback) override {}
 
   void LoadedShader(const std::string& key, const std::string& data) override {}
@@ -110,6 +121,8 @@ class TestGpuService : public mojom::GpuService {
   void GpuSwitched() override {}
 
   void DestroyAllChannels() override {}
+
+  void OnBackgrounded() override {}
 
   void Crash() override {}
 
@@ -144,13 +157,14 @@ class TestGpuService : public mojom::GpuService {
 // correctly.
 class FakeClientNativePixmapFactory : public gfx::ClientNativePixmapFactory {
  public:
-  FakeClientNativePixmapFactory() {}
+  explicit FakeClientNativePixmapFactory(bool allow_native_buffers)
+      : allow_native_buffers_(allow_native_buffers) {}
   ~FakeClientNativePixmapFactory() override {}
 
   // gfx::ClientNativePixmapFactory:
   bool IsConfigurationSupported(gfx::BufferFormat format,
                                 gfx::BufferUsage usage) const override {
-    return true;
+    return allow_native_buffers_;
   }
   std::unique_ptr<gfx::ClientNativePixmap> ImportFromHandle(
       const gfx::NativePixmapHandle& handle,
@@ -161,6 +175,8 @@ class FakeClientNativePixmapFactory : public gfx::ClientNativePixmapFactory {
   }
 
  private:
+  bool allow_native_buffers_ = false;
+
   DISALLOW_COPY_AND_ASSIGN(FakeClientNativePixmapFactory);
 };
 
@@ -195,17 +211,23 @@ class ServerGpuMemoryBufferManagerTest : public ::testing::Test {
 
   // ::testing::Test:
   void SetUp() override {
-    gfx::ClientNativePixmapFactory::ResetInstance();
-    gfx::ClientNativePixmapFactory::SetInstance(&pixmap_factory_);
   }
 
-  void TearDown() override { gfx::ClientNativePixmapFactory::ResetInstance(); }
+  void TearDown() override {}
 
  private:
-  FakeClientNativePixmapFactory pixmap_factory_;
-
   DISALLOW_COPY_AND_ASSIGN(ServerGpuMemoryBufferManagerTest);
 };
+
+std::unique_ptr<gpu::GpuMemoryBufferSupport> MakeGpuMemoryBufferSupport(
+    bool allow_native_buffers) {
+#if defined(OS_LINUX)
+  return std::make_unique<gpu::GpuMemoryBufferSupport>(
+      std::make_unique<FakeClientNativePixmapFactory>(allow_native_buffers));
+#else
+  return std::make_unique<gpu::GpuMemoryBufferSupport>();
+#endif
+}
 
 // Tests that allocation requests from a client that goes away before allocation
 // completes are cleaned up correctly.
@@ -213,7 +235,8 @@ TEST_F(ServerGpuMemoryBufferManagerTest, AllocationRequestsForDestroyedClient) {
 #if !defined(USE_OZONE) && !defined(OS_MACOSX) && !defined(OS_WIN)
   // Not all platforms support native configurations (currently only ozone and
   // mac support it). Abort the test in those platforms.
-  DCHECK(gpu::GetNativeGpuMemoryBufferConfigurations().empty());
+  gpu::GpuMemoryBufferSupport support;
+  DCHECK(gpu::GetNativeGpuMemoryBufferConfigurations(&support).empty());
   return;
 #else
   // Note: ServerGpuMemoryBufferManager normally operates on a mojom::GpuService
@@ -221,7 +244,9 @@ TEST_F(ServerGpuMemoryBufferManagerTest, AllocationRequestsForDestroyedClient) {
   // GpuService is asynchronous. In this test, the mojom::GpuService is not
   // bound to a mojo pipe, which means those calls are all synchronous.
   TestGpuService gpu_service;
-  ServerGpuMemoryBufferManager manager(&gpu_service, 1);
+  auto gpu_memory_buffer_support = MakeGpuMemoryBufferSupport(true);
+  ServerGpuMemoryBufferManager manager(&gpu_service, 1,
+                                       std::move(gpu_memory_buffer_support));
 
   const auto buffer_id = static_cast<gfx::GpuMemoryBufferId>(1);
   const int client_id = 2;
@@ -249,9 +274,10 @@ TEST_F(ServerGpuMemoryBufferManagerTest, AllocationRequestsForDestroyedClient) {
 
 TEST_F(ServerGpuMemoryBufferManagerTest,
        RequestsFromUntrustedClientsValidated) {
-  gfx::ClientNativePixmapFactory::ResetInstance();
   TestGpuService gpu_service;
-  ServerGpuMemoryBufferManager manager(&gpu_service, 1);
+  auto gpu_memory_buffer_support = MakeGpuMemoryBufferSupport(false);
+  ServerGpuMemoryBufferManager manager(&gpu_service, 1,
+                                       std::move(gpu_memory_buffer_support));
   const auto buffer_id = static_cast<gfx::GpuMemoryBufferId>(1);
   const int client_id = 2;
   // SCANOUT cannot be used if native gpu memory buffer is not supported.
@@ -295,9 +321,10 @@ TEST_F(ServerGpuMemoryBufferManagerTest,
 }
 
 TEST_F(ServerGpuMemoryBufferManagerTest, GpuMemoryBufferDestroyed) {
-  gfx::ClientNativePixmapFactory::ResetInstance();
   TestGpuService gpu_service;
-  ServerGpuMemoryBufferManager manager(&gpu_service, 1);
+  auto gpu_memory_buffer_support = MakeGpuMemoryBufferSupport(false);
+  ServerGpuMemoryBufferManager manager(&gpu_service, 1,
+                                       std::move(gpu_memory_buffer_support));
   auto buffer = AllocateGpuMemoryBufferSync(&manager);
   EXPECT_TRUE(buffer);
   buffer.reset();
@@ -305,17 +332,16 @@ TEST_F(ServerGpuMemoryBufferManagerTest, GpuMemoryBufferDestroyed) {
 
 TEST_F(ServerGpuMemoryBufferManagerTest,
        GpuMemoryBufferDestroyedOnDifferentThread) {
-  gfx::ClientNativePixmapFactory::ResetInstance();
   TestGpuService gpu_service;
-  ServerGpuMemoryBufferManager manager(&gpu_service, 1);
+  auto gpu_memory_buffer_support = MakeGpuMemoryBufferSupport(false);
+  ServerGpuMemoryBufferManager manager(&gpu_service, 1,
+                                       std::move(gpu_memory_buffer_support));
   auto buffer = AllocateGpuMemoryBufferSync(&manager);
   EXPECT_TRUE(buffer);
   // Destroy the buffer in a different thread.
   base::Thread diff_thread("DestroyThread");
   ASSERT_TRUE(diff_thread.Start());
-  diff_thread.task_runner()->PostTask(
-      FROM_HERE, base::Bind([](std::unique_ptr<gfx::GpuMemoryBuffer> buffer) {},
-                            base::Passed(&buffer)));
+  diff_thread.task_runner()->DeleteSoon(FROM_HERE, std::move(buffer));
   diff_thread.Stop();
 }
 

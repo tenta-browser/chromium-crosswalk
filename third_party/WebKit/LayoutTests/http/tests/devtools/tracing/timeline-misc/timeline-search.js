@@ -14,7 +14,9 @@
 
   var testData = [
     {
-      'args': {'sessionId': sessionId},
+      'args': {'data': {'sessionId': sessionId, 'frames': [
+        {'frame': 'frame1', 'url': 'frameurl', 'name': 'frame-name'}
+      ]}},
       'cat': 'disabled-by-default-devtools.timeline',
       'name': 'TracingStartedInPage',
       'ph': 'I',
@@ -123,7 +125,7 @@
       'tid': mainThread,
       'pid': pid,
       'cat': 'disabled-by-default-devtools.timeline',
-      'args': {'data': {'message': 'foo13'}}
+      'args': {'data': {'message': 'foo13', 'clip': [0,0,2,0,2,2,0,2]}}
     },
     {
       'name': 'TimeStamp',
@@ -203,7 +205,7 @@
   var searchConfig = new UI.SearchableView.SearchConfig('Paint', false, false);
   flameChartView.performSearch(searchConfig, true, false);
   for (var i = 0; i < 7; ++i) {
-    var selection = timeline._currentModelSelectionData().selection;
+    var selection = timeline._selection;
     if (!selection || selection.type() !== Timeline.TimelineSelection.Type.TraceEvent) {
       TestRunner.addResult(`Invalid selection type: ${selection && selection.type()}`);
       continue;

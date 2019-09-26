@@ -49,6 +49,7 @@ bool ProcessSnapshotLinux::Initialize(PtraceConnection* connection) {
 
   system_.Initialize(&process_reader_, &snapshot_time_);
   InitializeThreads();
+  InitializeModules();
 
   INITIALIZATION_STATE_SET_VALID(initialized_);
   return true;
@@ -76,6 +77,45 @@ bool ProcessSnapshotLinux::InitializeException(
   }
 
   return true;
+}
+
+void ProcessSnapshotLinux::GetCrashpadOptions(
+    CrashpadInfoClientOptions* options) {
+  INITIALIZATION_STATE_DCHECK_VALID(initialized_);
+
+  CrashpadInfoClientOptions local_options;
+
+  for (const auto& module : modules_) {
+    CrashpadInfoClientOptions module_options;
+    if (!module->GetCrashpadOptions(&module_options)) {
+      continue;
+    }
+
+    if (local_options.crashpad_handler_behavior == TriState::kUnset) {
+      local_options.crashpad_handler_behavior =
+          module_options.crashpad_handler_behavior;
+    }
+    if (local_options.system_crash_reporter_forwarding == TriState::kUnset) {
+      local_options.system_crash_reporter_forwarding =
+          module_options.system_crash_reporter_forwarding;
+    }
+    if (local_options.gather_indirectly_referenced_memory == TriState::kUnset) {
+      local_options.gather_indirectly_referenced_memory =
+          module_options.gather_indirectly_referenced_memory;
+      local_options.indirectly_referenced_memory_cap =
+          module_options.indirectly_referenced_memory_cap;
+    }
+
+    // If non-default values have been found for all options, the loop can end
+    // early.
+    if (local_options.crashpad_handler_behavior != TriState::kUnset &&
+        local_options.system_crash_reporter_forwarding != TriState::kUnset &&
+        local_options.gather_indirectly_referenced_memory != TriState::kUnset) {
+      break;
+    }
+  }
+
+  *options = local_options;
 }
 
 pid_t ProcessSnapshotLinux::ProcessID() const {
@@ -136,9 +176,11 @@ std::vector<const ThreadSnapshot*> ProcessSnapshotLinux::Threads() const {
 
 std::vector<const ModuleSnapshot*> ProcessSnapshotLinux::Modules() const {
   INITIALIZATION_STATE_DCHECK_VALID(initialized_);
-  // TODO(jperaza): do this.
-  LOG(ERROR) << "Not implemented";
-  return std::vector<const ModuleSnapshot*>();
+  std::vector<const ModuleSnapshot*> modules;
+  for (const auto& module : modules_) {
+    modules.push_back(module.get());
+  }
+  return modules;
 }
 
 std::vector<UnloadedModuleSnapshot> ProcessSnapshotLinux::UnloadedModules()
@@ -171,13 +213,24 @@ std::vector<const MemorySnapshot*> ProcessSnapshotLinux::ExtraMemory() const {
 }
 
 void ProcessSnapshotLinux::InitializeThreads() {
-  const std::vector<ProcessReader::Thread>& process_reader_threads =
+  const std::vector<ProcessReaderLinux::Thread>& process_reader_threads =
       process_reader_.Threads();
-  for (const ProcessReader::Thread& process_reader_thread :
+  for (const ProcessReaderLinux::Thread& process_reader_thread :
        process_reader_threads) {
     auto thread = std::make_unique<internal::ThreadSnapshotLinux>();
     if (thread->Initialize(&process_reader_, process_reader_thread)) {
       threads_.push_back(std::move(thread));
+    }
+  }
+}
+
+void ProcessSnapshotLinux::InitializeModules() {
+  for (const ProcessReaderLinux::Module& reader_module :
+       process_reader_.Modules()) {
+    auto module = std::make_unique<internal::ModuleSnapshotElf>(
+        reader_module.name, reader_module.elf_reader, reader_module.type);
+    if (module->Initialize()) {
+      modules_.push_back(std::move(module));
     }
   }
 }

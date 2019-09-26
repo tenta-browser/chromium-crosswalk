@@ -5,7 +5,6 @@
 #include "gpu/ipc/host/shader_disk_cache.h"
 #include "base/files/scoped_temp_dir.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/test/scoped_task_environment.h"
 #include "net/base/test_completion_callback.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -21,9 +20,9 @@ const char kCacheValue[] = "cached value";
 
 class ShaderDiskCacheTest : public testing::Test {
  public:
-  ShaderDiskCacheTest() {}
+  ShaderDiskCacheTest() = default;
 
-  ~ShaderDiskCacheTest() override {}
+  ~ShaderDiskCacheTest() override = default;
 
   const base::FilePath& cache_path() { return temp_dir_.GetPath(); }
 
@@ -35,7 +34,14 @@ class ShaderDiskCacheTest : public testing::Test {
   ShaderCacheFactory* factory() { return &factory_; }
 
  private:
-  void TearDown() override { factory_.RemoveCacheInfo(kDefaultClientId); }
+  void TearDown() override {
+    factory_.RemoveCacheInfo(kDefaultClientId);
+
+    // Run all pending tasks before destroying ScopedTaskEnvironment. Otherwise,
+    // SimpleEntryImpl instances bound to pending tasks are destroyed in an
+    // incorrect state (see |state_| DCHECK in ~SimpleEntryImpl).
+    scoped_task_environment_.RunUntilIdle();
+  }
 
   base::test::ScopedTaskEnvironment scoped_task_environment_;
   base::ScopedTempDir temp_dir_;

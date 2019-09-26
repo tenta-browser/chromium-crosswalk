@@ -119,6 +119,9 @@ class MEDIA_EXPORT WASAPIAudioInputStream
   // DelegateSimpleThread::Delegate implementation.
   void Run() override;
 
+  // Pulls capture data from the endpoint device and pushes it to the sink.
+  void PullCaptureDataAndPushToSink();
+
   // Issues the OnError() callback to the |sink_|.
   void HandleError(HRESULT err);
 
@@ -133,8 +136,24 @@ class MEDIA_EXPORT WASAPIAudioInputStream
   HRESULT InitializeAudioEngine();
   void ReportOpenResult(HRESULT hr) const;
 
+  // Reports stats for format related audio client initilization
+  // (IAudioClient::Initialize) errors, that is if |hr| is an error related to
+  // the format.
+  void MaybeReportFormatRelatedInitError(HRESULT hr) const;
+
   // AudioConverter::InputCallback implementation.
   double ProvideInput(AudioBus* audio_bus, uint32_t frames_delayed) override;
+
+  // Reports delay stats based on |capture_time|. Detects and counts glitches
+  // based on |frames_in_buffer|, |discontinuity_flagged|, and
+  // |device_position|.
+  void ReportDelayStatsAndUpdateGlitchCount(UINT32 frames_in_buffer,
+                                            bool discontinuity_flagged,
+                                            UINT64 device_position,
+                                            base::TimeTicks capture_time);
+
+  // Reports glitch stats and resets associated variables.
+  void ReportAndResetGlitchStats();
 
   // Used to track down where we fail during initialization which at the
   // moment seems to be happening frequently and we're not sure why.
@@ -168,8 +187,14 @@ class MEDIA_EXPORT WASAPIAudioInputStream
   // All OnData() callbacks will be called from this thread.
   std::unique_ptr<base::DelegateSimpleThread> capture_thread_;
 
-  // Contains the desired audio format which is set up at construction.
-  WAVEFORMATEX format_;
+  // Contains the desired output audio format which is set up at construction,
+  // that is the audio format this class should output data to the sink in.
+  WAVEFORMATEX output_format_;
+
+  // Contains the audio format we get data from the audio engine in. Set to
+  // |output_format_| at construction and might be changed to a close match
+  // if the audio engine doesn't support the originally set format.
+  WAVEFORMATEX input_format_;
 
   bool opened_ = false;
   bool started_ = false;
@@ -254,6 +279,15 @@ class MEDIA_EXPORT WASAPIAudioInputStream
 
   // Callback to send log messages.
   AudioManager::LogCallback log_callback_;
+
+  // For detecting and reporting glitches.
+  UINT64 expected_next_device_position_ = 0;
+  int total_glitches_ = 0;
+  int total_device_position_less_than_expected_ = 0;
+  int total_discontinuities_ = 0;
+  int total_concurrent_glitch_and_discontinuities_ = 0;
+  UINT64 total_lost_frames_ = 0;
+  UINT64 largest_glitch_frames_ = 0;
 
   SEQUENCE_CHECKER(sequence_checker_);
 

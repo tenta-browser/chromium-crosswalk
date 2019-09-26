@@ -37,7 +37,7 @@ source_set("security_key") {
 
   deps = [
     "//ipc",
-    "//mojo/edk/system",
+    "//mojo/edk",
     "//remoting/proto",
     "//third_party/webrtc/modules/desktop_capture",
   ]
@@ -53,6 +53,9 @@ source_set("main") {
   sources = [
     "remote_security_key_main.cc",
     "remote_security_key_main.h",
+  ]
+  deps = [
+    "//base:debugging_buildflags",
   ]
 }
 

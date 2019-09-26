@@ -110,6 +110,7 @@ do_package() {
   log_cmd echo "Packaging ${ARCHITECTURE}..."
   PREDEPENDS="$COMMON_PREDEPS"
   DEPENDS="${COMMON_DEPS}"
+  RECOMMENDS="${COMMON_RECOMMENDS}"
   PROVIDES="www-browser"
   gen_changelog
   process_template "${SCRIPTDIR}/control.template" "${DEB_CONTROL}"
@@ -135,15 +136,16 @@ cleanup() {
 
 usage() {
   echo "usage: $(basename $0) [-a target_arch] [-b 'dir'] -c channel"
-  echo "                      -d branding [-f] [-o 'dir'] -s 'dir'"
-  echo "-a arch     package architecture (ia32 or x64)"
-  echo "-b dir      build input directory    [${BUILDDIR}]"
-  echo "-c channel  the package channel (unstable, beta, stable)"
-  echo "-d brand    either chromium or google_chrome"
-  echo "-f          indicates that this is an official build"
-  echo "-h          this help message"
-  echo "-o dir      package output directory [${OUTPUTDIR}]"
-  echo "-s dir      /path/to/sysroot"
+  echo "                      -d branding [-f] [-o 'dir'] -s 'dir' -t target_os"
+  echo "-a arch      package architecture (ia32 or x64)"
+  echo "-b dir       build input directory    [${BUILDDIR}]"
+  echo "-c channel   the package channel (unstable, beta, stable)"
+  echo "-d brand     either chromium or google_chrome"
+  echo "-f           indicates that this is an official build"
+  echo "-h           this help message"
+  echo "-o dir       package output directory [${OUTPUTDIR}]"
+  echo "-s dir       /path/to/sysroot"
+  echo "-t platform  target platform"
 }
 
 # Check that the channel name is one of the allowable ones.
@@ -171,7 +173,7 @@ verify_channel() {
 }
 
 process_opts() {
-  while getopts ":a:b:c:d:fho:s:" OPTNAME
+  while getopts ":a:b:c:d:fho:s:t:" OPTNAME
   do
     case $OPTNAME in
       a )
@@ -199,6 +201,9 @@ process_opts() {
         ;;
       s )
         SYSROOT="$OPTARG"
+        ;;
+      t )
+        TARGET_OS="$OPTARG"
         ;;
      \: )
         echo "'-$OPTARG' needs an argument."
@@ -263,12 +268,16 @@ export DEBEMAIL="${MAINTMAIL}"
 DEB_COMMON_DEPS="${BUILDDIR}/deb_common.deps"
 COMMON_DEPS=$(sed ':a;N;$!ba;s/\n/, /g' "${DEB_COMMON_DEPS}")
 COMMON_PREDEPS="dpkg (>= 1.14.0)"
+COMMON_RECOMMENDS="libu2f-udev"
 
 
 # Make everything happen in the OUTPUTDIR.
 cd "${OUTPUTDIR}"
 
 case "$TARGETARCH" in
+  arm )
+    export ARCHITECTURE="armhf"
+    ;;
   ia32 )
     export ARCHITECTURE="i386"
     ;;
@@ -277,6 +286,9 @@ case "$TARGETARCH" in
     ;;
   mipsel )
     export ARCHITECTURE="mipsel"
+    ;;
+  mips64el )
+    export ARCHITECTURE="mips64el"
     ;;
   * )
     echo

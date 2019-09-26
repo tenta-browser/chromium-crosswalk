@@ -12,6 +12,7 @@
 #include "base/callback_helpers.h"
 #include "base/files/file_util.h"
 #include "base/logging.h"
+#include "base/message_loop/message_loop.h"
 #include "base/posix/eintr_wrapper.h"
 #include "base/trace_event/trace_event.h"
 #include "build/build_config.h"
@@ -20,6 +21,7 @@
 #include "net/base/net_errors.h"
 #include "net/base/sockaddr_storage.h"
 #include "net/base/trace_constants.h"
+#include "net/traffic_annotation/network_traffic_annotation.h"
 
 #if defined(OS_FUCHSIA)
 #include <poll.h>
@@ -173,7 +175,7 @@ int SocketPosix::Accept(std::unique_ptr<SocketPosix>* socket,
     return rv;
 
   if (!base::MessageLoopForIO::current()->WatchFileDescriptor(
-          socket_fd_, true, base::MessageLoopForIO::WATCH_READ,
+          socket_fd_, true, base::MessagePumpForIO::WATCH_READ,
           &accept_socket_watcher_, this)) {
     PLOG(ERROR) << "WatchFileDescriptor failed on accept, errno " << errno;
     return MapSystemError(errno);
@@ -198,7 +200,7 @@ int SocketPosix::Connect(const SockaddrStorage& address,
     return rv;
 
   if (!base::MessageLoopForIO::current()->WatchFileDescriptor(
-          socket_fd_, true, base::MessageLoopForIO::WATCH_WRITE,
+          socket_fd_, true, base::MessagePumpForIO::WATCH_WRITE,
           &write_socket_watcher_, this)) {
     PLOG(ERROR) << "WatchFileDescriptor failed on connect, errno " << errno;
     return MapSystemError(errno);
@@ -336,7 +338,7 @@ int SocketPosix::ReadIfReady(IOBuffer* buf,
     return rv;
 
   if (!base::MessageLoopForIO::current()->WatchFileDescriptor(
-          socket_fd_, true, base::MessageLoopForIO::WATCH_READ,
+          socket_fd_, true, base::MessagePumpForIO::WATCH_READ,
           &read_socket_watcher_, this)) {
     PLOG(ERROR) << "WatchFileDescriptor failed on read, errno " << errno;
     return MapSystemError(errno);
@@ -346,9 +348,11 @@ int SocketPosix::ReadIfReady(IOBuffer* buf,
   return ERR_IO_PENDING;
 }
 
-int SocketPosix::Write(IOBuffer* buf,
-                       int buf_len,
-                       const CompletionCallback& callback) {
+int SocketPosix::Write(
+    IOBuffer* buf,
+    int buf_len,
+    const CompletionCallback& callback,
+    const NetworkTrafficAnnotationTag& /* traffic_annotation */) {
   DCHECK(thread_checker_.CalledOnValidThread());
   DCHECK_NE(kInvalidSocket, socket_fd_);
   DCHECK(!waiting_connect_);
@@ -374,7 +378,7 @@ int SocketPosix::WaitForWrite(IOBuffer* buf,
   DCHECK_LT(0, buf_len);
 
   if (!base::MessageLoopForIO::current()->WatchFileDescriptor(
-          socket_fd_, true, base::MessageLoopForIO::WATCH_WRITE,
+          socket_fd_, true, base::MessagePumpForIO::WATCH_WRITE,
           &write_socket_watcher_, this)) {
     PLOG(ERROR) << "WatchFileDescriptor failed on write, errno " << errno;
     return MapSystemError(errno);

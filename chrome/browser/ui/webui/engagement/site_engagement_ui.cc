@@ -76,7 +76,7 @@ class SiteEngagementDetailsProviderImpl
 }  // namespace
 
 SiteEngagementUI::SiteEngagementUI(content::WebUI* web_ui)
-    : MojoWebUIController<mojom::SiteEngagementDetailsProvider>(web_ui) {
+    : ui::MojoWebUIController<mojom::SiteEngagementDetailsProvider>(web_ui) {
   // Set up the chrome://site-engagement/ source.
   std::unique_ptr<content::WebUIDataSource> source(
       content::WebUIDataSource::Create(chrome::kChromeUISiteEngagementHost));
@@ -84,7 +84,7 @@ SiteEngagementUI::SiteEngagementUI(content::WebUI* web_ui)
   source->AddResourcePath(
       "chrome/browser/engagement/site_engagement_details.mojom.js",
       IDR_SITE_ENGAGEMENT_MOJO_JS);
-  source->AddResourcePath("url/mojo/url.mojom.js", IDR_URL_MOJO_JS);
+  source->AddResourcePath("url/mojom/url.mojom.js", IDR_URL_MOJO_JS);
   source->SetDefaultResource(IDR_SITE_ENGAGEMENT_HTML);
   source->UseGzip();
   content::WebUIDataSource::Add(Profile::FromWebUI(web_ui), source.release());

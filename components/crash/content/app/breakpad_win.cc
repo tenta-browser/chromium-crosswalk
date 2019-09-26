@@ -4,12 +4,13 @@
 
 #include "components/crash/content/app/breakpad_win.h"
 
-#include <windows.h>
+#include <crtdbg.h>
 #include <intrin.h>
 #include <shellapi.h>
 #include <stddef.h>
 #include <tchar.h>
 #include <userenv.h>
+#include <windows.h>
 #include <winnt.h>
 
 #include <algorithm>
@@ -129,21 +130,11 @@ DWORD WINAPI DumpProcessWithoutCrashThread(void*) {
 }  // namespace
 
 extern "C" HANDLE __declspec(dllexport) __cdecl InjectDumpForHungInput(
-    HANDLE process,
-    void* serialized_crash_keys) {
+    HANDLE process) {
   // |serialized_crash_keys| is not propagated in breakpad but is in crashpad
   // since breakpad is deprecated.
   return CreateRemoteThread(process, NULL, 0, DumpProcessWithoutCrashThread,
                             0, 0, NULL);
-}
-
-extern "C" HANDLE __declspec(
-    dllexport) __cdecl InjectDumpForHungInputNoCrashKeys(HANDLE process,
-                                                         int reason) {
-  // |reason| is not propagated in breakpad but is in crashpad since breakpad
-  // is deprecated.
-  return CreateRemoteThread(process, NULL, 0, DumpProcessWithoutCrashThread, 0,
-                            0, NULL);
 }
 
 // Returns a string containing a list of all modifiers for the loaded profile.
@@ -263,22 +254,6 @@ long WINAPI CloudPrintServiceExceptionFilter(EXCEPTION_POINTERS* info) {
   DumpDoneCallback(NULL, NULL, NULL, info, NULL, false);
   return EXCEPTION_EXECUTE_HANDLER;
 }
-
-#if !defined(COMPONENT_BUILD)
-// Installed via base::debug::SetCrashKeyReportingFunctions.
-void SetCrashKeyValueForBaseDebug(const base::StringPiece& key,
-                                  const base::StringPiece& value) {
-  DCHECK(CrashKeysWin::keeper());
-  CrashKeysWin::keeper()->SetCrashKeyValue(base::UTF8ToUTF16(key),
-                                           base::UTF8ToUTF16(value));
-}
-
-// Installed via base::debug::SetCrashKeyReportingFunctions.
-void ClearCrashKeyForBaseDebug(const base::StringPiece& key) {
-  DCHECK(CrashKeysWin::keeper());
-  CrashKeysWin::keeper()->ClearCrashKeyValue(base::UTF8ToUTF16(key));
-}
-#endif  // !defined(COMPONENT_BUILD)
 
 }  // namespace
 
@@ -404,8 +379,8 @@ static void InitTerminateProcessHooks() {
     return;
 
   DWORD old_protect = 0;
-  if (!::VirtualProtect(terminate_process_func_address, 5,
-                        PAGE_EXECUTE_READWRITE, &old_protect))
+  if (!::VirtualProtect(reinterpret_cast<void*>(terminate_process_func_address),
+                        5, PAGE_EXECUTE_READWRITE, &old_protect))
     return;
 
   g_real_terminate_process_stub = reinterpret_cast<char*>(VirtualAllocEx(
@@ -418,23 +393,23 @@ static void InitTerminateProcessHooks() {
   g_surrogate_exception_pointers.ExceptionRecord =
       &g_surrogate_exception_record;
 
-  sidestep::SideStepError patch_result =
-      sidestep::PreamblePatcher::Patch(
-          terminate_process_func_address, HookNtTerminateProcess,
-          g_real_terminate_process_stub, sidestep::kMaxPreambleStubSize);
+  sidestep::SideStepError patch_result = sidestep::PreamblePatcher::Patch(
+      reinterpret_cast<void*>(terminate_process_func_address),
+      reinterpret_cast<void*>(HookNtTerminateProcess),
+      g_real_terminate_process_stub, sidestep::kMaxPreambleStubSize);
   if (patch_result != sidestep::SIDESTEP_SUCCESS) {
     CHECK(::VirtualFreeEx(::GetCurrentProcess(), g_real_terminate_process_stub,
                     0, MEM_RELEASE));
-    CHECK(::VirtualProtect(terminate_process_func_address, 5, old_protect,
-                           &old_protect));
+    CHECK(::VirtualProtect(
+        reinterpret_cast<void*>(terminate_process_func_address), 5, old_protect,
+        &old_protect));
     return;
   }
 
   DWORD dummy = 0;
-  CHECK(::VirtualProtect(terminate_process_func_address,
-                         5,
-                         old_protect,
-                         &dummy));
+  CHECK(
+      ::VirtualProtect(reinterpret_cast<void*>(terminate_process_func_address),
+                       5, old_protect, &dummy));
   CHECK(::VirtualProtect(g_real_terminate_process_stub,
                          sidestep::kMaxPreambleStubSize,
                          old_protect,
@@ -500,12 +475,6 @@ void InitDefaultCrashCallback(LPTOP_LEVEL_EXCEPTION_FILTER filter) {
 }
 
 void InitCrashReporter(const std::string& process_type_switch) {
-  // The maximum lengths specified by breakpad include the trailing NULL, so the
-  // actual length of the chunk is one less.
-  static_assert(google_breakpad::CustomInfoEntry::kValueMaxLength - 1 ==
-                crash_keys::kChunkMaxLength, "kChunkMaxLength mismatch");
-  static_assert(crash_keys::kSmallSize <= crash_keys::kChunkMaxLength,
-                "crash key chunk size too small");
   const base::CommandLine& command = *base::CommandLine::ForCurrentProcess();
   if (command.HasSwitch(switches::kDisableBreakpad))
     return;
@@ -528,17 +497,6 @@ void InitCrashReporter(const std::string& process_type_switch) {
       keeper->GetCustomInfo(exe_path, process_type, GetProfileType(),
                             base::CommandLine::ForCurrentProcess(),
                             GetCrashReporterClient());
-
-#if !defined(COMPONENT_BUILD)
-  // chrome/common/child_process_logging_win.cc registers crash keys for
-  // chrome.dll. In a component build, that is sufficient as chrome.dll and
-  // chrome.exe share a copy of base (in base.dll).
-  // In a static build, the EXE must separately initialize the crash keys
-  // configuration as it has its own statically linked copy of base.
-  base::debug::SetCrashKeyReportingFunctions(&SetCrashKeyValueForBaseDebug,
-                                             &ClearCrashKeyForBaseDebug);
-  GetCrashReporterClient()->RegisterCrashKeys();
-#endif
 
   google_breakpad::ExceptionHandler::MinidumpCallback callback = NULL;
   LPTOP_LEVEL_EXCEPTION_FILTER default_filter = NULL;
@@ -691,7 +649,8 @@ RegisterNonABICompliantCodeRange(void* start, size_t size_in_bytes) {
   // mov imm64, rax
   record->thunk[0] = 0x48;
   record->thunk[1] = 0xb8;
-  void* handler = &CrashForExceptionInNonABICompliantCodeRange;
+  void* handler =
+      reinterpret_cast<void*>(&CrashForExceptionInNonABICompliantCodeRange);
   memcpy(&record->thunk[2], &handler, 8);
 
   // jmp rax

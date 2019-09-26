@@ -7,9 +7,6 @@
       `Tests breakpoints are correctly dimmed and restored in JavaScriptSourceFrame during live edit.\n`);
   await TestRunner.loadModule('sources_test_runner');
   await TestRunner.showPanel('sources');
-  await TestRunner.loadHTML(`
-      <a href="https://bugs.webkit.org/show_bug.cgi?id=99598">Bug 99598</a>
-    `);
   await TestRunner.addScriptTag('resources/edit-me-breakpoints.js');
 
   function pathToFileName(path) {
@@ -41,7 +38,7 @@
     TestRunner.addResult('    Dumping breakpoints');
     for (var i = 0; i < breakpoints.length; ++i) {
       var breakpoint = breakpoints[i];
-      var uiSourceCode = breakpointManager._workspace.uiSourceCode(breakpoint.projectId(), breakpoint.url());
+      var uiSourceCode = breakpoint._primaryUISourceCode;
       var lineNumber = breakpoint.lineNumber();
       var url = uiSourceCode.url();
       var project = uiSourceCode.project();
@@ -50,7 +47,7 @@
     }
   }
 
-  Bindings.breakpointManager._storage._breakpoints = {};
+  Bindings.breakpointManager._storage._breakpoints = new Map();
 
   SourcesTestRunner.runDebuggerTestSuite([
     function testEditUndo(next) {

@@ -8,16 +8,17 @@
 #include <memory>
 #include <string>
 
+#include "base/callback.h"
 #include "base/compiler_specific.h"
 #include "base/files/file_path.h"
 #include "build/build_config.h"
 #include "content/public/browser/content_browser_client.h"
-#include "content/shell/browser/shell_resource_dispatcher_host_delegate.h"
 #include "content/shell/browser/shell_speech_recognition_manager_delegate.h"
 #include "services/service_manager/public/cpp/binder_registry.h"
 
 namespace content {
 
+class ResourceDispatcherHostDelegate;
 class ShellBrowserContext;
 class ShellBrowserMainParts;
 
@@ -25,8 +26,6 @@ class ShellContentBrowserClient : public ContentBrowserClient {
  public:
   // Gets the current instance.
   static ShellContentBrowserClient* Get();
-
-  static void SetSwapProcessesForRedirect(bool swap);
 
   ShellContentBrowserClient();
   ~ShellContentBrowserClient() override;
@@ -66,14 +65,18 @@ class ShellContentBrowserClient : public ContentBrowserClient {
   SpeechRecognitionManagerDelegate* CreateSpeechRecognitionManagerDelegate()
       override;
   net::NetLog* GetNetLog() override;
-  bool ShouldSwapProcessesForRedirect(BrowserContext* browser_context,
-                                      const GURL& current_url,
-                                      const GURL& new_url) override;
   DevToolsManagerDelegate* GetDevToolsManagerDelegate() override;
-
   void OpenURL(BrowserContext* browser_context,
                const OpenURLParams& params,
                const base::Callback<void(WebContents*)>& callback) override;
+  scoped_refptr<LoginDelegate> CreateLoginDelegate(
+      net::AuthChallengeInfo* auth_info,
+      content::ResourceRequestInfo::WebContentsGetter web_contents_getter,
+      bool is_main_frame,
+      const GURL& url,
+      bool first_auth_attempt,
+      const base::Callback<void(const base::Optional<net::AuthCredentials>&)>&
+          auth_required_callback) override;
 
 #if defined(OS_LINUX) || defined(OS_ANDROID)
   void GetAdditionalMappedFilesForChildProcess(
@@ -88,7 +91,7 @@ class ShellContentBrowserClient : public ContentBrowserClient {
 
   ShellBrowserContext* browser_context();
   ShellBrowserContext* off_the_record_browser_context();
-  ShellResourceDispatcherHostDelegate* resource_dispatcher_host_delegate() {
+  ResourceDispatcherHostDelegate* resource_dispatcher_host_delegate() {
     return resource_dispatcher_host_delegate_.get();
   }
   ShellBrowserMainParts* shell_browser_main_parts() {
@@ -98,11 +101,16 @@ class ShellContentBrowserClient : public ContentBrowserClient {
   // Used for content_browsertests.
   void set_select_client_certificate_callback(
       base::Closure select_client_certificate_callback) {
-    select_client_certificate_callback_ = select_client_certificate_callback;
+    select_client_certificate_callback_ =
+        std::move(select_client_certificate_callback);
   }
   void set_should_terminate_on_service_quit_callback(
       base::Callback<bool(const service_manager::Identity&)> callback) {
-    should_terminate_on_service_quit_callback_ = callback;
+    should_terminate_on_service_quit_callback_ = std::move(callback);
+  }
+  void set_login_request_callback(
+      base::Callback<void()> login_request_callback) {
+    login_request_callback_ = std::move(login_request_callback);
   }
 
  protected:
@@ -110,22 +118,18 @@ class ShellContentBrowserClient : public ContentBrowserClient {
       service_manager::BinderRegistryWithArgs<content::RenderFrameHost*>*
           registry);
 
-  void set_resource_dispatcher_host_delegate(
-      std::unique_ptr<ShellResourceDispatcherHostDelegate> delegate) {
-    resource_dispatcher_host_delegate_ = std::move(delegate);
-  }
-
   void set_browser_main_parts(ShellBrowserMainParts* parts) {
     shell_browser_main_parts_ = parts;
   }
 
  private:
-  std::unique_ptr<ShellResourceDispatcherHostDelegate>
+  std::unique_ptr<ResourceDispatcherHostDelegate>
       resource_dispatcher_host_delegate_;
 
   base::Closure select_client_certificate_callback_;
   base::Callback<bool(const service_manager::Identity&)>
       should_terminate_on_service_quit_callback_;
+  base::Callback<void()> login_request_callback_;
 
   std::unique_ptr<
       service_manager::BinderRegistryWithArgs<content::RenderFrameHost*>>

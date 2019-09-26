@@ -4,11 +4,12 @@
 
 #include "webcontentdecryptionmodulesession_impl.h"
 
+#include <memory>
+
 #include "base/bind.h"
 #include "base/callback_helpers.h"
 #include "base/logging.h"
-#include "base/memory/ptr_util.h"
-#include "base/metrics/histogram_macros.h"
+#include "base/metrics/histogram_functions.h"
 #include "base/numerics/safe_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
@@ -23,12 +24,12 @@
 #include "media/blink/cdm_session_adapter.h"
 #include "media/blink/webmediaplayer_util.h"
 #include "media/cdm/json_web_key.h"
-#include "media/media_features.h"
-#include "third_party/WebKit/public/platform/WebData.h"
-#include "third_party/WebKit/public/platform/WebEncryptedMediaKeyInformation.h"
-#include "third_party/WebKit/public/platform/WebString.h"
-#include "third_party/WebKit/public/platform/WebURL.h"
-#include "third_party/WebKit/public/platform/WebVector.h"
+#include "media/media_buildflags.h"
+#include "third_party/blink/public/platform/web_data.h"
+#include "third_party/blink/public/platform/web_encrypted_media_key_information.h"
+#include "third_party/blink/public/platform/web_string.h"
+#include "third_party/blink/public/platform/web_url.h"
+#include "third_party/blink/public/platform/web_vector.h"
 
 #if BUILDFLAG(USE_PROPRIETARY_CODECS)
 #include "media/cdm/cenc_utils.h"
@@ -57,6 +58,9 @@ convertMessageType(CdmMessageType message_type) {
     case CdmMessageType::LICENSE_RELEASE:
       return blink::WebContentDecryptionModuleSession::Client::MessageType::
           kLicenseRelease;
+    case CdmMessageType::INDIVIDUALIZATION_REQUEST:
+      return blink::WebContentDecryptionModuleSession::Client::MessageType::
+          kIndividualizationRequest;
   }
 
   NOTREACHED();
@@ -253,7 +257,7 @@ WebContentDecryptionModuleSessionImpl::
     // session will be gone.
     if (!is_closed_ && !has_close_been_called_) {
       adapter_->CloseSession(session_id_,
-                             base::MakeUnique<IgnoreResponsePromise>());
+                             std::make_unique<IgnoreResponsePromise>());
     }
   }
 }
@@ -345,7 +349,8 @@ void WebContentDecryptionModuleSessionImpl::InitializeNewSession(
           result, adapter_->GetKeySystemUMAPrefix(), kGenerateRequestUMAName,
           base::Bind(
               &WebContentDecryptionModuleSessionImpl::OnSessionInitialized,
-              weak_ptr_factory_.GetWeakPtr()))));
+              weak_ptr_factory_.GetWeakPtr()),
+          {SessionInitStatus::NEW_SESSION})));
 }
 
 void WebContentDecryptionModuleSessionImpl::Load(
@@ -380,7 +385,9 @@ void WebContentDecryptionModuleSessionImpl::Load(
           result, adapter_->GetKeySystemUMAPrefix(), kLoadSessionUMAName,
           base::Bind(
               &WebContentDecryptionModuleSessionImpl::OnSessionInitialized,
-              weak_ptr_factory_.GetWeakPtr()))));
+              weak_ptr_factory_.GetWeakPtr()),
+          {SessionInitStatus::NEW_SESSION,
+           SessionInitStatus::SESSION_NOT_FOUND})));
 }
 
 void WebContentDecryptionModuleSessionImpl::Update(
@@ -480,9 +487,7 @@ void WebContentDecryptionModuleSessionImpl::OnSessionKeysChange(
     keys[i].SetStatus(ConvertCdmKeyStatus(key_info->status));
     keys[i].SetSystemCode(key_info->system_code);
 
-    // Sparse histogram macro does not cache the histogram, so it's safe to use
-    // macro with non-static histogram name here.
-    UMA_HISTOGRAM_SPARSE_SLOWLY(
+    base::UmaHistogramSparse(
         adapter_->GetKeySystemUMAPrefix() + kKeyStatusSystemCodeUMAName,
         key_info->system_code);
   }

@@ -8,11 +8,15 @@
 // IPC messages for interactions between the WebMediaPlayerDelegate in the
 // renderer process and MediaWebContentsObserver in the browser process.
 
+// TODO(apacible): Mojoify MediaPlayerDelegateMsg, then remove this file.
+// https://crbug.com/824965
+
 #include <stdint.h>
 
 #include "content/common/content_export.h"
 #include "ipc/ipc_message_macros.h"
 #include "media/base/media_content_type.h"
+#include "third_party/blink/public/platform/web_fullscreen_video_status.h"
 #include "ui/gfx/ipc/geometry/gfx_param_traits.h"
 
 #undef IPC_MESSAGE_EXPORT
@@ -20,6 +24,8 @@
 #define IPC_MESSAGE_START MediaPlayerDelegateMsgStart
 
 IPC_ENUM_TRAITS_MAX_VALUE(media::MediaContentType, media::MediaContentType::Max)
+IPC_ENUM_TRAITS_MAX_VALUE(blink::WebFullscreenVideoStatus,
+                          blink::WebFullscreenVideoStatus::kMax)
 
 // ----------------------------------------------------------------------------
 // Messages from the browser to the renderer requesting playback state changes.
@@ -74,10 +80,16 @@ IPC_MESSAGE_ROUTED2(MediaPlayerDelegateHostMsg_OnMutedStatusChanged,
 IPC_MESSAGE_ROUTED2(
     MediaPlayerDelegateHostMsg_OnMediaEffectivelyFullscreenChanged,
     int /* delegate_id, distinguishes instances */,
-    bool /* is_fullscreen */)
+    blink::WebFullscreenVideoStatus /* fullscreen_video_status */)
 
 IPC_MESSAGE_ROUTED2(MediaPlayerDelegateHostMsg_OnMediaSizeChanged,
                     int /* delegate_id, distinguishes instances */,
                     gfx::Size /* new size of video */)
+
+IPC_MESSAGE_ROUTED1(MediaPlayerDelegateHostMsg_OnPictureInPictureSourceChanged,
+                    int /* delegate id */)
+
+IPC_MESSAGE_ROUTED1(MediaPlayerDelegateHostMsg_OnPictureInPictureModeEnded,
+                    int /* delegate id */)
 
 #endif  // CONTENT_COMMON_MEDIA_MEDIA_PLAYER_DELEGATE_MESSAGES_H_

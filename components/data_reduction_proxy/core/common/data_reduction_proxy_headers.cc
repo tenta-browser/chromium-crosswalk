@@ -11,19 +11,19 @@
 #include <utility>
 #include <vector>
 
+#include "base/metrics/field_trial_params.h"
 #include "base/rand_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
 #include "base/time/time.h"
 #include "components/data_reduction_proxy/core/common/data_reduction_proxy_event_creator.h"
+#include "components/data_reduction_proxy/core/common/data_reduction_proxy_features.h"
 #include "components/data_reduction_proxy/core/common/data_reduction_proxy_params.h"
 #include "net/http/http_response_headers.h"
 #include "net/http/http_status_code.h"
 #include "net/http/http_util.h"
 #include "net/url_request/url_request.h"
-
-using base::StringPiece;
 
 namespace {
 
@@ -45,10 +45,6 @@ const char kLitePageDirective[] = "lite-page";
 const char kCompressedVideoDirective[] = "compressed-video";
 const char kIdentityDirective[] = "identity";
 const char kChromeProxyPagePoliciesDirective[] = "page-policies";
-
-const char kChromeProxyExperimentForceLitePage[] = "force_lite_page";
-const char kChromeProxyExperimentForceEmptyImage[] =
-    "force_page_policies_empty_image";
 
 const char kChromeProxyActionBlockOnce[] = "block-once";
 const char kChromeProxyActionBlock[] = "block";
@@ -181,14 +177,6 @@ const char* page_policies_directive() {
   return kChromeProxyPagePoliciesDirective;
 }
 
-const char* chrome_proxy_experiment_force_lite_page() {
-  return kChromeProxyExperimentForceLitePage;
-}
-
-const char* chrome_proxy_experiment_force_empty_image() {
-  return kChromeProxyExperimentForceEmptyImage;
-}
-
 TransformDirective ParseRequestTransform(
     const net::HttpRequestHeaders& headers) {
   std::string accept_transform_value;
@@ -290,7 +278,8 @@ bool ParseHeadersAndSetBypassDuration(const net::HttpResponseHeaders& headers,
     if (StartsWithActionPrefix(value, action_prefix)) {
       int64_t seconds;
       if (!base::StringToInt64(
-              StringPiece(value).substr(action_prefix.size() + 1), &seconds) ||
+              base::StringPiece(value).substr(action_prefix.size() + 1),
+              &seconds) ||
           seconds < 0) {
         continue;  // In case there is a well formed instruction.
       }
@@ -386,6 +375,12 @@ DataReductionProxyBypassType GetDataReductionProxyBypassType(
     DataReductionProxyInfo* data_reduction_proxy_info) {
   DCHECK(data_reduction_proxy_info);
 
+  // Responses from the warmup URL probe should not be checked for bypass types.
+  // Doing so may unnecessarily cause all data saver proxies to be marked as
+  // bad (e.g., when via header is missing on the response to the probe from the
+  // HTTP proxy).
+  DCHECK(url_chain.empty() || (params::GetWarmupURL() != url_chain.back()));
+
   bool has_via_header = HasDataReductionProxyViaHeader(headers, nullptr);
 
   if (has_via_header && HasURLRedirectCycle(url_chain)) {
@@ -430,7 +425,17 @@ DataReductionProxyBypassType GetDataReductionProxyBypassType(
       !headers.HasHeader("Proxy-Authenticate")) {
     return BYPASS_EVENT_TYPE_MALFORMED_407;
   }
-  if (!has_via_header && (headers.response_code() != net::HTTP_NOT_MODIFIED)) {
+
+  bool disable_bypass_on_missing_via_header =
+      GetFieldTrialParamByFeatureAsBool(
+          features::kDataReductionProxyRobustConnection,
+          params::GetWarmupCallbackParamName(), false) &&
+      GetFieldTrialParamByFeatureAsBool(
+          features::kDataReductionProxyRobustConnection,
+          params::GetMissingViaBypassParamName(), false);
+
+  if (!has_via_header && !disable_bypass_on_missing_via_header &&
+      (headers.response_code() != net::HTTP_NOT_MODIFIED)) {
     // A Via header might not be present in a 304. Since the goal of a 304
     // response is to minimize information transfer, a sender in general
     // should not generate representation metadata other than Cache-Control,

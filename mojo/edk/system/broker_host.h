@@ -12,15 +12,15 @@
 #include "base/message_loop/message_loop.h"
 #include "base/process/process_handle.h"
 #include "base/strings/string_piece.h"
-#include "mojo/edk/embedder/embedder.h"
+#include "mojo/edk/embedder/process_error_callback.h"
 #include "mojo/edk/embedder/scoped_platform_handle.h"
 #include "mojo/edk/system/channel.h"
 
 namespace mojo {
 namespace edk {
 
-// The BrokerHost is a channel to the child process, which services synchronous
-// IPCs.
+// The BrokerHost is a channel to a broker client process, servicing synchronous
+// IPCs issued by the client.
 class BrokerHost : public Channel::Delegate,
                    public base::MessageLoop::DestructionObserver {
  public:
@@ -28,11 +28,11 @@ class BrokerHost : public Channel::Delegate,
              ScopedPlatformHandle handle,
              const ProcessErrorCallback& process_error_callback);
 
-  // Send |handle| to the child, to be used to establish a NodeChannel to us.
+  // Send |handle| to the client, to be used to establish a NodeChannel to us.
   bool SendChannel(ScopedPlatformHandle handle);
 
 #if defined(OS_WIN)
-  // Sends a named channel to the child. Like above, but for named pipes.
+  // Sends a named channel to the client. Like above, but for named pipes.
   void SendNamedChannel(const base::StringPiece16& pipe_name);
 #endif
 

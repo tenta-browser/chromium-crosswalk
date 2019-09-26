@@ -4,11 +4,10 @@
 
 #include "chrome/browser/chromeos/hats/hats_notification_controller.h"
 
+#include "ash/public/cpp/vector_icons/vector_icons.h"
 #include "base/command_line.h"
 #include "base/feature_list.h"
-#include "base/memory/ptr_util.h"
 #include "base/task_scheduler/post_task.h"
-#include "chrome/app/vector_icons/vector_icons.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/chromeos/hats/hats_dialog.h"
 #include "chrome/browser/chromeos/hats/hats_finch_helper.h"
@@ -26,11 +25,8 @@
 #include "net/traffic_annotation/network_traffic_annotation.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/resource/resource_bundle.h"
-#include "ui/message_center/message_center.h"
-#include "ui/message_center/notification.h"
-#include "ui/message_center/notification_types.h"
-#include "ui/message_center/public/cpp/message_center_constants.h"
-#include "ui/message_center/public/cpp/message_center_switches.h"
+#include "ui/message_center/public/cpp/notification.h"
+#include "ui/message_center/public/cpp/notification_types.h"
 #include "ui/strings/grit/ui_strings.h"
 
 namespace {
@@ -159,13 +155,9 @@ bool HatsNotificationController::ShouldShowSurveyToProfile(Profile* profile) {
   return true;
 }
 
-// message_center::NotificationDelegate override:
-void HatsNotificationController::Click() {
-  ButtonClick(0 /* unused */);
-}
-
-// message_center::NotificationDelegate override:
-void HatsNotificationController::ButtonClick(int /* button_index */) {
+void HatsNotificationController::Click(
+    const base::Optional<int>& button_index,
+    const base::Optional<base::string16>& reply) {
   UpdateLastInteractionTime();
 
   // The dialog deletes itslef on close.
@@ -197,35 +189,21 @@ void HatsNotificationController::OnPortalDetectionCompleted(
   network_portal_detector::GetInstance()->RemoveObserver(this);
 
   // Create and display the notification for the user.
-  message_center::RichNotificationData optional;
-  if (!message_center::IsNewStyleNotificationEnabled()) {
-    optional.buttons.push_back(message_center::ButtonInfo(
-        l10n_util::GetStringUTF16(IDS_HATS_NOTIFICATION_TAKE_SURVEY_BUTTON)));
-  }
-
-  message_center::Notification notification(
-      message_center::NOTIFICATION_TYPE_SIMPLE, kNotificationId,
-      l10n_util::GetStringUTF16(IDS_HATS_NOTIFICATION_TITLE),
-      l10n_util::GetStringUTF16(IDS_HATS_NOTIFICATION_BODY),
-      gfx::Image(
-          gfx::CreateVectorIcon(kGoogleGLogoIcon, gfx::kPlaceholderColor)),
-      l10n_util::GetStringUTF16(IDS_MESSAGE_CENTER_NOTIFIER_HATS_NAME),
-      GURL(kNotificationOriginUrl),
-      message_center::NotifierId(message_center::NotifierId::SYSTEM_COMPONENT,
-                                 kNotifierHats),
-      optional, this);
-  if (message_center::IsNewStyleNotificationEnabled()) {
-    notification.set_icon(gfx::Image());
-    notification.set_accent_color(
-        message_center::kSystemNotificationColorNormal);
-    notification.set_small_image(gfx::Image(gfx::CreateVectorIcon(
-        kNotificationGoogleIcon, message_center::kSmallImageSizeMD,
-        message_center::kSystemNotificationColorNormal)));
-    notification.set_vector_small_image(kNotificationGoogleIcon);
-  }
+  std::unique_ptr<message_center::Notification> notification =
+      message_center::Notification::CreateSystemNotification(
+          message_center::NOTIFICATION_TYPE_SIMPLE, kNotificationId,
+          l10n_util::GetStringUTF16(IDS_HATS_NOTIFICATION_TITLE),
+          l10n_util::GetStringUTF16(IDS_HATS_NOTIFICATION_BODY), gfx::Image(),
+          l10n_util::GetStringUTF16(IDS_MESSAGE_CENTER_NOTIFIER_HATS_NAME),
+          GURL(kNotificationOriginUrl),
+          message_center::NotifierId(
+              message_center::NotifierId::SYSTEM_COMPONENT, kNotifierHats),
+          message_center::RichNotificationData(), this,
+          ash::kNotificationGoogleIcon,
+          message_center::SystemNotificationWarningLevel::NORMAL);
 
   NotificationDisplayService::GetForProfile(profile_)->Display(
-      NotificationHandler::Type::TRANSIENT, notification);
+      NotificationHandler::Type::TRANSIENT, *notification);
 }
 
 void HatsNotificationController::UpdateLastInteractionTime() {

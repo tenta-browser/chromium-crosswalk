@@ -7,19 +7,21 @@
 #include <utility>
 
 #include "base/metrics/histogram_macros.h"
+#include "base/unguessable_token.h"
 #include "content/browser/devtools/shared_worker_devtools_manager.h"
 #include "content/browser/interface_provider_filtering.h"
 #include "content/browser/renderer_interface_binders.h"
 #include "content/browser/shared_worker/shared_worker_content_settings_proxy_impl.h"
 #include "content/browser/shared_worker/shared_worker_instance.h"
 #include "content/browser/shared_worker/shared_worker_service_impl.h"
+#include "content/public/browser/browser_context.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/content_browser_client.h"
 #include "content/public/browser/render_process_host.h"
 #include "content/public/common/content_client.h"
-#include "third_party/WebKit/common/message_port/message_port_channel.h"
-#include "third_party/WebKit/public/platform/web_feature.mojom.h"
-#include "third_party/WebKit/public/web/worker_content_settings_proxy.mojom.h"
+#include "third_party/blink/public/common/message_port/message_port_channel.h"
+#include "third_party/blink/public/platform/web_feature.mojom.h"
+#include "third_party/blink/public/web/worker_content_settings_proxy.mojom.h"
 
 namespace content {
 namespace {
@@ -53,13 +55,13 @@ bool AllowIndexedDBOnIOThread(const GURL& url,
 }  // namespace
 
 SharedWorkerHost::SharedWorkerHost(
+    SharedWorkerServiceImpl* service,
     std::unique_ptr<SharedWorkerInstance> instance,
-    int process_id,
-    int route_id)
+    int process_id)
     : binding_(this),
+      service_(service),
       instance_(std::move(instance)),
       process_id_(process_id),
-      route_id_(route_id),
       next_connection_request_id_(1),
       creation_time_(base::TimeTicks::Now()),
       interface_provider_binding_(this),
@@ -70,34 +72,49 @@ SharedWorkerHost::SharedWorkerHost(
 SharedWorkerHost::~SharedWorkerHost() {
   UMA_HISTOGRAM_LONG_TIMES("SharedWorker.TimeToDeleted",
                            base::TimeTicks::Now() - creation_time_);
-  if (!closed_ && !termination_message_sent_) {
-    SharedWorkerDevToolsManager::GetInstance()->WorkerDestroyed(process_id_,
-                                                                route_id_);
-  }
+  if (!closed_ && !termination_message_sent_)
+    SharedWorkerDevToolsManager::GetInstance()->WorkerDestroyed(this);
 }
 
-void SharedWorkerHost::Start(mojom::SharedWorkerFactoryPtr factory,
-                             bool pause_on_start) {
-  blink::mojom::WorkerContentSettingsProxyPtr content_settings;
-  content_settings_ = std::make_unique<SharedWorkerContentSettingsProxyImpl>(
-      instance_->url(), this, mojo::MakeRequest(&content_settings));
-
-  mojom::SharedWorkerHostPtr host;
-  binding_.Bind(mojo::MakeRequest(&host));
-
-  service_manager::mojom::InterfaceProviderPtr interface_provider;
-  interface_provider_binding_.Bind(FilterRendererExposedInterfaces(
-      mojom::kNavigation_SharedWorkerSpec, process_id_,
-      mojo::MakeRequest(&interface_provider)));
+void SharedWorkerHost::Start(
+    mojom::SharedWorkerFactoryPtr factory,
+    mojom::ServiceWorkerProviderInfoForSharedWorkerPtr
+        service_worker_provider_info,
+    network::mojom::URLLoaderFactoryAssociatedPtrInfo script_loader_factory) {
+  DCHECK_CURRENTLY_ON(BrowserThread::UI);
 
   mojom::SharedWorkerInfoPtr info(mojom::SharedWorkerInfo::New(
       instance_->url(), instance_->name(), instance_->content_security_policy(),
       instance_->content_security_policy_type(),
       instance_->creation_address_space()));
 
-  factory->CreateSharedWorker(
-      std::move(info), pause_on_start, instance_->devtools_worker_token(),
-      route_id_, std::move(content_settings), std::move(host),
+  // Register with DevTools.
+  bool pause_on_start;
+  base::UnguessableToken devtools_worker_token;
+  SharedWorkerDevToolsManager::GetInstance()->WorkerCreated(
+      this, &pause_on_start, &devtools_worker_token);
+
+  // Set up content settings interface.
+  blink::mojom::WorkerContentSettingsProxyPtr content_settings;
+  content_settings_ = std::make_unique<SharedWorkerContentSettingsProxyImpl>(
+      instance_->url(), this, mojo::MakeRequest(&content_settings));
+
+  // Set up host interface.
+  mojom::SharedWorkerHostPtr host;
+  binding_.Bind(mojo::MakeRequest(&host));
+
+  // Set up interface provider interface.
+  service_manager::mojom::InterfaceProviderPtr interface_provider;
+  interface_provider_binding_.Bind(FilterRendererExposedInterfaces(
+      mojom::kNavigation_SharedWorkerSpec, process_id_,
+      mojo::MakeRequest(&interface_provider)));
+
+  // Send the CreateSharedWorker message.
+  factory_ = std::move(factory);
+  factory_->CreateSharedWorker(
+      std::move(info), pause_on_start, devtools_worker_token,
+      std::move(content_settings), std::move(service_worker_provider_info),
+      std::move(script_loader_factory), std::move(host),
       mojo::MakeRequest(&worker_), std::move(interface_provider));
 
   // Monitor the lifetime of the worker.
@@ -111,7 +128,9 @@ void SharedWorkerHost::AllowFileSystem(
   BrowserThread::PostTask(
       BrowserThread::IO, FROM_HERE,
       base::BindOnce(&AllowFileSystemOnIOThread, url,
-                     instance_->resource_context(),
+                     RenderProcessHost::FromID(process_id_)
+                         ->GetBrowserContext()
+                         ->GetResourceContext(),
                      GetRenderFrameIDsForWorker(), std::move(callback)));
 }
 
@@ -121,17 +140,20 @@ void SharedWorkerHost::AllowIndexedDB(const GURL& url,
   BrowserThread::PostTaskAndReplyWithResult(
       BrowserThread::IO, FROM_HERE,
       base::BindOnce(&AllowIndexedDBOnIOThread, url, name,
-                     instance_->resource_context(),
+                     RenderProcessHost::FromID(process_id_)
+                         ->GetBrowserContext()
+                         ->GetResourceContext(),
                      GetRenderFrameIDsForWorker()),
       std::move(callback));
 }
 
 void SharedWorkerHost::TerminateWorker() {
+  // This can be called twice in tests while cleaning up all the workers.
+  if (termination_message_sent_)
+    return;
   termination_message_sent_ = true;
-  if (!closed_) {
-    SharedWorkerDevToolsManager::GetInstance()->WorkerDestroyed(process_id_,
-                                                                route_id_);
-  }
+  if (!closed_)
+    SharedWorkerDevToolsManager::GetInstance()->WorkerDestroyed(this);
   worker_->Terminate();
   // Now, we wait to observe OnWorkerConnectionLost.
 }
@@ -164,15 +186,13 @@ void SharedWorkerHost::OnContextClosed() {
   // being sent to the worker (messages can still be sent from the worker,
   // for exception reporting, etc).
   closed_ = true;
-  if (!termination_message_sent_) {
-    SharedWorkerDevToolsManager::GetInstance()->WorkerDestroyed(process_id_,
-                                                                route_id_);
-  }
+  if (!termination_message_sent_)
+    SharedWorkerDevToolsManager::GetInstance()->WorkerDestroyed(this);
 }
 
 void SharedWorkerHost::OnReadyForInspection() {
-  SharedWorkerDevToolsManager::GetInstance()->WorkerReadyForInspection(
-      process_id_, route_id_);
+  if (!closed_ && !termination_message_sent_)
+    SharedWorkerDevToolsManager::GetInstance()->WorkerReadyForInspection(this);
 }
 
 void SharedWorkerHost::OnScriptLoaded() {
@@ -227,12 +247,9 @@ void SharedWorkerHost::AddClient(mojom::SharedWorkerClientPtr client,
   worker_->Connect(info.connection_request_id, port.ReleaseHandle());
 }
 
-bool SharedWorkerHost::ServesExternalClient() {
-  for (const ClientInfo& info : clients_) {
-    if (info.process_id != process_id_)
-      return true;
-  }
-  return false;
+void SharedWorkerHost::BindDevToolsAgent(
+    blink::mojom::DevToolsAgentAssociatedRequest request) {
+  worker_->BindDevToolsAgent(std::move(request));
 }
 
 void SharedWorkerHost::OnClientConnectionLost() {
@@ -251,8 +268,7 @@ void SharedWorkerHost::OnClientConnectionLost() {
 void SharedWorkerHost::OnWorkerConnectionLost() {
   // This will destroy |this| resulting in client's observing their mojo
   // connection being dropped.
-  static_cast<SharedWorkerServiceImpl*>(SharedWorkerService::GetInstance())
-      ->DestroyHost(process_id_, route_id_);
+  service_->DestroyHost(this);
 }
 
 void SharedWorkerHost::GetInterface(

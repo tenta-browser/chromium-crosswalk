@@ -3,14 +3,20 @@
     {
       "name": "LayoutView #document",
       "bounds": [800, 600],
+      "drawsContent": false,
+      "backgroundColor": "#FFFFFF"
+    },
+    {
+      "name": "Scrolling Layer",
+      "bounds": [800, 600],
+      "drawsContent": false
+    },
+    {
+      "name": "Scrolling Contents Layer",
+      "bounds": [800, 600],
       "contentsOpaque": true,
       "backgroundColor": "#FFFFFF",
       "paintInvalidations": [
-        {
-          "object": "LayoutBlockFlow (anonymous)",
-          "rect": [8, 68, 784, 236],
-          "reason": "geometry"
-        },
         {
           "object": "LayoutImage (relative positioned) IMG id='test' class='moved'",
           "rect": [8, 148, 214, 232],

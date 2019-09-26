@@ -7,54 +7,62 @@
 #include <utility>
 
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
-#include "content/child/thread_safe_sender.h"
 #include "content/common/service_worker/service_worker_messages.h"
 #include "content/renderer/service_worker/service_worker_dispatcher.h"
-#include "content/renderer/service_worker/service_worker_handle_reference.h"
 #include "content/renderer/service_worker/web_service_worker_provider_impl.h"
-#include "third_party/WebKit/public/platform/WebRuntimeFeatures.h"
-#include "third_party/WebKit/public/platform/WebSecurityOrigin.h"
-#include "third_party/WebKit/public/platform/WebString.h"
-#include "third_party/WebKit/public/platform/modules/serviceworker/WebServiceWorkerProxy.h"
-#include "third_party/WebKit/public/platform/modules/serviceworker/service_worker_object.mojom.h"
+#include "third_party/blink/public/platform/modules/serviceworker/web_service_worker_proxy.h"
+#include "third_party/blink/public/platform/web_runtime_features.h"
+#include "third_party/blink/public/platform/web_string.h"
 
-using blink::WebSecurityOrigin;
 using blink::WebString;
 
 namespace content {
 
 namespace {
 
-class HandleImpl : public blink::WebServiceWorker::Handle {
+class ServiceWorkerHandleImpl : public blink::WebServiceWorker::Handle {
  public:
-  explicit HandleImpl(const scoped_refptr<WebServiceWorkerImpl>& worker)
-      : worker_(worker) {}
-  ~HandleImpl() override {}
+  explicit ServiceWorkerHandleImpl(scoped_refptr<WebServiceWorkerImpl> worker)
+      : worker_(std::move(worker)) {}
+  ~ServiceWorkerHandleImpl() override {}
 
   blink::WebServiceWorker* ServiceWorker() override { return worker_.get(); }
 
  private:
   scoped_refptr<WebServiceWorkerImpl> worker_;
 
-  DISALLOW_COPY_AND_ASSIGN(HandleImpl);
+  DISALLOW_COPY_AND_ASSIGN(ServiceWorkerHandleImpl);
 };
+
+void OnTerminated(
+    std::unique_ptr<WebServiceWorkerImpl::TerminateForTestingCallback>
+        callback) {
+  callback->OnSuccess();
+}
 
 }  // namespace
 
-WebServiceWorkerImpl::WebServiceWorkerImpl(
-    std::unique_ptr<ServiceWorkerHandleReference> handle_ref,
-    ThreadSafeSender* thread_safe_sender)
-    : handle_ref_(std::move(handle_ref)),
-      state_(handle_ref_->state()),
-      thread_safe_sender_(thread_safe_sender),
-      proxy_(nullptr) {
-  DCHECK_NE(blink::mojom::kInvalidServiceWorkerHandleId,
-            handle_ref_->handle_id());
-  ServiceWorkerDispatcher* dispatcher =
-      ServiceWorkerDispatcher::GetThreadSpecificInstance();
-  DCHECK(dispatcher);
-  dispatcher->AddServiceWorker(handle_ref_->handle_id(), this);
+// static
+scoped_refptr<WebServiceWorkerImpl>
+WebServiceWorkerImpl::CreateForServiceWorkerGlobalScope(
+    blink::mojom::ServiceWorkerObjectInfoPtr info,
+    scoped_refptr<base::SingleThreadTaskRunner> io_task_runner) {
+  scoped_refptr<WebServiceWorkerImpl> impl =
+      new WebServiceWorkerImpl(std::move(info));
+  impl->host_for_global_scope_ =
+      blink::mojom::ThreadSafeServiceWorkerObjectHostAssociatedPtr::Create(
+          std::move(impl->info_->host_ptr_info), io_task_runner);
+  return impl;
+}
+
+// static
+scoped_refptr<WebServiceWorkerImpl>
+WebServiceWorkerImpl::CreateForServiceWorkerClient(
+    blink::mojom::ServiceWorkerObjectInfoPtr info) {
+  scoped_refptr<WebServiceWorkerImpl> impl =
+      new WebServiceWorkerImpl(std::move(info));
+  impl->host_for_client_.Bind(std::move(impl->info_->host_ptr_info));
+  return impl;
 }
 
 void WebServiceWorkerImpl::OnStateChanged(
@@ -76,43 +84,56 @@ blink::WebServiceWorkerProxy* WebServiceWorkerImpl::Proxy() {
 }
 
 blink::WebURL WebServiceWorkerImpl::Url() const {
-  return handle_ref_->url();
+  return info_->url;
 }
 
 blink::mojom::ServiceWorkerState WebServiceWorkerImpl::GetState() const {
   return state_;
 }
 
-void WebServiceWorkerImpl::PostMessage(
-    blink::WebServiceWorkerProvider* provider,
-    const WebString& message,
-    const WebSecurityOrigin& source_origin,
-    blink::WebVector<blink::MessagePortChannel> channels) {
-  thread_safe_sender_->Send(new ServiceWorkerHostMsg_PostMessageToWorker(
-      handle_ref_->handle_id(),
-      static_cast<WebServiceWorkerProviderImpl*>(provider)->provider_id(),
-      message.Utf16(), url::Origin(source_origin), channels.ReleaseVector()));
+void WebServiceWorkerImpl::PostMessageToServiceWorker(
+    blink::TransferableMessage message) {
+  GetObjectHost()->PostMessageToServiceWorker(std::move(message));
 }
 
-void WebServiceWorkerImpl::Terminate() {
-  thread_safe_sender_->Send(
-      new ServiceWorkerHostMsg_TerminateWorker(handle_ref_->handle_id()));
+void WebServiceWorkerImpl::TerminateForTesting(
+    std::unique_ptr<TerminateForTestingCallback> callback) {
+  GetObjectHost()->TerminateForTesting(
+      base::BindOnce(&OnTerminated, std::move(callback)));
 }
 
 // static
 std::unique_ptr<blink::WebServiceWorker::Handle>
-WebServiceWorkerImpl::CreateHandle(
-    const scoped_refptr<WebServiceWorkerImpl>& worker) {
+WebServiceWorkerImpl::CreateHandle(scoped_refptr<WebServiceWorkerImpl> worker) {
   if (!worker)
     return nullptr;
-  return std::make_unique<HandleImpl>(worker);
+  return std::make_unique<ServiceWorkerHandleImpl>(std::move(worker));
+}
+
+WebServiceWorkerImpl::WebServiceWorkerImpl(
+    blink::mojom::ServiceWorkerObjectInfoPtr info)
+    : info_(std::move(info)), state_(info_->state), proxy_(nullptr) {
+  DCHECK_NE(blink::mojom::kInvalidServiceWorkerHandleId, info_->handle_id);
+  ServiceWorkerDispatcher* dispatcher =
+      ServiceWorkerDispatcher::GetThreadSpecificInstance();
+  DCHECK(dispatcher);
+  dispatcher->AddServiceWorker(info_->handle_id, this);
 }
 
 WebServiceWorkerImpl::~WebServiceWorkerImpl() {
   ServiceWorkerDispatcher* dispatcher =
       ServiceWorkerDispatcher::GetThreadSpecificInstance();
   if (dispatcher)
-    dispatcher->RemoveServiceWorker(handle_ref_->handle_id());
+    dispatcher->RemoveServiceWorker(info_->handle_id);
+}
+
+blink::mojom::ServiceWorkerObjectHost* WebServiceWorkerImpl::GetObjectHost() {
+  if (host_for_client_)
+    return host_for_client_.get();
+  if (host_for_global_scope_)
+    return host_for_global_scope_->get();
+  NOTREACHED();
+  return nullptr;
 }
 
 }  // namespace content

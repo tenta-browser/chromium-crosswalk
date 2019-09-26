@@ -15,6 +15,7 @@
 #include "net/base/io_buffer.h"
 #include "net/base/ip_address.h"
 #include "net/base/net_errors.h"
+#include "net/traffic_annotation/network_traffic_annotation.h"
 
 namespace net {
 
@@ -64,6 +65,8 @@ FuzzedDatagramClientSocket::GetBoundNetwork() const {
   return NetworkChangeNotifier::kInvalidNetworkHandle;
 }
 
+void FuzzedDatagramClientSocket::ApplySocketTag(const SocketTag& tag) {}
+
 void FuzzedDatagramClientSocket::Close() {
   connected_ = false;
   read_pending_ = false;
@@ -87,6 +90,35 @@ int FuzzedDatagramClientSocket::GetLocalAddress(IPEndPoint* address) const {
 }
 
 void FuzzedDatagramClientSocket::UseNonBlockingIO() {}
+
+int FuzzedDatagramClientSocket::WriteAsync(
+    DatagramBuffers buffers,
+    const CompletionCallback& callback,
+    const NetworkTrafficAnnotationTag& traffic_annotation) {
+  return -1;
+}
+
+int FuzzedDatagramClientSocket::WriteAsync(
+    const char* buffer,
+    size_t buf_len,
+    const CompletionCallback& callback,
+    const NetworkTrafficAnnotationTag& traffic_annotation) {
+  return -1;
+}
+
+DatagramBuffers FuzzedDatagramClientSocket::GetUnwrittenBuffers() {
+  DatagramBuffers result;
+  return result;
+}
+
+void FuzzedDatagramClientSocket::SetWriteAsyncEnabled(bool enabled) {}
+bool FuzzedDatagramClientSocket::WriteAsyncEnabled() {
+  return false;
+}
+void FuzzedDatagramClientSocket::SetMaxPacketSize(size_t max_packet_size) {}
+void FuzzedDatagramClientSocket::SetWriteMultiCoreEnabled(bool enabled) {}
+void FuzzedDatagramClientSocket::SetSendmmsgEnabled(bool enabled) {}
+void FuzzedDatagramClientSocket::SetWriteBatchingActive(bool active) {}
 
 const NetLogWithSource& FuzzedDatagramClientSocket::NetLog() const {
   return net_log_;
@@ -130,9 +162,11 @@ int FuzzedDatagramClientSocket::Read(IOBuffer* buf,
   return ERR_IO_PENDING;
 }
 
-int FuzzedDatagramClientSocket::Write(IOBuffer* buf,
-                                      int buf_len,
-                                      const CompletionCallback& callback) {
+int FuzzedDatagramClientSocket::Write(
+    IOBuffer* buf,
+    int buf_len,
+    const CompletionCallback& callback,
+    const NetworkTrafficAnnotationTag& /* traffic_annotation */) {
   CHECK(!callback.is_null());
   CHECK(!write_pending_);
 

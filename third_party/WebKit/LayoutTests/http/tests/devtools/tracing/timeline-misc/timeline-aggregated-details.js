@@ -38,10 +38,11 @@
         'data': {
           'page': '0x2f7b63884000',
           'sessionId': sessionId,
+          'persistentIds': true,
           'frames': [
             {'frame': '0x2f7b63884000', 'url': 'top-page-url', 'name': 'top-page-name'},
-            {'frame': '0x2f7b63884100', 'url': 'subframe-url1', 'name': 'subframe-name1'},
-            {'frame': '0x2f7b63884200', 'url': 'about:blank', 'name': 'subframe-name2'}
+            {'frame': '0x2f7b63884100', 'url': 'subframe-url1', 'name': 'subframe-name1', 'parent': '0x2f7b63884000'},
+            {'frame': '0x2f7b63884200', 'url': 'about:blank', 'name': 'subframe-name2', 'parent': '0x2f7b63884000'}
           ]
         }
       },
@@ -54,7 +55,7 @@
       'tts': 606543
     },
     {
-      'args': {'data': {'frame': '0x2f7b63884300', 'url': 'subframe-url3', 'name': 'subframe-name3'}},
+      'args': {'data': {'frame': '0x2f7b63884300', 'url': 'subframe-url3', 'name': 'subframe-name3', 'parent': '0x2f7b63884000'}},
       'cat': 'disabled-by-default-devtools.timeline',
       'name': 'CommitLoad',
       'ph': 'I',
@@ -564,7 +565,6 @@
   var timeline = UI.panels.timeline;
   timeline._setModel(PerformanceTestRunner.createPerformanceModelWithEvents(rawTraceEvents));
 
-  timeline.requestWindowTimes(0, Infinity);
   await ProductRegistry.instance();
   var groupByEnum = Timeline.AggregatedTimelineTreeView.GroupBy;
   for (var grouping of Object.values(groupByEnum)) {
@@ -577,10 +577,10 @@
   function getTreeView(type) {
     if (timeline._tabbedPane) {
       timeline._tabbedPane.selectTab(type, true);
-      return timeline._currentView._treeView;
+      return timeline._flameChart._treeView;
     }
-    timeline._currentView._detailsView._tabbedPane.selectTab(type, true);
-    return timeline._currentView._detailsView._tabbedPane.visibleView;
+    timeline._flameChart._detailsView._tabbedPane.selectTab(type, true);
+    return timeline._flameChart._detailsView._tabbedPane.visibleView;
   }
 
   function testEventTree(type, grouping) {

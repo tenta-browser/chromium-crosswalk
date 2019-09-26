@@ -18,6 +18,7 @@
 #include "base/memory/weak_ptr.h"
 #include "base/strings/string16.h"
 #include "base/threading/thread_checker.h"
+#include "build/build_config.h"
 #include "extensions/common/permissions/permission_message.h"
 #include "third_party/skia/include/core/SkBitmap.h"
 #include "ui/gfx/image/image.h"
@@ -86,8 +87,6 @@ class ExtensionInstallPrompt {
     WITHHELD_PERMISSIONS,
     ALL_PERMISSIONS,
   };
-
-  static std::string PromptTypeToString(PromptType type);
 
   // Extra information needed to display an installation or uninstallation
   // prompt. Gets populated with raw data and exposes getters for formatted
@@ -261,10 +260,6 @@ class ExtensionInstallPrompt {
   // Callback to show the default extension install dialog.
   // The implementations of this function are platform-specific.
   static ShowDialogCallback GetDefaultShowDialogCallback();
-
-  // Callback to show the Views extension install dialog. Don't use this; it is
-  // a temporary hack for MacViews.
-  static ShowDialogCallback GetViewsShowDialogCallback();
 
   // Returns the appropriate prompt type for the given |extension|.
   // TODO(devlin): This method is yucky - callers probably only care about one

@@ -25,7 +25,7 @@
 #include "content/public/browser/browser_thread.h"
 #include "mojo/public/cpp/bindings/associated_binding.h"
 #include "net/base/net_errors.h"
-#include "third_party/WebKit/public/platform/modules/serviceworker/service_worker_object.mojom.h"
+#include "third_party/blink/public/mojom/service_worker/service_worker_object.mojom.h"
 
 namespace content {
 
@@ -39,6 +39,7 @@ ServiceWorkerRegisterJob::ServiceWorkerRegisterJob(
       job_type_(REGISTRATION_JOB),
       pattern_(options.scope),
       script_url_(script_url),
+      update_via_cache_(options.update_via_cache),
       phase_(INITIAL),
       doom_installing_worker_(false),
       is_promise_resolved_(false),
@@ -56,6 +57,7 @@ ServiceWorkerRegisterJob::ServiceWorkerRegisterJob(
     : context_(context),
       job_type_(UPDATE_JOB),
       pattern_(registration->pattern()),
+      update_via_cache_(registration->update_via_cache()),
       phase_(INITIAL),
       doom_installing_worker_(false),
       is_promise_resolved_(false),
@@ -73,18 +75,14 @@ ServiceWorkerRegisterJob::~ServiceWorkerRegisterJob() {
       << "Jobs should only be interrupted during shutdown.";
 }
 
-void ServiceWorkerRegisterJob::AddCallback(
-    const RegistrationCallback& callback,
-    ServiceWorkerProviderHost* provider_host) {
+void ServiceWorkerRegisterJob::AddCallback(RegistrationCallback callback) {
   if (!is_promise_resolved_) {
-    callbacks_.push_back(callback);
-    if (provider_host)
-      provider_host->AddScopedProcessReferenceToPattern(pattern_);
+    callbacks_.emplace_back(std::move(callback));
     return;
   }
   base::ThreadTaskRunnerHandle::Get()->PostTask(
       FROM_HERE,
-      base::BindOnce(callback, promise_resolved_status_,
+      base::BindOnce(std::move(callback), promise_resolved_status_,
                      promise_resolved_status_message_,
                      base::RetainedRef(promise_resolved_registration_)));
 }
@@ -100,22 +98,23 @@ void ServiceWorkerRegisterJob::StartImpl() {
   SetPhase(START);
   ServiceWorkerStorage::FindRegistrationCallback next_step;
   if (job_type_ == REGISTRATION_JOB) {
-    next_step = base::Bind(
-        &ServiceWorkerRegisterJob::ContinueWithRegistration,
-        weak_factory_.GetWeakPtr());
+    next_step =
+        base::BindOnce(&ServiceWorkerRegisterJob::ContinueWithRegistration,
+                       weak_factory_.GetWeakPtr());
   } else {
-    next_step = base::Bind(
-        &ServiceWorkerRegisterJob::ContinueWithUpdate,
-        weak_factory_.GetWeakPtr());
+    next_step = base::BindOnce(&ServiceWorkerRegisterJob::ContinueWithUpdate,
+                               weak_factory_.GetWeakPtr());
   }
 
   scoped_refptr<ServiceWorkerRegistration> registration =
       context_->storage()->GetUninstallingRegistration(pattern_);
   if (registration.get())
     base::ThreadTaskRunnerHandle::Get()->PostTask(
-        FROM_HERE, base::BindOnce(next_step, SERVICE_WORKER_OK, registration));
+        FROM_HERE,
+        base::BindOnce(std::move(next_step), SERVICE_WORKER_OK, registration));
   else
-    context_->storage()->FindRegistrationForPattern(pattern_, next_step);
+    context_->storage()->FindRegistrationForPattern(pattern_,
+                                                    std::move(next_step));
 }
 
 void ServiceWorkerRegisterJob::Abort() {
@@ -222,27 +221,30 @@ void ServiceWorkerRegisterJob::ContinueWithRegistration(
   }
 
   DCHECK(existing_registration->GetNewestVersion());
-  // "If scriptURL is equal to registration.[[ScriptURL]], then:"
-  if (existing_registration->GetNewestVersion()->script_url() == script_url_) {
+  // "If scriptURL is equal to registration.[[ScriptURL]] and
+  // "update_via_cache is equal to registration.[[update_via_cache]], then:"
+  if (existing_registration->GetNewestVersion()->script_url() == script_url_ &&
+      existing_registration->update_via_cache() == update_via_cache_) {
     // "Set registration.[[Uninstalling]] to false."
-    existing_registration->AbortPendingClear(base::Bind(
+    existing_registration->AbortPendingClear(base::BindOnce(
         &ServiceWorkerRegisterJob::ContinueWithRegistrationForSameScriptUrl,
-        weak_factory_.GetWeakPtr(),
-        existing_registration));
+        weak_factory_.GetWeakPtr(), existing_registration));
     return;
   }
 
   if (existing_registration->is_uninstalling()) {
-    existing_registration->AbortPendingClear(base::Bind(
+    existing_registration->AbortPendingClear(base::BindOnce(
         &ServiceWorkerRegisterJob::ContinueWithUninstallingRegistration,
-        weak_factory_.GetWeakPtr(),
-        existing_registration));
+        weak_factory_.GetWeakPtr(), existing_registration));
     return;
   }
 
+  // "Invoke Set Registration algorithm with job’s scope url and
+  // job’s update via cache mode."
+  existing_registration->set_update_via_cache(update_via_cache_);
+  set_registration(existing_registration);
   // "Return the result of running the [[Update]] algorithm, or its equivalent,
   // passing registration as the argument."
-  set_registration(existing_registration);
   UpdateAndContinue();
 }
 
@@ -287,9 +289,10 @@ void ServiceWorkerRegisterJob::RegisterAndContinue() {
     return;
   }
 
-  set_registration(new ServiceWorkerRegistration(
-      blink::mojom::ServiceWorkerRegistrationOptions(pattern_), registration_id,
-      context_));
+  blink::mojom::ServiceWorkerRegistrationOptions options(pattern_,
+                                                         update_via_cache_);
+  set_registration(
+      new ServiceWorkerRegistration(options, registration_id, context_));
   AddRegistrationToMatchingProviderHosts(registration());
   UpdateAndContinue();
 }
@@ -315,8 +318,9 @@ void ServiceWorkerRegisterJob::ContinueWithRegistrationForSameScriptUrl(
   }
   set_registration(existing_registration);
 
-  // "If newestWorker is not null, and scriptURL is equal to
-  // newestWorker.scriptURL, then:
+  // "If newestWorker is not null, scriptURL is equal to newestWorker.scriptURL,
+  // and job’s update via cache mode's value equals registration’s
+  // update via cache mode then:
   // Return a promise resolved with registration."
   // We resolve only if there's an active version. If there's not,
   // then there is either no version or only a waiting version from
@@ -358,8 +362,8 @@ void ServiceWorkerRegisterJob::UpdateAndContinue() {
   }
   new_version()->StartWorker(
       ServiceWorkerMetrics::EventType::INSTALL,
-      base::Bind(&ServiceWorkerRegisterJob::OnStartWorkerFinished,
-                 weak_factory_.GetWeakPtr()));
+      base::BindOnce(&ServiceWorkerRegisterJob::OnStartWorkerFinished,
+                     weak_factory_.GetWeakPtr()));
 }
 
 void ServiceWorkerRegisterJob::OnStartWorkerFinished(
@@ -384,7 +388,7 @@ void ServiceWorkerRegisterJob::OnStartWorkerFinished(
   if (main_script_status.status() != net::URLRequestStatus::SUCCESS) {
     message = new_version()->script_cache_map()->main_script_status_message();
     if (message.empty())
-      message = kFetchScriptError;
+      message = kServiceWorkerFetchScriptError;
   }
   Complete(status, message);
 }
@@ -411,8 +415,6 @@ void ServiceWorkerRegisterJob::InstallAndContinue() {
   new_version()->RunAfterStartWorker(
       ServiceWorkerMetrics::EventType::INSTALL,
       base::BindOnce(&ServiceWorkerRegisterJob::DispatchInstallEvent,
-                     weak_factory_.GetWeakPtr()),
-      base::BindOnce(&ServiceWorkerRegisterJob::OnInstallFailed,
                      weak_factory_.GetWeakPtr()));
 
   // A subsequent registration job may terminate our installing worker. It can
@@ -422,15 +424,21 @@ void ServiceWorkerRegisterJob::InstallAndContinue() {
     Complete(SERVICE_WORKER_ERROR_INSTALL_WORKER_FAILED);
 }
 
-void ServiceWorkerRegisterJob::DispatchInstallEvent() {
+void ServiceWorkerRegisterJob::DispatchInstallEvent(
+    ServiceWorkerStatusCode start_worker_status) {
+  if (start_worker_status != SERVICE_WORKER_OK) {
+    OnInstallFailed(start_worker_status);
+    return;
+  }
+
   DCHECK_EQ(ServiceWorkerVersion::INSTALLING, new_version()->status())
       << new_version()->status();
   DCHECK_EQ(EmbeddedWorkerStatus::RUNNING, new_version()->running_status())
       << "Worker stopped too soon after it was started.";
   int request_id = new_version()->StartRequest(
       ServiceWorkerMetrics::EventType::INSTALL,
-      base::Bind(&ServiceWorkerRegisterJob::OnInstallFailed,
-                 weak_factory_.GetWeakPtr()));
+      base::BindOnce(&ServiceWorkerRegisterJob::OnInstallFailed,
+                     weak_factory_.GetWeakPtr()));
 
   new_version()->event_dispatcher()->DispatchInstallEvent(
       base::BindOnce(&ServiceWorkerRegisterJob::OnInstallFinished,
@@ -460,21 +468,17 @@ void ServiceWorkerRegisterJob::OnInstallFinished(
           ? ServiceWorkerVersion::FetchHandlerExistence::EXISTS
           : ServiceWorkerVersion::FetchHandlerExistence::DOES_NOT_EXIST);
   context_->storage()->StoreRegistration(
-      registration(),
-      new_version(),
-      base::Bind(&ServiceWorkerRegisterJob::OnStoreRegistrationComplete,
-                 weak_factory_.GetWeakPtr()));
+      registration(), new_version(),
+      base::BindOnce(&ServiceWorkerRegisterJob::OnStoreRegistrationComplete,
+                     weak_factory_.GetWeakPtr()));
 }
 
 void ServiceWorkerRegisterJob::OnInstallFailed(ServiceWorkerStatusCode status) {
   ServiceWorkerMetrics::RecordInstallEventStatus(status);
-
-  if (status != SERVICE_WORKER_OK) {
-    Complete(status, std::string("ServiceWorker failed to install: ") +
-                         ServiceWorkerStatusToString(status));
-  } else {
-    NOTREACHED() << "OnInstallFailed should not handle SERVICE_WORKER_OK";
-  }
+  DCHECK_NE(status, SERVICE_WORKER_OK)
+      << "OnInstallFailed should not handle SERVICE_WORKER_OK";
+  Complete(status, std::string("ServiceWorker failed to install: ") +
+                       ServiceWorkerStatusToString(status));
 }
 
 void ServiceWorkerRegisterJob::OnStoreRegistrationComplete(
@@ -488,8 +492,7 @@ void ServiceWorkerRegisterJob::OnStoreRegistrationComplete(
   if (registration()->waiting_version()) {
     // 1. Set redundantWorker to registration’s waiting worker.
     // 2. Terminate redundantWorker.
-    registration()->waiting_version()->StopWorker(
-        base::BindOnce(&base::DoNothing));
+    registration()->waiting_version()->StopWorker(base::DoNothing());
     // TODO(falken): Move this further down. The spec says to set status to
     // 'redundant' after promoting the new version to .waiting attribute and
     // 'installed' status.
@@ -549,9 +552,8 @@ void ServiceWorkerRegisterJob::CompleteInternal(
           !registration()->active_version()) {
         registration()->NotifyRegistrationFailed();
         context_->storage()->DeleteRegistration(
-            registration()->id(),
-            registration()->pattern().GetOrigin(),
-            base::Bind(&ServiceWorkerUtils::NoOpStatusCallback));
+            registration()->id(), registration()->pattern().GetOrigin(),
+            base::DoNothing());
       }
     }
     if (!is_promise_resolved_)
@@ -576,11 +578,8 @@ void ServiceWorkerRegisterJob::ResolvePromise(
   promise_resolved_status_ = status;
   promise_resolved_status_message_ = status_message,
   promise_resolved_registration_ = registration;
-  for (std::vector<RegistrationCallback>::iterator it = callbacks_.begin();
-       it != callbacks_.end();
-       ++it) {
-    it->Run(status, status_message, registration);
-  }
+  for (RegistrationCallback& callback : callbacks_)
+    std::move(callback).Run(status, status_message, registration);
   callbacks_.clear();
 }
 
@@ -588,14 +587,14 @@ void ServiceWorkerRegisterJob::AddRegistrationToMatchingProviderHosts(
     ServiceWorkerRegistration* registration) {
   DCHECK(registration);
   for (std::unique_ptr<ServiceWorkerContextCore::ProviderHostIterator> it =
-           context_->GetProviderHostIterator();
+           context_->GetClientProviderHostIterator(
+               registration->pattern().GetOrigin());
        !it->IsAtEnd(); it->Advance()) {
     ServiceWorkerProviderHost* host = it->GetProviderHost();
-    if (host->IsHostToRunningServiceWorker())
-      continue;
     if (!ServiceWorkerUtils::ScopeMatches(registration->pattern(),
-                                          host->document_url()))
+                                          host->document_url())) {
       continue;
+    }
     host->AddMatchingRegistration(registration);
   }
 }

@@ -38,6 +38,7 @@
 #include "components/user_manager/known_user.h"
 #include "components/user_manager/user.h"
 #include "components/user_manager/user_manager.h"
+#include "content/public/browser/browser_thread.h"
 #include "extensions/common/manifest.h"
 #include "google_apis/gaia/gaia_auth_util.h"
 #include "third_party/cros_system_api/dbus/service_constants.h"
@@ -278,9 +279,9 @@ void EPKPChallengeKeyBase::AskForUserConsentCallback(
 
 void EPKPChallengeKeyBase::GetCertificateCallback(
     const base::Callback<void(PrepareKeyResult)>& callback,
-    bool success,
+    chromeos::attestation::AttestationStatus status,
     const std::string& pem_certificate_chain) {
-  if (!success) {
+  if (status != chromeos::attestation::ATTESTATION_SUCCESS) {
     callback.Run(PREPARE_KEY_GET_CERTIFICATE_FAILED);
     return;
   }

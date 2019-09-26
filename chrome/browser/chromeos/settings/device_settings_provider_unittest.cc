@@ -11,6 +11,7 @@
 #include "base/bind.h"
 #include "base/callback.h"
 #include "base/files/file_util.h"
+#include "base/json/json_reader.h"
 #include "base/macros.h"
 #include "base/path_service.h"
 #include "base/test/scoped_path_override.h"
@@ -125,6 +126,17 @@ class DeviceSettingsProviderTest : public DeviceSettingsTestBase {
     Mock::VerifyAndClearExpectations(this);
   }
 
+  // Helper routine to set device wallpaper setting in policy.
+  void SetWallpaperSettings(const std::string& wallpaper_settings) {
+    EXPECT_CALL(*this, SettingChanged(_)).Times(AtLeast(1));
+    em::DeviceWallpaperImageProto* proto =
+        device_policy_.payload().mutable_device_wallpaper_image();
+    proto->set_device_wallpaper_image(wallpaper_settings);
+    device_policy_.Build();
+    session_manager_client_.set_device_policy(device_policy_.GetBlob());
+    ReloadDeviceSettings();
+  }
+
   enum MetricsOption { DISABLE_METRICS, ENABLE_METRICS, REMOVE_METRICS_POLICY };
 
   // Helper routine to enable/disable metrics report upload settings in policy.
@@ -229,6 +241,18 @@ class DeviceSettingsProviderTest : public DeviceSettingsTestBase {
     for (auto const& value : values) {
       proto->add_allowed_connection_types(kConnectionTypes[value]);
     }
+    device_policy_.Build();
+    session_manager_client_.set_device_policy(device_policy_.GetBlob());
+    ReloadDeviceSettings();
+    Mock::VerifyAndClearExpectations(this);
+  }
+
+  // Helper routine to set HostnameTemplate policy.
+  void SetHostnameTemplate(const std::string& hostname_template) {
+    EXPECT_CALL(*this, SettingChanged(_)).Times(AtLeast(1));
+    em::NetworkHostnameProto* proto =
+        device_policy_.payload().mutable_network_hostname();
+    proto->set_device_hostname_template(hostname_template);
     device_policy_.Build();
     session_manager_client_.set_device_policy(device_policy_.GetBlob());
     ReloadDeviceSettings();
@@ -570,12 +594,41 @@ TEST_F(DeviceSettingsProviderTest, EmptyAllowedConnectionTypesForUpdate) {
   VerifyPolicyValue(kAllowedConnectionTypesForUpdate, &allowed_connections);
 }
 
+TEST_F(DeviceSettingsProviderTest, DecodeHostnameTemplate) {
+  // By default DeviceHostnameTemplate policy should not be set.
+  VerifyPolicyValue(kDeviceHostnameTemplate, nullptr);
+
+  // Empty string means that the policy is not set.
+  SetHostnameTemplate("");
+  VerifyPolicyValue(kDeviceHostnameTemplate, nullptr);
+
+  // Check some meaningful value. Policy should be set.
+  const std::string hostname_template = "chromebook-${ASSET_ID}";
+  const base::Value template_value(hostname_template);
+  SetHostnameTemplate(hostname_template);
+  VerifyPolicyValue(kDeviceHostnameTemplate, &template_value);
+}
+
 TEST_F(DeviceSettingsProviderTest, DecodeLogUploadSettings) {
   SetLogUploadSettings(true);
   VerifyLogUploadSettings(true);
 
   SetLogUploadSettings(false);
   VerifyLogUploadSettings(false);
+}
+
+TEST_F(DeviceSettingsProviderTest, SetWallpaperSettings) {
+  // Invalid format should be ignored.
+  const std::string invalid_format = "\\\\invalid\\format";
+  SetWallpaperSettings(invalid_format);
+  EXPECT_EQ(nullptr, provider_->Get(kDeviceWallpaperImage));
+
+  // Set with valid json format.
+  const std::string valid_format("{\"type\":\"object\"}");
+  SetWallpaperSettings(valid_format);
+  std::unique_ptr<base::DictionaryValue> expected_value =
+      base::DictionaryValue::From(base::JSONReader::Read(valid_format));
+  EXPECT_EQ(*expected_value, *provider_->Get(kDeviceWallpaperImage));
 }
 
 }  // namespace chromeos

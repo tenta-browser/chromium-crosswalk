@@ -109,8 +109,14 @@ class MockClientGpuControl : public GpuControl {
                        size_t height,
                        unsigned internalformat));
   MOCK_METHOD1(DestroyImage, void(int32_t id));
-  MOCK_METHOD2(SignalQuery,
-               void(uint32_t query, const base::Closure& callback));
+
+  // Workaround for move-only args in GMock.
+  MOCK_METHOD2(DoSignalQuery,
+               void(uint32_t query, base::OnceClosure* callback));
+  void SignalQuery(uint32_t query, base::OnceClosure callback) override {
+    DoSignalQuery(query, &callback);
+  }
+
   MOCK_METHOD1(CreateStreamTexture, uint32_t(uint32_t));
   MOCK_METHOD1(SetLock, void(base::Lock*));
   MOCK_METHOD0(EnsureWorkVisible, void());
@@ -118,15 +124,25 @@ class MockClientGpuControl : public GpuControl {
   MOCK_CONST_METHOD0(GetCommandBufferID, CommandBufferId());
   MOCK_METHOD0(FlushPendingWork, void());
   MOCK_METHOD0(GenerateFenceSyncRelease, uint64_t());
-  MOCK_METHOD1(IsFenceSyncRelease, bool(uint64_t release));
-  MOCK_METHOD1(IsFenceSyncFlushed, bool(uint64_t release));
-  MOCK_METHOD1(IsFenceSyncFlushReceived, bool(uint64_t release));
   MOCK_METHOD1(IsFenceSyncReleased, bool(uint64_t release));
-  MOCK_METHOD2(SignalSyncToken, void(const SyncToken& sync_token,
-                                     const base::Closure& callback));
+
+  // Workaround for move-only args in GMock.
+  MOCK_METHOD2(DoSignalSyncToken,
+               void(const SyncToken& sync_token, base::OnceClosure* callback));
+  void SignalSyncToken(const SyncToken& sync_token,
+                       base::OnceClosure callback) override {
+    DoSignalSyncToken(sync_token, &callback);
+  }
+
   MOCK_METHOD1(WaitSyncTokenHint, void(const SyncToken&));
   MOCK_METHOD1(CanWaitUnverifiedSyncToken, bool(const SyncToken&));
   MOCK_METHOD0(SetSnapshotRequested, void());
+  MOCK_METHOD2(CreateGpuFence,
+               void(uint32_t gpu_fence_id, ClientGpuFence source));
+  // OnceCallback isn't mockable?
+  void GetGpuFence(uint32_t gpu_fence_id,
+                   base::OnceCallback<void(std::unique_ptr<gfx::GpuFence>)>
+                       callback) override {}
 
  private:
   DISALLOW_COPY_AND_ASSIGN(MockClientGpuControl);

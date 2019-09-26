@@ -32,7 +32,7 @@
 #include "content/public/test/test_browser_context.h"
 #include "content/test/test_render_view_host.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/WebKit/public/platform/WebInputEvent.h"
+#include "third_party/blink/public/platform/web_input_event.h"
 #include "ui/gfx/geometry/point.h"
 #include "ui/gfx/geometry/point_f.h"
 #include "ui/gfx/geometry/vector2d.h"
@@ -708,9 +708,8 @@ class SyntheticGestureControllerTestBase {
   void FlushInputUntilComplete() {
     // Start and stop the timer explicitly here, since the test does not need to
     // wait for begin-frame to start the timer.
-    controller_->dispatch_timer_.Start(FROM_HERE,
-                                       base::TimeDelta::FromSeconds(1),
-                                       base::Bind(&base::DoNothing));
+    controller_->dispatch_timer_.Start(
+        FROM_HERE, base::TimeDelta::FromSeconds(1), base::DoNothing());
     do
       time_ += base::TimeDelta::FromMilliseconds(kFlushInputRateInMs);
     while (controller_->DispatchNextEvent(time_));

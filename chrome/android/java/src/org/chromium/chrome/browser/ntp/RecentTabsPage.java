@@ -5,6 +5,7 @@
 package org.chromium.chrome.browser.ntp;
 
 import android.app.Activity;
+import android.content.res.Resources;
 import android.graphics.Canvas;
 import android.graphics.Color;
 import android.os.SystemClock;
@@ -25,6 +26,8 @@ import org.chromium.chrome.browser.NativePage;
 import org.chromium.chrome.browser.UrlConstants;
 import org.chromium.chrome.browser.compositor.layouts.content.InvalidationAwareThumbnailProvider;
 import org.chromium.chrome.browser.metrics.StartupMetrics;
+import org.chromium.chrome.browser.util.ColorUtils;
+import org.chromium.chrome.browser.util.FeatureUtilities;
 import org.chromium.chrome.browser.util.ViewUtils;
 
 import java.util.concurrent.TimeUnit;
@@ -54,8 +57,6 @@ public class RecentTabsPage
     private int mSnapshotWidth;
     private int mSnapshotHeight;
 
-    private final int mThemeColor;
-
     /**
      * Whether the page is in the foreground and is visible.
      */
@@ -82,10 +83,9 @@ public class RecentTabsPage
     public RecentTabsPage(ChromeActivity activity, RecentTabsManager recentTabsManager) {
         mActivity = activity;
         mRecentTabsManager = recentTabsManager;
+        Resources resources = activity.getResources();
 
-        mTitle = activity.getResources().getString(R.string.recent_tabs);
-        mThemeColor = ApiCompatibilityUtils.getColor(
-                activity.getResources(), R.color.default_primary_color);
+        mTitle = resources.getString(R.string.recent_tabs);
         mRecentTabsManager.setUpdatedCallback(this);
         LayoutInflater inflater = LayoutInflater.from(activity);
         mView = (ViewGroup) inflater.inflate(R.layout.recent_tabs_page, null);
@@ -102,13 +102,12 @@ public class RecentTabsPage
         ApplicationStatus.registerStateListenerForActivity(this, activity);
         // {@link #mInForeground} will be updated once the view is attached to the window.
 
-        if (activity.getBottomSheet() != null) {
-            View recentTabsRoot = mView.findViewById(R.id.recent_tabs_root);
+        View recentTabsRoot = mView.findViewById(R.id.recent_tabs_root);
+        if (activity.getFullscreenManager().getBottomControlsHeight() != 0) {
             ApiCompatibilityUtils.setPaddingRelative(recentTabsRoot,
                     ApiCompatibilityUtils.getPaddingStart(recentTabsRoot), 0,
                     ApiCompatibilityUtils.getPaddingEnd(recentTabsRoot),
-                    activity.getResources().getDimensionPixelSize(
-                            R.dimen.bottom_control_container_height));
+                    activity.getFullscreenManager().getBottomControlsHeight());
         }
 
         onUpdated();
@@ -156,7 +155,8 @@ public class RecentTabsPage
 
     @Override
     public int getThemeColor() {
-        return mThemeColor;
+        return ColorUtils.getDefaultThemeColor(
+                mActivity.getResources(), FeatureUtilities.isChromeModernDesignEnabled(), false);
     }
 
     @Override

@@ -15,6 +15,10 @@ class EventForwarder {
  public:
   ~EventForwarder();
 
+  base::android::ScopedJavaLocalRef<jobject> GetJavaWindowAndroid(
+      JNIEnv* env,
+      const base::android::JavaParamRef<jobject>& obj);
+
   jboolean OnTouchEvent(
       JNIEnv* env,
       const base::android::JavaParamRef<jobject>& obj,
@@ -67,8 +71,7 @@ class EventForwarder {
                          jfloat x,
                          jfloat y,
                          jfloat ticks_x,
-                         jfloat ticks_y,
-                         jfloat pixels_per_tick);
+                         jfloat ticks_y);
 
   void OnDragEvent(JNIEnv* env,
                    const base::android::JavaParamRef<jobject>& jobj,
@@ -84,7 +87,30 @@ class EventForwarder {
                       const base::android::JavaParamRef<jobject>& jobj,
                       jint type,
                       jlong time_ms,
-                      jfloat delta);
+                      jfloat scale);
+
+  void Scroll(JNIEnv* env,
+              const base::android::JavaParamRef<jobject>& jobj,
+              jlong time_ms,
+              jfloat delta_x,
+              jfloat delta_y);
+
+  void DoubleTap(JNIEnv* env,
+                 const base::android::JavaParamRef<jobject>& jobj,
+                 jlong time_ms,
+                 jint x,
+                 jint y);
+
+  void StartFling(JNIEnv* env,
+                  const base::android::JavaParamRef<jobject>& jobj,
+                  jlong time_ms,
+                  jfloat velocity_x,
+                  jfloat velocity_y,
+                  jboolean synthetic_scroll);
+
+  void CancelFling(JNIEnv* env,
+                   const base::android::JavaParamRef<jobject>& jobj,
+                   jlong time_ms);
 
  private:
   friend class ViewAndroid;

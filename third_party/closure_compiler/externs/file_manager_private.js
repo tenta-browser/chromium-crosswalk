@@ -16,6 +16,14 @@ var FileTask;
 
 /**
  * @typedef {{
+ *   icon16x16Url: (string|undefined),
+ *   icon32x32Url: (string|undefined)
+ * }}
+ */
+var IconSet;
+
+/**
+ * @typedef {{
  *   size: (number|undefined),
  *   modificationTime: (number|undefined),
  *   modificationByMeTime: (number|undefined),
@@ -60,7 +68,7 @@ var ProfileInfo;
  * @typedef {{
  *   volumeId: string,
  *   fileSystemId: (string|undefined),
- *   extensionId: (string|undefined),
+ *   iconSet: IconSet,
  *   source: string,
  *   volumeLabel: (string|undefined),
  *   profile: ProfileInfo,
@@ -203,7 +211,8 @@ var DeviceEvent;
 
 /**
  * @typedef {{
- *   extensionId: string,
+ *   providerId: string,
+ *   iconSet: IconSet,
  *   name: string,
  *   configurable: boolean,
  *   watchable: boolean,
@@ -211,7 +220,7 @@ var DeviceEvent;
  *   source: string
  * }}
  */
-var ProvidingExtension;
+var Provider;
 
 /**
  * @typedef {{
@@ -356,6 +365,20 @@ chrome.fileManagerPrivate.getEntryProperties = function(entries, names,
 chrome.fileManagerPrivate.pinDriveFile = function(entry, pin, callback) {};
 
 /**
+ * If |entry| is a Drive file, ensures the file is downloaded to the cache.
+ * Otherwise, finishes immediately in success. For example, when the file is
+ * under Downloads, MTP, removeable media, or provided by extensions for
+ * other cloud storage services than Google Drive, this does nothing.
+ * This is a workaround to avoid intermittent and duplicated downloading of
+ * a Drive file by current implementation of Drive integration when an
+ * extension reads a file sequentially but intermittently.
+ * @param {!Entry} entry A regular file entry to be read.
+ * @param {function()} callback Callback called after having the file in cache.
+ *     runtime.lastError will be set if there was an error.
+ */
+chrome.fileManagerPrivate.ensureFileDownloaded = function(entry, callback) {};
+
+/**
  * Resolves file entries in the isolated file system and returns corresponding
  * entries in the external file system mounted to Chrome OS file manager
  * backend. If resolving entry fails, the entry will be just ignored and the
@@ -381,6 +404,19 @@ chrome.fileManagerPrivate.addMount = function(source, callback) {};
  * @param {string} volumeId
  */
 chrome.fileManagerPrivate.removeMount = function(volumeId) {};
+
+/**
+ * Marks a cache file of Drive as mounted or unmounted.
+ * Does nothing if the file is not under Drive directory.
+ * @param {string} sourcePath Mounted source file. Relative file path within
+ *     external file system.
+ * @param {boolean} isMounted Mark as mounted if true. Mark as unmounted
+ *     otherwise.
+ * @param {function()} callback Completion callback. runtime.lastError will be
+ *     set if there was an error.
+ */
+chrome.fileManagerPrivate.markCacheAsMounted = function(
+    sourcePath, isMounted, callback) {};
 
 /**
  * Get the list of mounted volumes. |callback|
@@ -493,12 +529,12 @@ chrome.fileManagerPrivate.searchFilesByHashes = function(volumeId, hashes,
  * The files must be under the directory specified by |parentEntry|. |destName|
  * Name of the destination zip file. The zip file will be created under the
  * directory specified by |parentEntry|.
- * @param {!DirectoryEntry} parentEntry
  * @param {!Array<!Entry>} entries
+ * @param {!DirectoryEntry} parentEntry
  * @param {string} destName
  * @param {function((boolean|undefined))} callback
  */
-chrome.fileManagerPrivate.zipSelection = function(parentEntry, entries,
+chrome.fileManagerPrivate.zipSelection = function(entries, parentEntry,
     destName, callback) {};
 
 /**
@@ -592,6 +628,12 @@ chrome.fileManagerPrivate.getProfiles = function(callback) {};
 chrome.fileManagerPrivate.openInspector = function(type) {};
 
 /**
+ * Opens settings sub page. |sub_page| Name of a sub page.
+ * @param {string} sub_page
+ */
+chrome.fileManagerPrivate.openSettingsSubpage = function(sub_page) {};
+
+/**
  * Computes an MD5 checksum for the given file.
  * @param {!Entry} entry
  * @param {function((string|undefined))} callback
@@ -630,19 +672,19 @@ chrome.fileManagerPrivate.setEntryTag = function(entry, visibility, key,
 chrome.fileManagerPrivate.isPiexLoaderEnabled = function(callback) {};
 
 /**
- * Returns list of available providing extensions.
- * @param {function((!Array<!ProvidingExtension>|undefined))} callback
+ * Returns list of available providers.
+ * @param {function((!Array<!Provider>|undefined))} callback
  */
-chrome.fileManagerPrivate.getProvidingExtensions = function(callback) {};
+chrome.fileManagerPrivate.getProviders = function(callback) {};
 
 /**
  * Requests adding a new provided file system. If not possible, then an error
  * via chrome.runtime.lastError is returned.
- * @param {string} extensionId
+ * @param {string} providerId
  * @param {function()} callback
  */
 chrome.fileManagerPrivate.addProvidedFileSystem =
-    function(extensionId, callback) {};
+    function(providerId, callback) {};
 
 /**
  * Requests configuring an existing file system. If not possible, then returns

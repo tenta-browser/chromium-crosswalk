@@ -14,11 +14,11 @@
 #include "base/files/file_path.h"
 #include "base/synchronization/lock.h"
 #include "build/build_config.h"
-#include "chrome/common/features.h"
+#include "chrome/common/buildflags.h"
 #include "chrome/common/origin_trials/chrome_origin_trial_policy.h"
-#include "components/nacl/common/features.h"
+#include "components/nacl/common/buildflags.h"
 #include "content/public/common/content_client.h"
-#include "ppapi/features/features.h"
+#include "ppapi/buildflags/buildflags.h"
 
 #if BUILDFLAG(ENABLE_PLUGINS)
 #include "content/public/common/pepper_plugin_info.h"
@@ -69,7 +69,7 @@ class ChromeContentClient : public content::ContentClient {
       const std::vector<std::unique_ptr<content::PepperPluginInfo>>& plugins);
 #endif
 
-  void SetActiveURL(const GURL& url) override;
+  void SetActiveURL(const GURL& url, std::string top_origin) override;
   void SetGpuInfo(const gpu::GPUInfo& gpu_info) override;
   void AddPepperPlugins(
       std::vector<content::PepperPluginInfo>* plugins) override;
@@ -90,7 +90,6 @@ class ChromeContentClient : public content::ContentClient {
   std::string GetProcessTypeNameInEnglish(int type) override;
 
   bool AllowScriptExtensionForServiceWorker(const GURL& script_url) override;
-  bool IsSupplementarySiteIsolationModeEnabled() override;
 
   content::OriginTrialPolicy* GetOriginTrialPolicy() override;
 

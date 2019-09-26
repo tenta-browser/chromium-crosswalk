@@ -3,6 +3,17 @@
     {
       "name": "LayoutView #document",
       "bounds": [800, 600],
+      "drawsContent": false,
+      "backgroundColor": "#FFFFFF"
+    },
+    {
+      "name": "Scrolling Layer",
+      "bounds": [800, 600],
+      "drawsContent": false
+    },
+    {
+      "name": "Scrolling Contents Layer",
+      "bounds": [800, 600],
       "contentsOpaque": true,
       "backgroundColor": "#FFFFFF",
       "paintInvalidations": [
@@ -23,14 +34,6 @@
     {
       "object": "LayoutSVGRect rect id='shape'",
       "reason": "style change"
-    },
-    {
-      "object": "LayoutSVGRect rect",
-      "reason": "disappeared"
-    },
-    {
-      "object": "LayoutSVGResourcePattern pattern id='pat'",
-      "reason": "disappeared"
     },
     {
       "object": "LayoutSVGRect rect id='shape'",

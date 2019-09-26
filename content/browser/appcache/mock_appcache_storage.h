@@ -43,6 +43,10 @@ class AppCacheRequestHandlerTest;
 class AppCacheServiceImplTest;
 class MockAppCacheStorageTest;
 
+namespace appcache_update_job_unittest {
+class AppCacheUpdateJobTest;
+}
+
 // For use in unit tests.
 // Note: This class is also being used to bootstrap our development efforts.
 // We can get layout tests up and running, and back fill with real storage
@@ -86,14 +90,14 @@ class MockAppCacheStorage : public AppCacheStorage {
  private:
   friend class AppCacheRequestHandlerTest;
   friend class AppCacheServiceImplTest;
-  friend class AppCacheUpdateJobTest;
+  friend class appcache_update_job_unittest::AppCacheUpdateJobTest;
   friend class MockAppCacheStorageTest;
 
-  typedef base::hash_map<int64_t, scoped_refptr<AppCache>> StoredCacheMap;
-  typedef std::map<GURL, scoped_refptr<AppCacheGroup> > StoredGroupMap;
-  typedef std::set<int64_t> DoomedResponseIds;
-  typedef std::map<int64_t, std::pair<base::Time, base::Time>>
-      StoredEvictionTimesMap;
+  using StoredCacheMap = base::hash_map<int64_t, scoped_refptr<AppCache>>;
+  using StoredGroupMap = std::map<GURL, scoped_refptr<AppCacheGroup>>;
+  using DoomedResponseIds = std::set<int64_t>;
+  using StoredEvictionTimesMap =
+      std::map<int64_t, std::pair<base::Time, base::Time>>;
 
   void ProcessGetAllInfo(scoped_refptr<DelegateReference> delegate_ref);
   void ProcessLoadCache(int64_t id,

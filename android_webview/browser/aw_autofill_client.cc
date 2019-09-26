@@ -74,7 +74,7 @@ syncer::SyncService* AwAutofillClient::GetSyncService() {
   return nullptr;
 }
 
-IdentityProvider* AwAutofillClient::GetIdentityProvider() {
+identity::IdentityManager* AwAutofillClient::GetIdentityManager() {
   return nullptr;
 }
 
@@ -220,6 +220,10 @@ void AwAutofillClient::ExecuteCommand(int id) {
 }
 
 bool AwAutofillClient::IsAutofillSupported() {
+  return true;
+}
+
+bool AwAutofillClient::AreServerCardsSupported() {
   return true;
 }
 

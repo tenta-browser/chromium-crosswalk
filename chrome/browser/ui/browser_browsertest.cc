@@ -23,7 +23,6 @@
 #include "base/strings/string_split.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/sys_info.h"
-#include "base/threading/sequenced_worker_pool.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "build/build_config.h"
 #include "chrome/app/chrome_command_ids.h"
@@ -57,11 +56,13 @@
 #include "chrome/browser/ui/extensions/app_launch_params.h"
 #include "chrome/browser/ui/extensions/application_launch.h"
 #include "chrome/browser/ui/javascript_dialogs/javascript_dialog_tab_helper.h"
+#include "chrome/browser/ui/search/local_ntp_test_utils.h"
 #include "chrome/browser/ui/search/search_tab_helper.h"
 #include "chrome/browser/ui/startup/startup_browser_creator.h"
 #include "chrome/browser/ui/startup/startup_browser_creator_impl.h"
 #include "chrome/browser/ui/tabs/pinned_tab_codec.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
+#include "chrome/common/buildflags.h"
 #include "chrome/common/chrome_paths.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/common/extensions/manifest_handlers/app_launch_info.h"
@@ -97,7 +98,6 @@
 #include "content/public/browser/ssl_status.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_contents_observer.h"
-#include "content/public/common/browser_side_navigation_policy.h"
 #include "content/public/common/frame_navigate_params.h"
 #include "content/public/common/renderer_preferences.h"
 #include "content/public/common/url_constants.h"
@@ -199,18 +199,6 @@ class MockTabStripModelObserver : public TabStripModelObserver {
   DISALLOW_COPY_AND_ASSIGN(MockTabStripModelObserver);
 };
 
-// Causes the browser to swap processes on a redirect to an HTTPS URL.
-class TransferHttpsRedirectsContentBrowserClient
-    : public ChromeContentBrowserClient {
- public:
-  bool ShouldSwapProcessesForRedirect(
-      content::BrowserContext* browser_context,
-      const GURL& current_url,
-      const GURL& new_url) override {
-    return new_url.SchemeIs(url::kHttpsScheme);
-  }
-};
-
 // Used by CloseWithAppMenuOpen. Invokes CloseWindow on the supplied browser.
 void CloseWindowCallback(Browser* browser) {
   chrome::CloseWindow(browser);
@@ -286,20 +274,11 @@ class RenderViewSizeObserver : public content::WebContentsObserver {
     }
   }
 
-  void DidStartNavigationToPendingEntry(
-      const GURL& url,
-      content::ReloadType reload_type) override {
-    // TODO: remove this method when PlzNavigate is turned on by default.
-    if (!content::IsBrowserSideNavigationEnabled())
-      Resize();
-  }
-
   // Enlarge WebContentsView by |wcv_resize_insets_| while the navigation entry
   // is pending.
   void DidStartNavigation(
       content::NavigationHandle* navigation_handle) override {
-    if (content::IsBrowserSideNavigationEnabled())
-      Resize();
+    Resize();
   }
 
   void Resize() {
@@ -537,8 +516,7 @@ IN_PROC_BROWSER_TEST_F(BrowserTest, ClearPendingOnFailUnlessNTP) {
   ASSERT_TRUE(embedded_test_server()->Start());
   WebContents* web_contents =
       browser()->tab_strip_model()->GetActiveWebContents();
-  GURL ntp_url(search::GetNewTabPageURL(browser()->profile()));
-  ui_test_utils::NavigateToURL(browser(), ntp_url);
+  ui_test_utils::NavigateToURL(browser(), GURL(chrome::kChromeUINewTabURL));
 
   // Navigate to a 204 URL (aborts with no content) on the NTP and make sure it
   // sticks around so that the user can edit it.
@@ -629,7 +607,7 @@ IN_PROC_BROWSER_TEST_F(BrowserTest, SadTabCancelsDialogs) {
   content::RenderProcessHostWatcher crash_observer(
       child_process,
       content::RenderProcessHostWatcher::WATCH_FOR_PROCESS_EXIT);
-  child_process->Shutdown(0, false);
+  child_process->Shutdown(0);
   crash_observer.Wait();
   EXPECT_FALSE(dialog_queue->HasActiveDialog());
 
@@ -663,7 +641,7 @@ IN_PROC_BROWSER_TEST_F(BrowserTest, SadTabCancelsSubframeDialogs) {
   content::RenderProcessHostWatcher crash_observer(
       child_process,
       content::RenderProcessHostWatcher::WATCH_FOR_PROCESS_EXIT);
-  child_process->Shutdown(0, false);
+  child_process->Shutdown(0);
   crash_observer.Wait();
   EXPECT_FALSE(js_helper->IsShowingDialogForTesting());
 
@@ -719,132 +697,6 @@ IN_PROC_BROWSER_TEST_F(BrowserTest, ReloadThenCancelBeforeUnload) {
   // Clear the beforeunload handler so the test can easily exit.
   contents->GetMainFrame()->ExecuteJavaScriptForTests(
       ASCIIToUTF16("onbeforeunload=null;"));
-}
-
-class RedirectObserver : public content::WebContentsObserver {
- public:
-  explicit RedirectObserver(content::WebContents* web_contents)
-      : WebContentsObserver(web_contents),
-        transition_(ui::PageTransition::PAGE_TRANSITION_LINK) {
-  }
-
-  void DidFinishNavigation(
-      content::NavigationHandle* navigation_handle) override {
-    if (!navigation_handle->HasCommitted())
-      return;
-    transition_ = navigation_handle->GetPageTransition();
-    redirects_ = navigation_handle->GetRedirectChain();
-  }
-
-  void WebContentsDestroyed() override {
-    // Make sure we don't close the tab while the observer is in scope.
-    // See http://crbug.com/314036.
-    FAIL() << "WebContents closed during navigation (http://crbug.com/314036).";
-  }
-
-  ui::PageTransition transition() const { return transition_; }
-  const std::vector<GURL> redirects() const { return redirects_; }
-
- private:
-  ui::PageTransition transition_;
-  std::vector<GURL> redirects_;
-
-  DISALLOW_COPY_AND_ASSIGN(RedirectObserver);
-};
-
-// Ensure that a transferred cross-process navigation does not generate
-// DidStopLoading events until the navigation commits.  If it did, then
-// ui_test_utils::NavigateToURL would proceed before the URL had committed.
-// http://crbug.com/243957.
-IN_PROC_BROWSER_TEST_F(BrowserTest, NoStopDuringTransferUntilCommit) {
-  // Create HTTP and HTTPS servers for a cross-site transition.
-  ASSERT_TRUE(embedded_test_server()->Start());
-  net::EmbeddedTestServer https_test_server(
-      net::EmbeddedTestServer::TYPE_HTTPS);
-  https_test_server.ServeFilesFromSourceDirectory(base::FilePath(kDocRoot));
-  ASSERT_TRUE(https_test_server.Start());
-
-  // Temporarily replace ContentBrowserClient with one that will cause a
-  // process swap on all redirects to HTTPS URLs.
-  TransferHttpsRedirectsContentBrowserClient new_client;
-  content::ContentBrowserClient* old_client =
-      SetBrowserClientForTesting(&new_client);
-
-  GURL init_url(embedded_test_server()->GetURL("/title1.html"));
-  ui_test_utils::NavigateToURL(browser(), init_url);
-
-  // Navigate to a same-site page that redirects, causing a transfer.
-  WebContents* contents = browser()->tab_strip_model()->GetActiveWebContents();
-
-  // Create a RedirectObserver that goes away before we close the tab.
-  {
-    RedirectObserver redirect_observer(contents);
-    GURL dest_url(https_test_server.GetURL("/title2.html"));
-    GURL redirect_url(
-        embedded_test_server()->GetURL("/server-redirect?" + dest_url.spec()));
-    ui_test_utils::NavigateToURL(browser(), redirect_url);
-
-    // We should immediately see the new committed entry.
-    EXPECT_FALSE(contents->GetController().GetPendingEntry());
-    EXPECT_EQ(dest_url,
-              contents->GetController().GetLastCommittedEntry()->GetURL());
-
-    // We should keep track of the original request URL, redirect chain, and
-    // page transition type during a transfer, since these are necessary for
-    // history autocomplete to work.
-    EXPECT_EQ(redirect_url, contents->GetController().GetLastCommittedEntry()->
-                  GetOriginalRequestURL());
-    EXPECT_EQ(2U, redirect_observer.redirects().size());
-    EXPECT_EQ(redirect_url, redirect_observer.redirects().at(0));
-    EXPECT_EQ(dest_url, redirect_observer.redirects().at(1));
-    EXPECT_TRUE(ui::PageTransitionCoreTypeIs(
-        redirect_observer.transition(), ui::PAGE_TRANSITION_TYPED));
-  }
-
-  // Restore previous browser client.
-  SetBrowserClientForTesting(old_client);
-}
-
-// Tests that a cross-process redirect will only cause the beforeunload
-// handler to run once.
-IN_PROC_BROWSER_TEST_F(BrowserTest, SingleBeforeUnloadAfterRedirect) {
-  // Create HTTP and HTTPS servers for a cross-site transition.
-  ASSERT_TRUE(embedded_test_server()->Start());
-  net::EmbeddedTestServer https_test_server(
-      net::EmbeddedTestServer::TYPE_HTTPS);
-  https_test_server.ServeFilesFromSourceDirectory(base::FilePath(kDocRoot));
-  ASSERT_TRUE(https_test_server.Start());
-
-  // Temporarily replace ContentBrowserClient with one that will cause a
-  // process swap on all redirects to HTTPS URLs.
-  TransferHttpsRedirectsContentBrowserClient new_client;
-  content::ContentBrowserClient* old_client =
-      SetBrowserClientForTesting(&new_client);
-
-  // Navigate to a page with a beforeunload handler.
-  GURL url(embedded_test_server()->GetURL("/beforeunload.html"));
-  ui_test_utils::NavigateToURL(browser(), url);
-  WebContents* contents = browser()->tab_strip_model()->GetActiveWebContents();
-  content::PrepContentsForBeforeUnloadTest(contents);
-
-  // Navigate to a URL that redirects to another process and approve the
-  // beforeunload dialog that pops up.
-  content::WindowedNotificationObserver nav_observer(
-      content::NOTIFICATION_NAV_ENTRY_COMMITTED,
-      content::NotificationService::AllSources());
-  GURL https_url(https_test_server.GetURL("/title1.html"));
-  GURL redirect_url(
-      embedded_test_server()->GetURL("/server-redirect?" + https_url.spec()));
-  browser()->OpenURL(OpenURLParams(redirect_url, Referrer(),
-                                   WindowOpenDisposition::CURRENT_TAB,
-                                   ui::PAGE_TRANSITION_TYPED, false));
-  JavaScriptAppModalDialog* alert = ui_test_utils::WaitForAppModalDialog();
-  EXPECT_TRUE(alert->is_before_unload_dialog());
-  alert->native_dialog()->AcceptAppModalDialog();
-  nav_observer.Wait();
-
-  // Restore previous browser client.
-  SetBrowserClientForTesting(old_client);
 }
 
 // Test for crbug.com/11647.  A page closed with window.close() should not have
@@ -1079,6 +931,11 @@ IN_PROC_BROWSER_TEST_F(BrowserTest, NullOpenerRedirectForksProcess) {
 // http://www.google.com/chrome/intl/en/webmasters-faq.html#newtab will not
 // fork a new renderer process.
 IN_PROC_BROWSER_TEST_F(BrowserTest, OtherRedirectsDontForkProcess) {
+  // TODO(lukasza): https://crbug.com/824962: Investigate why this test fails
+  // with --site-per-process.
+  if (content::AreAllSitesIsolatedForTesting())
+    return;
+
   base::CommandLine::ForCurrentProcess()->AppendSwitch(
       switches::kDisablePopupBlocking);
 
@@ -1157,14 +1014,14 @@ IN_PROC_BROWSER_TEST_F(BrowserTest, RenderIdleTime) {
       browser(), ui_test_utils::GetTestUrl(
                      base::FilePath(base::FilePath::kCurrentDirectory),
                      base::FilePath(kTitle1File)));
-  content::RenderProcessHost::iterator it(
-      content::RenderProcessHost::AllHostsIterator());
-  for (; !it.IsAtEnd(); it.Advance()) {
-    base::TimeDelta renderer_td =
-        it.GetCurrentValue()->GetChildProcessIdleTime();
-    base::TimeDelta browser_td = base::TimeTicks::Now() - start;
-    EXPECT_TRUE(browser_td >= renderer_td);
-  }
+  base::TimeDelta renderer_td = browser()
+                                    ->tab_strip_model()
+                                    ->GetActiveWebContents()
+                                    ->GetMainFrame()
+                                    ->GetProcess()
+                                    ->GetChildProcessIdleTime();
+  base::TimeDelta browser_td = base::TimeTicks::Now() - start;
+  EXPECT_TRUE(browser_td >= renderer_td);
 }
 
 // Test RenderView correctly send back favicon url for web page that redirects
@@ -1344,8 +1201,7 @@ IN_PROC_BROWSER_TEST_F(BrowserTest, ReattachDevToolsWindow) {
   ASSERT_TRUE(embedded_test_server()->Start());
   WebContents* web_contents =
       browser()->tab_strip_model()->GetActiveWebContents();
-  GURL ntp_url = search::GetNewTabPageURL(browser()->profile());
-  ui_test_utils::NavigateToURL(browser(), ntp_url);
+  ui_test_utils::NavigateToURL(browser(), GURL(chrome::kChromeUINewTabURL));
 
   // Open a devtools window.
   DevToolsWindow* devtools_window =
@@ -1990,11 +1846,17 @@ IN_PROC_BROWSER_TEST_F(BrowserTest2, NoTabsInPopups) {
 }
 #endif
 
-IN_PROC_BROWSER_TEST_F(BrowserTest, WindowOpenClose1) {
+// Flaky on Chrome OS only. TODO(https://crbug.com/823043) fix it.
+#if defined(OS_CHROMEOS)
+#define MAYBE_WindowOpenClose1 DISABLED_WindowOpenClose1
+#else
+#define MAYBE_WindowOpenClose1 WindowOpenClose1
+#endif
+IN_PROC_BROWSER_TEST_F(BrowserTest, MAYBE_WindowOpenClose1) {
   base::CommandLine::ForCurrentProcess()->AppendSwitch(
       switches::kDisablePopupBlocking);
-  GURL url = ui_test_utils::GetTestUrl(
-      base::FilePath(), base::FilePath().AppendASCII("window.close.html"));
+  ASSERT_TRUE(embedded_test_server()->Start());
+  GURL url = embedded_test_server()->GetURL("/window.close.html");
   GURL::Replacements add_query;
   std::string query("test1");
   add_query.SetQuery(query.c_str(), url::Component(0, query.length()));
@@ -2007,11 +1869,17 @@ IN_PROC_BROWSER_TEST_F(BrowserTest, WindowOpenClose1) {
   EXPECT_EQ(title, title_watcher.WaitAndGetTitle());
 }
 
-IN_PROC_BROWSER_TEST_F(BrowserTest, WindowOpenClose2) {
+// Flaky on Chrome OS only. TODO(https://crbug.com/823043) fix it.
+#if defined(OS_CHROMEOS)
+#define MAYBE_WindowOpenClose2 DISABLED_WindowOpenClose2
+#else
+#define MAYBE_WindowOpenClose2 WindowOpenClose2
+#endif
+IN_PROC_BROWSER_TEST_F(BrowserTest, MAYBE_WindowOpenClose2) {
   base::CommandLine::ForCurrentProcess()->AppendSwitch(
       switches::kDisablePopupBlocking);
-  GURL url = ui_test_utils::GetTestUrl(
-      base::FilePath(), base::FilePath().AppendASCII("window.close.html"));
+  ASSERT_TRUE(embedded_test_server()->Start());
+  GURL url = embedded_test_server()->GetURL("/window.close.html");
   GURL::Replacements add_query;
   std::string query("test2");
   add_query.SetQuery(query.c_str(), url::Component(0, query.length()));
@@ -2024,11 +1892,19 @@ IN_PROC_BROWSER_TEST_F(BrowserTest, WindowOpenClose2) {
   EXPECT_EQ(title, title_watcher.WaitAndGetTitle());
 }
 
-IN_PROC_BROWSER_TEST_F(BrowserTest, WindowOpenClose3) {
+#if defined(OS_MACOSX) || (defined(OS_WIN) && !defined(NDEBUG))
+// Times out on windows (dbg). https://crbug.com/753691.
+// Also times out on macOS (can be made to pass by lowering kPaintMsgTimeoutMS
+// in RenderWidgetHostImpl).
+#define MAYBE_WindowOpenClose3 DISABLED_WindowOpenClose3
+#else
+#define MAYBE_WindowOpenClose3 WindowOpenClose3
+#endif
+IN_PROC_BROWSER_TEST_F(BrowserTest, MAYBE_WindowOpenClose3) {
   base::CommandLine::ForCurrentProcess()->AppendSwitch(
       switches::kDisablePopupBlocking);
-  GURL url = ui_test_utils::GetTestUrl(
-      base::FilePath(), base::FilePath().AppendASCII("window.close.html"));
+  ASSERT_TRUE(embedded_test_server()->Start());
+  GURL url = embedded_test_server()->GetURL("/window.close.html");
   GURL::Replacements add_query;
   std::string query("test3");
   add_query.SetQuery(query.c_str(), url::Component(0, query.length()));
@@ -2156,6 +2032,7 @@ IN_PROC_BROWSER_TEST_F(LaunchBrowserWithTrailingSlashDatadir,
 }
 #endif  // defined(OS_WIN)
 
+#if BUILDFLAG(ENABLE_BACKGROUND_MODE)
 // Tests to ensure that the browser continues running in the background after
 // the last window closes.
 class RunInBackgroundTest : public BrowserTest {
@@ -2172,11 +2049,7 @@ IN_PROC_BROWSER_TEST_F(RunInBackgroundTest, RunInBackgroundBasicTest) {
   // running.
   Profile* profile = browser()->profile();
   EXPECT_EQ(1u, chrome::GetTotalBrowserCount());
-  content::WindowedNotificationObserver observer(
-      chrome::NOTIFICATION_BROWSER_CLOSED,
-      content::Source<Browser>(browser()));
-  chrome::CloseWindow(browser());
-  observer.Wait();
+  CloseBrowserSynchronously(browser());
   EXPECT_EQ(0u, chrome::GetTotalBrowserCount());
 
   ui_test_utils::BrowserAddedObserver browser_added_observer;
@@ -2185,6 +2058,7 @@ IN_PROC_BROWSER_TEST_F(RunInBackgroundTest, RunInBackgroundBasicTest) {
 
   EXPECT_EQ(1u, chrome::GetTotalBrowserCount());
 }
+#endif  // BUILDFLAG(ENABLE_BACKGROUND_MODE)
 
 // Tests to ensure that the browser continues running in the background after
 // the last window closes.

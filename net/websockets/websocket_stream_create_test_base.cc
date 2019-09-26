@@ -23,26 +23,6 @@ namespace net {
 
 using HeaderKeyValuePair = WebSocketStreamCreateTestBase::HeaderKeyValuePair;
 
-// A sub-class of WebSocketHandshakeStreamCreateHelper which always sets a
-// deterministic key to use in the WebSocket handshake.
-class DeterministicKeyWebSocketHandshakeStreamCreateHelper
-    : public WebSocketHandshakeStreamCreateHelper {
- public:
-  DeterministicKeyWebSocketHandshakeStreamCreateHelper(
-      WebSocketStream::ConnectDelegate* connect_delegate,
-      const std::vector<std::string>& requested_subprotocols)
-      : WebSocketHandshakeStreamCreateHelper(connect_delegate,
-                                             requested_subprotocols) {}
-
-  void OnBasicStreamCreated(WebSocketBasicHandshakeStream* stream) override {
-    stream->SetWebSocketKeyForTesting("dGhlIHNhbXBsZSBub25jZQ==");
-  }
-
- private:
-  DISALLOW_COPY_AND_ASSIGN(
-      DeterministicKeyWebSocketHandshakeStreamCreateHelper);
-};
-
 class WebSocketStreamCreateTestBase::TestConnectDelegate
     : public WebSocketStream::ConnectDelegate {
  public:
@@ -107,22 +87,16 @@ void WebSocketStreamCreateTestBase::CreateAndConnectStream(
     const GURL& site_for_cookies,
     const std::string& additional_headers,
     std::unique_ptr<base::Timer> timer) {
-  for (size_t i = 0; i < ssl_data_.size(); ++i) {
-    url_request_context_host_.AddSSLSocketDataProvider(std::move(ssl_data_[i]));
-  }
-  ssl_data_.clear();
-  std::unique_ptr<WebSocketStream::ConnectDelegate> connect_delegate(
-      new TestConnectDelegate(this, connect_run_loop_.QuitClosure()));
-  WebSocketStream::ConnectDelegate* delegate = connect_delegate.get();
-  std::unique_ptr<WebSocketHandshakeStreamCreateHelper> create_helper(
-      new DeterministicKeyWebSocketHandshakeStreamCreateHelper(delegate,
-                                                               sub_protocols));
+  auto connect_delegate = std::make_unique<TestConnectDelegate>(
+      this, connect_run_loop_.QuitClosure());
+  auto create_helper =
+      std::make_unique<TestWebSocketHandshakeStreamCreateHelper>(
+          connect_delegate.get(), sub_protocols);
   stream_request_ = WebSocketStream::CreateAndConnectStreamForTesting(
       socket_url, std::move(create_helper), origin, site_for_cookies,
       additional_headers, url_request_context_host_.GetURLRequestContext(),
       NetLogWithSource(), std::move(connect_delegate),
-      timer ? std::move(timer)
-            : std::unique_ptr<base::Timer>(new base::Timer(false, false)));
+      timer ? std::move(timer) : std::make_unique<base::Timer>(false, false));
 }
 
 std::vector<HeaderKeyValuePair>

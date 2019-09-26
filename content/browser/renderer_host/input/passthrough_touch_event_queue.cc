@@ -8,7 +8,6 @@
 
 #include "base/auto_reset.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/trace_event/trace_event.h"
 #include "content/browser/renderer_host/input/touch_timeout_handler.h"
@@ -53,7 +52,7 @@ operator<(const TouchEventWithLatencyInfoAndAckState& other) const {
 }
 
 PassthroughTouchEventQueue::PassthroughTouchEventQueue(
-    TouchEventQueueClient* client,
+    PassthroughTouchEventQueueClient* client,
     const Config& config)
     : client_(client),
       has_handlers_(true),

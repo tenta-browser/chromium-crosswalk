@@ -195,6 +195,11 @@ public class TabModelSelectorImpl extends TabModelSelectorBase implements TabMod
                 }
                 mUma.onTabCrashed(tab.getId());
             }
+
+            @Override
+            public void onNavigationEntriesDeleted(Tab tab) {
+                mTabSaver.addTabToSaveQueue(tab);
+            }
         };
     }
 
@@ -252,6 +257,11 @@ public class TabModelSelectorImpl extends TabModelSelectorBase implements TabMod
     @Override
     public boolean closeAllTabsRequest(boolean incognito) {
         return mCloseAllTabsDelegate.closeAllTabsRequest(incognito);
+    }
+
+    @Override
+    public boolean isCurrentModel(TabModel model) {
+        return isIncognitoSelected() == model.isIncognito();
     }
 
     public void saveState() {

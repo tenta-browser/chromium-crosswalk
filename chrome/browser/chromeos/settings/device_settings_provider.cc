@@ -6,6 +6,7 @@
 
 #include <memory.h>
 #include <stddef.h>
+#include <memory>
 #include <utility>
 
 #include "base/bind.h"
@@ -15,6 +16,7 @@
 #include "base/logging.h"
 #include "base/macros.h"
 #include "base/metrics/histogram_macros.h"
+#include "base/syslog_logging.h"
 #include "base/threading/thread_restrictions.h"
 #include "base/values.h"
 #include "chrome/browser/browser_process.h"
@@ -66,7 +68,7 @@ const char* const kKnownSettings[] = {
     kDeviceAttestationEnabled,
     kDeviceDisabled,
     kDeviceDisabledMessage,
-    kDeviceEnrollmentIdNeeded,
+    kDeviceHostnameTemplate,
     kDeviceLoginScreenAppInstallList,
     kDeviceLoginScreenInputMethods,
     kDeviceLoginScreenLocales,
@@ -112,6 +114,7 @@ const char* const kKnownSettings[] = {
     kUnaffiliatedArcAllowed,
     kUpdateDisabled,
     kVariationsRestrictParameter,
+    kVirtualMachinesAllowed,
 };
 
 void DecodeLoginPolicies(
@@ -514,7 +517,8 @@ void DecodeGenericPolicies(
     }
   }
 
-  if (policy.has_allow_redeem_offers()) {
+  if (policy.has_allow_redeem_offers() &&
+      policy.allow_redeem_offers().has_allow_redeem_offers()) {
     new_values_cache->SetBoolean(
         kAllowRedeemChromeOsRegistrationOffers,
         policy.allow_redeem_offers().allow_redeem_offers());
@@ -574,10 +578,16 @@ void DecodeGenericPolicies(
 
   if (policy.has_device_wallpaper_image() &&
       policy.device_wallpaper_image().has_device_wallpaper_image()) {
+    const std::string& wallpaper_policy(
+        policy.device_wallpaper_image().device_wallpaper_image());
     std::unique_ptr<base::DictionaryValue> dict_val =
-        base::DictionaryValue::From(base::JSONReader::Read(
-            policy.device_wallpaper_image().device_wallpaper_image()));
-    new_values_cache->SetValue(kDeviceWallpaperImage, std::move(dict_val));
+        base::DictionaryValue::From(base::JSONReader::Read(wallpaper_policy));
+    if (dict_val) {
+      new_values_cache->SetValue(kDeviceWallpaperImage, std::move(dict_val));
+    } else {
+      SYSLOG(ERROR) << "Value of wallpaper policy has invalid format: "
+                    << wallpaper_policy;
+    }
   }
 
   if (policy.has_device_off_hours()) {
@@ -605,16 +615,7 @@ void DecodeGenericPolicies(
     const em::CastReceiverNameProto& container(policy.cast_receiver_name());
     if (container.has_name()) {
       new_values_cache->SetValue(
-          kCastReceiverName, base::MakeUnique<base::Value>(container.name()));
-    }
-  }
-
-  if (policy.has_forced_reenrollment()) {
-    const em::ForcedReenrollmentProto& container(policy.forced_reenrollment());
-    if (container.has_enrollment_id_needed()) {
-      new_values_cache->SetValue(
-          kDeviceEnrollmentIdNeeded,
-          base::MakeUnique<base::Value>(container.enrollment_id_needed()));
+          kCastReceiverName, std::make_unique<base::Value>(container.name()));
     }
   }
 
@@ -624,7 +625,26 @@ void DecodeGenericPolicies(
     if (container.has_unaffiliated_arc_allowed()) {
       new_values_cache->SetValue(
           kUnaffiliatedArcAllowed,
-          base::MakeUnique<base::Value>(container.unaffiliated_arc_allowed()));
+          std::make_unique<base::Value>(container.unaffiliated_arc_allowed()));
+    }
+  }
+
+  if (policy.has_network_hostname()) {
+    const em::NetworkHostnameProto& container(policy.network_hostname());
+    if (container.has_device_hostname_template() &&
+        !container.device_hostname_template().empty()) {
+      new_values_cache->SetString(kDeviceHostnameTemplate,
+                                  container.device_hostname_template());
+    }
+  }
+
+  if (policy.has_virtual_machines_allowed()) {
+    const em::VirtualMachinesAllowedProto& container(
+        policy.virtual_machines_allowed());
+    if (container.has_virtual_machines_allowed()) {
+      new_values_cache->SetValue(
+          kVirtualMachinesAllowed,
+          std::make_unique<base::Value>(container.virtual_machines_allowed()));
     }
   }
 }
@@ -685,6 +705,19 @@ DeviceSettingsProvider::~DeviceSettingsProvider() {
 bool DeviceSettingsProvider::IsDeviceSetting(const std::string& name) {
   const char* const* end = kKnownSettings + arraysize(kKnownSettings);
   return std::find(kKnownSettings, end, name) != end;
+}
+
+// static
+void DeviceSettingsProvider::DecodePolicies(
+    const em::ChromeDeviceSettingsProto& policy,
+    PrefValueMap* new_values_cache) {
+  DecodeLoginPolicies(policy, new_values_cache);
+  DecodeNetworkPolicies(policy, new_values_cache);
+  DecodeAutoUpdatePolicies(policy, new_values_cache);
+  DecodeReportingPolicies(policy, new_values_cache);
+  DecodeHeartbeatPolicies(policy, new_values_cache);
+  DecodeGenericPolicies(policy, new_values_cache);
+  DecodeLogUploadPolicies(policy, new_values_cache);
 }
 
 void DeviceSettingsProvider::DoSet(const std::string& path,
@@ -826,13 +859,7 @@ void DeviceSettingsProvider::UpdateValuesCache(
                                policy_data.service_account_identity());
   }
 
-  DecodeLoginPolicies(settings, &new_values_cache);
-  DecodeNetworkPolicies(settings, &new_values_cache);
-  DecodeAutoUpdatePolicies(settings, &new_values_cache);
-  DecodeReportingPolicies(settings, &new_values_cache);
-  DecodeHeartbeatPolicies(settings, &new_values_cache);
-  DecodeGenericPolicies(settings, &new_values_cache);
-  DecodeLogUploadPolicies(settings, &new_values_cache);
+  DecodePolicies(settings, &new_values_cache);
   DecodeDeviceState(policy_data, &new_values_cache);
 
   // Collect all notifications but send them only after we have swapped the
@@ -950,7 +977,7 @@ bool DeviceSettingsProvider::UpdateFromService() {
     case DeviceSettingsService::STORE_NO_POLICY:
       if (MitigateMissingPolicy())
         break;
-      // fall through.
+      FALLTHROUGH;
     case DeviceSettingsService::STORE_KEY_UNAVAILABLE:
       VLOG(1) << "No policies present yet, will use the temp storage.";
       trusted_status_ = PERMANENTLY_UNTRUSTED;

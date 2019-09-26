@@ -82,7 +82,7 @@ void DeviceOAuth2TokenService::FetchOAuth2Token(
     case DeviceOAuth2TokenServiceDelegate::STATE_VALIDATION_PENDING:
       // If this is the first request for a token, start validation.
       GetDeviceDelegate()->StartValidation();
-      // fall through.
+      FALLTHROUGH;
     case DeviceOAuth2TokenServiceDelegate::STATE_LOADING:
     case DeviceOAuth2TokenServiceDelegate::STATE_VALIDATION_STARTED:
       // Add a pending request that will be satisfied once validation completes.
@@ -133,7 +133,12 @@ void DeviceOAuth2TokenService::FlushPendingRequests(
 void DeviceOAuth2TokenService::FailRequest(
     RequestImpl* request,
     GoogleServiceAuthError::State error) {
-  GoogleServiceAuthError auth_error(error);
+  GoogleServiceAuthError auth_error =
+      (error == GoogleServiceAuthError::INVALID_GAIA_CREDENTIALS)
+          ? GoogleServiceAuthError::FromInvalidGaiaCredentialsReason(
+                GoogleServiceAuthError::InvalidGaiaCredentialsReason::
+                    CREDENTIALS_REJECTED_BY_SERVER)
+          : GoogleServiceAuthError(error);
   base::ThreadTaskRunnerHandle::Get()->PostTask(
       FROM_HERE, base::Bind(&RequestImpl::InformConsumer, request->AsWeakPtr(),
                             auth_error, std::string(), base::Time()));

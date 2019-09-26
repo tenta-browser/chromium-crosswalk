@@ -95,24 +95,21 @@ MusClient::MusClient(service_manager::Connector* connector,
   // TODO(msw): Avoid this... use some default value? Allow clients to extend?
   property_converter_ = std::make_unique<aura::PropertyConverter>();
   property_converter_->RegisterPrimitiveProperty(
-      wm::kShadowElevationKey,
+      ::wm::kShadowElevationKey,
       ui::mojom::WindowManager::kShadowElevation_Property,
-      base::Bind(&wm::IsValidShadowElevation));
+      aura::PropertyConverter::CreateAcceptAnyValueCallback());
 
   if (create_wm_state)
     wm_state_ = std::make_unique<wm::WMState>();
 
   if (testing_state == MusClientTestingState::CREATE_TESTING_STATE) {
     connector->BindInterface(ui::mojom::kServiceName, &server_test_ptr_);
-    connector->BindInterface(ui::mojom::kServiceName,
-                             &remote_event_dispatcher_ptr_);
+    connector->BindInterface(ui::mojom::kServiceName, &event_injector_);
   }
 
-  window_tree_client_ = std::make_unique<aura::WindowTreeClient>(
-      connector, this, nullptr /* window_manager_delegate */,
-      nullptr /* window_tree_client_request */, std::move(io_task_runner));
+  window_tree_client_ = aura::WindowTreeClient::CreateForWindowTreeFactory(
+      connector, this, true, std::move(io_task_runner));
   aura::Env::GetInstance()->SetWindowTreeClient(window_tree_client_.get());
-  window_tree_client_->ConnectViaWindowTreeFactory();
 
   pointer_watcher_event_router_ =
       std::make_unique<PointerWatcherEventRouter>(window_tree_client_.get());
@@ -195,6 +192,12 @@ MusClient::ConfigurePropertiesFromParams(
   properties[WindowManager::kRemoveStandardFrame_InitProperty] =
       mojo::ConvertTo<TransportType>(init_params.remove_standard_frame);
 
+  if (init_params.corner_radius) {
+    properties[WindowManager::kWindowCornerRadius_Property] =
+        mojo::ConvertTo<TransportType>(
+            static_cast<PrimitiveType>(*init_params.corner_radius));
+  }
+
   if (!Widget::RequiresNonClientView(init_params.type))
     return properties;
 
@@ -270,6 +273,14 @@ void MusClient::SetMusPropertyMirror(
   mus_property_mirror_ = std::move(mirror);
 }
 
+void MusClient::CloseAllWidgets() {
+  for (aura::Window* root : window_tree_client_->GetRoots()) {
+    Widget* widget = Widget::GetWidgetForNativeView(root);
+    if (widget)
+      widget->CloseNow();
+  }
+}
+
 ui::mojom::WindowServerTest* MusClient::GetTestingInterface() const {
   // This will only be set in tests. CHECK to ensure it doesn't get used
   // elsewhere.
@@ -277,9 +288,9 @@ ui::mojom::WindowServerTest* MusClient::GetTestingInterface() const {
   return server_test_ptr_.get();
 }
 
-ui::mojom::RemoteEventDispatcher* MusClient::GetTestingEventDispater() const {
-  CHECK(remote_event_dispatcher_ptr_);
-  return remote_event_dispatcher_ptr_.get();
+ui::mojom::EventInjector* MusClient::GetTestingEventInjector() const {
+  CHECK(event_injector_);
+  return event_injector_.get();
 }
 
 std::unique_ptr<DesktopWindowTreeHost> MusClient::CreateDesktopWindowTreeHost(

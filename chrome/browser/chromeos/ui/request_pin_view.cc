@@ -164,7 +164,8 @@ void RequestPinView::Init() {
   set_margins(ChromeLayoutProvider::Get()->GetDialogInsetsForContentType(
       views::TEXT, views::TEXT));
 
-  views::GridLayout* layout = views::GridLayout::CreateAndInstall(this);
+  views::GridLayout* layout =
+      SetLayoutManager(std::make_unique<views::GridLayout>(this));
 
   int column_view_set_id = 0;
   views::ColumnSet* column_set = layout->AddColumnSet(column_view_set_id);
@@ -195,6 +196,7 @@ void RequestPinView::Init() {
   textfield_ = new PassphraseTextfield();
   textfield_->set_controller(this);
   textfield_->SetEnabled(true);
+  textfield_->SetAssociatedLabel(header_label_);
   layout->AddView(textfield_);
 
   layout->AddPaddingRow(0, related_vertical_spacing);

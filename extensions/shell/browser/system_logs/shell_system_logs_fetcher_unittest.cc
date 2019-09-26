@@ -9,12 +9,12 @@
 #include <vector>
 
 #include "base/memory/ref_counted.h"
+#include "base/run_loop.h"
 #include "base/strings/string_util.h"
 #include "base/values.h"
 #include "components/feedback/system_logs/system_logs_fetcher.h"
 #include "components/feedback/system_logs/system_logs_source.h"
 #include "content/public/browser/browser_context.h"
-#include "content/public/test/test_browser_thread_bundle.h"
 #include "extensions/browser/extension_function.h"
 #include "extensions/browser/extension_registry.h"
 #include "extensions/browser/extensions_test.h"
@@ -27,18 +27,14 @@ namespace extensions {
 
 class ShellSystemLogsFetcherTest : public ExtensionsTest {
  public:
-  ShellSystemLogsFetcherTest()
-      : ExtensionsTest(std::make_unique<content::TestBrowserThreadBundle>()) {}
+  ShellSystemLogsFetcherTest() = default;
   ~ShellSystemLogsFetcherTest() override = default;
 
   scoped_refptr<Extension> BuildExtension(const std::string& name,
                                           const std::string& version,
                                           const std::string& id) {
-    return ExtensionBuilder()
-        .SetManifest(DictionaryBuilder()
-                         .Set("name", name)
-                         .Set("version", version)
-                         .Build())
+    return ExtensionBuilder(name)
+        .MergeManifest(DictionaryBuilder().Set("version", version).Build())
         .SetID(id)
         .Build();
   }
@@ -46,11 +42,15 @@ class ShellSystemLogsFetcherTest : public ExtensionsTest {
   void OnSystemLogsResponse(
       std::unique_ptr<system_logs::SystemLogsResponse> response) {
     response_ = std::move(response);
+    wait_for_logs_response_run_loop_.Quit();
   }
 
   const system_logs::SystemLogsResponse* response() const {
     return response_.get();
   }
+
+ protected:
+  base::RunLoop wait_for_logs_response_run_loop_;
 
  private:
   std::unique_ptr<system_logs::SystemLogsResponse> response_;
@@ -72,7 +72,9 @@ TEST_F(ShellSystemLogsFetcherTest, TestLogSources) {
   fetcher->Fetch(base::Bind(&ShellSystemLogsFetcherTest::OnSystemLogsResponse,
                             base::Unretained(this)));
 
-  EXPECT_TRUE(response());
+  wait_for_logs_response_run_loop_.Run();
+
+  ASSERT_TRUE(response());
   EXPECT_LT(0u, response()->at("APPSHELL VERSION").size());
   EXPECT_LT(0u, response()->at("OS VERSION").size());
 

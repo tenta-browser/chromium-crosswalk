@@ -37,19 +37,16 @@ typedef VideoPlayerBrowserTestBase<NOT_IN_GUEST_MODE> VideoPlayerBrowserTest;
 typedef VideoPlayerBrowserTestBase<IN_GUEST_MODE>
     VideoPlayerBrowserTestInGuestMode;
 
-IN_PROC_BROWSER_TEST_F(VideoPlayerBrowserTest, OpenSingleVideoOnDownloads) {
+// TODO(yamaguchi): Enable after removing root cause of the test flakiness.
+// http://crbug.com/804413.
+IN_PROC_BROWSER_TEST_F(VideoPlayerBrowserTest,
+                       DISABLED_OpenSingleVideoOnDownloads) {
   set_test_case_name("openSingleVideoOnDownloads");
   StartTest();
 }
 
-// http://crbug.com/508949
-#if defined(MEMORY_SANITIZER)
-#define MAYBE_OpenSingleVideoOnDownloads DISABLED_OpenSingleVideoOnDownloads
-#else
-#define MAYBE_OpenSingleVideoOnDownloads OpenSingleVideoOnDownloads
-#endif
 IN_PROC_BROWSER_TEST_F(VideoPlayerBrowserTestInGuestMode,
-                       MAYBE_OpenSingleVideoOnDownloads) {
+                       OpenSingleVideoOnDownloads) {
   set_test_case_name("openSingleVideoOnDownloads");
   StartTest();
 }
@@ -72,7 +69,9 @@ IN_PROC_BROWSER_TEST_F(VideoPlayerBrowserTest, MAYBE_OpenSingleVideoOnDrive) {
 #else
 #define MAYBE_CheckInitialElements CheckInitialElements
 #endif
-IN_PROC_BROWSER_TEST_F(VideoPlayerBrowserTest, MAYBE_CheckInitialElements) {
+// TODO(yamaguchi):Enable after removing root cause of the test flakiness.
+// https://crbug.com/804413.
+IN_PROC_BROWSER_TEST_F(VideoPlayerBrowserTest, DISABLED_CheckInitialElements) {
   set_test_case_name("checkInitialElements");
   StartTest();
 }
@@ -83,7 +82,9 @@ IN_PROC_BROWSER_TEST_F(VideoPlayerBrowserTest, MAYBE_CheckInitialElements) {
 #else
 #define MAYBE_ClickControlButtons ClickControlButtons
 #endif
-IN_PROC_BROWSER_TEST_F(VideoPlayerBrowserTest, MAYBE_ClickControlButtons) {
+// TODO(yamaguchi):Enable after removing root cause of the test flakiness.
+// https://crbug.com/804413.
+IN_PROC_BROWSER_TEST_F(VideoPlayerBrowserTest, DISABLED_ClickControlButtons) {
   set_test_case_name("clickControlButtons");
   StartTest();
 }

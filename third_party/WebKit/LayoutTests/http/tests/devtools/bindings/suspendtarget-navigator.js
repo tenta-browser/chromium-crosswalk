@@ -7,7 +7,7 @@
   await TestRunner.loadModule('sources_test_runner');
   await TestRunner.loadModule('bindings_test_runner');
 
-  var sourcesNavigator = new Sources.SourcesNavigatorView();
+  var sourcesNavigator = new Sources.NetworkNavigatorView();
   sourcesNavigator.show(UI.inspectorView.element);
 
   TestRunner.markStep('initialWorkspace');
@@ -29,6 +29,7 @@
   TestRunner.markStep('detachFrame');
   await BindingsTestRunner.detachFrame('frame1', '_test_detachFrame.js');
   SourcesTestRunner.dumpNavigatorView(sourcesNavigator, false);
+  await TestRunner.evaluateInPageAnonymously('GCController.collectAll()');
 
   TestRunner.markStep('Resuming targets.');
   await Promise.all([

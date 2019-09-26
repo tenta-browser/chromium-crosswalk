@@ -13,11 +13,11 @@
 #include "chrome/renderer/page_load_metrics/page_timing_metrics_sender.h"
 #include "chrome/renderer/page_load_metrics/page_timing_sender.h"
 #include "content/public/renderer/render_frame.h"
-#include "third_party/WebKit/common/associated_interfaces/associated_interface_provider.h"
-#include "third_party/WebKit/public/web/WebDocument.h"
-#include "third_party/WebKit/public/web/WebDocumentLoader.h"
-#include "third_party/WebKit/public/web/WebLocalFrame.h"
-#include "third_party/WebKit/public/web/WebPerformance.h"
+#include "third_party/blink/public/common/associated_interfaces/associated_interface_provider.h"
+#include "third_party/blink/public/web/web_document.h"
+#include "third_party/blink/public/web/web_document_loader.h"
+#include "third_party/blink/public/web/web_local_frame.h"
+#include "third_party/blink/public/web/web_performance.h"
 #include "url/gurl.h"
 
 namespace page_load_metrics {
@@ -76,6 +76,15 @@ void MetricsRenderFrameObserver::DidObserveNewFeatureUsage(
     page_timing_metrics_sender_->DidObserveNewFeatureUsage(feature);
 }
 
+void MetricsRenderFrameObserver::DidObserveNewCssPropertyUsage(
+    int css_property,
+    bool is_animated) {
+  if (page_timing_metrics_sender_) {
+    page_timing_metrics_sender_->DidObserveNewCssPropertyUsage(css_property,
+                                                               is_animated);
+  }
+}
+
 void MetricsRenderFrameObserver::FrameDetached() {
   page_timing_metrics_sender_.reset();
 }
@@ -97,7 +106,7 @@ void MetricsRenderFrameObserver::DidCommitProvisionalLoad(
   if (HasNoRenderFrame())
     return;
 
-  page_timing_metrics_sender_ = base::MakeUnique<PageTimingMetricsSender>(
+  page_timing_metrics_sender_ = std::make_unique<PageTimingMetricsSender>(
       CreatePageTimingSender(), CreateTimer(), GetTiming());
 }
 
@@ -128,6 +137,14 @@ mojom::PageLoadTimingPtr MetricsRenderFrameObserver::GetTiming() const {
   if (perf.FirstInputInvalidatingInteractive() > 0.0) {
     timing->interactive_timing->first_invalidating_input =
         ClampDelta(perf.FirstInputInvalidatingInteractive(), start);
+  }
+  if (perf.FirstInputDelay() > 0.0) {
+    timing->interactive_timing->first_input_delay =
+        base::TimeDelta::FromSecondsD(perf.FirstInputDelay());
+  }
+  if (perf.FirstInputTimestamp() > 0.0) {
+    timing->interactive_timing->first_input_timestamp =
+        ClampDelta(perf.FirstInputTimestamp(), start);
   }
   if (perf.ResponseStart() > 0.0)
     timing->response_start = ClampDelta(perf.ResponseStart(), start);
@@ -195,7 +212,7 @@ mojom::PageLoadTimingPtr MetricsRenderFrameObserver::GetTiming() const {
 }
 
 std::unique_ptr<base::Timer> MetricsRenderFrameObserver::CreateTimer() {
-  return base::MakeUnique<base::OneShotTimer>();
+  return std::make_unique<base::OneShotTimer>();
 }
 
 std::unique_ptr<PageTimingSender>

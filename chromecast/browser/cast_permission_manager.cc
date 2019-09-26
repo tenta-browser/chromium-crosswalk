@@ -41,9 +41,6 @@ int CastPermissionManager::RequestPermissions(
   return kNoPendingOperation;
 }
 
-void CastPermissionManager::CancelPermissionRequest(int request_id) {
-}
-
 void CastPermissionManager::ResetPermission(
     content::PermissionType permission,
     const GURL& requesting_origin,
@@ -54,6 +51,15 @@ blink::mojom::PermissionStatus CastPermissionManager::GetPermissionStatus(
     content::PermissionType permission,
     const GURL& requesting_origin,
     const GURL& embedding_origin) {
+  LOG(INFO) << __FUNCTION__ << ": " << static_cast<int>(permission);
+  return blink::mojom::PermissionStatus::GRANTED;
+}
+
+blink::mojom::PermissionStatus
+CastPermissionManager::GetPermissionStatusForFrame(
+    content::PermissionType permission,
+    content::RenderFrameHost* render_frame_host,
+    const GURL& requesting_origin) {
   LOG(INFO) << __FUNCTION__ << ": " << static_cast<int>(permission);
   return blink::mojom::PermissionStatus::GRANTED;
 }

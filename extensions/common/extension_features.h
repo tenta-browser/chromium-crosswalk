@@ -11,6 +11,7 @@ namespace extensions {
 namespace features {
 
 extern const base::Feature kNativeCrxBindings;
+extern const base::Feature kNewExtensionUpdaterService;
 
 }  // namespace features
 }  // namespace extensions

@@ -7,6 +7,7 @@
 #include "base/callback.h"
 #include "base/command_line.h"
 #include "content/public/browser/permission_type.h"
+#include "content/public/browser/web_contents.h"
 #include "content/public/common/content_switches.h"
 #include "content/shell/common/shell_switches.h"
 #include "media/base/media_switches.h"
@@ -17,7 +18,15 @@ namespace {
 
 bool IsWhitelistedPermissionType(PermissionType permission) {
   return permission == PermissionType::GEOLOCATION ||
-         permission == PermissionType::MIDI;
+         permission == PermissionType::MIDI ||
+         permission == PermissionType::SENSORS ||
+         permission == PermissionType::PAYMENT_HANDLER ||
+         // Background sync browser tests require permission to be granted by
+         // default.
+         // TODO(nsatragno): add a command line flag so that it's only granted
+         // for tests.
+         permission == PermissionType::BACKGROUND_SYNC ||
+         permission == PermissionType::ACCESSIBILITY_EVENTS;
 }
 
 }  // namespace
@@ -58,9 +67,6 @@ int ShellPermissionManager::RequestPermissions(
   return kNoPendingOperation;
 }
 
-void ShellPermissionManager::CancelPermissionRequest(int request_id) {
-}
-
 void ShellPermissionManager::ResetPermission(
     PermissionType permission,
     const GURL& requesting_origin,
@@ -71,12 +77,6 @@ blink::mojom::PermissionStatus ShellPermissionManager::GetPermissionStatus(
     PermissionType permission,
     const GURL& requesting_origin,
     const GURL& embedding_origin) {
-  // Background sync browser tests require permission to be granted by default.
-  // TODO(nsatragno): add a command line flag so that it's only granted for
-  // tests.
-  if (permission == PermissionType::BACKGROUND_SYNC)
-    return blink::mojom::PermissionStatus::GRANTED;
-
   base::CommandLine* command_line = base::CommandLine::ForCurrentProcess();
   if ((permission == PermissionType::AUDIO_CAPTURE ||
        permission == PermissionType::VIDEO_CAPTURE) &&
@@ -85,13 +85,21 @@ blink::mojom::PermissionStatus ShellPermissionManager::GetPermissionStatus(
     return blink::mojom::PermissionStatus::GRANTED;
   }
 
-  // Generic sensor browser tests require permission to be granted.
-  if (permission == PermissionType::SENSORS &&
-      command_line->HasSwitch(switches::kContentBrowserTest)) {
-    return blink::mojom::PermissionStatus::GRANTED;
-  }
+  return IsWhitelistedPermissionType(permission)
+             ? blink::mojom::PermissionStatus::GRANTED
+             : blink::mojom::PermissionStatus::DENIED;
+}
 
-  return blink::mojom::PermissionStatus::DENIED;
+blink::mojom::PermissionStatus
+ShellPermissionManager::GetPermissionStatusForFrame(
+    PermissionType permission,
+    content::RenderFrameHost* render_frame_host,
+    const GURL& requesting_origin) {
+  return GetPermissionStatus(
+      permission, requesting_origin,
+      content::WebContents::FromRenderFrameHost(render_frame_host)
+          ->GetLastCommittedURL()
+          .GetOrigin());
 }
 
 int ShellPermissionManager::SubscribePermissionStatusChange(

@@ -6,18 +6,17 @@
 #include <string>
 
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/strings/string_util.h"
 #include "build/build_config.h"
 #include "chrome/app/chrome_command_ids.h"
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_commands.h"
+#include "chrome/browser/ui/browser_list.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/test/base/in_process_browser_test.h"
 #include "chrome/test/base/interactive_test_utils.h"
 #include "content/public/browser/notification_service.h"
-#include "content/public/common/browser_side_navigation_policy.h"
 #include "content/public/test/browser_test_utils.h"
 #include "content/public/test/test_utils.h"
 #include "ui/events/keycodes/dom/keycode_converter.h"
@@ -36,7 +35,8 @@ namespace {
 // events with "getKeyEventReport()" function. It has two magic keys: pressing
 // "S" to enter fullscreen mode; pressing "X" to indicate the end of all the
 // keys (see FinishTestAndVerifyResult() function).
-constexpr char kFullscreenKeyboardLockHTML[] = "/fullscreen_keyboardlock.html";
+constexpr char kFullscreenKeyboardLockHTML[] =
+    "/fullscreen_keyboardlock/fullscreen_keyboardlock.html";
 
 // On MacOSX command key is used for most of the shortcuts, so replace it with
 // control to reduce the complexity of comparison of the results.
@@ -495,9 +495,17 @@ IN_PROC_BROWSER_TEST_F(
   ASSERT_NO_FATAL_FAILURE(FinishTestAndVerifyResult());
 }
 
+#if defined(OS_MACOSX)
+// Triggers a DCHECK in MacViews: http://crbug.com/823478
+#define MAYBE_KeyEventsShouldBeConsumedByWebPageInJsFullscreenExceptForF11 \
+    DISABLED_KeyEventsShouldBeConsumedByWebPageInJsFullscreenExceptForF11
+#else
+#define MAYBE_KeyEventsShouldBeConsumedByWebPageInJsFullscreenExceptForF11 \
+    KeyEventsShouldBeConsumedByWebPageInJsFullscreenExceptForF11
+#endif
 IN_PROC_BROWSER_TEST_F(
     BrowserCommandControllerInteractiveTest,
-    KeyEventsShouldBeConsumedByWebPageInJsFullscreenExceptForF11) {
+    MAYBE_KeyEventsShouldBeConsumedByWebPageInJsFullscreenExceptForF11) {
   ASSERT_NO_FATAL_FAILURE(StartFullscreenLockPage());
 
   ASSERT_NO_FATAL_FAILURE(SendJsFullscreenShortcutAndWait());
@@ -562,12 +570,10 @@ IN_PROC_BROWSER_TEST_F(BrowserCommandControllerInteractiveTest,
 #endif
 IN_PROC_BROWSER_TEST_F(BrowserCommandControllerInteractiveTest,
                        MAYBE_ShortcutsShouldTakeEffectInJsFullscreen) {
-  // This test is flaky when browser side navigation is enabled on Linux. See
-  // http://crbug.com/759704.
-  // TODO(zijiehe): Find out the root cause.
+// This test is flaky. See http://crbug.com/759704.
+// TODO(zijiehe): Find out the root cause.
 #if defined(OS_LINUX)
-  if (content::IsBrowserSideNavigationEnabled())
-    return;
+  return;
 #endif
   ASSERT_NO_FATAL_FAILURE(SendShortcutsAndExpectNotPrevented(true));
 }

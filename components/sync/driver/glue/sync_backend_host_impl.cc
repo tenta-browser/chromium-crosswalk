@@ -14,7 +14,6 @@
 #include "base/threading/thread_task_runner_handle.h"
 #include "components/invalidation/public/invalidation_service.h"
 #include "components/invalidation/public/object_id_invalidation_map.h"
-#include "components/signin/core/browser/signin_client.h"
 #include "components/sync/base/experiments.h"
 #include "components/sync/base/invalidation_helper.h"
 #include "components/sync/base/sync_prefs.h"
@@ -71,8 +70,8 @@ void SyncBackendHostImpl::Initialize(InitParams params) {
   registrar_ = params.registrar.get();
 
   sync_task_runner_->PostTask(
-      FROM_HERE, base::Bind(&SyncBackendHostCore::DoInitialize, core_,
-                            base::Passed(&params)));
+      FROM_HERE, base::BindOnce(&SyncBackendHostCore::DoInitialize, core_,
+                                std::move(params)));
 }
 
 void SyncBackendHostImpl::TriggerRefresh(const ModelTypeSet& types) {
@@ -87,6 +86,12 @@ void SyncBackendHostImpl::UpdateCredentials(
   sync_task_runner_->PostTask(
       FROM_HERE, base::Bind(&SyncBackendHostCore::DoUpdateCredentials, core_,
                             credentials));
+}
+
+void SyncBackendHostImpl::InvalidateCredentials() {
+  sync_task_runner_->PostTask(
+      FROM_HERE,
+      base::BindOnce(&SyncBackendHostCore::DoInvalidateCredentials, core_));
 }
 
 void SyncBackendHostImpl::StartConfiguration() {
@@ -162,8 +167,8 @@ void SyncBackendHostImpl::ConfigureDataTypes(ConfigureParams params) {
       base::Bind(&SyncBackendHostCore::DoPurgeDisabledTypes, core_,
                  params.to_purge, params.to_journal, params.to_unapply));
   sync_task_runner_->PostTask(
-      FROM_HERE, base::Bind(&SyncBackendHostCore::DoConfigureSyncer, core_,
-                            base::Passed(&params)));
+      FROM_HERE, base::BindOnce(&SyncBackendHostCore::DoConfigureSyncer, core_,
+                                std::move(params)));
 }
 
 void SyncBackendHostImpl::RegisterDirectoryDataType(ModelType type,
@@ -414,13 +419,6 @@ void SyncBackendHostImpl::UpdateInvalidationVersions(
     const std::map<ModelType, int64_t>& invalidation_versions) {
   DCHECK(thread_checker_.CalledOnValidThread());
   sync_prefs_->UpdateInvalidationVersions(invalidation_versions);
-}
-
-void SyncBackendHostImpl::RefreshTypesForTest(ModelTypeSet types) {
-  DCHECK(thread_checker_.CalledOnValidThread());
-  sync_task_runner_->PostTask(
-      FROM_HERE,
-      base::Bind(&SyncBackendHostCore::DoRefreshTypes, core_, types));
 }
 
 void SyncBackendHostImpl::ClearServerData(const base::Closure& callback) {

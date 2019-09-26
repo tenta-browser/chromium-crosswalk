@@ -43,7 +43,7 @@ layer at (0,0) size 785x6798 backgroundClip at (0,0) size 785x600 clip at (0,0) 
             text run at (17,57) width 50: "source)."
         LayoutText {#text} at (199,5) size 363x99
           text run at (199,5) width 175: "This is text within the DIV. "
-          text run at (373,5) width 181: "The floating elements within"
+          text run at (374,5) width 180: "The floating elements within"
           text run at (199,25) width 363: "this DIV should not go beyond the left or right inner edge"
           text run at (199,45) width 354: "of this DIV, which means that the borders of the floating"
           text run at (199,65) width 360: "elements should not overlap the top or side borders of the"
@@ -53,7 +53,7 @@ layer at (0,0) size 785x6798 backgroundClip at (0,0) size 785x600 clip at (0,0) 
         LayoutImage (floating) {IMG} at (745,5) size 15x36 [border: (3px solid #000000)]
         LayoutText {#text} at (20,5) size 726x59
           text run at (20,5) width 175: "This is text within the DIV. "
-          text run at (194,5) width 537: "The floating images within this DIV should not go beyond the left or right inner edge"
+          text run at (195,5) width 536: "The floating images within this DIV should not go beyond the left or right inner edge"
           text run at (20,25) width 707: "of this DIV, which means that the borders of the floating images should not overlap the top or side borders of the"
           text run at (5,45) width 31: "DIV."
       LayoutBlockFlow {DIV} at (2,549) size 442x250 [border: (5px solid #800080)]
@@ -75,13 +75,13 @@ layer at (0,0) size 785x6798 backgroundClip at (0,0) size 785x600 clip at (0,0) 
           text run at (393,45) width 40: "within"
           text run at (393,65) width 19: "the"
           text run at (199,85) width 35: "DIV. "
-          text run at (233,85) width 181: "The floating elements within"
+          text run at (234,85) width 180: "The floating elements within"
           text run at (199,105) width 219: "this DIV should not go beyond the"
           text run at (199,125) width 218: "left or right inner edge of this DIV,"
           text run at (199,145) width 224: "which means that the borders of the"
           text run at (5,165) width 412: "floating elements should not overlap the top or side borders of the"
           text run at (5,185) width 110: "DIV in any way. "
-          text run at (114,185) width 298: "In addition, they should not overlap each other."
+          text run at (115,185) width 296: "In addition, they should not overlap each other."
           text run at (5,205) width 425: "The first two should be side by side, whereas the third should be on"
           text run at (5,225) width 95: "the next \"line.\""
       LayoutBlockFlow {DIV} at (2,817) size 360x210 [border: (5px solid #800080)]
@@ -92,15 +92,15 @@ layer at (0,0) size 785x6798 backgroundClip at (0,0) size 785x600 clip at (0,0) 
           text run at (317,5) width 28: "This"
           text run at (317,25) width 37: "is text"
           text run at (161,45) width 102: "within the DIV. "
-          text run at (262,45) width 78: "The floating"
+          text run at (263,45) width 77: "The floating"
           text run at (161,65) width 193: "images within this DIV should"
           text run at (5,85) width 336: "not go beyond the left or right inner edge of this DIV,"
           text run at (5,105) width 324: "which means that the borders of the floating images"
           text run at (5,125) width 350: "should not overlap the top or side borders of the DIV in"
           text run at (5,145) width 61: "any way. "
-          text run at (65,145) width 258: "In addition, they should not overlap each"
-          text run at (5,165) width 40: "other. "
-          text run at (44,165) width 308: "The first two should be side by side, whereas the"
+          text run at (66,145) width 257: "In addition, they should not overlap each"
+          text run at (5,165) width 39: "other. "
+          text run at (44,165) width 307: "The first two should be side by side, whereas the"
           text run at (5,185) width 213: "third should be on the next \"line.\""
       LayoutBlockFlow {DIV} at (2,1077) size 314x384 [border: (5px solid #800080)]
         LayoutBlockFlow (floating) {P} at (5,5) size 194x94 [bgcolor=#C0C0C0] [border: (1px solid #00FF00)]
@@ -126,7 +126,7 @@ layer at (0,0) size 785x6798 backgroundClip at (0,0) size 785x600 clip at (0,0) 
           text run at (5,199) width 292: "means that the borders of the floating elements"
           text run at (5,219) width 301: "should not overlap the top or side borders of the"
           text run at (5,239) width 110: "DIV in any way. "
-          text run at (114,239) width 174: "In addition, they should not"
+          text run at (115,239) width 173: "In addition, they should not"
           text run at (5,259) width 287: "overlap each other in any way, nor should the"
           text run at (5,279) width 304: "floated elements be overwritten by the DIV text."
           text run at (5,299) width 290: "In addition, the floated elements should not be"
@@ -139,13 +139,13 @@ layer at (0,0) size 785x6798 backgroundClip at (0,0) size 785x600 clip at (0,0) 
         LayoutText {#text} at (261,5) size 398x235
           text run at (261,5) width 136: "This is text within the"
           text run at (5,41) width 35: "DIV. "
-          text run at (39,41) width 78: "The floating"
+          text run at (40,41) width 77: "The floating"
           text run at (5,61) width 114: "images within this"
           text run at (5,81) width 380: "DIV should not go beyond the left or right inner edge of this"
           text run at (5,101) width 359: "DIV, which means that the borders of the floating images"
           text run at (5,121) width 377: "should not overlap the top or side borders of the DIV in any"
           text run at (5,141) width 34: "way. "
-          text run at (38,141) width 337: "In addition, they should not overlap each other in any"
+          text run at (39,141) width 336: "In addition, they should not overlap each other in any"
           text run at (5,161) width 368: "way, nor should the floated elements be overwritten by the"
           text run at (5,181) width 64: "DIV text. "
           text run at (69,181) width 334: "In addition, the floated images should not be side-by-"
@@ -164,33 +164,33 @@ layer at (0,0) size 785x6798 backgroundClip at (0,0) size 785x600 clip at (0,0) 
             text run at (17,57) width 50: "source)."
         LayoutText {#text} at (199,5) size 549x119
           text run at (199,5) width 175: "This is text within the DIV. "
-          text run at (373,5) width 181: "The floating elements within"
+          text run at (374,5) width 180: "The floating elements within"
           text run at (199,25) width 350: "this DIV should not go beyond the top side of this DIV,"
           text run at (199,45) width 335: "which means that the borders of the floating elements"
           text run at (199,65) width 350: "should not overlap the top or side borders of the DIV in"
           text run at (199,85) width 61: "any way. "
-          text run at (259,85) width 265: "In addition, the top of the left-floating box"
+          text run at (260,85) width 264: "In addition, the top of the left-floating box"
           text run at (5,105) width 365: "should not be higher than the top of the right-floating box."
       LayoutBlockFlow {DIV} at (2,1923) size 765x70 [border: (5px solid #800080)]
         LayoutImage (floating) {IMG} at (5,5) size 15x36 [border: (3px solid #000000)]
         LayoutImage (floating) {IMG} at (745,5) size 15x36 [border: (3px solid #000000)]
         LayoutText {#text} at (20,5) size 720x59
           text run at (20,5) width 175: "This is text within the DIV. "
-          text run at (194,5) width 524: "The floating images within this DIV should not go beyond the top side of this DIV,"
+          text run at (195,5) width 523: "The floating images within this DIV should not go beyond the top side of this DIV,"
           text run at (20,25) width 705: "which means that the borders of the floating images should not overlap the top or side borders of the DIV in any"
           text run at (5,45) width 34: "way. "
-          text run at (38,45) width 662: "In addition, the top of the left-floating image should not be higher than the top of the right-floating image."
+          text run at (39,45) width 661: "In addition, the top of the left-floating image should not be higher than the top of the right-floating image."
       LayoutBlockFlow {DIV} at (2,2043) size 765x150 [border: (5px solid #800080)]
         LayoutText {#text} at (199,5) size 183x19
           text run at (199,5) width 175: "This is text within the DIV. "
-          text run at (373,5) width 9: "*"
+          text run at (374,5) width 8: "*"
         LayoutBlockFlow (floating) {P} at (5,5) size 194x94 [bgcolor=#C0C0C0] [border: (1px solid #00FF00)]
           LayoutText {#text} at (17,17) size 130x59
             text run at (17,17) width 130: "This is a left-floating"
             text run at (17,37) width 112: "paragraph (first in"
             text run at (17,57) width 50: "source)."
-        LayoutText {#text} at (381,5) size 543x39
-          text run at (381,5) width 361: " The floating elements within this DIV should not go any"
+        LayoutText {#text} at (382,5) size 543x39
+          text run at (382,5) width 360: " The floating elements within this DIV should not go any"
           text run at (199,25) width 477: "higher than the line-box containing the inline content which precedes them. "
           text run at (676,25) width 12: "* "
         LayoutBlockFlow (floating) {P} at (566,45) size 194x94 [bgcolor=#C0C0C0] [border: (1px solid #00FF00)]
@@ -209,10 +209,10 @@ layer at (0,0) size 785x6798 backgroundClip at (0,0) size 785x600 clip at (0,0) 
       LayoutBlockFlow {DIV} at (2,2211) size 765x90 [border: (5px solid #800080)]
         LayoutText {#text} at (20,5) size 183x19
           text run at (20,5) width 175: "This is text within the DIV. "
-          text run at (194,5) width 9: "*"
+          text run at (195,5) width 8: "*"
         LayoutImage (floating) {IMG} at (5,5) size 15x36 [border: (3px solid #000000)]
-        LayoutText {#text} at (202,5) size 686x39
-          text run at (202,5) width 504: " The floating images within this DIV should not go any higher than the line-box"
+        LayoutText {#text} at (203,5) size 686x39
+          text run at (203,5) width 503: " The floating images within this DIV should not go any higher than the line-box"
           text run at (20,25) width 323: "containing the inline content which precedes them. "
           text run at (343,25) width 12: "* "
         LayoutImage (floating) {IMG} at (745,25) size 15x36 [border: (3px solid #000000)]
@@ -224,14 +224,14 @@ layer at (0,0) size 785x6798 backgroundClip at (0,0) size 785x600 clip at (0,0) 
       LayoutBlockFlow {DIV} at (2,2351) size 765x290 [border: (5px solid #800080)]
         LayoutText {#text} at (199,5) size 183x19
           text run at (199,5) width 175: "This is text within the DIV. "
-          text run at (373,5) width 9: "*"
+          text run at (374,5) width 8: "*"
         LayoutBlockFlow (floating) {P} at (5,5) size 194x94 [bgcolor=#C0C0C0] [border: (1px solid #00FF00)]
           LayoutText {#text} at (17,17) size 130x59
             text run at (17,17) width 130: "This is a left-floating"
             text run at (17,37) width 112: "paragraph (first in"
             text run at (17,57) width 50: "source)."
-        LayoutText {#text} at (381,5) size 543x39
-          text run at (381,5) width 361: " The floating elements within this DIV should not go any"
+        LayoutText {#text} at (382,5) size 543x39
+          text run at (382,5) width 360: " The floating elements within this DIV should not go any"
           text run at (199,25) width 477: "higher than the line-box containing the inline content which precedes them. "
           text run at (676,25) width 12: "* "
         LayoutBlockFlow (floating) {P} at (566,45) size 194x94 [bgcolor=#C0C0C0] [border: (1px solid #00FF00)]
@@ -273,10 +273,10 @@ layer at (0,0) size 785x6798 backgroundClip at (0,0) size 785x600 clip at (0,0) 
       LayoutBlockFlow {DIV} at (2,2659) size 765x130 [border: (5px solid #800080)]
         LayoutText {#text} at (20,5) size 183x19
           text run at (20,5) width 175: "This is text within the DIV. "
-          text run at (194,5) width 9: "*"
+          text run at (195,5) width 8: "*"
         LayoutImage (floating) {IMG} at (5,5) size 15x36 [border: (3px solid #000000)]
-        LayoutText {#text} at (202,5) size 671x39
-          text run at (202,5) width 504: " The floating images within this DIV should not go any higher than the line-box"
+        LayoutText {#text} at (203,5) size 671x39
+          text run at (203,5) width 503: " The floating images within this DIV should not go any higher than the line-box"
           text run at (35,25) width 323: "containing the inline content which precedes them. "
           text run at (358,25) width 12: "* "
         LayoutImage (floating) {IMG} at (745,25) size 15x36 [border: (3px solid #000000)]
@@ -292,7 +292,7 @@ layer at (0,0) size 785x6798 backgroundClip at (0,0) size 785x600 clip at (0,0) 
         LayoutImage (floating) {IMG} at (5,65) size 15x36 [border: (3px solid #000000)]
         LayoutText {#text} at (77,65) size 735x59
           text run at (77,65) width 615: " In order to mark these points clearly, an asterisk has been inserted just before each floated image. "
-          text run at (691,65) width 49: "If a line"
+          text run at (692,65) width 48: "If a line"
           text run at (20,85) width 700: "has room for a floated image, then the image should float so that its top is aligned with the top of the line-box in"
           text run at (5,105) width 173: "which the asterisk appears. "
           text run at (178,105) width 402: "Otherwise, its top should align with the top of the next line-box."
@@ -314,7 +314,7 @@ layer at (0,0) size 785x6798 backgroundClip at (0,0) size 785x600 clip at (0,0) 
         LayoutText {#text} at (199,25) size 475x299
           text run at (199,25) width 90: "text within the"
           text run at (199,45) width 35: "DIV. "
-          text run at (233,45) width 41: "Under"
+          text run at (234,45) width 40: "Under"
           text run at (199,65) width 88: "CSS1, the left"
           text run at (199,85) width 48: "floating"
           text run at (5,105) width 475: "element should be placed in the upper left corner of the DIV, and the purple"
@@ -337,7 +337,7 @@ layer at (0,0) size 785x6798 backgroundClip at (0,0) size 785x600 clip at (0,0) 
         LayoutImage (floating) {IMG} at (470,5) size 15x36 [border: (3px solid #000000)]
         LayoutText {#text} at (86,5) size 480x239
           text run at (86,5) width 133: " text within the DIV. "
-          text run at (218,5) width 227: "Under CSS1, the left floating image"
+          text run at (219,5) width 226: "Under CSS1, the left floating image"
           text run at (20,25) width 422: "should be placed in the upper left corner of the DIV, and the purple"
           text run at (5,45) width 436: "border of the DIV should abut the green border of the floating image."
           text run at (5,65) width 476: "Similarly, the right floating image should be placed in the upper right corner"
@@ -381,7 +381,7 @@ layer at (0,0) size 785x6798 backgroundClip at (0,0) size 785x600 clip at (0,0) 
                     text run at (17,57) width 50: "source)."
                 LayoutText {#text} at (199,5) size 337x99
                   text run at (199,5) width 175: "This is text within the DIV. "
-                  text run at (373,5) width 137: "The floating elements"
+                  text run at (374,5) width 136: "The floating elements"
                   text run at (199,25) width 337: "within this DIV should not go beyond the left or right"
                   text run at (199,45) width 332: "inner edge of this DIV, which means that the borders"
                   text run at (199,65) width 332: "of the floating elements should not overlap the top or"
@@ -391,7 +391,7 @@ layer at (0,0) size 785x6798 backgroundClip at (0,0) size 785x600 clip at (0,0) 
                 LayoutImage (floating) {IMG} at (723,5) size 15x36 [border: (3px solid #000000)]
                 LayoutText {#text} at (20,5) size 716x59
                   text run at (20,5) width 175: "This is text within the DIV. "
-                  text run at (194,5) width 503: "The floating images within this DIV should not go beyond the left or right inner"
+                  text run at (195,5) width 502: "The floating images within this DIV should not go beyond the left or right inner"
                   text run at (20,25) width 701: "edge of this DIV, which means that the borders of the floating images should not overlap the top or side borders"
                   text run at (5,45) width 71: "of the DIV."
               LayoutBlockFlow {DIV} at (6,362) size 442x250 [border: (5px solid #800080)]
@@ -413,13 +413,13 @@ layer at (0,0) size 785x6798 backgroundClip at (0,0) size 785x600 clip at (0,0) 
                   text run at (393,45) width 40: "within"
                   text run at (393,65) width 19: "the"
                   text run at (199,85) width 35: "DIV. "
-                  text run at (233,85) width 181: "The floating elements within"
+                  text run at (234,85) width 180: "The floating elements within"
                   text run at (199,105) width 219: "this DIV should not go beyond the"
                   text run at (199,125) width 218: "left or right inner edge of this DIV,"
                   text run at (199,145) width 224: "which means that the borders of the"
                   text run at (5,165) width 412: "floating elements should not overlap the top or side borders of the"
                   text run at (5,185) width 110: "DIV in any way. "
-                  text run at (114,185) width 298: "In addition, they should not overlap each other."
+                  text run at (115,185) width 296: "In addition, they should not overlap each other."
                   text run at (5,205) width 425: "The first two should be side by side, whereas the third should be on"
                   text run at (5,225) width 95: "the next \"line.\""
               LayoutBlockFlow {DIV} at (6,630) size 360x210 [border: (5px solid #800080)]
@@ -430,15 +430,15 @@ layer at (0,0) size 785x6798 backgroundClip at (0,0) size 785x600 clip at (0,0) 
                   text run at (317,5) width 28: "This"
                   text run at (317,25) width 37: "is text"
                   text run at (161,45) width 102: "within the DIV. "
-                  text run at (262,45) width 78: "The floating"
+                  text run at (263,45) width 77: "The floating"
                   text run at (161,65) width 193: "images within this DIV should"
                   text run at (5,85) width 336: "not go beyond the left or right inner edge of this DIV,"
                   text run at (5,105) width 324: "which means that the borders of the floating images"
                   text run at (5,125) width 350: "should not overlap the top or side borders of the DIV in"
                   text run at (5,145) width 61: "any way. "
-                  text run at (65,145) width 258: "In addition, they should not overlap each"
-                  text run at (5,165) width 40: "other. "
-                  text run at (44,165) width 308: "The first two should be side by side, whereas the"
+                  text run at (66,145) width 257: "In addition, they should not overlap each"
+                  text run at (5,165) width 39: "other. "
+                  text run at (44,165) width 307: "The first two should be side by side, whereas the"
                   text run at (5,185) width 213: "third should be on the next \"line.\""
               LayoutBlockFlow {DIV} at (6,890) size 314x384 [border: (5px solid #800080)]
                 LayoutBlockFlow (floating) {P} at (5,5) size 194x94 [bgcolor=#C0C0C0] [border: (1px solid #00FF00)]
@@ -464,7 +464,7 @@ layer at (0,0) size 785x6798 backgroundClip at (0,0) size 785x600 clip at (0,0) 
                   text run at (5,199) width 292: "means that the borders of the floating elements"
                   text run at (5,219) width 301: "should not overlap the top or side borders of the"
                   text run at (5,239) width 110: "DIV in any way. "
-                  text run at (114,239) width 174: "In addition, they should not"
+                  text run at (115,239) width 173: "In addition, they should not"
                   text run at (5,259) width 287: "overlap each other in any way, nor should the"
                   text run at (5,279) width 304: "floated elements be overwritten by the DIV text."
                   text run at (5,299) width 290: "In addition, the floated elements should not be"
@@ -477,13 +477,13 @@ layer at (0,0) size 785x6798 backgroundClip at (0,0) size 785x600 clip at (0,0) 
                 LayoutText {#text} at (261,5) size 398x235
                   text run at (261,5) width 136: "This is text within the"
                   text run at (5,41) width 35: "DIV. "
-                  text run at (39,41) width 78: "The floating"
+                  text run at (40,41) width 77: "The floating"
                   text run at (5,61) width 114: "images within this"
                   text run at (5,81) width 380: "DIV should not go beyond the left or right inner edge of this"
                   text run at (5,101) width 359: "DIV, which means that the borders of the floating images"
                   text run at (5,121) width 377: "should not overlap the top or side borders of the DIV in any"
                   text run at (5,141) width 34: "way. "
-                  text run at (38,141) width 337: "In addition, they should not overlap each other in any"
+                  text run at (39,141) width 336: "In addition, they should not overlap each other in any"
                   text run at (5,161) width 368: "way, nor should the floated elements be overwritten by the"
                   text run at (5,181) width 64: "DIV text. "
                   text run at (69,181) width 334: "In addition, the floated images should not be side-by-"
@@ -502,33 +502,33 @@ layer at (0,0) size 785x6798 backgroundClip at (0,0) size 785x600 clip at (0,0) 
                     text run at (17,57) width 50: "source)."
                 LayoutText {#text} at (199,5) size 531x119
                   text run at (199,5) width 175: "This is text within the DIV. "
-                  text run at (373,5) width 137: "The floating elements"
+                  text run at (374,5) width 136: "The floating elements"
                   text run at (199,25) width 333: "within this DIV should not go beyond the top side of"
                   text run at (199,45) width 337: "this DIV, which means that the borders of the floating"
                   text run at (199,65) width 337: "elements should not overlap the top or side borders of"
                   text run at (199,85) width 133: "the DIV in any way. "
-                  text run at (331,85) width 189: "In addition, the top of the left-"
+                  text run at (332,85) width 188: "In addition, the top of the left-"
                   text run at (5,105) width 445: "floating box should not be higher than the top of the right-floating box."
               LayoutBlockFlow {DIV} at (6,1736) size 743x70 [border: (5px solid #800080)]
                 LayoutImage (floating) {IMG} at (5,5) size 15x36 [border: (3px solid #000000)]
                 LayoutImage (floating) {IMG} at (723,5) size 15x36 [border: (3px solid #000000)]
                 LayoutText {#text} at (20,5) size 722x59
                   text run at (20,5) width 175: "This is text within the DIV. "
-                  text run at (194,5) width 524: "The floating images within this DIV should not go beyond the top side of this DIV,"
+                  text run at (195,5) width 523: "The floating images within this DIV should not go beyond the top side of this DIV,"
                   text run at (20,25) width 678: "which means that the borders of the floating images should not overlap the top or side borders of the DIV in"
                   text run at (5,45) width 61: "any way. "
-                  text run at (65,45) width 662: "In addition, the top of the left-floating image should not be higher than the top of the right-floating image."
+                  text run at (66,45) width 661: "In addition, the top of the left-floating image should not be higher than the top of the right-floating image."
               LayoutBlockFlow {DIV} at (6,1856) size 743x150 [border: (5px solid #800080)]
                 LayoutText {#text} at (199,5) size 183x19
                   text run at (199,5) width 175: "This is text within the DIV. "
-                  text run at (373,5) width 9: "*"
+                  text run at (374,5) width 8: "*"
                 LayoutBlockFlow (floating) {P} at (5,5) size 194x94 [bgcolor=#C0C0C0] [border: (1px solid #00FF00)]
                   LayoutText {#text} at (17,17) size 130x59
                     text run at (17,17) width 130: "This is a left-floating"
                     text run at (17,37) width 112: "paragraph (first in"
                     text run at (17,57) width 50: "source)."
-                LayoutText {#text} at (381,5) size 516x39
-                  text run at (381,5) width 334: " The floating elements within this DIV should not go"
+                LayoutText {#text} at (382,5) size 516x39
+                  text run at (382,5) width 333: " The floating elements within this DIV should not go"
                   text run at (199,25) width 504: "any higher than the line-box containing the inline content which precedes them. "
                   text run at (703,25) width 8: "*"
                 LayoutBlockFlow (floating) {P} at (544,45) size 194x94 [bgcolor=#C0C0C0] [border: (1px solid #00FF00)]
@@ -546,10 +546,10 @@ layer at (0,0) size 785x6798 backgroundClip at (0,0) size 785x600 clip at (0,0) 
               LayoutBlockFlow {DIV} at (6,2024) size 743x90 [border: (5px solid #800080)]
                 LayoutText {#text} at (20,5) size 183x19
                   text run at (20,5) width 175: "This is text within the DIV. "
-                  text run at (194,5) width 9: "*"
+                  text run at (195,5) width 8: "*"
                 LayoutImage (floating) {IMG} at (5,5) size 15x36 [border: (3px solid #000000)]
-                LayoutText {#text} at (202,5) size 686x39
-                  text run at (202,5) width 504: " The floating images within this DIV should not go any higher than the line-box"
+                LayoutText {#text} at (203,5) size 686x39
+                  text run at (203,5) width 503: " The floating images within this DIV should not go any higher than the line-box"
                   text run at (20,25) width 323: "containing the inline content which precedes them. "
                   text run at (343,25) width 12: "* "
                 LayoutImage (floating) {IMG} at (723,25) size 15x36 [border: (3px solid #000000)]
@@ -561,14 +561,14 @@ layer at (0,0) size 785x6798 backgroundClip at (0,0) size 785x600 clip at (0,0) 
               LayoutBlockFlow {DIV} at (6,2164) size 743x250 [border: (5px solid #800080)]
                 LayoutText {#text} at (199,5) size 183x19
                   text run at (199,5) width 175: "This is text within the DIV. "
-                  text run at (373,5) width 9: "*"
+                  text run at (374,5) width 8: "*"
                 LayoutBlockFlow (floating) {P} at (5,5) size 194x94 [bgcolor=#C0C0C0] [border: (1px solid #00FF00)]
                   LayoutText {#text} at (17,17) size 130x59
                     text run at (17,17) width 130: "This is a left-floating"
                     text run at (17,37) width 112: "paragraph (first in"
                     text run at (17,57) width 50: "source)."
-                LayoutText {#text} at (381,5) size 516x39
-                  text run at (381,5) width 334: " The floating elements within this DIV should not go"
+                LayoutText {#text} at (382,5) size 516x39
+                  text run at (382,5) width 333: " The floating elements within this DIV should not go"
                   text run at (199,25) width 504: "any higher than the line-box containing the inline content which precedes them. "
                   text run at (703,25) width 8: "*"
                 LayoutBlockFlow (floating) {P} at (544,45) size 194x94 [bgcolor=#C0C0C0] [border: (1px solid #00FF00)]
@@ -607,10 +607,10 @@ layer at (0,0) size 785x6798 backgroundClip at (0,0) size 785x600 clip at (0,0) 
               LayoutBlockFlow {DIV} at (6,2433) size 743x130 [border: (5px solid #800080)]
                 LayoutText {#text} at (20,5) size 183x19
                   text run at (20,5) width 175: "This is text within the DIV. "
-                  text run at (194,5) width 9: "*"
+                  text run at (195,5) width 8: "*"
                 LayoutImage (floating) {IMG} at (5,5) size 15x36 [border: (3px solid #000000)]
-                LayoutText {#text} at (202,5) size 671x39
-                  text run at (202,5) width 504: " The floating images within this DIV should not go any higher than the line-box"
+                LayoutText {#text} at (203,5) size 671x39
+                  text run at (203,5) width 503: " The floating images within this DIV should not go any higher than the line-box"
                   text run at (35,25) width 323: "containing the inline content which precedes them. "
                   text run at (358,25) width 12: "* "
                 LayoutImage (floating) {IMG} at (723,25) size 15x36 [border: (3px solid #000000)]
@@ -647,7 +647,7 @@ layer at (0,0) size 785x6798 backgroundClip at (0,0) size 785x600 clip at (0,0) 
                 LayoutText {#text} at (199,25) size 475x299
                   text run at (199,25) width 90: "text within the"
                   text run at (199,45) width 35: "DIV. "
-                  text run at (233,45) width 41: "Under"
+                  text run at (234,45) width 40: "Under"
                   text run at (199,65) width 88: "CSS1, the left"
                   text run at (199,85) width 48: "floating"
                   text run at (5,105) width 475: "element should be placed in the upper left corner of the DIV, and the purple"
@@ -670,7 +670,7 @@ layer at (0,0) size 785x6798 backgroundClip at (0,0) size 785x600 clip at (0,0) 
                 LayoutImage (floating) {IMG} at (470,5) size 15x36 [border: (3px solid #000000)]
                 LayoutText {#text} at (86,5) size 480x239
                   text run at (86,5) width 133: " text within the DIV. "
-                  text run at (218,5) width 227: "Under CSS1, the left floating image"
+                  text run at (219,5) width 226: "Under CSS1, the left floating image"
                   text run at (20,25) width 422: "should be placed in the upper left corner of the DIV, and the purple"
                   text run at (5,45) width 436: "border of the DIV should abut the green border of the floating image."
                   text run at (5,65) width 476: "Similarly, the right floating image should be placed in the upper right corner"

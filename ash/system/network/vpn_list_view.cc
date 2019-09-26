@@ -78,7 +78,7 @@ class VPNListProviderEntry : public views::ButtonListener, public views::View {
                        int button_accessible_name_id)
       : vpn_provider_(vpn_provider) {
     TrayPopupUtils::ConfigureAsStickyHeader(this);
-    SetLayoutManager(new views::FillLayout);
+    SetLayoutManager(std::make_unique<views::FillLayout>());
     TriView* tri_view = TrayPopupUtils::CreateSubHeaderRowView(false);
     AddChildView(tri_view);
 
@@ -93,8 +93,7 @@ class VPNListProviderEntry : public views::ButtonListener, public views::View {
     gfx::ImageSkia icon =
         gfx::CreateVectorIcon(kSystemMenuAddConnectionIcon, image_color);
     SystemMenuButton* add_vpn_button =
-        new SystemMenuButton(this, TrayPopupInkDropStyle::HOST_CENTERED, icon,
-                             icon, button_accessible_name_id);
+        new SystemMenuButton(this, icon, icon, button_accessible_name_id);
     add_vpn_button->SetInkDropColor(image_color);
     add_vpn_button->SetEnabled(true);
     tri_view->AddView(TriView::Container::END, add_vpn_button);

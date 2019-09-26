@@ -21,6 +21,8 @@ class DevToolsEyeDropper;
 namespace content {
 class DevToolsAgentHost;
 struct NativeWebKeyboardEvent;
+class NavigationHandle;
+class NavigationThrottle;
 class RenderFrameHost;
 }
 
@@ -82,6 +84,10 @@ class DevToolsWindow : public DevToolsUIBindings::Delegate,
   static void OpenDevToolsWindow(
       scoped_refptr<content::DevToolsAgentHost> host,
       Profile* profile);
+  // Similar to previous one, but forces the bundled frontend to be used.
+  static void OpenDevToolsWindowWithBundledFrontend(
+      scoped_refptr<content::DevToolsAgentHost> host,
+      Profile* profile);
 
   // Perform specified action for current WebContents inside a |browser|.
   // This may close currently open DevTools window.
@@ -105,6 +111,9 @@ class DevToolsWindow : public DevToolsUIBindings::Delegate,
   static void InspectElement(content::RenderFrameHost* inspected_frame_host,
                              int x,
                              int y);
+
+  static std::unique_ptr<content::NavigationThrottle>
+  MaybeCreateNavigationThrottle(content::NavigationHandle* handle);
 
   // Sets closure to be called after load is done. If already loaded, calls
   // closure immediately.
@@ -236,10 +245,11 @@ class DevToolsWindow : public DevToolsUIBindings::Delegate,
 
   enum FrontendType {
     kFrontendDefault,
-    kFrontendRemote,
     kFrontendWorker,
     kFrontendV8,
-    kFrontendNode
+    kFrontendNode,
+    kFrontendRemote,
+    kFrontendRemoteWorker,
   };
 
   DevToolsWindow(FrontendType frontend_type,
@@ -254,7 +264,10 @@ class DevToolsWindow : public DevToolsUIBindings::Delegate,
       Profile* profile,
       const std::string& frontend_uri,
       const scoped_refptr<content::DevToolsAgentHost>& agent_host,
-      FrontendType frontend_type);
+      bool use_bundled_frontend);
+  static void OpenDevToolsWindow(scoped_refptr<content::DevToolsAgentHost> host,
+                                 Profile* profile,
+                                 bool use_bundled_frontend);
 
   static DevToolsWindow* Create(Profile* profile,
                                 content::WebContents* inspected_web_contents,
@@ -307,7 +320,8 @@ class DevToolsWindow : public DevToolsUIBindings::Delegate,
   content::ColorChooser* OpenColorChooser(
       content::WebContents* web_contents,
       SkColor color,
-      const std::vector<content::ColorSuggestion>& suggestions) override;
+      const std::vector<blink::mojom::ColorSuggestionPtr>& suggestions)
+      override;
   void RunFileChooser(content::RenderFrameHost* render_frame_host,
                       const content::FileChooserParams& params) override;
   bool PreHandleGestureEvent(content::WebContents* source,
@@ -327,6 +341,8 @@ class DevToolsWindow : public DevToolsUIBindings::Delegate,
   void InspectedContentsClosing() override;
   void OnLoadCompleted() override;
   void ReadyForTest() override;
+  void ConnectionReady() override;
+  void SetOpenNewWindowForPopups(bool value) override;
   InfoBarService* GetInfoBarService() override;
   void RenderProcessGone(bool crashed) override;
   void ShowCertificateViewer(const std::string& cert_viewer) override;
@@ -366,6 +382,10 @@ class DevToolsWindow : public DevToolsUIBindings::Delegate,
   base::TimeTicks inspect_element_start_time_;
   std::unique_ptr<DevToolsEventForwarder> event_forwarder_;
   std::unique_ptr<DevToolsEyeDropper> eye_dropper_;
+
+  class Throttle;
+  Throttle* throttle_ = nullptr;
+  bool open_new_window_for_popups_ = false;
 
   friend class DevToolsEventForwarder;
   DISALLOW_COPY_AND_ASSIGN(DevToolsWindow);

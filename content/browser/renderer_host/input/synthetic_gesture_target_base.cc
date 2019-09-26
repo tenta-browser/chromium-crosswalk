@@ -8,7 +8,7 @@
 #include "content/browser/renderer_host/render_widget_host_view_base.h"
 #include "content/browser/renderer_host/ui_events_helper.h"
 #include "content/common/input_messages.h"
-#include "third_party/WebKit/public/platform/WebInputEvent.h"
+#include "third_party/blink/public/platform/web_input_event.h"
 #include "ui/events/blink/web_input_event_traits.h"
 #include "ui/events/event.h"
 #include "ui/latency/latency_info.h"
@@ -55,27 +55,35 @@ void SyntheticGestureTargetBase::DispatchInputEventToPlatform(
         static_cast<const WebTouchEvent&>(event);
 
     // Check that all touch pointers are within the content bounds.
-    for (unsigned i = 0; i < web_touch.touches_length; i++)
-      CHECK(web_touch.touches[i].state != WebTouchPoint::kStatePressed ||
-            PointIsWithinContents(web_touch.touches[i].PositionInWidget().x,
-                                  web_touch.touches[i].PositionInWidget().y))
-          << "Touch coordinates are not within content bounds on TouchStart.";
-
+    for (unsigned i = 0; i < web_touch.touches_length; i++) {
+      if (web_touch.touches[i].state == WebTouchPoint::kStatePressed &&
+          !PointIsWithinContents(web_touch.touches[i].PositionInWidget().x,
+                                 web_touch.touches[i].PositionInWidget().y)) {
+        LOG(WARNING)
+            << "Touch coordinates are not within content bounds on TouchStart.";
+        return;
+      }
+    }
     DispatchWebTouchEventToPlatform(web_touch, latency_info);
   } else if (event.GetType() == WebInputEvent::kMouseWheel) {
     const WebMouseWheelEvent& web_wheel =
         static_cast<const WebMouseWheelEvent&>(event);
-    CHECK(PointIsWithinContents(web_wheel.PositionInWidget().x,
-                                web_wheel.PositionInWidget().y))
-        << "Mouse wheel position is not within content bounds.";
+    if (!PointIsWithinContents(web_wheel.PositionInWidget().x,
+                               web_wheel.PositionInWidget().y)) {
+      LOG(WARNING) << "Mouse wheel position is not within content bounds.";
+      return;
+    }
     DispatchWebMouseWheelEventToPlatform(web_wheel, latency_info);
   } else if (WebInputEvent::IsMouseEventType(event.GetType())) {
     const WebMouseEvent& web_mouse =
         static_cast<const WebMouseEvent&>(event);
-    CHECK(event.GetType() != WebInputEvent::kMouseDown ||
-          PointIsWithinContents(web_mouse.PositionInWidget().x,
-                                web_mouse.PositionInWidget().y))
-        << "Mouse pointer is not within content bounds on MouseDown.";
+    if (event.GetType() == WebInputEvent::kMouseDown &&
+        !PointIsWithinContents(web_mouse.PositionInWidget().x,
+                               web_mouse.PositionInWidget().y)) {
+      LOG(WARNING)
+          << "Mouse pointer is not within content bounds on MouseDown.";
+      return;
+    }
     DispatchWebMouseEventToPlatform(web_mouse, latency_info);
   } else {
     NOTREACHED();
@@ -88,7 +96,7 @@ void SyntheticGestureTargetBase::DispatchWebTouchEventToPlatform(
   // We assume that platforms supporting touch have their own implementation of
   // SyntheticGestureTarget to route the events through their respective input
   // stack.
-  CHECK(false) << "Touch events not supported for this browser.";
+  LOG(ERROR) << "Touch events not supported for this browser.";
 }
 
 void SyntheticGestureTargetBase::DispatchWebMouseWheelEventToPlatform(

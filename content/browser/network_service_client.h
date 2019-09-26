@@ -6,28 +6,47 @@
 #define CONTENT_BROWSER_NETWORK_SERVICE_IMPL_H_
 
 #include "base/macros.h"
-#include "content/public/common/network_service.mojom.h"
 #include "mojo/public/cpp/bindings/binding.h"
+#include "services/network/public/mojom/network_service.mojom.h"
+#include "url/gurl.h"
 
 namespace content {
 
-class NetworkServiceClient : public mojom::NetworkServiceClient {
+class NetworkServiceClient : public network::mojom::NetworkServiceClient {
  public:
-  explicit NetworkServiceClient(
-      mojom::NetworkServiceClientRequest network_service_client_request);
+  explicit NetworkServiceClient(network::mojom::NetworkServiceClientRequest
+                                    network_service_client_request);
   ~NetworkServiceClient() override;
 
-  // mojom::NetworkServiceClient implementation:
-  void OnSSLCertificateError(ResourceType resource_type,
-                             const GURL& url,
-                             uint32_t process_id,
+  // network::mojom::NetworkServiceClient implementation:
+  void OnAuthRequired(
+      uint32_t process_id,
+      uint32_t routing_id,
+      uint32_t request_id,
+      int32_t resource_type,
+      const GURL& url,
+      bool first_auth_attempt,
+      const scoped_refptr<net::AuthChallengeInfo>& auth_info,
+      network::mojom::NetworkServiceClient::OnAuthRequiredCallback callback)
+      override;
+  void OnCertificateRequested(
+      uint32_t process_id,
+      uint32_t routing_id,
+      uint32_t request_id,
+      const scoped_refptr<net::SSLCertRequestInfo>& cert_info,
+      network::mojom::NetworkServiceClient::OnCertificateRequestedCallback
+          callback) override;
+  void OnSSLCertificateError(uint32_t process_id,
                              uint32_t routing_id,
+                             uint32_t request_id,
+                             int32_t resource_type,
+                             const GURL& url,
                              const net::SSLInfo& ssl_info,
                              bool fatal,
                              OnSSLCertificateErrorCallback response) override;
 
  private:
-  mojo::Binding<mojom::NetworkServiceClient> binding_;
+  mojo::Binding<network::mojom::NetworkServiceClient> binding_;
 
   DISALLOW_COPY_AND_ASSIGN(NetworkServiceClient);
 };

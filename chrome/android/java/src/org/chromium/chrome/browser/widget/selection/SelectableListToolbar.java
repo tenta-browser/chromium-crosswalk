@@ -9,6 +9,7 @@ import android.content.Context;
 import android.graphics.Color;
 import android.graphics.drawable.Drawable;
 import android.support.annotation.CallSuper;
+import android.support.annotation.StringRes;
 import android.support.v4.view.GravityCompat;
 import android.support.v4.widget.DrawerLayout;
 import android.support.v7.app.ActionBarDrawerToggle;
@@ -29,12 +30,12 @@ import android.widget.TextView;
 import android.widget.TextView.OnEditorActionListener;
 
 import org.chromium.base.ApiCompatibilityUtils;
-import org.chromium.base.ObserverList;
 import org.chromium.base.VisibleForTesting;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.toolbar.ActionModeController;
 import org.chromium.chrome.browser.toolbar.ToolbarActionModeCallback;
 import org.chromium.chrome.browser.util.FeatureUtilities;
+import org.chromium.chrome.browser.vr_shell.VrShellDelegate;
 import org.chromium.chrome.browser.widget.NumberRollView;
 import org.chromium.chrome.browser.widget.TintedDrawable;
 import org.chromium.chrome.browser.widget.TintedImageButton;
@@ -55,9 +56,9 @@ import javax.annotation.Nullable;
  *
  * @param <E> The type of the selectable items this toolbar interacts with.
  */
-public class SelectableListToolbar<E> extends Toolbar implements SelectionObserver<E>,
-        OnClickListener, OnEditorActionListener, DisplayStyleObserver {
-
+public class SelectableListToolbar<E>
+        extends Toolbar implements SelectionObserver<E>, OnClickListener, OnEditorActionListener,
+                                   DisplayStyleObserver, VrShellDelegate.VrModeObserver {
     /**
      * A delegate that handles searching the list of selectable items associated with this toolbar.
      */
@@ -74,23 +75,6 @@ public class SelectableListToolbar<E> extends Toolbar implements SelectionObserv
         void onEndSearch();
     }
 
-    /**
-     * An interface to observe events on this toolbar.
-     */
-    public interface SelectableListToolbarObserver {
-        /**
-         * A notification that the theme color of the toolbar has changed.
-         * @param isLightTheme Whether or not the toolbar is using a light theme. When this
-         *                     parameter is true, it indicates that dark drawables should be used.
-         */
-        void onThemeColorChanged(boolean isLightTheme);
-
-        /**
-         * A notification that search mode has been activated for this toolbar.
-         */
-        void onStartSearch();
-    }
-
     /** No navigation button is displayed. **/
     public static final int NAVIGATION_BUTTON_NONE = 0;
     /** Button to open the DrawerLayout. Only valid if mDrawerLayout is set. **/
@@ -99,9 +83,6 @@ public class SelectableListToolbar<E> extends Toolbar implements SelectionObserv
     public static final int NAVIGATION_BUTTON_BACK = 2;
     /** Button to clear the selection. **/
     public static final int NAVIGATION_BUTTON_SELECTION_BACK = 3;
-
-    /** An observer list for this toolbar. */
-    private final ObserverList<SelectableListToolbarObserver> mObservers = new ObserverList<>();
 
     protected boolean mIsSelectionEnabled;
     protected SelectionDelegate<E> mSelectionDelegate;
@@ -113,8 +94,8 @@ public class SelectableListToolbar<E> extends Toolbar implements SelectionObserv
     private EditText mSearchEditText;
     private TintedImageButton mClearTextButton;
     private SearchDelegate mSearchDelegate;
-    private boolean mIsLightTheme = true;
     private boolean mSelectableListHasItems;
+    private boolean mIsVrEnabled = false;
 
     protected NumberRollView mNumberRollView;
     private DrawerLayout mDrawerLayout;
@@ -141,6 +122,8 @@ public class SelectableListToolbar<E> extends Toolbar implements SelectionObserv
     private int mModernToolbarSearchIconOffsetPx;
 
     private boolean mIsDestroyed;
+    private boolean mShowInfoItem;
+    private boolean mInfoShowing;
 
     /**
      * Constructor for inflating from XML.
@@ -155,8 +138,8 @@ public class SelectableListToolbar<E> extends Toolbar implements SelectionObserv
     void destroy() {
         mIsDestroyed = true;
         if (mSelectionDelegate != null) mSelectionDelegate.removeObserver(this);
-        mObservers.clear();
         UiUtils.hideKeyboard(mSearchEditText);
+        VrShellDelegate.unregisterVrModeObserver(this);
     }
 
     /**
@@ -198,7 +181,8 @@ public class SelectableListToolbar<E> extends Toolbar implements SelectionObserv
 
         normalBackgroundColorResId = normalBackgroundColorResId != null
                 ? normalBackgroundColorResId
-                : R.color.default_primary_color;
+                : FeatureUtilities.isChromeModernDesignEnabled() ? R.color.modern_primary_color
+                                                                 : R.color.default_primary_color;
         mNormalBackgroundColor =
                 ApiCompatibilityUtils.getColor(getResources(), normalBackgroundColorResId);
         setBackgroundColor(mNormalBackgroundColor);
@@ -215,9 +199,28 @@ public class SelectableListToolbar<E> extends Toolbar implements SelectionObserv
         mSelectionMenuButton = TintedDrawable.constructTintedDrawable(
                 getResources(), R.drawable.ic_more_vert_black_24dp, android.R.color.white);
 
-        if (!FeatureUtilities.isChromeHomeEnabled()) {
+        if (!FeatureUtilities.isChromeModernDesignEnabled()) {
             setTitleTextAppearance(getContext(), R.style.BlackHeadline2);
         }
+
+        VrShellDelegate.registerVrModeObserver(this);
+        if (VrShellDelegate.isInVr()) onEnterVr();
+    }
+
+    @Override
+    public void onEnterVr() {
+        // TODO(https://crbug.com/817177): Editing text is not supported in VR, so we disable
+        // searching.
+        mIsVrEnabled = true;
+        if (mHasSearchView) updateSearchMenuItem();
+        updateInfoMenuItem(mShowInfoItem, mInfoShowing);
+    }
+
+    @Override
+    public void onExitVr() {
+        mIsVrEnabled = false;
+        if (mHasSearchView) updateSearchMenuItem();
+        updateInfoMenuItem(mShowInfoItem, mInfoShowing);
     }
 
     /**
@@ -266,7 +269,7 @@ public class SelectableListToolbar<E> extends Toolbar implements SelectionObserv
             }
         });
 
-        if (FeatureUtilities.isChromeHomeEnabled()) {
+        if (FeatureUtilities.isChromeModernDesignEnabled()) {
             mClearTextButton.setPadding(ApiCompatibilityUtils.getPaddingStart(mClearTextButton),
                     mClearTextButton.getPaddingTop(),
                     getResources().getDimensionPixelSize(R.dimen.clear_text_button_end_padding),
@@ -303,9 +306,12 @@ public class SelectableListToolbar<E> extends Toolbar implements SelectionObserv
             showNormalView();
         }
 
-        if (mIsSelectionEnabled && !wasSelectionEnabled) {
+        if (mIsSelectionEnabled) {
+            @StringRes
+            int resId = wasSelectionEnabled ? R.string.accessibility_toolbar_multi_select
+                                            : R.string.accessibility_toolbar_screen_position;
             announceForAccessibility(
-                    getResources().getString(R.string.accessibility_toolbar_screen_position));
+                    getContext().getString(resId, Integer.toString(selectedItems.size())));
         }
     }
 
@@ -405,7 +411,6 @@ public class SelectableListToolbar<E> extends Toolbar implements SelectionObserv
         mSelectionDelegate.clearSelection();
 
         showSearchViewInternal();
-        for (SelectableListToolbarObserver o : mObservers) o.onStartSearch();
 
         mSearchEditText.requestFocus();
         UiUtils.showKeyboard(mSearchEditText);
@@ -445,9 +450,7 @@ public class SelectableListToolbar<E> extends Toolbar implements SelectionObserv
     protected void onDataChanged(int numItems) {
         if (mHasSearchView) {
             mSelectableListHasItems = numItems != 0;
-            getMenu()
-                    .findItem(mSearchMenuItemId)
-                    .setVisible(!mIsSelectionEnabled && !mIsSearching && mSelectableListHasItems);
+            updateSearchMenuItem();
         }
     }
 
@@ -491,8 +494,8 @@ public class SelectableListToolbar<E> extends Toolbar implements SelectionObserv
         int padding =
                 SelectableListLayout.getPaddingForDisplayStyle(newDisplayStyle, getResources());
         int paddingStartOffset = 0;
-        boolean isModernSearchViewEnabled =
-                mIsSearching && !mIsSelectionEnabled && FeatureUtilities.isChromeHomeEnabled();
+        boolean isModernSearchViewEnabled = mIsSearching && !mIsSelectionEnabled
+                && FeatureUtilities.isChromeModernDesignEnabled();
         MarginLayoutParams params = (MarginLayoutParams) getLayoutParams();
 
         if (newDisplayStyle.horizontal == HorizontalDisplayStyle.WIDE
@@ -540,20 +543,6 @@ public class SelectableListToolbar<E> extends Toolbar implements SelectionObserv
     }
 
     /**
-     * @return Whether or not the toolbar is currently using a light theme.
-     */
-    public boolean isLightTheme() {
-        return mIsLightTheme;
-    }
-
-    /**
-     * @param observer The observer to add to this toolbar.
-     */
-    public void addObserver(SelectableListToolbarObserver observer) {
-        mObservers.addObserver(observer);
-    }
-
-    /**
      * Set up ActionBarDrawerToggle, a.k.a. hamburger button.
      */
     private void initActionBarDrawerToggle() {
@@ -572,7 +561,7 @@ public class SelectableListToolbar<E> extends Toolbar implements SelectionObserv
         getMenu().setGroupVisible(mSelectedGroupResId, false);
         if (mHasSearchView) {
             mSearchView.setVisibility(View.GONE);
-            getMenu().findItem(mSearchMenuItemId).setVisible(mSelectableListHasItems);
+            updateSearchMenuItem();
         }
 
         setNavigationButton(NAVIGATION_BUTTON_MENU);
@@ -583,7 +572,6 @@ public class SelectableListToolbar<E> extends Toolbar implements SelectionObserv
         mNumberRollView.setVisibility(View.GONE);
         mNumberRollView.setNumber(0, false);
 
-        onThemeChanged(true);
         updateDisplayStyleIfNecessary();
     }
 
@@ -600,7 +588,6 @@ public class SelectableListToolbar<E> extends Toolbar implements SelectionObserv
 
         if (mIsSearching) UiUtils.hideKeyboard(mSearchEditText);
 
-        onThemeChanged(false);
         updateDisplayStyleIfNecessary();
     }
 
@@ -611,14 +598,22 @@ public class SelectableListToolbar<E> extends Toolbar implements SelectionObserv
         mSearchView.setVisibility(View.VISIBLE);
 
         setNavigationButton(NAVIGATION_BUTTON_BACK);
-        if (FeatureUtilities.isChromeHomeEnabled()) {
+        if (FeatureUtilities.isChromeModernDesignEnabled()) {
             setBackgroundResource(R.drawable.search_toolbar_modern_bg);
         } else {
             setBackgroundColor(mSearchBackgroundColor);
         }
 
-        onThemeChanged(true);
         updateDisplayStyleIfNecessary();
+    }
+
+    private void updateSearchMenuItem() {
+        if (!mHasSearchView) return;
+        MenuItem searchMenuItem = getMenu().findItem(mSearchMenuItemId);
+        if (searchMenuItem != null) {
+            searchMenuItem.setVisible(mSelectableListHasItems && !mIsSelectionEnabled
+                    && !mIsSearching && !mIsVrEnabled);
+        }
     }
 
     protected void switchToNumberRollView(List<E> selectedItems, boolean wasSelectionEnabled) {
@@ -626,15 +621,6 @@ public class SelectableListToolbar<E> extends Toolbar implements SelectionObserv
         mNumberRollView.setVisibility(View.VISIBLE);
         if (!wasSelectionEnabled) mNumberRollView.setNumber(0, false);
         mNumberRollView.setNumber(selectedItems.size(), true);
-    }
-
-    /**
-     * Update internal state and notify observers that the theme color changed.
-     * @param isLightTheme Whether or not the theme color is light.
-     */
-    private void onThemeChanged(boolean isLightTheme) {
-        mIsLightTheme = isLightTheme;
-        for (SelectableListToolbarObserver o : mObservers) o.onThemeColorChanged(isLightTheme);
     }
 
     private void updateDisplayStyleIfNecessary() {
@@ -655,6 +641,8 @@ public class SelectableListToolbar<E> extends Toolbar implements SelectionObserv
      * @param infoShowing Whether or not info header is currently showing.
      */
     public void updateInfoMenuItem(boolean showItem, boolean infoShowing) {
+        mShowInfoItem = showItem;
+        mInfoShowing = infoShowing;
         MenuItem infoMenuItem = getMenu().findItem(mInfoMenuItemId);
         if (infoMenuItem != null) {
             Drawable iconDrawable =
@@ -662,7 +650,16 @@ public class SelectableListToolbar<E> extends Toolbar implements SelectionObserv
                             infoShowing ? R.color.light_active_color : R.color.light_normal_color);
 
             infoMenuItem.setIcon(iconDrawable);
-            infoMenuItem.setTitle(infoShowing ? R.string.hide_info : R.string.show_info);
+            if (VrShellDelegate.isInVr()) {
+                // There seems to be a bug with the support library, only on Android N, where the
+                // toast showing the title shows up every time the info menu item is clicked or
+                // scrolled on, even if its long press handler is overridden. VR on N doesn't
+                // support toasts, which render monocularly over top of VR content, so we need to
+                // disable it.
+                infoMenuItem.setTitle("");
+            } else {
+                infoMenuItem.setTitle(infoShowing ? R.string.hide_info : R.string.show_info);
+            }
             infoMenuItem.setVisible(showItem);
         }
     }

@@ -5,6 +5,7 @@
 #include "net/quic/core/quic_headers_stream.h"
 
 #include "net/quic/core/quic_spdy_session.h"
+#include "net/quic/platform/api/quic_arraysize.h"
 #include "net/quic/platform/api/quic_flag_utils.h"
 #include "net/quic/platform/api/quic_flags.h"
 
@@ -25,7 +26,8 @@ QuicHeadersStream::CompressedHeaderInfo::CompressedHeaderInfo(
 QuicHeadersStream::CompressedHeaderInfo::~CompressedHeaderInfo() {}
 
 QuicHeadersStream::QuicHeadersStream(QuicSpdySession* session)
-    : QuicStream(kHeadersStreamId, session), spdy_session_(session) {
+    : QuicStream(kHeadersStreamId, session, /*is_static=*/true),
+      spdy_session_(session) {
   // The headers stream is exempt from connection level flow control.
   DisableConnectionFlowControlForThisStream();
 }
@@ -38,7 +40,7 @@ void QuicHeadersStream::OnDataAvailable() {
   QuicTime timestamp(QuicTime::Zero());
   while (true) {
     iov.iov_base = buffer;
-    iov.iov_len = arraysize(buffer);
+    iov.iov_len = QUIC_ARRAYSIZE(buffer);
     if (!sequencer()->GetReadableRegion(&iov, &timestamp)) {
       // No more data to read.
       break;
@@ -58,14 +60,12 @@ void QuicHeadersStream::MaybeReleaseSequencerBuffer() {
   }
 }
 
-void QuicHeadersStream::OnStreamFrameAcked(QuicStreamOffset offset,
+bool QuicHeadersStream::OnStreamFrameAcked(QuicStreamOffset offset,
                                            QuicByteCount data_length,
                                            bool fin_acked,
                                            QuicTime::Delta ack_delay_time) {
   QuicIntervalSet<QuicStreamOffset> newly_acked(offset, offset + data_length);
-  if (session()->allow_multiple_acks_for_data()) {
-    newly_acked.Difference(bytes_acked());
-  }
+  newly_acked.Difference(bytes_acked());
   for (const auto& acked : newly_acked) {
     QuicStreamOffset acked_offset = acked.min();
     QuicByteCount acked_length = acked.max() - acked.min();
@@ -88,9 +88,10 @@ void QuicHeadersStream::OnStreamFrameAcked(QuicStreamOffset offset,
       if (header.unacked_length < header_length) {
         QUIC_BUG << "Unsent stream data is acked. unacked_length: "
                  << header.unacked_length << " acked_length: " << header_length;
+        RecordInternalErrorLocation(QUIC_HEADERS_STREAM);
         CloseConnectionWithDetails(QUIC_INTERNAL_ERROR,
                                    "Unsent stream data is acked");
-        return;
+        return false;
       }
       if (header.ack_listener != nullptr && header_length > 0) {
         header.ack_listener->OnPacketAcked(header_length, ack_delay_time);
@@ -106,12 +107,14 @@ void QuicHeadersStream::OnStreamFrameAcked(QuicStreamOffset offset,
          unacked_headers_.front().unacked_length == 0) {
     unacked_headers_.pop_front();
   }
-  QuicStream::OnStreamFrameAcked(offset, data_length, fin_acked,
-                                 ack_delay_time);
+  return QuicStream::OnStreamFrameAcked(offset, data_length, fin_acked,
+                                        ack_delay_time);
 }
 
 void QuicHeadersStream::OnStreamFrameRetransmitted(QuicStreamOffset offset,
-                                                   QuicByteCount data_length) {
+                                                   QuicByteCount data_length,
+                                                   bool /*fin_retransmitted*/) {
+  QuicStream::OnStreamFrameRetransmitted(offset, data_length, false);
   for (CompressedHeaderInfo& header : unacked_headers_) {
     if (offset < header.headers_stream_offset) {
       // This header frame offset belongs to headers with smaller offset, stop

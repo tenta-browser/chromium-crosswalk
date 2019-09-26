@@ -18,6 +18,7 @@ class TimelineController(object):
   def __init__(self, enable_auto_issuing_record=True):
     super(TimelineController, self).__init__()
     self.trace_categories = None
+    self.enable_systrace = False
     self._model = None
     self._renderer_process = None
     self._smooth_records = []
@@ -37,6 +38,8 @@ class TimelineController(object):
     config = tracing_config.TracingConfig()
     config.chrome_trace_config.category_filter.AddFilterString(
         self.trace_categories)
+    if self.enable_systrace:
+      config.chrome_trace_config.SetEnableSystrace()
     config.enable_chrome_trace = True
     tab.browser.platform.tracing_controller.StartTracing(config)
 
@@ -52,14 +55,7 @@ class TimelineController(object):
     if self._enable_auto_issuing_record:
       self._interaction.End()
     # Stop tracing.
-    timeline_data = tab.browser.platform.tracing_controller.StopTracing()
-
-    # TODO(charliea): This is part of a three-sided Chromium/Telemetry patch
-    # where we're changing the return type of StopTracing from a TraceValue to a
-    # (TraceValue, nonfatal_exception_list) tuple. Once the tuple return value
-    # lands in Chromium, the non-tuple logic should be deleted.
-    if isinstance(timeline_data, tuple):
-      timeline_data = timeline_data[0]
+    timeline_data = tab.browser.platform.tracing_controller.StopTracing()[0]
 
     # TODO(#763375): Rely on results.telemetry_info.trace_local_path/etc.
     kwargs = {}

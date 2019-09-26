@@ -11,9 +11,6 @@
       {
           console.timeStamp("TIME STAMP");
       }
-
-      if (!window.testRunner)
-          setTimeout(performActions, 2000);
   `);
 
   PerformanceTestRunner.performActionsAndPrint('performActions()', 'TimeStamp', true);

@@ -9,13 +9,13 @@
 #include "ash/login/login_screen_controller.h"
 #include "ash/login/ui/layout_util.h"
 #include "ash/login/ui/lock_screen.h"
-#include "ash/login/ui/login_constants.h"
 #include "ash/login/ui/login_display_style.h"
 #include "ash/login/ui/login_password_view.h"
 #include "ash/login/ui/login_pin_view.h"
 #include "ash/login/ui/login_user_view.h"
 #include "ash/login/ui/non_accessible_view.h"
 #include "ash/login/ui/pin_keyboard_animation.h"
+#include "ash/public/cpp/login_constants.h"
 #include "ash/shell.h"
 #include "ash/strings/grit/ash_strings.h"
 #include "base/strings/utf_string_conversions.h"
@@ -44,7 +44,10 @@ const int kDistanceBetweenUserViewAndPasswordDp = 28;
 const int kDistanceBetweenPasswordFieldAndPinKeyboard = 20;
 
 // Distance from the end of pin keyboard to the bottom of the big user view.
-const int kDistanceFromPinKeyboardToBigUserViewBottom = 48;
+const int kDistanceFromPinKeyboardToBigUserViewBottom = 50;
+
+// Distance from the top of the user view to the user icon.
+constexpr int kDistanceFromTopOfBigUserViewToUserIconDp = 54;
 
 // Returns an observer that will hide |view| when it fires. The observer will
 // delete itself after firing. Make sure to call |observer->SetReady()| after
@@ -94,20 +97,37 @@ LoginPasswordView* LoginAuthUserView::TestApi::password_view() const {
   return view_->password_view_;
 }
 
-LoginAuthUserView::LoginAuthUserView(
-    const mojom::LoginUserInfoPtr& user,
-    const OnAuthCallback& on_auth,
-    const LoginUserView::OnTap& on_tap,
-    const OnEasyUnlockIconHovered& on_easy_unlock_icon_hovered,
-    const OnEasyUnlockIconTapped& on_easy_unlock_icon_tapped)
+LoginPinView* LoginAuthUserView::TestApi::pin_view() const {
+  return view_->pin_view_;
+}
+
+LoginAuthUserView::Callbacks::Callbacks() = default;
+
+LoginAuthUserView::Callbacks::Callbacks(const Callbacks& other) = default;
+
+LoginAuthUserView::Callbacks::~Callbacks() = default;
+
+LoginAuthUserView::LoginAuthUserView(const mojom::LoginUserInfoPtr& user,
+                                     const Callbacks& callbacks)
     : NonAccessibleView(kLoginAuthUserViewClassName),
-      on_auth_(on_auth),
-      on_tap_(on_tap),
+      on_auth_(callbacks.on_auth),
+      on_tap_(callbacks.on_tap),
       weak_factory_(this) {
+  DCHECK(callbacks.on_auth);
+  DCHECK(callbacks.on_tap);
+  DCHECK(callbacks.on_remove_warning_shown);
+  DCHECK(callbacks.on_remove);
+  DCHECK(callbacks.on_easy_unlock_icon_hovered);
+  DCHECK(callbacks.on_easy_unlock_icon_tapped);
+  DCHECK_NE(user->basic_user_info->type,
+            user_manager::USER_TYPE_PUBLIC_ACCOUNT);
+
   // Build child views.
   user_view_ = new LoginUserView(
-      LoginDisplayStyle::kLarge, true /*show_dropdown*/,
-      base::Bind(&LoginAuthUserView::OnUserViewTap, base::Unretained(this)));
+      LoginDisplayStyle::kLarge, true /*show_dropdown*/, false /*show_domain*/,
+      base::BindRepeating(&LoginAuthUserView::OnUserViewTap,
+                          base::Unretained(this)),
+      callbacks.on_remove_warning_shown, callbacks.on_remove);
 
   password_view_ = new LoginPasswordView();
   password_view_->SetPaintToLayer();  // Needed for opacity animation.
@@ -115,7 +135,7 @@ LoginAuthUserView::LoginAuthUserView(
   password_view_->UpdateForUser(user);
 
   pin_view_ =
-      new LoginPinView(base::BindRepeating(&LoginPasswordView::AppendNumber,
+      new LoginPinView(base::BindRepeating(&LoginPasswordView::InsertNumber,
                                            base::Unretained(password_view_)),
                        base::BindRepeating(&LoginPasswordView::Backspace,
                                            base::Unretained(password_view_)));
@@ -127,9 +147,9 @@ LoginAuthUserView::LoginAuthUserView(
       base::Bind(&LoginAuthUserView::OnAuthSubmit, base::Unretained(this)),
       base::Bind(&LoginPinView::OnPasswordTextChanged,
                  base::Unretained(pin_view_)),
-      on_easy_unlock_icon_hovered, on_easy_unlock_icon_tapped);
+      callbacks.on_easy_unlock_icon_hovered,
+      callbacks.on_easy_unlock_icon_tapped);
 
-  // Child views animate outside view bounds.
   SetPaintToLayer(ui::LayerType::LAYER_NOT_DRAWN);
 
   // Build layout.
@@ -145,7 +165,8 @@ LoginAuthUserView::LoginAuthUserView(
 
   // Use views::GridLayout instead of views::BoxLayout because views::BoxLayout
   // lays out children according to the view->children order.
-  views::GridLayout* grid_layout = views::GridLayout::CreateAndInstall(this);
+  views::GridLayout* grid_layout =
+      SetLayoutManager(std::make_unique<views::GridLayout>(this));
   views::ColumnSet* column_set = grid_layout->AddColumnSet(0);
   column_set->AddColumn(views::GridLayout::CENTER, views::GridLayout::LEADING,
                         0 /*resize_percent*/, views::GridLayout::USE_PREF,
@@ -159,6 +180,7 @@ LoginAuthUserView::LoginAuthUserView(
   };
 
   // Add views in rendering order.
+  add_padding(kDistanceFromTopOfBigUserViewToUserIconDp);
   add_view(wrapped_user_view);
   add_padding(kDistanceBetweenUserViewAndPasswordDp);
   add_view(password_view_);
@@ -174,6 +196,8 @@ LoginAuthUserView::LoginAuthUserView(
 LoginAuthUserView::~LoginAuthUserView() = default;
 
 void LoginAuthUserView::SetAuthMethods(uint32_t auth_methods) {
+  bool had_password = HasAuthMethod(AUTH_PASSWORD);
+
   auth_methods_ = static_cast<AuthMethods>(auth_methods);
   bool has_password = HasAuthMethod(AUTH_PASSWORD);
   bool has_pin = HasAuthMethod(AUTH_PIN);
@@ -183,7 +207,7 @@ void LoginAuthUserView::SetAuthMethods(uint32_t auth_methods) {
   password_view_->SetFocusEnabledForChildViews(has_password);
   password_view_->layer()->SetOpacity(has_password ? 1 : 0);
 
-  if (has_password)
+  if (!had_password && has_password)
     password_view_->RequestFocus();
 
   pin_view_->SetVisible(has_pin);
@@ -204,8 +228,7 @@ void LoginAuthUserView::SetAuthMethods(uint32_t auth_methods) {
   // case, then render the user view as if it was always focused, since clicking
   // on it will not do anything (such as swapping users).
   user_view_->SetForceOpaque(has_password);
-  user_view_->SetFocusBehavior(has_password ? FocusBehavior::NEVER
-                                            : FocusBehavior::ALWAYS);
+  user_view_->SetTapEnabled(!has_password);
 
   PreferredSizeChanged();
 }
@@ -346,14 +369,19 @@ void LoginAuthUserView::OnAuthSubmit(const base::string16& password) {
 }
 
 void LoginAuthUserView::OnAuthComplete(base::Optional<bool> auth_success) {
-  password_view_->SetReadOnly(false);
-  if (auth_success.has_value()) {
-    // Clear the password if auth fails.
-    if (!auth_success.value())
-      password_view_->Clear();
+  if (!auth_success.has_value())
+    return;
 
-    on_auth_.Run(auth_success.value());
+  // Clear the password only if auth fails. Make sure to keep the password view
+  // disabled even if auth succeededs, as if the user submits a password while
+  // animating the next lock screen will not work as expected. See
+  // https://crbug.com/808486.
+  if (!auth_success.value()) {
+    password_view_->Clear();
+    password_view_->SetReadOnly(false);
   }
+
+  on_auth_.Run(auth_success.value());
 }
 
 void LoginAuthUserView::OnUserViewTap() {

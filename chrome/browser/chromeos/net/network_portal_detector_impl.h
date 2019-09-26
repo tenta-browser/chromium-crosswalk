@@ -33,8 +33,10 @@ namespace base {
 class Value;
 }
 
-namespace net {
-class URLRequestContextGetter;
+namespace network {
+namespace mojom {
+class URLLoaderFactory;
+}
 }
 
 namespace chromeos {
@@ -55,9 +57,8 @@ class NetworkPortalDetectorImpl : public NetworkPortalDetector,
   static constexpr base::TimeDelta kDelaySinceShillPortalForUMA =
       base::TimeDelta::FromSeconds(60);
 
-  NetworkPortalDetectorImpl(
-      const scoped_refptr<net::URLRequestContextGetter>& request_context,
-      bool create_notification_controller);
+  NetworkPortalDetectorImpl(network::mojom::URLLoaderFactory* loader_factory,
+                            bool create_notification_controller);
   ~NetworkPortalDetectorImpl() override;
 
   // Set the URL to be tested for portal state.
@@ -79,8 +80,6 @@ class NetworkPortalDetectorImpl : public NetworkPortalDetector,
     STATE_PORTAL_CHECK_PENDING,
     // Portal check is in progress.
     STATE_CHECKING_FOR_PORTAL,
-    // No portal check when successfully behind portal.
-    STATE_BEHIND_PORTAL_IDLE,
   };
 
   struct DetectionAttemptCompletedReport {
@@ -141,7 +140,7 @@ class NetworkPortalDetectorImpl : public NetworkPortalDetector,
   // PortalDetectorStrategy::Delegate implementation:
   int NoResponseResultCount() override;
   base::TimeTicks AttemptStartTime() override;
-  base::TimeTicks NowTicks() override;
+  base::TimeTicks NowTicks() const override;
 
   // content::NotificationObserver implementation:
   void Observe(int type,
@@ -166,9 +165,6 @@ class NetworkPortalDetectorImpl : public NetworkPortalDetector,
   }
   bool is_checking_for_portal() const {
     return state_ == STATE_CHECKING_FOR_PORTAL;
-  }
-  bool is_behind_portal_idle() const {
-    return state_ == STATE_BEHIND_PORTAL_IDLE;
   }
 
   int same_detection_result_count_for_testing() const {

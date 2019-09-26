@@ -9,8 +9,10 @@
 #include <stdint.h>
 
 #include <map>
+#include <memory>
 #include <set>
 #include <string>
+#include <vector>
 
 #include "base/callback.h"
 #include "base/containers/hash_tables.h"
@@ -18,6 +20,7 @@
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/shared_memory.h"
+#include "components/services/filesystem/public/interfaces/types.mojom.h"
 #include "content/browser/streams/stream.h"
 #include "content/browser/streams/stream_context.h"
 #include "content/common/content_export.h"
@@ -25,7 +28,6 @@
 #include "storage/browser/fileapi/file_system_context.h"
 #include "storage/browser/fileapi/file_system_operation_runner.h"
 #include "storage/common/fileapi/file_system_types.h"
-#include "storage/common/quota/quota_types.h"
 
 class GURL;
 
@@ -37,7 +39,6 @@ class Time;
 namespace storage {
 class FileSystemURL;
 class FileSystemOperationRunner;
-struct DirectoryEntry;
 struct FileSystemInfo;
 }
 
@@ -128,7 +129,7 @@ class CONTENT_EXPORT FileAPIMessageFilter : public BrowserMessageFilter {
                                   const base::File::Info& info);
   void DidReadDirectory(int request_id,
                         base::File::Error result,
-                        std::vector<storage::DirectoryEntry> entries,
+                        std::vector<filesystem::mojom::DirectoryEntry> entries,
                         bool has_more);
   void DidWrite(int request_id,
                 base::File::Error result,

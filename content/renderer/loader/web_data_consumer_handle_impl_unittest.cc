@@ -14,7 +14,6 @@
 
 #include "base/bind.h"
 #include "base/location.h"
-#include "base/memory/ptr_util.h"
 #include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
@@ -23,6 +22,7 @@
 #include "base/threading/thread_task_runner_handle.h"
 #include "mojo/public/cpp/system/data_pipe.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "third_party/blink/public/platform/scheduler/test/renderer_scheduler_test_support.h"
 
 namespace content {
 
@@ -50,7 +50,7 @@ class ClientImpl final : public WebDataConsumerHandle::Client {
       : operation_(operation) {}
 
   void DidGetReadable() override {
-    base::ThreadTaskRunnerHandle::Get()->PostTask(
+    blink::scheduler::GetSingleThreadTaskRunnerForTesting()->PostTask(
         FROM_HERE, base::BindOnce(&ReadDataOperationBase::ReadMore,
                                   base::Unretained(operation_)));
   }
@@ -80,7 +80,9 @@ class ReadDataOperation : public ReadDataOperationBase {
   void ReadData() {
     if (!client_) {
       client_.reset(new ClientImpl(this));
-      reader_ = handle_->ObtainReader(client_.get());
+      reader_ = handle_->ObtainReader(
+          client_.get(),
+          blink::scheduler::GetSingleThreadTaskRunnerForTesting());
     }
 
     Result rv = kOk;
@@ -138,7 +140,9 @@ class TwoPhaseReadDataOperation : public ReadDataOperationBase {
   void ReadData() {
     if (!client_) {
       client_.reset(new ClientImpl(this));
-      reader_ = handle_->ObtainReader(client_.get());
+      reader_ = handle_->ObtainReader(
+          client_.get(),
+          blink::scheduler::GetSingleThreadTaskRunnerForTesting());
     }
 
     Result rv;
@@ -285,8 +289,8 @@ TEST_F(WebDataConsumerHandleImplTest, ZeroSizeRead) {
   constexpr size_t data_size = kDataPipeCapacity - 1;
   std::unique_ptr<WebDataConsumerHandleImpl> handle(
       new WebDataConsumerHandleImpl(std::move(consumer_)));
-  std::unique_ptr<WebDataConsumerHandle::Reader> reader(
-      handle->ObtainReader(nullptr));
+  std::unique_ptr<WebDataConsumerHandle::Reader> reader(handle->ObtainReader(
+      nullptr, blink::scheduler::GetSingleThreadTaskRunnerForTesting()));
 
   size_t read_size;
   WebDataConsumerHandle::Result rv =
@@ -328,8 +332,8 @@ TEST_F(WebDataConsumerHandleImplTest, DidGetReadable) {
       std::make_unique<CountDidGetReadableClient>();
   std::unique_ptr<WebDataConsumerHandleImpl> handle(
       new WebDataConsumerHandleImpl(std::move(consumer_)));
-  std::unique_ptr<WebDataConsumerHandle::Reader> reader(
-      handle->ObtainReader(client.get()));
+  std::unique_ptr<WebDataConsumerHandle::Reader> reader(handle->ObtainReader(
+      client.get(), blink::scheduler::GetSingleThreadTaskRunnerForTesting()));
   base::RunLoop().RunUntilIdle();
   EXPECT_EQ(0, client->num_did_get_readable_called());
 

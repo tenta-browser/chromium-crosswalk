@@ -4,18 +4,25 @@
 
 package org.chromium.chrome.browser.vr_shell;
 
+import static org.chromium.chrome.browser.vr_shell.TestFramework.PAGE_LOAD_TIMEOUT_S;
 import static org.chromium.chrome.browser.vr_shell.VrTestFramework.PAGE_LOAD_TIMEOUT_S;
+import static org.chromium.chrome.browser.vr_shell.VrTestFramework.POLL_CHECK_INTERVAL_LONG_MS;
 import static org.chromium.chrome.browser.vr_shell.VrTestFramework.POLL_CHECK_INTERVAL_SHORT_MS;
 import static org.chromium.chrome.browser.vr_shell.VrTestFramework.POLL_TIMEOUT_LONG_MS;
 import static org.chromium.chrome.browser.vr_shell.VrTestFramework.POLL_TIMEOUT_SHORT_MS;
 import static org.chromium.chrome.test.util.ChromeRestriction.RESTRICTION_TYPE_DON_ENABLED;
 import static org.chromium.chrome.test.util.ChromeRestriction.RESTRICTION_TYPE_VIEWER_DAYDREAM;
 
+import android.annotation.TargetApi;
 import android.app.Activity;
+import android.graphics.Bitmap;
+import android.graphics.Color;
 import android.os.Build;
 import android.os.SystemClock;
+import android.support.test.InstrumentationRegistry;
 import android.support.test.filters.LargeTest;
 import android.support.test.filters.MediumTest;
+import android.support.test.uiautomator.UiDevice;
 
 import org.junit.Assert;
 import org.junit.Before;
@@ -32,12 +39,14 @@ import org.chromium.base.test.params.ParameterizedRunner;
 import org.chromium.base.test.util.CommandLineFlags;
 import org.chromium.base.test.util.MinAndroidSdkLevel;
 import org.chromium.base.test.util.Restriction;
+import org.chromium.base.test.util.RetryOnFailure;
 import org.chromium.chrome.browser.ChromeActivity;
 import org.chromium.chrome.browser.ChromeSwitches;
 import org.chromium.chrome.browser.customtabs.CustomTabActivity;
 import org.chromium.chrome.browser.vr_shell.mock.MockVrIntentHandler;
 import org.chromium.chrome.browser.vr_shell.rules.VrActivityRestriction;
 import org.chromium.chrome.browser.vr_shell.util.NfcSimUtils;
+import org.chromium.chrome.browser.vr_shell.util.TransitionUtils;
 import org.chromium.chrome.browser.vr_shell.util.VrTestRuleUtils;
 import org.chromium.chrome.browser.vr_shell.util.VrTransitionUtils;
 import org.chromium.chrome.test.ChromeActivityTestRule;
@@ -49,17 +58,20 @@ import org.chromium.content_public.browser.WebContents;
 import java.lang.ref.WeakReference;
 import java.util.List;
 import java.util.concurrent.Callable;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
- * End-to-end tests for transitioning between WebVR's magic window and
+ * End-to-end tests for transitioning between WebVR and WebXR's magic window and
  * presentation modes.
  */
 @RunWith(ParameterizedRunner.class)
 @UseRunnerDelegate(ChromeJUnit4RunnerDelegate.class)
-@CommandLineFlags.Add({ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE,
-        ChromeActivityTestRule.DISABLE_NETWORK_PREDICTION_FLAG, "enable-webvr"})
-@MinAndroidSdkLevel(Build.VERSION_CODES.KITKAT) // WebVR is only supported on K+
+@CommandLineFlags.Add({ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE, "enable-webvr"})
+@MinAndroidSdkLevel(Build.VERSION_CODES.KITKAT) // WebVR and WebXR are only supported on K+
+@TargetApi(Build.VERSION_CODES.KITKAT) // Necessary to allow taking screenshots with UiAutomation
 public class WebVrTransitionTest {
     @ClassParameter
     private static List<ParameterSet> sClassParams =
@@ -67,17 +79,19 @@ public class WebVrTransitionTest {
     @Rule
     public RuleChain mRuleChain;
 
-    private ChromeActivityTestRule mVrTestRule;
+    private ChromeActivityTestRule mTestRule;
     private VrTestFramework mVrTestFramework;
+    private XrTestFramework mXrTestFramework;
 
     public WebVrTransitionTest(Callable<ChromeActivityTestRule> callable) throws Exception {
-        mVrTestRule = callable.call();
-        mRuleChain = VrTestRuleUtils.wrapRuleInVrActivityRestrictionRule(mVrTestRule);
+        mTestRule = callable.call();
+        mRuleChain = VrTestRuleUtils.wrapRuleInVrActivityRestrictionRule(mTestRule);
     }
 
     @Before
     public void setUp() throws Exception {
-        mVrTestFramework = new VrTestFramework(mVrTestRule);
+        mVrTestFramework = new VrTestFramework(mTestRule);
+        mXrTestFramework = new XrTestFramework(mTestRule);
     }
 
     /**
@@ -87,13 +101,56 @@ public class WebVrTransitionTest {
     @MediumTest
     @VrActivityRestriction({VrActivityRestriction.SupportedActivity.ALL})
     public void testRequestPresentEntersVr() throws InterruptedException {
-        mVrTestFramework.loadUrlAndAwaitInitialization(
-                VrTestFramework.getHtmlTestFile("test_requestPresent_enters_vr"),
-                PAGE_LOAD_TIMEOUT_S);
-        VrTransitionUtils.enterPresentationAndWait(
-                mVrTestFramework.getFirstTabCvc(), mVrTestFramework.getFirstTabWebContents());
+        testPresentationEntryImpl(
+                VrTestFramework.getHtmlTestFile("generic_webvr_page"), mVrTestFramework);
+    }
+
+    /**
+     * Tests that a successful request for an exclusive session actually enters VR.
+     */
+    @Test
+    @MediumTest
+    @CommandLineFlags.Remove({"enable-webvr"})
+    @CommandLineFlags.Add({"enable-features=WebXR"})
+    @VrActivityRestriction({VrActivityRestriction.SupportedActivity.ALL})
+    public void testRequestSessionEntersVr() throws InterruptedException {
+        testPresentationEntryImpl(
+                XrTestFramework.getHtmlTestFile("generic_webxr_page"), mXrTestFramework);
+    }
+
+    private void testPresentationEntryImpl(String url, TestFramework framework)
+            throws InterruptedException {
+        framework.loadUrlAndAwaitInitialization(url, PAGE_LOAD_TIMEOUT_S);
+        TransitionUtils.enterPresentationOrFail(framework);
         Assert.assertTrue("VrShellDelegate is in VR", VrShellDelegate.isInVr());
-        VrTestFramework.endTest(mVrTestFramework.getFirstTabWebContents());
+
+        // Initial Pixel Test - Verify that the Canvas is blue.
+        // The Canvas is set to blue while presenting.
+        final UiDevice uiDevice =
+                UiDevice.getInstance(InstrumentationRegistry.getInstrumentation());
+
+        CriteriaHelper.pollInstrumentationThread(new Criteria() {
+            @Override
+            public boolean isSatisfied() {
+                Bitmap screenshot = InstrumentationRegistry.getInstrumentation()
+                                            .getUiAutomation()
+                                            .takeScreenshot();
+
+                if (screenshot != null) {
+                    // Calculate center of eye coordinates.
+                    int height = uiDevice.getDisplayHeight() / 2;
+                    int width = uiDevice.getDisplayWidth() / 4;
+
+                    // Verify screen is blue.
+                    int pixel = screenshot.getPixel(width, height);
+                    // Workaround for the immersive mode popup sometimes being rendered over the
+                    // screen on K, which causes the pure blue to be darkened to (0, 0, 127).
+                    // TODO(https://crbug.com/819021): Only check pure blue.
+                    return pixel == Color.BLUE || pixel == Color.rgb(0, 0, 127);
+                }
+                return false;
+            }
+        }, POLL_TIMEOUT_LONG_MS, POLL_CHECK_INTERVAL_LONG_MS);
     }
 
     /**
@@ -107,11 +164,32 @@ public class WebVrTransitionTest {
     public void testWebVrDisabledWithoutFlagSet() throws InterruptedException {
         // TODO(bsheedy): Remove this test once WebVR is on by default without
         // requiring an origin trial.
-        mVrTestFramework.loadUrlAndAwaitInitialization(
+        apiDisabledWithoutFlagSetImpl(
                 VrTestFramework.getHtmlTestFile("test_webvr_disabled_without_flag_set"),
-                PAGE_LOAD_TIMEOUT_S);
-        VrTestFramework.waitOnJavaScriptStep(mVrTestFramework.getFirstTabWebContents());
-        VrTestFramework.endTest(mVrTestFramework.getFirstTabWebContents());
+                mVrTestFramework);
+    }
+
+    /**
+     * Tests that WebXR is not exposed if the flag is not on and the page does
+     * not have an origin trial token.
+     */
+    @Test
+    @MediumTest
+    @CommandLineFlags.Remove({"enable-webvr"})
+    @VrActivityRestriction({VrActivityRestriction.SupportedActivity.ALL})
+    public void testWebXrDisabledWithoutFlagSet() throws InterruptedException {
+        // TODO(bsheedy): Remove this test once WebXR is on by default without
+        // requiring an origin trial.
+        apiDisabledWithoutFlagSetImpl(
+                XrTestFramework.getHtmlTestFile("test_webxr_disabled_without_flag_set"),
+                mXrTestFramework);
+    }
+
+    private void apiDisabledWithoutFlagSetImpl(String url, TestFramework framework)
+            throws InterruptedException {
+        framework.loadUrlAndAwaitInitialization(url, PAGE_LOAD_TIMEOUT_S);
+        TestFramework.waitOnJavaScriptStep(framework.getFirstTabWebContents());
+        TestFramework.endTest(framework.getFirstTabWebContents());
     }
 
     /**
@@ -128,7 +206,7 @@ public class WebVrTransitionTest {
                 PAGE_LOAD_TIMEOUT_S);
         VrTestFramework.runJavaScriptOrFail(
                 "addListener()", POLL_TIMEOUT_LONG_MS, mVrTestFramework.getFirstTabWebContents());
-        NfcSimUtils.simNfcScan(mVrTestRule.getActivity());
+        NfcSimUtils.simNfcScanUntilVrEntry(mTestRule.getActivity());
         VrTestFramework.waitOnJavaScriptStep(mVrTestFramework.getFirstTabWebContents());
         VrTestFramework.endTest(mVrTestFramework.getFirstTabWebContents());
         // VrCore has a 2000 ms debounce timeout on NFC scans. When run multiple times in different
@@ -156,6 +234,83 @@ public class WebVrTransitionTest {
     }
 
     /**
+     * Tests that the exclusive session promise doesn't resolve if the DON flow is
+     * not completed.
+     */
+    @Test
+    @MediumTest
+    @Restriction({RESTRICTION_TYPE_VIEWER_DAYDREAM, RESTRICTION_TYPE_DON_ENABLED})
+    @CommandLineFlags.Remove({"enable-webvr"})
+    @CommandLineFlags.Add({"enable-features=WebXR"})
+    @VrActivityRestriction({VrActivityRestriction.SupportedActivity.ALL})
+    public void testPresentationPromiseUnresolvedDuringDon_WebXr()
+            throws InterruptedException {
+        presentationPromiseUnresolvedDuringDonImpl(
+                XrTestFramework.getHtmlTestFile(
+                        "webxr_test_presentation_promise_unresolved_during_don"),
+                mXrTestFramework);
+    }
+
+    private void presentationPromiseUnresolvedDuringDonImpl(String url, TestFramework framework)
+            throws InterruptedException {
+        framework.loadUrlAndAwaitInitialization(url, PAGE_LOAD_TIMEOUT_S);
+        TransitionUtils.enterPresentationAndWait(
+                framework.getFirstTabCvc(), framework.getFirstTabWebContents());
+        TestFramework.endTest(framework.getFirstTabWebContents());
+    }
+
+    /**
+     * Tests that the requestPresent promise is rejected if the DON flow is canceled.
+     */
+    @Test
+    @MediumTest
+    @Restriction({RESTRICTION_TYPE_VIEWER_DAYDREAM, RESTRICTION_TYPE_DON_ENABLED})
+    @VrActivityRestriction({VrActivityRestriction.SupportedActivity.ALL})
+    public void testPresentationPromiseRejectedIfDonCanceled() throws InterruptedException {
+        presentationPromiseRejectedIfDonCanceledImpl(
+                VrTestFramework.getHtmlTestFile(
+                        "test_presentation_promise_rejected_if_don_canceled"),
+                mVrTestFramework);
+    }
+
+    /**
+     * Tests that the exclusive session promise is rejected if the DON flow is canceled.
+     */
+    @Test
+    @MediumTest
+    @Restriction({RESTRICTION_TYPE_VIEWER_DAYDREAM, RESTRICTION_TYPE_DON_ENABLED})
+    @CommandLineFlags.Remove({"enable-webvr"})
+    @CommandLineFlags.Add({"enable-features=WebXR"})
+    @VrActivityRestriction({VrActivityRestriction.SupportedActivity.ALL})
+    public void testPresentationPromiseRejectedIfDonCanceled_WebXr()
+            throws InterruptedException {
+        presentationPromiseRejectedIfDonCanceledImpl(
+                XrTestFramework.getHtmlTestFile(
+                        "webxr_test_presentation_promise_rejected_if_don_canceled"),
+                mXrTestFramework);
+    }
+
+    private void presentationPromiseRejectedIfDonCanceledImpl(String url, TestFramework framework)
+            throws InterruptedException {
+        framework.loadUrlAndAwaitInitialization(url, PAGE_LOAD_TIMEOUT_S);
+        final UiDevice uiDevice =
+                UiDevice.getInstance(InstrumentationRegistry.getInstrumentation());
+        TransitionUtils.enterPresentation(framework.getFirstTabCvc());
+        // Wait until the DON flow appears to be triggered
+        // TODO(bsheedy): Make this less hacky if there's ever an explicit way to check if the
+        // DON flow is currently active https://crbug.com/758296
+        CriteriaHelper.pollUiThread(new Criteria() {
+            @Override
+            public boolean isSatisfied() {
+                return uiDevice.getCurrentPackageName().equals("com.google.vr.vrcore");
+            }
+        }, POLL_TIMEOUT_LONG_MS, POLL_CHECK_INTERVAL_SHORT_MS);
+        uiDevice.pressBack();
+        TestFramework.waitOnJavaScriptStep(framework.getFirstTabWebContents());
+        TestFramework.endTest(framework.getFirstTabWebContents());
+    }
+
+    /**
      * Tests that an intent from a trusted app such as Daydream Home allows WebVR content
      * to auto present without the need for a user gesture.
      */
@@ -169,8 +324,8 @@ public class WebVrTransitionTest {
 
         // Send an autopresent intent, which will open the link in a CCT
         VrTransitionUtils.sendVrLaunchIntent(
-                VrTestFramework.getHtmlTestFile("test_webvr_autopresent"),
-                mVrTestRule.getActivity(), true /* autopresent */);
+                VrTestFramework.getHtmlTestFile("test_webvr_autopresent"), mTestRule.getActivity(),
+                true /* autopresent */, true /* avoidRelaunch */);
 
         // Wait until a CCT is opened due to the intent
         final AtomicReference<CustomTabActivity> cct = new AtomicReference<CustomTabActivity>();
@@ -210,11 +365,27 @@ public class WebVrTransitionTest {
     @Test
     @MediumTest
     public void testControlsVisibleAfterExitingVr() throws InterruptedException {
-        mVrTestFramework.loadUrlAndAwaitInitialization(
-                VrTestFramework.getHtmlTestFile("generic_webvr_page"), PAGE_LOAD_TIMEOUT_S);
-        VrTransitionUtils.enterPresentationAndWait(
-                mVrTestFramework.getFirstTabCvc(), mVrTestFramework.getFirstTabWebContents());
-        VrTransitionUtils.forceExitVr();
+        controlsVisibleAfterExitingVrImpl(
+                VrTestFramework.getHtmlTestFile("generic_webvr_page"), mVrTestFramework);
+    }
+
+    /**
+     * Tests that the omnibox reappears after exiting an exclusive session.
+     */
+    @Test
+    @MediumTest
+    @CommandLineFlags.Remove({"enable-webvr"})
+    @CommandLineFlags.Add({"enable-features=WebXR"})
+    public void testControlsVisibleAfterExitingVr_WebXr() throws InterruptedException {
+        controlsVisibleAfterExitingVrImpl(
+                XrTestFramework.getHtmlTestFile("generic_webxr_page"), mXrTestFramework);
+    }
+
+    private void controlsVisibleAfterExitingVrImpl(String url, final TestFramework framework)
+            throws InterruptedException {
+        framework.loadUrlAndAwaitInitialization(url, PAGE_LOAD_TIMEOUT_S);
+        TransitionUtils.enterPresentationOrFail(framework);
+        TransitionUtils.forceExitVr();
         // The hiding of the controls may only propagate after VR has exited, so give it a chance
         // to propagate. In the worst case this test will erroneously pass, but should never
         // erroneously fail, and should only be flaky if omnibox showing is broken.
@@ -222,9 +393,134 @@ public class WebVrTransitionTest {
         CriteriaHelper.pollUiThread(new Criteria() {
             @Override
             public boolean isSatisfied() {
-                ChromeActivity activity = mVrTestFramework.getRule().getActivity();
+                ChromeActivity activity = framework.getRule().getActivity();
                 return activity.getFullscreenManager().getBrowserControlHiddenRatio() == 0.0;
             }
         }, POLL_TIMEOUT_SHORT_MS, POLL_CHECK_INTERVAL_SHORT_MS);
+    }
+
+    /**
+     * Tests that window.requestAnimationFrame stops firing while in WebVR presentation, but resumes
+     * afterwards.
+     */
+    @Test
+    @MediumTest
+    @VrActivityRestriction({VrActivityRestriction.SupportedActivity.ALL})
+    @RetryOnFailure
+    public void testWindowRafStopsFiringWhilePresenting() throws InterruptedException {
+        windowRafStopsFiringWhilePresentingImpl(
+                VrTestFramework.getHtmlTestFile("test_window_raf_stops_firing_while_presenting"),
+                mVrTestFramework);
+    }
+
+    /**
+     * Tests that window.requestAnimationFrame stops firing while in a WebXR exclusive session, but
+     * resumes afterwards.
+     */
+    @Test
+    @MediumTest
+    @CommandLineFlags.Remove({"enable-webvr"})
+    @CommandLineFlags.Add({"enable-features=WebXR"})
+    @VrActivityRestriction({VrActivityRestriction.SupportedActivity.ALL})
+    public void testWindowRafStopsFiringWhilePresenting_WebXr()
+            throws InterruptedException {
+        windowRafStopsFiringWhilePresentingImpl(
+                XrTestFramework.getHtmlTestFile(
+                        "webxr_test_window_raf_stops_firing_during_exclusive_session"),
+                mXrTestFramework);
+    }
+
+    private void windowRafStopsFiringWhilePresentingImpl(String url, TestFramework framework)
+            throws InterruptedException {
+        framework.loadUrlAndAwaitInitialization(url, PAGE_LOAD_TIMEOUT_S);
+        TestFramework.executeStepAndWait(
+                "stepVerifyBeforePresent()", framework.getFirstTabWebContents());
+        // Pausing of window.rAF is done asynchronously, so wait until that's done.
+        final CountDownLatch vsyncPausedLatch = new CountDownLatch(1);
+        TestVrShellDelegate.getInstance().setVrShellOnVSyncPausedCallback(
+                () -> { vsyncPausedLatch.countDown(); });
+        TransitionUtils.enterPresentationOrFail(framework);
+        vsyncPausedLatch.await(POLL_TIMEOUT_SHORT_MS, TimeUnit.MILLISECONDS);
+        TestFramework.executeStepAndWait(
+                "stepVerifyDuringPresent()", framework.getFirstTabWebContents());
+        TransitionUtils.forceExitVr();
+        TestFramework.executeStepAndWait(
+                "stepVerifyAfterPresent()", framework.getFirstTabWebContents());
+        TestFramework.endTest(framework.getFirstTabWebContents());
+    }
+
+    /**
+     * Tests renderer crashes while in WebVR presentation stay in VR.
+     */
+    @Test
+    @MediumTest
+    @Restriction(RESTRICTION_TYPE_VIEWER_DAYDREAM)
+    public void testRendererKilledInWebVrStaysInVr()
+            throws IllegalArgumentException, InterruptedException, TimeoutException {
+        rendererKilledInVrStaysInVrImpl(
+                VrTestFramework.getHtmlTestFile("generic_webvr_page"), mVrTestFramework);
+    }
+
+    /**
+     * Tests renderer crashes while in WebXR presentation stay in VR.
+     */
+    @Test
+    @MediumTest
+    @Restriction(RESTRICTION_TYPE_VIEWER_DAYDREAM)
+    @CommandLineFlags.Remove({"enable-webvr"})
+    @CommandLineFlags.Add({"enable-features=WebXR"})
+    public void testRendererKilledInWebXrStaysInVr()
+            throws IllegalArgumentException, InterruptedException, TimeoutException {
+        rendererKilledInVrStaysInVrImpl(
+                XrTestFramework.getHtmlTestFile("generic_webxr_page"), mXrTestFramework);
+    }
+
+    private void rendererKilledInVrStaysInVrImpl(String url, TestFramework framework)
+            throws InterruptedException {
+        framework.loadUrlAndAwaitInitialization(url, PAGE_LOAD_TIMEOUT_S);
+        TransitionUtils.enterPresentationOrFail(framework);
+        framework.simulateRendererKilled();
+        Assert.assertTrue("Browser is in VR", VrShellDelegate.isInVr());
+    }
+
+    /**
+     * Tests that window.rAF continues to fire when we have a non-exclusive session.
+     */
+    @Test
+    @MediumTest
+    @CommandLineFlags.Remove({"enable-webvr"})
+    @CommandLineFlags.Add({"enable-features=WebXR"})
+    @VrActivityRestriction({VrActivityRestriction.SupportedActivity.ALL})
+    public void testWindowRafFiresDuringNonExclusiveSession() throws InterruptedException {
+        mXrTestFramework.loadUrlAndAwaitInitialization(
+                XrTestFramework.getHtmlTestFile(
+                        "test_window_raf_fires_during_non_exclusive_session"),
+                PAGE_LOAD_TIMEOUT_S);
+        XrTestFramework.waitOnJavaScriptStep(mXrTestFramework.getFirstTabWebContents());
+        XrTestFramework.endTest(mXrTestFramework.getFirstTabWebContents());
+    }
+
+    /**
+     * Tests that non-exclusive sessions stop receiving rAFs during an exclusive session, but resume
+     * once the exclusive session ends.
+     */
+    @Test
+    @MediumTest
+    @CommandLineFlags.Remove({"enable-webvr"})
+    @CommandLineFlags.Add({"enable-features=WebXR"})
+    @VrActivityRestriction({VrActivityRestriction.SupportedActivity.ALL})
+    public void testNonExclusiveStopsDuringExclusive() throws InterruptedException {
+        mXrTestFramework.loadUrlAndAwaitInitialization(
+                XrTestFramework.getHtmlTestFile("test_non_exclusive_stops_during_exclusive"),
+                PAGE_LOAD_TIMEOUT_S);
+        XrTestFramework.executeStepAndWait(
+                "stepBeforeExclusive()", mXrTestFramework.getFirstTabWebContents());
+        TransitionUtils.enterPresentationOrFail(mXrTestFramework);
+        XrTestFramework.executeStepAndWait(
+                "stepDuringExclusive()", mXrTestFramework.getFirstTabWebContents());
+        TransitionUtils.forceExitVr();
+        XrTestFramework.executeStepAndWait(
+                "stepAfterExclusive()", mXrTestFramework.getFirstTabWebContents());
+        XrTestFramework.endTest(mXrTestFramework.getFirstTabWebContents());
     }
 }

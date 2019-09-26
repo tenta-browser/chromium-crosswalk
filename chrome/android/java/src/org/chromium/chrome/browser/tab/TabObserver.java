@@ -9,9 +9,10 @@ import android.support.annotation.Nullable;
 import android.view.ContextMenu;
 
 import org.chromium.chrome.browser.TabLoadStatus;
-import org.chromium.content.browser.ContentViewCore;
+import org.chromium.content_public.browser.ContentViewCore;
 import org.chromium.content_public.browser.LoadUrlParams;
 import org.chromium.content_public.browser.WebContents;
+import org.chromium.content_public.common.BrowserControlsState;
 
 /**
  * An observer that is notified of changes to a {@link Tab} object.
@@ -297,4 +298,17 @@ public interface TabObserver {
      * @param isInteractable Whether or not the tab is interactable.
      */
     public void onInteractabilityChanged(boolean isInteractable);
+
+    /**
+     * Called when navigation entries of a tab have been deleted.
+     * @param tab The notifying {@link Tab}.
+     */
+    public void onNavigationEntriesDeleted(Tab tab);
+
+    /**
+     * Called when the tab's browser controls constraints has been updated.
+     * @param tab The notifying {@link Tab}.
+     * @param constraints The updated browser controls constraints.
+     */
+    public void onBrowserControlsConstraintsUpdated(Tab tab, @BrowserControlsState int constraints);
 }

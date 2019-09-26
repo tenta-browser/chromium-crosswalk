@@ -7,12 +7,15 @@
 #include <utility>
 
 #include "base/auto_reset.h"
+#include "base/bind.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/timer/timer.h"
+#include "build/build_config.h"
 #include "chrome/app/chrome_command_ids.h"
 #include "chrome/browser/browsing_data/browsing_data_helper.h"
 #include "chrome/browser/password_manager/chrome_password_manager_client.h"
 #include "chrome/browser/password_manager/password_store_factory.h"
+#include "chrome/browser/signin/signin_ui_util.h"
 #include "chrome/browser/ui/browser_command_controller.h"
 #include "chrome/browser/ui/browser_commands.h"
 #include "chrome/browser/ui/browser_finder.h"
@@ -32,6 +35,12 @@
 #include "components/password_manager/core/browser/statistics_table.h"
 #include "components/password_manager/core/common/credential_manager_types.h"
 #include "content/public/browser/navigation_handle.h"
+
+#if defined(OS_WIN)
+#include "chrome/browser/password_manager/password_manager_util_win.h"
+#elif defined(OS_MACOSX)
+#include "chrome/browser/password_manager/password_manager_util_mac.h"
+#endif
 
 using password_manager::PasswordFormManager;
 
@@ -62,6 +71,7 @@ ManagePasswordsUIController::ManagePasswordsUIController(
     content::WebContents* web_contents)
     : content::WebContentsObserver(web_contents),
       bubble_status_(NOT_SHOWN),
+      are_passwords_revealed_when_next_bubble_is_opened_(false),
       weak_ptr_factory_(this) {
   passwords_data_.set_client(
       ChromePasswordManagerClient::FromWebContents(web_contents));
@@ -136,6 +146,7 @@ void ManagePasswordsUIController::OnHideManualFallbackForSaving() {
 
   save_fallback_timer_.Stop();
 
+  ClearPopUpFlagForBubble();
   if (passwords_data_.GetCurrentForms().empty())
     passwords_data_.OnInactive();
   else
@@ -209,6 +220,7 @@ void ManagePasswordsUIController::OnPasswordAutofilled(
   // for the user that the current state.
   if (passwords_data_.state() == password_manager::ui::INACTIVE_STATE ||
       passwords_data_.state() == password_manager::ui::MANAGE_STATE) {
+    ClearPopUpFlagForBubble();
     passwords_data_.OnPasswordAutofilled(password_form_map, origin,
                                          federated_matches);
     // Don't close the existing bubble. Update the icon later.
@@ -223,13 +235,15 @@ void ManagePasswordsUIController::OnLoginsChanged(
     const password_manager::PasswordStoreChangeList& changes) {
   password_manager::ui::State current_state = GetState();
   passwords_data_.ProcessLoginsChanged(changes);
-  if (current_state != GetState())
+  if (current_state != GetState()) {
+    ClearPopUpFlagForBubble();
     UpdateBubbleAndIconVisibility();
+  }
 }
 
 void ManagePasswordsUIController::UpdateIconAndBubbleState(
     ManagePasswordsIconView* icon) {
-  if (bubble_status_ == SHOULD_POP_UP) {
+  if (ShouldBubblePopUp()) {
     DCHECK(!dialog_controller_);
     // This will detach any existing bubble so OnBubbleHidden() isn't called.
     weak_ptr_factory_.InvalidateWeakPtrs();
@@ -238,8 +252,7 @@ void ManagePasswordsUIController::UpdateIconAndBubbleState(
     icon->SetState(GetState());
     ShowBubbleWithoutUserInteraction();
     // If the bubble appeared then the status is updated in OnBubbleShown().
-    if (bubble_status_ == SHOULD_POP_UP)
-      bubble_status_ = NOT_SHOWN;
+    ClearPopUpFlagForBubble();
   } else {
     password_manager::ui::State state = GetState();
     // The dialog should hide the icon.
@@ -299,12 +312,6 @@ ManagePasswordsUIController::GetCredentialSource() const {
              : password_manager::metrics_util::CredentialSourceType::kUnknown;
 }
 
-bool ManagePasswordsUIController::IsPasswordOverridden() const {
-  const password_manager::PasswordFormManager* form_manager =
-      passwords_data_.form_manager();
-  return form_manager ? form_manager->password_overridden() : false;
-}
-
 const std::vector<std::unique_ptr<autofill::PasswordForm>>&
 ManagePasswordsUIController::GetCurrentForms() const {
   return passwords_data_.GetCurrentForms();
@@ -325,6 +332,7 @@ bool ManagePasswordsUIController::BubbleIsManualFallbackForSaving() const {
 }
 
 void ManagePasswordsUIController::OnBubbleShown() {
+  are_passwords_revealed_when_next_bubble_is_opened_ = false;
   bubble_status_ = SHOWN;
 }
 
@@ -370,7 +378,6 @@ void ManagePasswordsUIController::NeverSavePassword() {
 
 void ManagePasswordsUIController::SavePassword(const base::string16& username,
                                                const base::string16& password) {
-  DCHECK_EQ(password_manager::ui::PENDING_PASSWORD_STATE, GetState());
   const auto& pending_credentials =
       passwords_data_.form_manager()->pending_credentials();
   bool username_edited = pending_credentials.username_value != username;
@@ -429,6 +436,7 @@ void ManagePasswordsUIController::UpdatePassword(
 
   save_fallback_timer_.Stop();
   UpdatePasswordInternal(password_form);
+  ClearPopUpFlagForBubble();
   passwords_data_.TransitionToState(password_manager::ui::MANAGE_STATE);
   UpdateBubbleAndIconVisibility();
 }
@@ -444,16 +452,17 @@ void ManagePasswordsUIController::ChooseCredential(
   autofill::PasswordForm copy_form = form;
   dialog_controller_.reset();
   passwords_data_.ChooseCredential(&copy_form);
+  ClearPopUpFlagForBubble();
   passwords_data_.TransitionToState(password_manager::ui::MANAGE_STATE);
   UpdateBubbleAndIconVisibility();
 }
 
 void ManagePasswordsUIController::NavigateToSmartLockHelpPage() {
-  chrome::NavigateParams params(
-      chrome::FindBrowserWithWebContents(web_contents()),
-      GURL(chrome::kSmartLockHelpPage), ui::PAGE_TRANSITION_LINK);
+  NavigateParams params(chrome::FindBrowserWithWebContents(web_contents()),
+                        GURL(chrome::kSmartLockHelpPage),
+                        ui::PAGE_TRANSITION_LINK);
   params.disposition = WindowOpenDisposition::NEW_FOREGROUND_TAB;
-  chrome::Navigate(&params);
+  Navigate(&params);
 }
 
 void ManagePasswordsUIController::NavigateToPasswordManagerSettingsPage() {
@@ -463,27 +472,48 @@ void ManagePasswordsUIController::NavigateToPasswordManagerSettingsPage() {
 }
 
 void ManagePasswordsUIController::NavigateToPasswordManagerAccountDashboard() {
-  chrome::NavigateParams params(
+  NavigateParams params(
       chrome::FindBrowserWithWebContents(web_contents()),
       GURL(password_manager::kPasswordManagerAccountDashboardURL),
       ui::PAGE_TRANSITION_LINK);
   params.disposition = WindowOpenDisposition::NEW_FOREGROUND_TAB;
-  chrome::Navigate(&params);
+  Navigate(&params);
 }
 
-void ManagePasswordsUIController::NavigateToChromeSignIn() {
+void ManagePasswordsUIController::EnableSync(const AccountInfo& account,
+                                             bool is_default_promo_account) {
   Browser* browser = chrome::FindBrowserWithWebContents(web_contents());
-  browser->window()->ShowAvatarBubbleFromAvatarButton(
-      BrowserWindow::AVATAR_BUBBLE_MODE_SIGNIN, signin::ManageAccountsParams(),
-      signin_metrics::AccessPoint::ACCESS_POINT_PASSWORD_BUBBLE, false);
+  signin_ui_util::EnableSyncFromPromo(
+      browser, account,
+      signin_metrics::AccessPoint::ACCESS_POINT_PASSWORD_BUBBLE,
+      is_default_promo_account);
 }
 
 void ManagePasswordsUIController::OnDialogHidden() {
   dialog_controller_.reset();
   if (GetState() == password_manager::ui::CREDENTIAL_REQUEST_STATE) {
+    ClearPopUpFlagForBubble();
     passwords_data_.TransitionToState(password_manager::ui::MANAGE_STATE);
     UpdateBubbleAndIconVisibility();
   }
+}
+
+bool ManagePasswordsUIController::AuthenticateUser() {
+#if defined(OS_WIN) || defined(OS_MACOSX)
+  base::SequencedTaskRunnerHandle::Get()->PostTask(
+      FROM_HERE,
+      base::BindOnce(
+          &ManagePasswordsUIController::RequestAuthenticationAndReopenBubble,
+          weak_ptr_factory_.GetWeakPtr()));
+  return false;
+#else
+  return true;
+#endif
+}
+
+bool ManagePasswordsUIController::ArePasswordsRevealedWhenBubbleIsOpened()
+    const {
+  return are_passwords_revealed_when_next_bubble_is_opened_;
 }
 
 void ManagePasswordsUIController::SavePasswordInternal() {
@@ -517,12 +547,14 @@ void ManagePasswordsUIController::UpdateBubbleAndIconVisibility() {
   // display either the bubble or the icon.
   if (!ChromePasswordManagerClient::CanShowBubbleOnURL(
           web_contents()->GetLastCommittedURL())) {
+    ClearPopUpFlagForBubble();
     passwords_data_.OnInactive();
   }
 
   Browser* browser = chrome::FindBrowserWithWebContents(web_contents());
   if (!browser)
     return;
+
   LocationBar* location_bar = browser->window()->GetLocationBar();
   DCHECK(location_bar);
   location_bar->UpdateManagePasswordsIconAndBubble();
@@ -560,12 +592,15 @@ void ManagePasswordsUIController::DidFinishNavigation(
 
   // Otherwise, reset the password manager.
   DestroyAccountChooser();
+  ClearPopUpFlagForBubble();
   passwords_data_.OnInactive();
   UpdateBubbleAndIconVisibility();
 }
 
-void ManagePasswordsUIController::WasHidden() {
-  TabDialogs::FromWebContents(web_contents())->HideManagePasswordsBubble();
+void ManagePasswordsUIController::OnVisibilityChanged(
+    content::Visibility visibility) {
+  if (visibility == content::Visibility::HIDDEN)
+    TabDialogs::FromWebContents(web_contents())->HideManagePasswordsBubble();
 }
 
 // static
@@ -575,12 +610,18 @@ base::TimeDelta ManagePasswordsUIController::GetTimeoutForSaveFallback() {
 }
 
 void ManagePasswordsUIController::ShowBubbleWithoutUserInteraction() {
-  DCHECK(IsAutomaticallyOpeningBubble());
+  DCHECK(ShouldBubblePopUp());
   Browser* browser = chrome::FindBrowserWithWebContents(web_contents());
-  if (!browser || browser->toolbar_model()->input_in_progress())
+  // Can be zero in the tests.
+  if (!browser)
     return;
 
   chrome::ExecuteCommand(browser, IDC_MANAGE_PASSWORDS_FOR_PAGE);
+}
+
+void ManagePasswordsUIController::ClearPopUpFlagForBubble() {
+  if (ShouldBubblePopUp())
+    bubble_status_ = NOT_SHOWN;
 }
 
 void ManagePasswordsUIController::DestroyAccountChooser() {
@@ -598,4 +639,39 @@ void ManagePasswordsUIController::WebContentsDestroyed() {
   TabDialogs* tab_dialogs = TabDialogs::FromWebContents(web_contents());
   if (tab_dialogs)
     tab_dialogs->HideManagePasswordsBubble();
+}
+
+void ManagePasswordsUIController::RequestAuthenticationAndReopenBubble() {
+  base::WeakPtr<ManagePasswordsUIController> weak_ptr =
+      weak_ptr_factory_.GetWeakPtr();
+  bool auth_is_successful = ShowAuthenticationDialog();
+  base::SequencedTaskRunnerHandle::Get()->PostTask(
+      FROM_HERE,
+      base::BindOnce(&ManagePasswordsUIController::ReopenBubbleAfterAuth,
+                     weak_ptr, auth_is_successful));
+}
+
+void ManagePasswordsUIController::ReopenBubbleAfterAuth(
+    bool auth_is_successful) {
+  if (GetState() != password_manager::ui::PENDING_PASSWORD_STATE &&
+      GetState() != password_manager::ui::PENDING_PASSWORD_UPDATE_STATE)
+    return;
+  if (auth_is_successful)
+    are_passwords_revealed_when_next_bubble_is_opened_ = true;
+  bubble_status_ = SHOULD_POP_UP_AFTER_REAUTH;
+  UpdateBubbleAndIconVisibility();
+}
+
+bool ManagePasswordsUIController::ShowAuthenticationDialog() {
+#if defined(OS_WIN)
+  return password_manager_util_win::AuthenticateUser(
+      web_contents()->GetNativeView(),
+      password_manager::ReauthPurpose::VIEW_PASSWORD);
+#elif defined(OS_MACOSX)
+  return password_manager_util_mac::AuthenticateUser(
+      password_manager::ReauthPurpose::VIEW_PASSWORD);
+#else
+  NOTREACHED();
+  return true;
+#endif
 }

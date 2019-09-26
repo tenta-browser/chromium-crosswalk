@@ -10,12 +10,12 @@
 #include "base/test/test_suite.h"
 #include "build/build_config.h"
 #include "media/base/media.h"
+#include "services/service_manager/public/cpp/binder_registry.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/WebKit/public/platform/InterfaceRegistry.h"
-#include "third_party/WebKit/public/platform/WebThread.h"
-#include "third_party/WebKit/public/platform/scheduler/renderer/renderer_scheduler.h"
-#include "third_party/WebKit/public/platform/scheduler/test/renderer_scheduler_test_support.h"
-#include "third_party/WebKit/public/web/WebKit.h"
+#include "third_party/blink/public/platform/scheduler/test/renderer_scheduler_test_support.h"
+#include "third_party/blink/public/platform/scheduler/web_main_thread_scheduler.h"
+#include "third_party/blink/public/platform/web_thread.h"
+#include "third_party/blink/public/web/blink.h"
 
 #if defined(OS_ANDROID)
 #include "media/base/android/media_codec_util.h"
@@ -29,12 +29,24 @@
 #include "gin/v8_initializer.h"
 #endif
 
+namespace {
+#if defined(V8_USE_EXTERNAL_STARTUP_DATA)
+#if defined(USE_V8_CONTEXT_SNAPSHOT)
+constexpr gin::V8Initializer::V8SnapshotFileType kSnapshotType =
+    gin::V8Initializer::V8SnapshotFileType::kWithAdditionalContext;
+#else
+constexpr gin::V8Initializer::V8SnapshotFileType kSnapshotType =
+    gin::V8Initializer::V8SnapshotFileType::kDefault;
+#endif
+#endif
+}
+
 class TestBlinkPlatformSupport : public blink::Platform {
  public:
   TestBlinkPlatformSupport()
-      : renderer_scheduler_(
-            blink::scheduler::CreateRendererSchedulerForTests()),
-        main_thread_(renderer_scheduler_->CreateMainThread()) {}
+      : main_thread_scheduler_(
+            blink::scheduler::CreateWebMainThreadSchedulerForTests()),
+        main_thread_(main_thread_scheduler_->CreateMainThread()) {}
   ~TestBlinkPlatformSupport() override;
 
   blink::WebThread* CurrentThread() override {
@@ -43,12 +55,13 @@ class TestBlinkPlatformSupport : public blink::Platform {
   }
 
  private:
-  std::unique_ptr<blink::scheduler::RendererScheduler> renderer_scheduler_;
+  std::unique_ptr<blink::scheduler::WebMainThreadScheduler>
+      main_thread_scheduler_;
   std::unique_ptr<blink::WebThread> main_thread_;
 };
 
 TestBlinkPlatformSupport::~TestBlinkPlatformSupport() {
-  renderer_scheduler_->Shutdown();
+  main_thread_scheduler_->Shutdown();
 }
 
 class BlinkMediaTestSuite : public base::TestSuite {
@@ -84,7 +97,7 @@ void BlinkMediaTestSuite::Initialize() {
   media::InitializeMediaLibrary();
 
 #ifdef V8_USE_EXTERNAL_STARTUP_DATA
-  gin::V8Initializer::LoadV8Snapshot();
+  gin::V8Initializer::LoadV8Snapshot(kSnapshotType);
   gin::V8Initializer::LoadV8Natives();
 #endif
 
@@ -98,8 +111,8 @@ void BlinkMediaTestSuite::Initialize() {
   std::unique_ptr<base::MessageLoop> message_loop;
   if (!base::MessageLoop::current())
     message_loop.reset(new base::MessageLoop());
-  blink::Initialize(blink_platform_support_.get(),
-                    blink::InterfaceRegistry::GetEmptyInterfaceRegistry());
+  service_manager::BinderRegistry empty_registry;
+  blink::Initialize(blink_platform_support_.get(), &empty_registry);
 }
 
 int main(int argc, char** argv) {

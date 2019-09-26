@@ -7,11 +7,9 @@
 #include <memory>
 
 #include "build/build_config.h"
-#include "chrome/services/util_win/public/interfaces/shell_util_win.mojom.h"
+#include "chrome/services/util_win/public/mojom/shell_util_win.mojom.h"
 #include "chrome/services/util_win/shell_util_win_impl.h"
 #include "mojo/public/cpp/bindings/strong_binding.h"
-
-namespace chrome {
 
 namespace {
 
@@ -35,8 +33,7 @@ std::unique_ptr<service_manager::Service> UtilWinService::CreateService() {
 
 void UtilWinService::OnStart() {
   ref_factory_ = std::make_unique<service_manager::ServiceContextRefFactory>(
-      base::Bind(&service_manager::ServiceContext::RequestQuit,
-                 base::Unretained(context())));
+      context()->CreateQuitClosure());
   registry_.AddInterface(
       base::Bind(&OnShellUtilWinRequest, ref_factory_.get()));
 }
@@ -47,5 +44,3 @@ void UtilWinService::OnBindInterface(
     mojo::ScopedMessagePipeHandle interface_pipe) {
   registry_.BindInterface(interface_name, std::move(interface_pipe));
 }
-
-}  //  namespace chrome

@@ -6,6 +6,7 @@
 
 #include <string>
 
+#include "base/bind_helpers.h"
 #include "base/command_line.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
@@ -52,10 +53,11 @@
 #if defined(OS_CHROMEOS)
 #include "chrome/browser/chromeos/login/users/fake_chrome_user_manager.h"
 #include "chrome/browser/chromeos/login/users/scoped_test_user_manager.h"
-#include "chrome/browser/chromeos/login/users/wallpaper/wallpaper_manager.h"
 #include "chrome/browser/chromeos/profiles/profile_helper.h"
 #include "chrome/browser/chromeos/settings/cros_settings.h"
 #include "chrome/browser/chromeos/settings/device_settings_service.h"
+#include "chrome/browser/ui/ash/test_wallpaper_controller.h"
+#include "chrome/browser/ui/ash/wallpaper_controller_client.h"
 #include "chromeos/chromeos_switches.h"
 #include "components/user_manager/scoped_user_manager.h"
 #include "components/user_manager/user_manager.h"
@@ -141,7 +143,10 @@ class ProfileManagerTest : public testing::Test {
 #if defined(OS_CHROMEOS)
     base::CommandLine* cl = base::CommandLine::ForCurrentProcess();
     cl->AppendSwitch(switches::kTestType);
-    chromeos::WallpaperManager::Initialize();
+    wallpaper_controller_client_ =
+        std::make_unique<WallpaperControllerClient>();
+    wallpaper_controller_client_->InitForTesting(
+        test_wallpaper_controller_.CreateInterfacePtr());
 
     // Have to manually reset the session type in between test runs because
     // some tests log in users.
@@ -157,7 +162,7 @@ class ProfileManagerTest : public testing::Test {
     content::RunAllTasksUntilIdle();
 #if defined(OS_CHROMEOS)
     session_type_.reset();
-    chromeos::WallpaperManager::Shutdown();
+    wallpaper_controller_client_.reset();
 #endif
   }
 
@@ -234,6 +239,8 @@ class ProfileManagerTest : public testing::Test {
   chromeos::ScopedTestUserManager test_user_manager_;
   std::unique_ptr<base::AutoReset<extensions::FeatureSessionType>>
       session_type_;
+  std::unique_ptr<WallpaperControllerClient> wallpaper_controller_client_;
+  TestWallpaperController test_wallpaper_controller_;
 #endif
 
   DISALLOW_COPY_AND_ASSIGN(ProfileManagerTest);
@@ -606,7 +613,11 @@ class ProfileManagerGuestTest : public ProfileManagerTest  {
     cl->AppendSwitch(chromeos::switches::kGuestSession);
     cl->AppendSwitch(::switches::kIncognito);
 
-    chromeos::WallpaperManager::Initialize();
+    wallpaper_controller_client_ =
+        std::make_unique<WallpaperControllerClient>();
+    wallpaper_controller_client_->InitForTesting(
+        test_wallpaper_controller_.CreateInterfacePtr());
+
     // Have to manually reset the session type in between test runs because
     // RegisterUser() changes it.
     ASSERT_EQ(extensions::FeatureSessionType::INITIAL,
@@ -658,7 +669,7 @@ TEST_F(ProfileManagerTest, AutoloadProfilesWithBackgroundApps) {
   ProfileAttributesStorage& storage =
       profile_manager->GetProfileAttributesStorage();
   local_state_.Get()->SetUserPref(prefs::kBackgroundModeEnabled,
-                                  base::MakeUnique<base::Value>(true));
+                                  std::make_unique<base::Value>(true));
 
   // Setting a pref which is not applicable to a system (i.e., Android in this
   // case) does not necessarily create it. Don't bother continuing with the
@@ -693,7 +704,7 @@ TEST_F(ProfileManagerTest, DoNotAutoloadProfilesIfBackgroundModeOff) {
   ProfileAttributesStorage& storage =
       profile_manager->GetProfileAttributesStorage();
   local_state_.Get()->SetUserPref(prefs::kBackgroundModeEnabled,
-                                  base::MakeUnique<base::Value>(false));
+                                  std::make_unique<base::Value>(false));
 
   EXPECT_EQ(0u, storage.GetNumberOfProfiles());
 
@@ -1118,6 +1129,32 @@ TEST_F(ProfileManagerTest, CleanUpEphemeralProfiles) {
   EXPECT_EQ("Profile 1", local_state->GetString(prefs::kProfileLastUsed));
 }
 
+TEST_F(ProfileManagerTest, CleanUpEphemeralProfilesWithGuestLastUsedProfile) {
+  ProfileManager* profile_manager = g_browser_process->profile_manager();
+  ProfileAttributesStorage& storage =
+      profile_manager->GetProfileAttributesStorage();
+  ASSERT_EQ(0u, storage.GetNumberOfProfiles());
+
+  const std::string profile_name1 = "Homer";
+  base::FilePath path1 =
+      profile_manager->user_data_dir().AppendASCII(profile_name1);
+  storage.AddProfile(path1, base::UTF8ToUTF16(profile_name1), std::string(),
+                     base::UTF8ToUTF16(profile_name1), 0, std::string());
+  storage.GetAllProfilesAttributes()[0u]->SetIsEphemeral(true);
+  ASSERT_TRUE(base::CreateDirectory(path1));
+  ASSERT_EQ(1u, storage.GetNumberOfProfiles());
+
+  // Set the active profile.
+  PrefService* local_state = g_browser_process->local_state();
+  local_state->SetString(prefs::kProfileLastUsed, std::string("Guest Profile"));
+
+  profile_manager->CleanUpEphemeralProfiles();
+  content::RunAllTasksUntilIdle();
+
+  ASSERT_EQ(0u, storage.GetNumberOfProfiles());
+  EXPECT_EQ("Profile 1", local_state->GetString(prefs::kProfileLastUsed));
+}
+
 TEST_F(ProfileManagerTest, ActiveProfileDeleted) {
   ProfileManager* profile_manager = g_browser_process->profile_manager();
   ASSERT_TRUE(profile_manager);
@@ -1145,8 +1182,7 @@ TEST_F(ProfileManagerTest, ActiveProfileDeleted) {
   local_state->SetString(prefs::kProfileLastUsed, profile_name1);
 
   // Delete the active profile.
-  profile_manager->ScheduleProfileForDeletion(dest_path1,
-                                              ProfileManager::CreateCallback());
+  profile_manager->ScheduleProfileForDeletion(dest_path1, base::DoNothing());
   content::RunAllTasksUntilIdle();
 
   EXPECT_EQ(dest_path2, profile_manager->GetLastUsedProfile()->GetPath());
@@ -1178,8 +1214,7 @@ TEST_F(ProfileManagerTest, LastProfileDeleted) {
   local_state->SetString(prefs::kProfileLastUsed, profile_name1);
 
   // Delete the active profile.
-  profile_manager->ScheduleProfileForDeletion(dest_path1,
-                                              ProfileManager::CreateCallback());
+  profile_manager->ScheduleProfileForDeletion(dest_path1, base::DoNothing());
   content::RunAllTasksUntilIdle();
 
   // A new profile should have been created
@@ -1232,8 +1267,7 @@ TEST_F(ProfileManagerTest, LastProfileDeletedWithGuestActiveProfile) {
   local_state->SetString(prefs::kProfileLastUsed, guest_profile_name);
 
   // Delete the other profile.
-  profile_manager->ScheduleProfileForDeletion(dest_path1,
-                                              ProfileManager::CreateCallback());
+  profile_manager->ScheduleProfileForDeletion(dest_path1, base::DoNothing());
   content::RunAllTasksUntilIdle();
 
   // A new profile should have been created.
@@ -1274,7 +1308,7 @@ TEST_F(ProfileManagerTest, ProfileDisplayNameResetsDefaultName) {
 
   // Deleting a profile means returning to the default name.
   profile_manager->ScheduleProfileForDeletion(profile2->GetPath(),
-                                              ProfileManager::CreateCallback());
+                                              base::DoNothing());
   content::RunAllTasksUntilIdle();
   EXPECT_EQ(default_profile_name,
             profiles::GetAvatarNameForProfile(profile1->GetPath()));
@@ -1319,7 +1353,7 @@ TEST_F(ProfileManagerTest, ProfileDisplayNamePreservesCustomName) {
 
   // Deleting a profile means returning to the original, custom name.
   profile_manager->ScheduleProfileForDeletion(profile2->GetPath(),
-                                              ProfileManager::CreateCallback());
+                                              base::DoNothing());
   content::RunAllTasksUntilIdle();
   EXPECT_EQ(custom_profile_name,
             profiles::GetAvatarNameForProfile(profile1->GetPath()));
@@ -1371,7 +1405,7 @@ TEST_F(ProfileManagerTest, ProfileDisplayNamePreservesSignedInName) {
 
   // Deleting a profile means returning to the original, actual profile name.
   profile_manager->ScheduleProfileForDeletion(profile2->GetPath(),
-                                              ProfileManager::CreateCallback());
+                                              base::DoNothing());
   content::RunAllTasksUntilIdle();
   EXPECT_EQ(gaia_given_name,
             profiles::GetAvatarNameForProfile(profile1->GetPath()));
@@ -1478,8 +1512,7 @@ TEST_F(ProfileManagerTest, ActiveProfileDeletedNeedsToLoadNextProfile) {
 
   // Delete the active profile. This should switch and load the unloaded
   // profile.
-  profile_manager->ScheduleProfileForDeletion(dest_path1,
-                                              ProfileManager::CreateCallback());
+  profile_manager->ScheduleProfileForDeletion(dest_path1, base::DoNothing());
 
   content::RunAllTasksUntilIdle();
 
@@ -1536,12 +1569,10 @@ TEST_F(ProfileManagerTest, ActiveProfileDeletedNextProfileDeletedToo) {
   // Try to break this flow by setting the active profile to Profile2 in the
   // middle (so after the first posted message), and trying to delete Profile2,
   // so that the ProfileManager has to look for a different profile to load.
-  profile_manager->ScheduleProfileForDeletion(dest_path1,
-                                              ProfileManager::CreateCallback());
+  profile_manager->ScheduleProfileForDeletion(dest_path1, base::DoNothing());
   local_state->SetString(prefs::kProfileLastUsed,
                          dest_path2.BaseName().MaybeAsASCII());
-  profile_manager->ScheduleProfileForDeletion(dest_path2,
-                                              ProfileManager::CreateCallback());
+  profile_manager->ScheduleProfileForDeletion(dest_path2, base::DoNothing());
   content::RunAllTasksUntilIdle();
 
   EXPECT_EQ(dest_path3, profile_manager->GetLastUsedProfile()->GetPath());

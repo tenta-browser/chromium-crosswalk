@@ -114,6 +114,12 @@ void ParseMouseClickEvent(const MouseEvent& event, std::vector<INPUT>* output) {
       input.mi.dwFlags = down ? MOUSEEVENTF_MIDDLEDOWN : MOUSEEVENTF_MIDDLEUP;
     } else if (button == MouseEvent::BUTTON_RIGHT) {
       input.mi.dwFlags = down ? MOUSEEVENTF_RIGHTDOWN : MOUSEEVENTF_RIGHTUP;
+    } else if (button == MouseEvent::BUTTON_BACK) {
+      input.mi.dwFlags = down ? MOUSEEVENTF_XDOWN : MOUSEEVENTF_XUP;
+      input.mi.mouseData = XBUTTON1;
+    } else if (button == MouseEvent::BUTTON_FORWARD) {
+      input.mi.dwFlags = down ? MOUSEEVENTF_XDOWN : MOUSEEVENTF_XUP;
+      input.mi.mouseData = XBUTTON2;
     } else {
       input.mi.dwFlags = down ? MOUSEEVENTF_LEFTDOWN : MOUSEEVENTF_LEFTUP;
     }
@@ -366,7 +372,9 @@ void InputInjectorWin::Core::Stop() {
   }
 
   clipboard_.reset();
-  touch_injector_->Deinitialize();
+  if (touch_injector_) {
+    touch_injector_->Deinitialize();
+  }
 }
 
 InputInjectorWin::Core::~Core() {}

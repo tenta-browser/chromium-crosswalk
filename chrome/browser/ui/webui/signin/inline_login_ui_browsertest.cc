@@ -4,7 +4,6 @@
 
 #include "base/command_line.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/memory/ref_counted.h"
 #include "base/run_loop.h"
 #include "base/strings/utf_string_conversions.h"
@@ -309,7 +308,7 @@ void InlineLoginUIBrowserTest::AddEmailToOneClickRejectedList(
   PrefService* pref_service = browser()->profile()->GetPrefs();
   ListPrefUpdate updater(pref_service,
                          prefs::kReverseAutologinRejectedEmailList);
-  updater->AppendIfNotPresent(base::MakeUnique<base::Value>(email));
+  updater->AppendIfNotPresent(std::make_unique<base::Value>(email));
 }
 
 void InlineLoginUIBrowserTest::AllowSigninCookies(bool enable) {
@@ -341,7 +340,7 @@ IN_PROC_BROWSER_TEST_F(InlineLoginUIBrowserTest, MAYBE_DifferentStorageId) {
   std::set<content::WebContents*> set;
   GuestViewManager* manager = GuestViewManager::FromBrowserContext(
       info.contents->GetBrowserContext());
-  manager->ForEachGuest(info.contents, base::Bind(&AddToSet, &set));
+  manager->ForEachGuest(info.contents, base::BindRepeating(&AddToSet, &set));
   ASSERT_EQ(1u, set.size());
   content::WebContents* webview_contents = *set.begin();
   content::RenderProcessHost* process =
@@ -355,8 +354,9 @@ IN_PROC_BROWSER_TEST_F(InlineLoginUIBrowserTest, OneProcessLimit) {
       base::FilePath(base::FilePath::kCurrentDirectory),
       base::FilePath(FILE_PATH_LITERAL("title1.html")));
   GURL test_url_2 = ui_test_utils::GetTestUrl(
-      base::FilePath(base::FilePath::kCurrentDirectory),
-      base::FilePath(FILE_PATH_LITERAL("data:text/html,Hello world!")));
+      base::FilePath(base::FilePath::kCurrentDirectory)
+          .Append(FILE_PATH_LITERAL("frame_tree")),
+      base::FilePath(FILE_PATH_LITERAL("simple.htm")));
 
   // Even when the process limit is set to one, the signin process should
   // still be given its own process and storage partition.

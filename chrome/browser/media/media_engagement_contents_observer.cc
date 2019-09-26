@@ -4,17 +4,20 @@
 
 #include "chrome/browser/media/media_engagement_contents_observer.h"
 
+#include <memory>
+
 #include "base/metrics/histogram.h"
 #include "base/metrics/histogram_macros.h"
-#include "build/build_config.h"
+#include "chrome/browser/media/media_engagement_preloaded_list.h"
 #include "chrome/browser/media/media_engagement_service.h"
 #include "chrome/browser/media/media_engagement_session.h"
 #include "chrome/browser/profiles/profile.h"
 #include "content/public/browser/navigation_handle.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/web_contents.h"
-#include "third_party/WebKit/common/associated_interfaces/associated_interface_provider.h"
-#include "third_party/WebKit/public/platform/media_engagement.mojom.h"
+#include "media/base/media_switches.h"
+#include "third_party/blink/public/common/associated_interfaces/associated_interface_provider.h"
+#include "third_party/blink/public/platform/autoplay.mojom.h"
 
 #if !defined(OS_ANDROID)
 #include "chrome/browser/ui/browser.h"
@@ -26,9 +29,10 @@ namespace {
 
 void SendEngagementLevelToFrame(const url::Origin& origin,
                                 content::RenderFrameHost* render_frame_host) {
-  blink::mojom::MediaEngagementClientAssociatedPtr client;
+  blink::mojom::AutoplayConfigurationClientAssociatedPtr client;
   render_frame_host->GetRemoteAssociatedInterfaces()->GetInterface(&client);
-  client->SetHasHighMediaEngagement(origin);
+  client->AddAutoplayFlags(origin,
+                           blink::mojom::kAutoplayFlagHighMediaEngagement);
 }
 
 }  // namespace.
@@ -158,7 +162,18 @@ void MediaEngagementContentsObserver::DidFinishNavigation(
   if (session_ && session_->IsSameOriginWith(new_origin))
     return;
 
-  session_ = GetOrCreateSession(new_origin, GetOpener());
+  // Only get the opener if the navigation originated from a link.
+  content::WebContents* opener = nullptr;
+  if (ui::PageTransitionCoreTypeIs(navigation_handle->GetPageTransition(),
+                                   ui::PAGE_TRANSITION_LINK) ||
+      ui::PageTransitionCoreTypeIs(navigation_handle->GetPageTransition(),
+                                   ui::PAGE_TRANSITION_RELOAD)) {
+    opener = GetOpener();
+  }
+
+  bool was_restored =
+      navigation_handle->GetRestoreType() != content::RestoreType::NONE;
+  session_ = GetOrCreateSession(new_origin, opener, was_restored);
 }
 
 MediaEngagementContentsObserver::PlayerState::PlayerState(base::Clock* clock)
@@ -175,8 +190,8 @@ MediaEngagementContentsObserver::GetPlayerState(const MediaPlayerId& id) {
   if (state != player_states_.end())
     return state->second;
 
-  auto iter = player_states_.insert(
-      std::make_pair(id, PlayerState(service_->clock_.get())));
+  auto iter =
+      player_states_.insert(std::make_pair(id, PlayerState(service_->clock_)));
   return iter.first->second;
 }
 
@@ -432,7 +447,7 @@ void MediaEngagementContentsObserver::UpdatePlayerTimer(
       return;
 
     std::unique_ptr<base::Timer> new_timer =
-        base::MakeUnique<base::Timer>(true, false);
+        std::make_unique<base::Timer>(true, false);
     if (task_runner_)
       new_timer->SetTaskRunner(task_runner_);
 
@@ -489,8 +504,28 @@ void MediaEngagementContentsObserver::SetTaskRunnerForTest(
 void MediaEngagementContentsObserver::ReadyToCommitNavigation(
     content::NavigationHandle* handle) {
   // TODO(beccahughes): Convert MEI API to using origin.
-  GURL url = handle->GetWebContents()->GetURL();
-  if (service_->HasHighEngagement(url)) {
+  // If the navigation is occuring in the main frame we should use the URL
+  // provided by |handle| as the navigation has not committed yet. If the
+  // navigation is in a sub frame then use the URL from the main frame.
+  GURL url = handle->IsInMainFrame()
+                 ? handle->GetURL()
+                 : handle->GetWebContents()->GetLastCommittedURL();
+  MediaEngagementScore score = service_->CreateEngagementScore(url);
+  bool has_high_engagement = score.high_score();
+
+  // If the preloaded feature flag is enabled and the number of visits is less
+  // than the number of visits required to have an MEI score we should check the
+  // global data.
+  if (!has_high_engagement &&
+      score.visits() < MediaEngagementScore::GetScoreMinVisits() &&
+      base::FeatureList::IsEnabled(media::kPreloadMediaEngagementData)) {
+    has_high_engagement =
+        MediaEngagementPreloadedList::GetInstance()->CheckOriginIsPresent(
+            url::Origin::Create(url));
+  }
+
+  // If we have high media engagement then we should send that to Blink.
+  if (has_high_engagement) {
     SendEngagementLevelToFrame(url::Origin::Create(handle->GetURL()),
                                handle->GetRenderFrameHost());
   }
@@ -509,6 +544,7 @@ content::WebContents* MediaEngagementContentsObserver::GetOpener() const {
         browser->tab_strip_model()->GetIndexOfWebContents(web_contents());
     if (index == TabStripModel::kNoTab)
       continue;
+
     // Whether or not the |opener| is null, this is the right tab strip.
     return browser->tab_strip_model()->GetOpenerOfWebContentsAt(index);
   }
@@ -520,7 +556,8 @@ content::WebContents* MediaEngagementContentsObserver::GetOpener() const {
 scoped_refptr<MediaEngagementSession>
 MediaEngagementContentsObserver::GetOrCreateSession(
     const url::Origin& origin,
-    content::WebContents* opener) const {
+    content::WebContents* opener,
+    bool was_restored) const {
   GURL url = origin.GetURL();
   if (!url.is_valid())
     return nullptr;
@@ -536,5 +573,8 @@ MediaEngagementContentsObserver::GetOrCreateSession(
     return opener_observer->session_;
   }
 
-  return new MediaEngagementSession(service_, origin);
+  return new MediaEngagementSession(
+      service_, origin,
+      was_restored ? MediaEngagementSession::RestoreType::kRestored
+                   : MediaEngagementSession::RestoreType::kNotRestored);
 }

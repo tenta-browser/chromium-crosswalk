@@ -4,6 +4,9 @@
 
 #include "chrome/browser/chromeos/login/quick_unlock/quick_unlock_storage.h"
 
+#include <memory>
+
+#include "base/time/time.h"
 #include "chrome/browser/chromeos/login/quick_unlock/quick_unlock_factory.h"
 #include "chrome/browser/chromeos/login/quick_unlock/quick_unlock_utils.h"
 #include "chrome/common/pref_names.h"
@@ -13,6 +16,10 @@
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace chromeos {
+
+using AuthToken = quick_unlock::AuthToken;
+using QuickUnlockStorage = quick_unlock::QuickUnlockStorage;
+
 namespace {
 
 void SetConfirmationFrequency(
@@ -28,14 +35,21 @@ base::TimeDelta GetExpirationTime(PrefService* pref_service) {
       static_cast<quick_unlock::PasswordConfirmationFrequency>(frequency));
 }
 
+}  // namespace
+
 class QuickUnlockStorageUnitTest : public testing::Test {
  protected:
-  QuickUnlockStorageUnitTest() : profile_(base::MakeUnique<TestingProfile>()) {}
+  QuickUnlockStorageUnitTest() : profile_(std::make_unique<TestingProfile>()) {}
   ~QuickUnlockStorageUnitTest() override {}
 
   // testing::Test:
   void SetUp() override {
     quick_unlock::EnableForTesting(quick_unlock::PinStorageType::kPrefs);
+  }
+
+  void ExpireAuthToken() {
+    quick_unlock::QuickUnlockFactory::GetForProfile(profile_.get())
+        ->auth_token_->ResetForTest();
   }
 
   content::TestBrowserThreadBundle thread_bundle_;
@@ -44,14 +58,11 @@ class QuickUnlockStorageUnitTest : public testing::Test {
   DISALLOW_COPY_AND_ASSIGN(QuickUnlockStorageUnitTest);
 };
 
-}  // namespace
-
 // Provides test-only QuickUnlockStorage APIs.
 class QuickUnlockStorageTestApi {
  public:
   // Does *not* take ownership over |quick_unlock_storage|.
-  explicit QuickUnlockStorageTestApi(
-      quick_unlock::QuickUnlockStorage* quick_unlock_storage)
+  explicit QuickUnlockStorageTestApi(QuickUnlockStorage* quick_unlock_storage)
       : quick_unlock_storage_(quick_unlock_storage) {}
 
   // Reduces the amount of strong auth time available by |time_delta|.
@@ -64,7 +75,7 @@ class QuickUnlockStorageTestApi {
   }
 
  private:
-  quick_unlock::QuickUnlockStorage* quick_unlock_storage_;
+  QuickUnlockStorage* quick_unlock_storage_;
 
   DISALLOW_COPY_AND_ASSIGN(QuickUnlockStorageTestApi);
 };
@@ -73,7 +84,7 @@ class QuickUnlockStorageTestApi {
 // value.
 TEST_F(QuickUnlockStorageUnitTest,
        TimeSinceLastStrongAuthReturnsPositiveValue) {
-  quick_unlock::QuickUnlockStorage* quick_unlock_storage =
+  QuickUnlockStorage* quick_unlock_storage =
       quick_unlock::QuickUnlockFactory::GetForProfile(profile_.get());
   PrefService* pref_service = profile_->GetPrefs();
   QuickUnlockStorageTestApi test_api(quick_unlock_storage);
@@ -94,7 +105,7 @@ TEST_F(QuickUnlockStorageUnitTest,
 // quick unlock storage will request password reconfirmation as expected.
 TEST_F(QuickUnlockStorageUnitTest,
        QuickUnlockPasswordConfirmationFrequencyPreference) {
-  quick_unlock::QuickUnlockStorage* quick_unlock_storage =
+  QuickUnlockStorage* quick_unlock_storage =
       quick_unlock::QuickUnlockFactory::GetForProfile(profile_.get());
   PrefService* pref_service = profile_->GetPrefs();
   QuickUnlockStorageTestApi test_api(quick_unlock_storage);
@@ -149,6 +160,22 @@ TEST_F(QuickUnlockStorageUnitTest,
   SetConfirmationFrequency(
       pref_service, quick_unlock::PasswordConfirmationFrequency::TWELVE_HOURS);
   EXPECT_TRUE(quick_unlock_storage->HasStrongAuth());
+}
+
+TEST_F(QuickUnlockStorageUnitTest, AuthToken) {
+  QuickUnlockStorage* quick_unlock_storage =
+      quick_unlock::QuickUnlockFactory::GetForProfile(profile_.get());
+  EXPECT_EQ(std::string(), quick_unlock_storage->GetAuthToken());
+
+  chromeos::UserContext context;
+  std::string auth_token = quick_unlock_storage->CreateAuthToken(context);
+  EXPECT_NE(std::string(), auth_token);
+  EXPECT_EQ(auth_token, quick_unlock_storage->GetAuthToken());
+  EXPECT_FALSE(quick_unlock_storage->GetAuthTokenExpired());
+
+  ExpireAuthToken();
+  EXPECT_NE(auth_token, quick_unlock_storage->GetAuthToken());
+  EXPECT_TRUE(quick_unlock_storage->GetAuthTokenExpired());
 }
 
 }  // namespace chromeos

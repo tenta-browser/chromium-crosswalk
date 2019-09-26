@@ -15,7 +15,7 @@
 #include "base/strings/utf_string_conversions.h"
 #include "printing/backend/print_backend.h"
 #include "printing/backend/win_helper.h"
-#include "printing/features/features.h"
+#include "printing/buildflags/buildflags.h"
 #include "printing/print_settings_initializer_win.h"
 #include "printing/printed_document.h"
 #include "printing/printing_context_system_dialog_win.h"
@@ -51,11 +51,10 @@ PrintingContextWin::~PrintingContextWin() {
   ReleaseContext();
 }
 
-void PrintingContextWin::AskUserForSettings(
-    int max_pages,
-    bool has_selection,
-    bool is_scripted,
-    const PrintSettingsCallback& callback) {
+void PrintingContextWin::AskUserForSettings(int max_pages,
+                                            bool has_selection,
+                                            bool is_scripted,
+                                            PrintSettingsCallback callback) {
   NOTIMPLEMENTED();
 }
 
@@ -218,7 +217,7 @@ PrintingContext::Result PrintingContextWin::UpdatePrinterSettings(
   if (show_system_dialog) {
     PrintingContext::Result result = PrintingContext::FAILED;
     AskUserForSettings(page_count, false, false,
-                       base::Bind(&AssignResult, &result));
+                       base::BindOnce(&AssignResult, &result));
     return result;
   }
   // Set printer then refresh printer settings.
@@ -263,11 +262,12 @@ PrintingContext::Result PrintingContextWin::NewDocument(
   di.lpszDocName = document_name.c_str();
 
   // Is there a debug dump directory specified? If so, force to print to a file.
-  base::string16 debug_dump_path =
-      PrintedDocument::CreateDebugDumpPath(document_name,
-                                           FILE_PATH_LITERAL(".prn")).value();
-  if (!debug_dump_path.empty())
-    di.lpszOutput = debug_dump_path.c_str();
+  if (PrintedDocument::HasDebugDumpPath()) {
+    base::FilePath debug_dump_path = PrintedDocument::CreateDebugDumpPath(
+        document_name, FILE_PATH_LITERAL(".prn"));
+    if (!debug_dump_path.empty())
+      di.lpszOutput = debug_dump_path.value().c_str();
+  }
 
   // No message loop running in unit tests.
   DCHECK(!base::MessageLoop::current() ||

@@ -23,9 +23,7 @@
 #endif
 
 IOSChromePasswordManagerInfoBarDelegate::
-    ~IOSChromePasswordManagerInfoBarDelegate() {
-  password_manager::metrics_util::LogUIDismissalReason(infobar_response_);
-};
+    ~IOSChromePasswordManagerInfoBarDelegate() = default;
 
 IOSChromePasswordManagerInfoBarDelegate::
     IOSChromePasswordManagerInfoBarDelegate(
@@ -34,11 +32,6 @@ IOSChromePasswordManagerInfoBarDelegate::
     : form_to_save_(std::move(form_to_save)),
       infobar_response_(password_manager::metrics_util::NO_DIRECT_INTERACTION),
       is_smart_lock_branding_enabled_(is_smart_lock_branding_enabled) {}
-
-infobars::InfoBarDelegate::Type
-IOSChromePasswordManagerInfoBarDelegate::GetInfoBarType() const {
-  return PAGE_ACTION_TYPE;
-};
 
 base::string16 IOSChromePasswordManagerInfoBarDelegate::GetLinkText() const {
   return is_smart_lock_branding_enabled_

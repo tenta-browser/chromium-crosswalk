@@ -18,15 +18,15 @@
 #include "build/build_config.h"
 #include "chrome/browser/download/download_path_reservation_tracker.h"
 #include "chrome/browser/download/download_target_determiner.h"
-#include "content/public/test/mock_download_item.h"
+#include "components/download/public/common/mock_download_item.h"
 #include "content/public/test/test_browser_thread_bundle.h"
 #include "content/public/test/test_utils.h"
 #include "net/base/filename_util.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
-using content::DownloadItem;
-using content::MockDownloadItem;
+using download::DownloadItem;
+using download::MockDownloadItem;
 using testing::AnyNumber;
 using testing::Return;
 using testing::ReturnRef;
@@ -149,8 +149,8 @@ DownloadPathReservationTrackerTest::GetLongNamePathInDownloadsDirectory(
           + suffix).c_str());
 }
 
-void SetDownloadItemState(content::MockDownloadItem* download_item,
-                          content::DownloadItem::DownloadState state) {
+void SetDownloadItemState(download::MockDownloadItem* download_item,
+                          download::DownloadItem::DownloadState state) {
   EXPECT_CALL(*download_item, GetState())
       .WillRepeatedly(Return(state));
   download_item->NotifyObserversDownloadUpdated();
@@ -589,9 +589,13 @@ TEST_F(DownloadPathReservationTrackerTest, BasicTruncation) {
       base::GetMaximumPathComponentLength(default_download_path());
   ASSERT_NE(-1, real_max_length);
 
+#if defined(OS_WIN)
+  const size_t max_length = real_max_length - strlen(":Zone.Identifier");
+#else
   // TODO(kinaba): the current implementation leaves spaces for appending
   // ".crdownload". So take it into account. Should be removed in the future.
   const size_t max_length = real_max_length - 11;
+#endif  // defined(OS_WIN)
 
   std::unique_ptr<MockDownloadItem> item(CreateDownloadItem(1));
   base::FilePath path(GetLongNamePathInDownloadsDirectory(
@@ -618,7 +622,11 @@ TEST_F(DownloadPathReservationTrackerTest, TruncationConflict) {
   int real_max_length =
       base::GetMaximumPathComponentLength(default_download_path());
   ASSERT_NE(-1, real_max_length);
+#if defined(OS_WIN)
+  const size_t max_length = real_max_length - strlen(":Zone.Identifier");
+#else
   const size_t max_length = real_max_length - 11;
+#endif  // defined(OS_WIN)
 
   std::unique_ptr<MockDownloadItem> item(CreateDownloadItem(1));
   base::FilePath path(GetLongNamePathInDownloadsDirectory(
@@ -653,7 +661,11 @@ TEST_F(DownloadPathReservationTrackerTest, TruncationFail) {
   int real_max_length =
       base::GetMaximumPathComponentLength(default_download_path());
   ASSERT_NE(-1, real_max_length);
+#if defined(OS_WIN)
+  const size_t max_length = real_max_length - strlen(":Zone.Identifier");
+#else
   const size_t max_length = real_max_length - 11;
+#endif  // defined(OS_WIN)
 
   std::unique_ptr<MockDownloadItem> item(CreateDownloadItem(1));
   base::FilePath path(GetPathInDownloadsDirectory(

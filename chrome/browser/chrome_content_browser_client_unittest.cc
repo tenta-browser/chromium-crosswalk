@@ -11,7 +11,6 @@
 #include "base/bind.h"
 #include "base/command_line.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/message_loop/message_loop.h"
 #include "base/metrics/field_trial.h"
 #include "base/run_loop.h"
@@ -35,7 +34,7 @@
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/content_switches.h"
 #include "content/public/test/test_browser_thread_bundle.h"
-#include "media/media_features.h"
+#include "media/media_buildflags.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "url/gurl.h"
@@ -184,10 +183,9 @@ TEST_F(DisableWebRtcEncryptionFlagTest, StableChannel) {
 
 class BlinkSettingsFieldTrialTest : public testing::Test {
  public:
-  static const char kParserFieldTrialName[];
-  static const char kPreloadScanningFieldTrialName[];
+  static const char kDisallowFetchFieldTrialName[];
+  static const char kCSSExternalScannerFieldTrialName[];
   static const char kFakeGroupName[];
-  static const char kDefaultGroupName[];
 
   BlinkSettingsFieldTrialTest()
       : trial_list_(NULL),
@@ -240,12 +238,11 @@ class BlinkSettingsFieldTrialTest : public testing::Test {
   content::TestBrowserThreadBundle thread_bundle_;
 };
 
-const char BlinkSettingsFieldTrialTest::kParserFieldTrialName[] =
-    "BackgroundHtmlParserTokenLimits";
-const char BlinkSettingsFieldTrialTest::kPreloadScanningFieldTrialName[] =
-    "HtmlPreloadScanning";
+const char BlinkSettingsFieldTrialTest::kDisallowFetchFieldTrialName[] =
+    "DisallowFetchForDocWrittenScriptsInMainFrame";
+const char BlinkSettingsFieldTrialTest::kCSSExternalScannerFieldTrialName[] =
+    "CSSExternalScanner";
 const char BlinkSettingsFieldTrialTest::kFakeGroupName[] = "FakeGroup";
-const char BlinkSettingsFieldTrialTest::kDefaultGroupName[] = "Default";
 
 TEST_F(BlinkSettingsFieldTrialTest, NoFieldTrial) {
   AppendContentBrowserClientSwitches();
@@ -253,14 +250,14 @@ TEST_F(BlinkSettingsFieldTrialTest, NoFieldTrial) {
 }
 
 TEST_F(BlinkSettingsFieldTrialTest, FieldTrialWithoutParams) {
-  CreateFieldTrial(kParserFieldTrialName, kFakeGroupName);
+  CreateFieldTrial(kDisallowFetchFieldTrialName, kFakeGroupName);
   AppendContentBrowserClientSwitches();
   EXPECT_FALSE(command_line().HasSwitch(switches::kBlinkSettings));
 }
 
 TEST_F(BlinkSettingsFieldTrialTest, BlinkSettingsSwitchAlreadySpecified) {
   AppendBlinkSettingsSwitch("foo");
-  CreateFieldTrialWithParams(kParserFieldTrialName, kFakeGroupName,
+  CreateFieldTrialWithParams(kDisallowFetchFieldTrialName, kFakeGroupName,
                              "key1", "value1", "key2", "value2");
   AppendContentBrowserClientSwitches();
   EXPECT_TRUE(command_line().HasSwitch(switches::kBlinkSettings));
@@ -269,7 +266,7 @@ TEST_F(BlinkSettingsFieldTrialTest, BlinkSettingsSwitchAlreadySpecified) {
 }
 
 TEST_F(BlinkSettingsFieldTrialTest, FieldTrialEnabled) {
-  CreateFieldTrialWithParams(kParserFieldTrialName, kFakeGroupName,
+  CreateFieldTrialWithParams(kDisallowFetchFieldTrialName, kFakeGroupName,
                              "key1", "value1", "key2", "value2");
   AppendContentBrowserClientSwitches();
   EXPECT_TRUE(command_line().HasSwitch(switches::kBlinkSettings));
@@ -278,9 +275,9 @@ TEST_F(BlinkSettingsFieldTrialTest, FieldTrialEnabled) {
 }
 
 TEST_F(BlinkSettingsFieldTrialTest, MultipleFieldTrialsEnabled) {
-  CreateFieldTrialWithParams(kParserFieldTrialName, kFakeGroupName,
+  CreateFieldTrialWithParams(kDisallowFetchFieldTrialName, kFakeGroupName,
                              "key1", "value1", "key2", "value2");
-  CreateFieldTrialWithParams(kPreloadScanningFieldTrialName, kFakeGroupName,
+  CreateFieldTrialWithParams(kCSSExternalScannerFieldTrialName, kFakeGroupName,
                              "keyA", "valueA", "keyB", "valueB");
   AppendContentBrowserClientSwitches();
   EXPECT_TRUE(command_line().HasSwitch(switches::kBlinkSettings));
@@ -289,9 +286,9 @@ TEST_F(BlinkSettingsFieldTrialTest, MultipleFieldTrialsEnabled) {
 }
 
 TEST_F(BlinkSettingsFieldTrialTest, MultipleFieldTrialsDuplicateKeys) {
-  CreateFieldTrialWithParams(kParserFieldTrialName, kFakeGroupName,
+  CreateFieldTrialWithParams(kDisallowFetchFieldTrialName, kFakeGroupName,
                              "key1", "value1", "key2", "value2");
-  CreateFieldTrialWithParams(kPreloadScanningFieldTrialName, kFakeGroupName,
+  CreateFieldTrialWithParams(kCSSExternalScannerFieldTrialName, kFakeGroupName,
                              "key2", "duplicate", "key3", "value3");
   AppendContentBrowserClientSwitches();
   EXPECT_TRUE(command_line().HasSwitch(switches::kBlinkSettings));
@@ -307,7 +304,7 @@ class InstantNTPURLRewriteTest : public BrowserWithTestWindowTest {
   void SetUp() override {
     BrowserWithTestWindowTest::SetUp();
     field_trial_list_.reset(new base::FieldTrialList(
-        base::MakeUnique<metrics::SHA1EntropyProvider>("42")));
+        std::make_unique<variations::SHA1EntropyProvider>("42")));
   }
 
   void InstallTemplateURLWithNewTabPage(GURL new_tab_page_url) {
@@ -322,7 +319,7 @@ class InstantNTPURLRewriteTest : public BrowserWithTestWindowTest {
     data.SetURL("http://foo.com/url?bar={searchTerms}");
     data.new_tab_url = new_tab_page_url.spec();
     TemplateURL* template_url =
-        template_url_service->Add(base::MakeUnique<TemplateURL>(data));
+        template_url_service->Add(std::make_unique<TemplateURL>(data));
     template_url_service->SetUserSelectedDefaultSearchProvider(template_url);
   }
 

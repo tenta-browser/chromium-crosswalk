@@ -9,8 +9,8 @@
           "arc::mojom::VideoDecodeClient",
           "arc::mojom::VideoEncodeAccelerator",
           "arc::mojom::VideoEncodeClient",
-          "chrome::mojom::ResourceUsageReporter",
-          "profiling::mojom::ProfilingClient"
+          "arc::mojom::VideoProtectedBufferAllocator",
+          "heap_profiling::mojom::ProfilingClient"
         ]
       }
     }

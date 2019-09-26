@@ -62,9 +62,9 @@ layer at (0,0) size 800x600
           text run at (0,120) width 114: "  node: DIV (five)"
         LayoutBR {BR} at (114,135) size 0x0
         LayoutBR {BR} at (0,140) size 0x19
-        LayoutText {#text} at (0,160) size 326x19
-          text run at (0,160) width 326: "childNodes.length = 11 (should be 11 nodes below)"
-        LayoutBR {BR} at (325,175) size 1x0
+        LayoutText {#text} at (0,160) size 325x19
+          text run at (0,160) width 325: "childNodes.length = 11 (should be 11 nodes below)"
+        LayoutBR {BR} at (325,175) size 0x0
         LayoutText {#text} at (0,180) size 155x19
           text run at (0,180) width 155: "  node: #text (undefined)"
         LayoutBR {BR} at (155,195) size 0x0

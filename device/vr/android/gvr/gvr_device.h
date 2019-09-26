@@ -30,13 +30,15 @@ class DEVICE_VR_EXPORT GvrDevice : public VRDeviceBase {
       VRDisplayImpl* display,
       mojom::VRSubmitFrameClientPtr submit_client,
       mojom::VRPresentationProviderRequest request,
+      mojom::VRRequestPresentOptionsPtr present_options,
       mojom::VRDisplayHost::RequestPresentCallback callback) override;
   void ExitPresent() override;
   void PauseTracking() override;
   void ResumeTracking() override;
 
-  void OnDIPScaleChanged(JNIEnv* env,
-                         const base::android::JavaRef<jobject>& obj);
+  void OnDisplayConfigurationChanged(
+      JNIEnv* env,
+      const base::android::JavaRef<jobject>& obj);
 
   void Activate(mojom::VRDisplayEventReason reason,
                 base::Callback<void(bool)> on_handled);
@@ -50,7 +52,8 @@ class DEVICE_VR_EXPORT GvrDevice : public VRDeviceBase {
   void OnRequestPresentResult(
       mojom::VRDisplayHost::RequestPresentCallback callback,
       VRDisplayImpl* display,
-      bool result);
+      bool result,
+      mojom::VRDisplayFrameTransportOptionsPtr transport_options);
 
   GvrDevice();
   GvrDelegateProvider* GetGvrDelegateProvider();

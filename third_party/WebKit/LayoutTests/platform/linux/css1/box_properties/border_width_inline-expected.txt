@@ -20,17 +20,17 @@ layer at (0,0) size 800x600
         LayoutInline {TT} at (0,0) size 24x16
           LayoutText {#text} at (197,28) size 24x16
             text run at (197,28) width 24: "one"
-        LayoutText {#text} at (221,25) size 162x19
+        LayoutText {#text} at (221,25) size 161x19
           text run at (221,25) width 8: ". "
-          text run at (229,25) width 154: "However, it contains an "
-        LayoutInline {SPAN} at (0,0) size 170x21 [border: (1px solid #000000)]
-          LayoutText {#text} at (383,25) size 144x19
-            text run at (383,25) width 144: "inline element of class "
-          LayoutInline {TT} at (0,0) size 25x16
-            LayoutText {#text} at (526,28) size 25x16
-              text run at (526,28) width 25: "two"
-        LayoutText {#text} at (551,25) size 713x39
-          text run at (551,25) width 187: ", which should result in a thin"
+          text run at (229,25) width 153: "However, it contains an "
+        LayoutInline {SPAN} at (0,0) size 169x21 [border: (1px solid #000000)]
+          LayoutText {#text} at (383,25) size 143x19
+            text run at (383,25) width 143: "inline element of class "
+          LayoutInline {TT} at (0,0) size 24x16
+            LayoutText {#text} at (526,28) size 24x16
+              text run at (526,28) width 24: "two"
+        LayoutText {#text} at (551,25) size 712x39
+          text run at (551,25) width 186: ", which should result in a thin"
           text run at (25,45) width 374: "solid border on each side of each box in the inline element. "
           text run at (399,45) width 103: "There is also an "
         LayoutInline {SPAN} at (0,0) size 183x19
@@ -60,27 +60,27 @@ layer at (0,0) size 800x600
                 LayoutInline {TT} at (0,0) size 24x16
                   LayoutText {#text} at (197,28) size 24x16
                     text run at (197,28) width 24: "one"
-                LayoutText {#text} at (221,25) size 162x19
+                LayoutText {#text} at (221,25) size 161x19
                   text run at (221,25) width 8: ". "
-                  text run at (229,25) width 154: "However, it contains an "
-                LayoutInline {SPAN} at (0,0) size 170x21 [border: (1px solid #000000)]
-                  LayoutText {#text} at (383,25) size 144x19
-                    text run at (383,25) width 144: "inline element of class "
-                  LayoutInline {TT} at (0,0) size 25x16
-                    LayoutText {#text} at (526,28) size 25x16
-                      text run at (526,28) width 25: "two"
-                LayoutText {#text} at (551,25) size 685x39
-                  text run at (551,25) width 159: ", which should result in a"
-                  text run at (25,45) width 402: "thin solid border on each side of each box in the inline element. "
-                  text run at (427,45) width 103: "There is also an "
+                  text run at (229,25) width 153: "However, it contains an "
+                LayoutInline {SPAN} at (0,0) size 169x21 [border: (1px solid #000000)]
+                  LayoutText {#text} at (383,25) size 143x19
+                    text run at (383,25) width 143: "inline element of class "
+                  LayoutInline {TT} at (0,0) size 24x16
+                    LayoutText {#text} at (526,28) size 24x16
+                      text run at (526,28) width 24: "two"
+                LayoutText {#text} at (551,25) size 712x39
+                  text run at (551,25) width 186: ", which should result in a thin"
+                  text run at (25,45) width 374: "solid border on each side of each box in the inline element. "
+                  text run at (399,45) width 103: "There is also an "
                 LayoutInline {SPAN} at (0,0) size 183x19
-                  LayoutText {#text} at (530,45) size 143x19
-                    text run at (530,45) width 143: "inline element of class "
+                  LayoutText {#text} at (502,45) size 143x19
+                    text run at (502,45) width 143: "inline element of class "
                   LayoutInline {TT} at (0,0) size 40x16
-                    LayoutText {#text} at (673,48) size 40x16
-                      text run at (673,48) width 40: "three"
-                LayoutText {#text} at (713,45) size 692x39
-                  text run at (713,45) width 4: ","
-                  text run at (25,65) width 430: "which should have no border width because no border style was set."
+                    LayoutText {#text} at (645,48) size 40x16
+                      text run at (645,48) width 40: "three"
+                LayoutText {#text} at (685,45) size 707x39
+                  text run at (685,45) width 47: ", which"
+                  text run at (25,65) width 387: "should have no border width because no border style was set."
 layer at (8,105) size 784x2 clip at (0,0) size 0x0
   LayoutBlockFlow {HR} at (0,97) size 784x2 [border: (1px inset #EEEEEE)]

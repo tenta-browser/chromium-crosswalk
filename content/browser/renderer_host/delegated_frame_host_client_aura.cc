@@ -28,8 +28,7 @@ bool DelegatedFrameHostClientAura::DelegatedFrameHostIsVisible() const {
   return !render_widget_host_view_->host_->is_hidden();
 }
 
-SkColor DelegatedFrameHostClientAura::DelegatedFrameHostGetGutterColor(
-    SkColor color) const {
+SkColor DelegatedFrameHostClientAura::DelegatedFrameHostGetGutterColor() const {
   // When making an element on the page fullscreen the element's background
   // may not match the page's, so use black as the gutter color to avoid
   // flashes of brighter colors during the transition.
@@ -38,12 +37,7 @@ SkColor DelegatedFrameHostClientAura::DelegatedFrameHostGetGutterColor(
           ->IsFullscreenForCurrentTab()) {
     return SK_ColorBLACK;
   }
-  return color;
-}
-
-gfx::Size DelegatedFrameHostClientAura::DelegatedFrameHostDesiredSizeInDIP()
-    const {
-  return render_widget_host_view_->window_->bounds().size();
+  return render_widget_host_view_->background_color_;
 }
 
 bool DelegatedFrameHostClientAura::DelegatedFrameCanCreateResizeLock() const {
@@ -73,12 +67,11 @@ DelegatedFrameHostClientAura::DelegatedFrameHostCreateResizeLock() {
   return std::make_unique<CompositorResizeLock>(this, desired_size);
 }
 
-viz::LocalSurfaceId DelegatedFrameHostClientAura::GetLocalSurfaceId() const {
-  return render_widget_host_view_->GetLocalSurfaceId();
-}
+void DelegatedFrameHostClientAura::OnFirstSurfaceActivation(
+    const viz::SurfaceInfo& surface_info) {}
 
-void DelegatedFrameHostClientAura::OnBeginFrame() {
-  render_widget_host_view_->OnBeginFrame();
+void DelegatedFrameHostClientAura::OnBeginFrame(base::TimeTicks frame_time) {
+  render_widget_host_view_->OnBeginFrame(frame_time);
 }
 
 bool DelegatedFrameHostClientAura::IsAutoResizeEnabled() const {
@@ -100,6 +93,10 @@ void DelegatedFrameHostClientAura::CompositorResizeLockEnded() {
   auto* window_host = render_widget_host_view_->window_->GetHost();
   window_host->dispatcher()->ReleasePointerMoves();
   render_widget_host_view_->host_->WasResized();
+}
+
+void DelegatedFrameHostClientAura::DidReceiveFirstFrameAfterNavigation() {
+  render_widget_host_view_->host_->DidReceiveFirstFrameAfterNavigation();
 }
 
 }  // namespace content

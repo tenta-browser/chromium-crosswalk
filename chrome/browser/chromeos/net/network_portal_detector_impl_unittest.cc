@@ -89,7 +89,6 @@ class NetworkPortalDetectorImplTest
         base::WrapUnique(user_manager));
 
     DBusThreadManager::Initialize();
-    base::StatisticsRecorder::Initialize();
     SetupNetworkHandler();
 
     ASSERT_TRUE(test_profile_manager_.SetUp());
@@ -107,7 +106,7 @@ class NetworkPortalDetectorImplTest
     EXPECT_TRUE(user_manager::UserManager::Get()->GetPrimaryUser());
 
     network_portal_detector_.reset(
-        new NetworkPortalDetectorImpl(profile_->GetRequestContext(), false));
+        new NetworkPortalDetectorImpl(test_loader_factory(), false));
     network_portal_detector_->Enable(false);
 
     set_detector(network_portal_detector_->captive_portal_detector_.get());
@@ -231,7 +230,7 @@ class NetworkPortalDetectorImplTest
   void SetBehindPortal(const std::string& service_path) {
     DBusThreadManager::Get()->GetShillServiceClient()->SetProperty(
         dbus::ObjectPath(service_path), shill::kStateProperty,
-        base::Value(shill::kStatePortal), base::Bind(&base::DoNothing),
+        base::Value(shill::kStatePortal), base::DoNothing(),
         base::Bind(&ErrorCallbackFunction));
     base::RunLoop().RunUntilIdle();
   }
@@ -246,16 +245,14 @@ class NetworkPortalDetectorImplTest
 
   void SetConnected(const std::string& service_path) {
     DBusThreadManager::Get()->GetShillServiceClient()->Connect(
-        dbus::ObjectPath(service_path),
-        base::Bind(&base::DoNothing),
+        dbus::ObjectPath(service_path), base::DoNothing(),
         base::Bind(&ErrorCallbackFunction));
     base::RunLoop().RunUntilIdle();
   }
 
   void SetDisconnected(const std::string& service_path) {
     DBusThreadManager::Get()->GetShillServiceClient()->Disconnect(
-        dbus::ObjectPath(service_path),
-        base::Bind(&*base::DoNothing),
+        dbus::ObjectPath(service_path), base::DoNothing(),
         base::Bind(&ErrorCallbackFunction));
     base::RunLoop().RunUntilIdle();
   }
@@ -448,7 +445,6 @@ TEST_F(NetworkPortalDetectorImplTest, NetworkChanged) {
   SetConnected(kStubWireless1);
 
   // WiFi is in portal state.
-  fetcher()->set_response_code(200);
   ASSERT_EQ(State::STATE_CHECKING_FOR_PORTAL, state());
 
   // Active network is changed during portal detection for WiFi.
@@ -505,7 +501,7 @@ TEST_F(NetworkPortalDetectorImplTest, NetworkStateChanged) {
 
   CompleteURLFetch(net::OK, 200, nullptr);
 
-  ASSERT_EQ(State::STATE_BEHIND_PORTAL_IDLE, state());
+  ASSERT_NE(State::STATE_IDLE, state());
   CheckPortalState(
       NetworkPortalDetector::CAPTIVE_PORTAL_STATUS_PORTAL, 200, kStubWireless1);
 
@@ -523,7 +519,7 @@ TEST_F(NetworkPortalDetectorImplTest, NetworkStateChanged) {
 
   CompleteURLFetch(net::OK, 200, nullptr);
 
-  ASSERT_EQ(State::STATE_BEHIND_PORTAL_IDLE, state());
+  ASSERT_NE(State::STATE_IDLE, state());
   CheckPortalState(
       NetworkPortalDetector::CAPTIVE_PORTAL_STATUS_PORTAL, 200, kStubWireless1);
 
@@ -705,29 +701,25 @@ TEST_F(NetworkPortalDetectorImplTest, NoResponseButBehindPortal) {
   SetBehindPortal(kStubWireless1);
   ASSERT_EQ(State::STATE_CHECKING_FOR_PORTAL, state());
 
-  CompleteURLFetch(net::ERR_CONNECTION_CLOSED,
-                   net::URLFetcher::RESPONSE_CODE_INVALID, nullptr);
+  CompleteURLFetch(net::ERR_CONNECTION_CLOSED, 0, nullptr);
   ASSERT_EQ(1, no_response_result_count());
   ASSERT_EQ(State::STATE_PORTAL_CHECK_PENDING, state());
 
   // To run CaptivePortalDetector::DetectCaptivePortal().
   base::RunLoop().RunUntilIdle();
 
-  CompleteURLFetch(net::ERR_CONNECTION_CLOSED,
-                   net::URLFetcher::RESPONSE_CODE_INVALID, nullptr);
+  CompleteURLFetch(net::ERR_CONNECTION_CLOSED, 0, nullptr);
   ASSERT_EQ(2, no_response_result_count());
   ASSERT_EQ(State::STATE_PORTAL_CHECK_PENDING, state());
 
   // To run CaptivePortalDetector::DetectCaptivePortal().
   base::RunLoop().RunUntilIdle();
 
-  CompleteURLFetch(net::ERR_CONNECTION_CLOSED,
-                   net::URLFetcher::RESPONSE_CODE_INVALID, nullptr);
+  CompleteURLFetch(net::ERR_CONNECTION_CLOSED, 0, nullptr);
   ASSERT_EQ(3, no_response_result_count());
   EXPECT_NE(State::STATE_IDLE, state());
 
-  CheckPortalState(NetworkPortalDetector::CAPTIVE_PORTAL_STATUS_PORTAL,
-                   net::URLFetcher::RESPONSE_CODE_INVALID,
+  CheckPortalState(NetworkPortalDetector::CAPTIVE_PORTAL_STATUS_PORTAL, 0,
                    kStubWireless1);
 
   ASSERT_TRUE(
@@ -800,8 +792,7 @@ TEST_F(NetworkPortalDetectorImplTest, ErrorScreenStrategyForPortalNetwork) {
   enable_error_screen_strategy();
   SetConnected(kStubWireless1);
 
-  CompleteURLFetch(net::ERR_CONNECTION_CLOSED,
-                   net::URLFetcher::RESPONSE_CODE_INVALID, nullptr);
+  CompleteURLFetch(net::ERR_CONNECTION_CLOSED, 0, nullptr);
   ASSERT_EQ(1, no_response_result_count());
   ASSERT_EQ(State::STATE_PORTAL_CHECK_PENDING, state());
   CheckPortalState(
@@ -810,8 +801,7 @@ TEST_F(NetworkPortalDetectorImplTest, ErrorScreenStrategyForPortalNetwork) {
   // To run CaptivePortalDetector::DetectCaptivePortal().
   base::RunLoop().RunUntilIdle();
 
-  CompleteURLFetch(net::ERR_CONNECTION_CLOSED,
-                   net::URLFetcher::RESPONSE_CODE_INVALID, nullptr);
+  CompleteURLFetch(net::ERR_CONNECTION_CLOSED, 0, nullptr);
   ASSERT_EQ(2, no_response_result_count());
   ASSERT_EQ(State::STATE_PORTAL_CHECK_PENDING, state());
   CheckPortalState(
@@ -904,9 +894,7 @@ TEST_F(NetworkPortalDetectorImplTest, RequestTimeouts) {
   CheckRequestTimeoutAndCompleteAttempt(
       0 /* expected_same_detection_result_count */,
       0 /* expected_no_response_result_count */,
-      5 /* expected_request_timeout_sec */,
-      net::ERR_CONNECTION_CLOSED,
-      net::URLFetcher::RESPONSE_CODE_INVALID);
+      5 /* expected_request_timeout_sec */, net::ERR_CONNECTION_CLOSED, 0);
 
   // Second portal detection attempt for cellular1 uses 10sec timeout.
   ASSERT_EQ(State::STATE_PORTAL_CHECK_PENDING, state());
@@ -914,9 +902,7 @@ TEST_F(NetworkPortalDetectorImplTest, RequestTimeouts) {
   CheckRequestTimeoutAndCompleteAttempt(
       1 /* expected_same_detection_result_count */,
       1 /* expected_no_response_result_count */,
-      10 /* expected_request_timeout_sec */,
-      net::ERR_CONNECTION_CLOSED,
-      net::URLFetcher::RESPONSE_CODE_INVALID);
+      10 /* expected_request_timeout_sec */, net::ERR_CONNECTION_CLOSED, 0);
 
   // Third portal detection attempt for cellular1 uses 15sec timeout.
   ASSERT_EQ(State::STATE_PORTAL_CHECK_PENDING, state());
@@ -924,9 +910,7 @@ TEST_F(NetworkPortalDetectorImplTest, RequestTimeouts) {
   CheckRequestTimeoutAndCompleteAttempt(
       2 /* expected_same_detection_result_count */,
       2 /* expected_no_response_result_count */,
-      15 /* expected_request_timeout_sec */,
-      net::ERR_CONNECTION_CLOSED,
-      net::URLFetcher::RESPONSE_CODE_INVALID);
+      15 /* expected_request_timeout_sec */, net::ERR_CONNECTION_CLOSED, 0);
 
   EXPECT_NE(State::STATE_IDLE, state());
 
@@ -937,9 +921,7 @@ TEST_F(NetworkPortalDetectorImplTest, RequestTimeouts) {
   CheckRequestTimeoutAndCompleteAttempt(
       0 /* expected_same_detection_result_count */,
       0 /* expected_no_response_result_count */,
-      15 /* expected_request_timeout_sec */,
-      net::ERR_CONNECTION_CLOSED,
-      net::URLFetcher::RESPONSE_CODE_INVALID);
+      15 /* expected_request_timeout_sec */, net::ERR_CONNECTION_CLOSED, 0);
   disable_error_screen_strategy();
   ASSERT_EQ(State::STATE_PORTAL_CHECK_PENDING, state());
 
@@ -950,9 +932,7 @@ TEST_F(NetworkPortalDetectorImplTest, RequestTimeouts) {
   CheckRequestTimeoutAndCompleteAttempt(
       0 /* expected_same_detection_result_count */,
       0 /* expected_no_response_result_count */,
-      5 /* expected_request_timeout_sec */,
-      net::ERR_CONNECTION_CLOSED,
-      net::URLFetcher::RESPONSE_CODE_INVALID);
+      5 /* expected_request_timeout_sec */, net::ERR_CONNECTION_CLOSED, 0);
 
   // Second portal detection attempt for wifi1 also uses 5sec timeout.
   ASSERT_EQ(State::STATE_PORTAL_CHECK_PENDING, state());
@@ -995,9 +975,7 @@ TEST_F(NetworkPortalDetectorImplTest, RequestTimeouts2) {
   CheckRequestTimeoutAndCompleteAttempt(
       0 /* expected_same_detection_result_count */,
       0 /* expected_no_response_result_count */,
-      5 /* expected_request_timeout_sec */,
-      net::ERR_CONNECTION_CLOSED,
-      net::URLFetcher::RESPONSE_CODE_INVALID);
+      5 /* expected_request_timeout_sec */, net::ERR_CONNECTION_CLOSED, 0);
   ASSERT_EQ(State::STATE_PORTAL_CHECK_PENDING, state());
   base::RunLoop().RunUntilIdle();
 
@@ -1005,9 +983,7 @@ TEST_F(NetworkPortalDetectorImplTest, RequestTimeouts2) {
   CheckRequestTimeoutAndCompleteAttempt(
       1 /* expected_same_detection_result_count */,
       1 /* expected_no_response_result_count */,
-      10 /* expected_request_timeout_sec */,
-      net::ERR_CONNECTION_CLOSED,
-      net::URLFetcher::RESPONSE_CODE_INVALID);
+      10 /* expected_request_timeout_sec */, net::ERR_CONNECTION_CLOSED, 0);
   ASSERT_EQ(State::STATE_PORTAL_CHECK_PENDING, state());
   base::RunLoop().RunUntilIdle();
 
@@ -1015,9 +991,7 @@ TEST_F(NetworkPortalDetectorImplTest, RequestTimeouts2) {
   CheckRequestTimeoutAndCompleteAttempt(
       2 /* expected_same_detection_result_count */,
       2 /* expected_no_response_result_count */,
-      15 /* expected_request_timeout_sec */,
-      net::ERR_CONNECTION_CLOSED,
-      net::URLFetcher::RESPONSE_CODE_INVALID);
+      15 /* expected_request_timeout_sec */, net::ERR_CONNECTION_CLOSED, 0);
   EXPECT_NE(State::STATE_IDLE, state());
   ASSERT_EQ(State::STATE_PORTAL_CHECK_PENDING, state());
 
@@ -1066,8 +1040,7 @@ TEST_F(NetworkPortalDetectorImplTest, BehindPortalAndThenBlacklisted) {
                      base::TimeDelta::FromSeconds(1));
   ASSERT_EQ(State::STATE_CHECKING_FOR_PORTAL, state());
 
-  CompleteURLFetch(net::ERR_CONNECTION_CLOSED,
-                   net::URLFetcher::RESPONSE_CODE_INVALID, nullptr);
+  CompleteURLFetch(net::ERR_CONNECTION_CLOSED, 0, nullptr);
   ASSERT_EQ(1, no_response_result_count());
   ASSERT_EQ(State::STATE_PORTAL_CHECK_PENDING, state());
 
@@ -1081,8 +1054,7 @@ TEST_F(NetworkPortalDetectorImplTest, BehindPortalAndThenBlacklisted) {
   // kDelaySincePortalNetworkForUMA.
   advance_time_ticks(base::TimeDelta::FromSeconds(2));
 
-  CompleteURLFetch(net::ERR_CONNECTION_CLOSED,
-                   net::URLFetcher::RESPONSE_CODE_INVALID, nullptr);
+  CompleteURLFetch(net::ERR_CONNECTION_CLOSED, 0, nullptr);
   ASSERT_EQ(2, no_response_result_count());
   ASSERT_EQ(State::STATE_PORTAL_CHECK_PENDING, state());
 

@@ -36,6 +36,7 @@
 #include "net/cert/pem_tokenizer.h"
 #include "net/log/net_log_source.h"
 #include "net/log/test_net_log.h"
+#include "net/socket/client_socket_handle.h"
 #include "net/socket/socket_test_util.h"
 #include "net/socket/ssl_client_socket.h"
 #include "net/socket/ssl_server_socket.h"
@@ -45,6 +46,7 @@
 #include "net/ssl/ssl_server_config.h"
 #include "net/test/cert_test_util.h"
 #include "net/test/test_data_directory.h"
+#include "net/traffic_annotation/network_traffic_annotation_test_helper.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -103,60 +105,23 @@ base::FilePath GetTestCertsDirectory() {
   return path;
 }
 
-class MockTCPSocket : public net::TCPClientSocket {
+class MockTCPSocket : public net::MockTCPClientSocket {
  public:
-  explicit MockTCPSocket(const net::MockConnect& connect_data)
-      : TCPClientSocket(net::AddressList(),
-                        nullptr,
-                        nullptr,
-                        net::NetLogSource()),
-        connect_data_(connect_data),
-        do_nothing_(false) {}
-
-  explicit MockTCPSocket(bool do_nothing)
-      : TCPClientSocket(net::AddressList(),
-                        nullptr,
-                        nullptr,
-                        net::NetLogSource()) {
-    CHECK(do_nothing);
+  MockTCPSocket(bool do_nothing, net::SocketDataProvider* socket_provider)
+      : net::MockTCPClientSocket(net::AddressList(), nullptr, socket_provider) {
     do_nothing_ = do_nothing;
   }
 
-  virtual int Connect(const net::CompletionCallback& callback) {
+  int Connect(const net::CompletionCallback& callback) override {
     if (do_nothing_) {
       // Stall the I/O event loop.
       return net::ERR_IO_PENDING;
     }
 
-    if (connect_data_.mode == net::ASYNC) {
-      CHECK_NE(connect_data_.result, net::ERR_IO_PENDING);
-      base::ThreadTaskRunnerHandle::Get()->PostTask(
-          FROM_HERE, base::Bind(callback, connect_data_.result));
-      return net::ERR_IO_PENDING;
-    } else {
-      return connect_data_.result;
-    }
-  }
-
-  virtual bool SetKeepAlive(bool enable, int delay) {
-    // Always return true in tests
-    return true;
-  }
-
-  virtual bool SetNoDelay(bool no_delay) {
-    // Always return true in tests
-    return true;
-  }
-
-  MOCK_METHOD3(Read, int(net::IOBuffer*, int, const net::CompletionCallback&));
-  MOCK_METHOD3(Write, int(net::IOBuffer*, int, const net::CompletionCallback&));
-
-  virtual void Disconnect() {
-    // Do nothing in tests
+    return net::MockTCPClientSocket::Connect(callback);
   }
 
  private:
-  net::MockConnect connect_data_;
   bool do_nothing_;
 
   DISALLOW_COPY_AND_ASSIGN(MockTCPSocket);
@@ -240,8 +205,7 @@ class MockTestCastSocket : public TestCastSocketBase {
   using TestCastSocketBase::TestCastSocketBase;
 
   MockTestCastSocket(const CastSocketOpenParams& open_params, Logger* logger)
-      : TestCastSocketBase(open_params, logger),
-        mock_net_log_(open_params.net_log) {}
+      : TestCastSocketBase(open_params, logger) {}
 
   ~MockTestCastSocket() override {}
 
@@ -289,24 +253,34 @@ class MockTestCastSocket : public TestCastSocketBase {
   }
 
  private:
-  std::unique_ptr<net::TCPClientSocket> CreateTcpSocket() override {
+  // Creates a TCP socket. Note that at most one socket created with this method
+  // may be live at a time.
+  std::unique_ptr<net::TransportClientSocket> CreateTcpSocket() override {
     if (tcp_unresponsive_) {
-      return std::unique_ptr<net::TCPClientSocket>(new MockTCPSocket(true));
+      socket_data_provider_ = std::make_unique<net::StaticSocketDataProvider>(
+          nullptr, 0, nullptr, 0);
+      return std::unique_ptr<net::TransportClientSocket>(
+          new MockTCPSocket(true, socket_data_provider_.get()));
     } else {
-      return std::unique_ptr<net::TCPClientSocket>(
-          new MockTCPSocket(*tcp_connect_data_));
+      socket_data_provider_ = std::make_unique<net::StaticSocketDataProvider>(
+          reads_.data(), reads_.size(), writes_.data(), writes_.size());
+      socket_data_provider_->set_connect_data(*tcp_connect_data_);
+      return std::unique_ptr<net::TransportClientSocket>(
+          new MockTCPSocket(false, socket_data_provider_.get()));
     }
   }
 
+  // Creates an SSL socket. Note that at most one socket created with this
+  // method may be live at a time.
   std::unique_ptr<net::SSLClientSocket> CreateSslSocket(
-      std::unique_ptr<net::StreamSocket>) override {
-    ssl_data_.reset(new net::StaticSocketDataProvider(
-        reads_.data(), reads_.size(), writes_.data(), writes_.size()));
-    ssl_data_->set_connect_data(*ssl_connect_data_);
-
-    // NOTE: net::MockTCPClientSocket inherits from net::SSLClientSocket !!
-    return std::unique_ptr<net::SSLClientSocket>(new net::MockTCPClientSocket(
-        net::AddressList(), mock_net_log_, ssl_data_.get()));
+      std::unique_ptr<net::StreamSocket> tcp_socket) override {
+    ssl_socket_data_provider_ = std::make_unique<net::SSLSocketDataProvider>(
+        ssl_connect_data_->mode, ssl_connect_data_->result);
+    auto client_handle = std::make_unique<net::ClientSocketHandle>();
+    client_handle->SetSocket(std::move(tcp_socket));
+    return std::make_unique<net::MockSSLClientSocket>(
+        std::move(client_handle), net::HostPortPair(), net::SSLConfig(),
+        ssl_socket_data_provider_.get());
   }
 
   // Simulated connect data
@@ -315,11 +289,11 @@ class MockTestCastSocket : public TestCastSocketBase {
   // Simulated read / write data
   std::vector<net::MockWrite> writes_;
   std::vector<net::MockRead> reads_;
-  std::unique_ptr<net::SocketDataProvider> ssl_data_;
+  std::unique_ptr<net::SocketDataProvider> socket_data_provider_;
+  std::unique_ptr<net::SSLSocketDataProvider> ssl_socket_data_provider_;
   // If true, makes TCP connection process stall. For timeout testing.
   bool tcp_unresponsive_ = false;
   MockCastTransport* mock_transport_ = nullptr;
-  net::NetLog* mock_net_log_ = nullptr;
 
   DISALLOW_COPY_AND_ASSIGN(MockTestCastSocket);
 };
@@ -335,16 +309,17 @@ class SslTestCastSocket : public TestCastSocketBase {
 
   using TestCastSocketBase::TestCastSocketBase;
 
-  void SetTcpSocket(std::unique_ptr<net::TCPClientSocket> tcp_client_socket) {
+  void SetTcpSocket(
+      std::unique_ptr<net::TransportClientSocket> tcp_client_socket) {
     tcp_client_socket_ = std::move(tcp_client_socket);
   }
 
  private:
-  std::unique_ptr<net::TCPClientSocket> CreateTcpSocket() override {
+  std::unique_ptr<net::TransportClientSocket> CreateTcpSocket() override {
     return std::move(tcp_client_socket_);
   }
 
-  std::unique_ptr<net::TCPClientSocket> tcp_client_socket_;
+  std::unique_ptr<net::TransportClientSocket> tcp_client_socket_;
 };
 
 class CastSocketTestBase : public testing::Test {
@@ -399,7 +374,7 @@ class MockCastSocketTest : public CastSocketTestBase {
     socket_->SetupMockTransport();
     CastMessage challenge_proto = CreateAuthChallenge();
     EXPECT_CALL(*socket_->GetMockTransport(),
-                SendMessage(EqualsProto(challenge_proto), _))
+                SendMessage(EqualsProto(challenge_proto), _, _))
         .WillOnce(PostCompletionCallbackTask<1>(net::OK));
     EXPECT_CALL(*socket_->GetMockTransport(), Start());
     EXPECT_CALL(handler_, OnConnectComplete(socket_.get()));
@@ -533,7 +508,7 @@ class SslCastSocketTest : public CastSocketTestBase {
       net::TestCompletionCallback write_callback;
       int write_result = write_callback.GetResult(server_socket_->Write(
           draining_buffer.get(), draining_buffer->BytesRemaining(),
-          write_callback.callback()));
+          write_callback.callback(), TRAFFIC_ANNOTATION_FOR_TESTS));
       EXPECT_GT(write_result, 0);
       draining_buffer->DidConsume(write_result);
     }
@@ -547,7 +522,7 @@ class SslCastSocketTest : public CastSocketTestBase {
 
   // Underlying TCP sockets for |socket_| to communicate with |server_socket_|
   // when testing with the real SSL implementation.
-  std::unique_ptr<net::TCPClientSocket> tcp_client_socket_;
+  std::unique_ptr<net::TransportClientSocket> tcp_client_socket_;
   std::unique_ptr<net::TCPServerSocket> tcp_server_socket_;
 
   std::unique_ptr<SslTestCastSocket> socket_;
@@ -614,7 +589,7 @@ TEST_F(MockCastSocketTest, TestConnectAuthMessageCorrupted) {
 
   CastMessage challenge_proto = CreateAuthChallenge();
   EXPECT_CALL(*socket_->GetMockTransport(),
-              SendMessage(EqualsProto(challenge_proto), _))
+              SendMessage(EqualsProto(challenge_proto), _, _))
       .WillOnce(PostCompletionCallbackTask<1>(net::OK));
   EXPECT_CALL(*socket_->GetMockTransport(), Start());
   EXPECT_CALL(handler_, OnConnectComplete(socket_.get()));
@@ -779,7 +754,7 @@ TEST_F(MockCastSocketTest, TestConnectChallengeSendError) {
   socket_->SetupTcpConnect(net::SYNCHRONOUS, net::OK);
   socket_->SetupSslConnect(net::SYNCHRONOUS, net::OK);
   EXPECT_CALL(*socket_->GetMockTransport(),
-              SendMessage(EqualsProto(CreateAuthChallenge()), _))
+              SendMessage(EqualsProto(CreateAuthChallenge()), _, _))
       .WillOnce(PostCompletionCallbackTask<1>(net::ERR_CONNECTION_RESET));
 
   EXPECT_CALL(handler_, OnConnectComplete(socket_.get()));
@@ -799,7 +774,7 @@ TEST_F(MockCastSocketTest, TestConnectDestroyedAfterChallengeSent) {
   socket_->SetupTcpConnect(net::SYNCHRONOUS, net::OK);
   socket_->SetupSslConnect(net::SYNCHRONOUS, net::OK);
   EXPECT_CALL(*socket_->GetMockTransport(),
-              SendMessage(EqualsProto(CreateAuthChallenge()), _))
+              SendMessage(EqualsProto(CreateAuthChallenge()), _, _))
       .WillOnce(PostCompletionCallbackTask<1>(net::ERR_CONNECTION_RESET));
   socket_->Connect(base::Bind(&CompleteHandler::OnConnectComplete,
                               base::Unretained(&handler_)));
@@ -815,7 +790,7 @@ TEST_F(MockCastSocketTest, TestConnectChallengeReplyReceiveError) {
   socket_->SetupTcpConnect(net::SYNCHRONOUS, net::OK);
   socket_->SetupSslConnect(net::SYNCHRONOUS, net::OK);
   EXPECT_CALL(*socket_->GetMockTransport(),
-              SendMessage(EqualsProto(CreateAuthChallenge()), _))
+              SendMessage(EqualsProto(CreateAuthChallenge()), _, _))
       .WillOnce(PostCompletionCallbackTask<1>(net::OK));
   socket_->AddReadResult(net::SYNCHRONOUS, net::ERR_FAILED);
   EXPECT_CALL(*observer_, OnError(_, ChannelError::CAST_SOCKET_ERROR));
@@ -843,7 +818,7 @@ TEST_F(MockCastSocketTest, TestConnectChallengeVerificationFails) {
   EXPECT_CALL(*observer_, OnError(_, ChannelError::AUTHENTICATION_ERROR));
   CastMessage challenge_proto = CreateAuthChallenge();
   EXPECT_CALL(*socket_->GetMockTransport(),
-              SendMessage(EqualsProto(challenge_proto), _))
+              SendMessage(EqualsProto(challenge_proto), _, _))
       .WillOnce(PostCompletionCallbackTask<1>(net::OK));
   EXPECT_CALL(handler_, OnConnectComplete(socket_.get()));
   EXPECT_CALL(*socket_->GetMockTransport(), Start());
@@ -893,8 +868,10 @@ TEST_F(MockCastSocketTest, TestConnectEndToEndWithRealTransportAsync) {
   // Send the test message through a real transport object.
   EXPECT_CALL(handler_, OnWriteComplete(net::OK));
   socket_->transport()->SendMessage(
-      test_message, base::Bind(&CompleteHandler::OnWriteComplete,
-                               base::Unretained(&handler_)));
+      test_message,
+      base::Bind(&CompleteHandler::OnWriteComplete,
+                 base::Unretained(&handler_)),
+      TRAFFIC_ANNOTATION_FOR_TESTS);
   RunPendingTasks();
 
   EXPECT_EQ(ReadyState::OPEN, socket_->ready_state());
@@ -935,8 +912,10 @@ TEST_F(MockCastSocketTest, TestConnectEndToEndWithRealTransportSync) {
   // Send the test message through a real transport object.
   EXPECT_CALL(handler_, OnWriteComplete(net::OK));
   socket_->transport()->SendMessage(
-      test_message, base::Bind(&CompleteHandler::OnWriteComplete,
-                               base::Unretained(&handler_)));
+      test_message,
+      base::Bind(&CompleteHandler::OnWriteComplete,
+                 base::Unretained(&handler_)),
+      TRAFFIC_ANNOTATION_FOR_TESTS);
   RunPendingTasks();
 
   EXPECT_EQ(ReadyState::OPEN, socket_->ready_state());
@@ -1089,8 +1068,10 @@ TEST_F(SslCastSocketTest, TestMessageEndToEndWithRealSSL) {
 
   EXPECT_CALL(handler_, OnWriteComplete(net::OK));
   socket_->transport()->SendMessage(
-      test_message, base::Bind(&CompleteHandler::OnWriteComplete,
-                               base::Unretained(&handler_)));
+      test_message,
+      base::Bind(&CompleteHandler::OnWriteComplete,
+                 base::Unretained(&handler_)),
+      TRAFFIC_ANNOTATION_FOR_TESTS);
   RunPendingTasks();
 
   read = ReadExactLength(test_message_buffer.get(), test_message_length,

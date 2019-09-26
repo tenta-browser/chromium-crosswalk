@@ -7,7 +7,6 @@
 #include <algorithm>
 
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "cc/trees/layer_tree_frame_sink.h"
 #include "components/exo/layer_tree_frame_sink_holder.h"
 #include "components/exo/surface.h"
@@ -19,6 +18,7 @@
 #include "ui/aura/window.h"
 #include "ui/aura/window_delegate.h"
 #include "ui/aura/window_event_dispatcher.h"
+#include "ui/aura/window_occlusion_tracker.h"
 #include "ui/aura/window_targeter.h"
 #include "ui/aura/window_tree_host.h"
 #include "ui/base/cursor/cursor.h"
@@ -105,6 +105,11 @@ void SurfaceTreeHost::SetRootSurface(Surface* root_surface) {
   if (root_surface == root_surface_)
     return;
 
+  // This method applies multiple changes to the window tree. Use
+  // ScopedPauseOcclusionTracking to ensure that occlusion isn't recomputed
+  // before all changes have been applied.
+  aura::WindowOcclusionTracker::ScopedPauseOcclusionTracking pause_occlusion;
+
   if (root_surface_) {
     root_surface_->window()->Hide();
     host_window_->RemoveChild(root_surface_->window());
@@ -150,10 +155,6 @@ bool SurfaceTreeHost::HasHitTestRegion() const {
 void SurfaceTreeHost::GetHitTestMask(gfx::Path* mask) const {
   if (root_surface_)
     root_surface_->GetHitTestMask(mask);
-}
-
-gfx::NativeCursor SurfaceTreeHost::GetCursor(const gfx::Point& point) const {
-  return root_surface_ ? root_surface_->GetCursor() : ui::CursorType::kNull;
 }
 
 void SurfaceTreeHost::DidReceiveCompositorFrameAck() {
@@ -217,7 +218,7 @@ bool SurfaceTreeHost::IsSurfaceSynchronized() const {
   return false;
 }
 
-bool SurfaceTreeHost::IsTouchEnabled(Surface*) const {
+bool SurfaceTreeHost::IsInputEnabled(Surface*) const {
   return true;
 }
 
@@ -285,10 +286,22 @@ void SurfaceTreeHost::SubmitCompositorFrame() {
   frame.render_pass_list.push_back(viz::RenderPass::Create());
   const std::unique_ptr<viz::RenderPass>& render_pass =
       frame.render_pass_list.back();
+
   const int kRenderPassId = 1;
-  render_pass->SetNew(kRenderPassId, gfx::Rect(), gfx::Rect(),
-                      gfx::Transform());
-  float device_scale_factor = host_window()->layer()->device_scale_factor();
+  // Compute a temporaly stable (across frames) size for the render pass output
+  // rectangle that is consistent with the window size. It is used to set the
+  // size of the output surface. Note that computing the actual coverage while
+  // building up the render pass can lead to the size being one pixel too large,
+  // especially if the device scale factor has a floating point representation
+  // that requires many bits of precision in the mantissa, due to the coverage
+  // computing an "enclosing" pixel rectangle. This isn't a problem for the
+  // dirty rectangle, so it is updated as part of filling in the render pass.
+  const float device_scale_factor =
+      host_window()->layer()->device_scale_factor();
+  const gfx::Size output_surface_size_in_pixels = gfx::ConvertSizeToPixel(
+      device_scale_factor, host_window_->bounds().size());
+  render_pass->SetNew(kRenderPassId, gfx::Rect(output_surface_size_in_pixels),
+                      gfx::Rect(), gfx::Transform());
   frame.metadata.device_scale_factor = device_scale_factor;
   root_surface_->AppendSurfaceHierarchyContentsToFrame(
       root_surface_origin_, device_scale_factor,
@@ -324,12 +337,18 @@ void SurfaceTreeHost::SubmitCompositorFrame() {
 // SurfaceTreeHost, private:
 
 void SurfaceTreeHost::UpdateHostWindowBounds() {
+  // This method applies multiple changes to the window tree. Use
+  // ScopedPauseOcclusionTracking to ensure that occlusion isn't recomputed
+  // before all changes have been applied.
+  aura::WindowOcclusionTracker::ScopedPauseOcclusionTracking pause_occlusion;
+
   gfx::Rect bounds = root_surface_->surface_hierarchy_content_bounds();
   host_window_->SetBounds(
       gfx::Rect(host_window_->bounds().origin(), bounds.size()));
-  host_window_->layer()->SetFillsBoundsOpaquely(
+  const bool fills_bounds_opaquely =
       bounds.size() == root_surface_->content_size() &&
-      root_surface_->FillsBoundsOpaquely());
+      root_surface_->FillsBoundsOpaquely();
+  host_window_->SetTransparent(!fills_bounds_opaquely);
 
   root_surface_origin_ = gfx::Point() - bounds.OffsetFromOrigin();
   root_surface_->window()->SetBounds(gfx::Rect(

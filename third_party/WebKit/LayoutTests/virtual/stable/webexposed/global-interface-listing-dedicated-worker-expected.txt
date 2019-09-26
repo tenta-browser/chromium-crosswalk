@@ -5,6 +5,17 @@ On success, you will see a series of "PASS" messages, followed by "TEST COMPLETE
 
 Starting worker: resources/global-interface-listing-worker.js
 [Worker] [INTERFACES]
+[Worker] interface AbortController
+[Worker]     attribute @@toStringTag
+[Worker]     getter signal
+[Worker]     method abort
+[Worker]     method constructor
+[Worker] interface AbortSignal : EventTarget
+[Worker]     attribute @@toStringTag
+[Worker]     getter aborted
+[Worker]     getter onabort
+[Worker]     method constructor
+[Worker]     setter onabort
 [Worker] interface Blob
 [Worker]     attribute @@toStringTag
 [Worker]     getter size
@@ -270,28 +281,6 @@ Starting worker: resources/global-interface-listing-worker.js
 [Worker]     method constructor
 [Worker]     method contains
 [Worker]     method item
-[Worker] interface DataView
-[Worker]     attribute @@toStringTag
-[Worker]     getter buffer
-[Worker]     getter byteLength
-[Worker]     getter byteOffset
-[Worker]     method constructor
-[Worker]     method getFloat32
-[Worker]     method getFloat64
-[Worker]     method getInt16
-[Worker]     method getInt32
-[Worker]     method getInt8
-[Worker]     method getUint16
-[Worker]     method getUint32
-[Worker]     method getUint8
-[Worker]     method setFloat32
-[Worker]     method setFloat64
-[Worker]     method setInt16
-[Worker]     method setInt32
-[Worker]     method setInt8
-[Worker]     method setUint16
-[Worker]     method setUint32
-[Worker]     method setUint8
 [Worker] interface DedicatedWorkerGlobalScope : WorkerGlobalScope
 [Worker]     attribute @@toStringTag
 [Worker]     attribute PERSISTENT
@@ -600,6 +589,7 @@ Starting worker: resources/global-interface-listing-worker.js
 [Worker]     getter effectiveType
 [Worker]     getter onchange
 [Worker]     getter rtt
+[Worker]     getter saveData
 [Worker]     method constructor
 [Worker]     setter onchange
 [Worker] interface Notification : EventTarget
@@ -643,6 +633,7 @@ Starting worker: resources/global-interface-listing-worker.js
 [Worker]     method constructor
 [Worker]     method disconnect
 [Worker]     method observe
+[Worker]     method takeRecords
 [Worker] interface PerformanceObserverEntryList
 [Worker]     attribute @@toStringTag
 [Worker]     method constructor
@@ -666,9 +657,18 @@ Starting worker: resources/global-interface-listing-worker.js
 [Worker]     getter responseEnd
 [Worker]     getter responseStart
 [Worker]     getter secureConnectionStart
+[Worker]     getter serverTiming
 [Worker]     getter transferSize
 [Worker]     getter workerStart
 [Worker]     method constructor
+[Worker]     method toJSON
+[Worker] interface PerformanceServerTiming
+[Worker]     attribute @@toStringTag
+[Worker]     getter description
+[Worker]     getter duration
+[Worker]     getter name
+[Worker]     method constructor
+[Worker]     method toJSON
 [Worker] interface PermissionStatus : EventTarget
 [Worker]     attribute @@toStringTag
 [Worker]     getter onchange
@@ -724,13 +724,16 @@ Starting worker: resources/global-interface-listing-worker.js
 [Worker]     getter bodyUsed
 [Worker]     getter cache
 [Worker]     getter credentials
+[Worker]     getter destination
 [Worker]     getter headers
 [Worker]     getter integrity
+[Worker]     getter keepalive
 [Worker]     getter method
 [Worker]     getter mode
 [Worker]     getter redirect
 [Worker]     getter referrer
 [Worker]     getter referrerPolicy
+[Worker]     getter signal
 [Worker]     getter url
 [Worker]     method arrayBuffer
 [Worker]     method blob
@@ -812,6 +815,10 @@ Starting worker: resources/global-interface-listing-worker.js
 [Worker]     getter encoding
 [Worker]     method constructor
 [Worker]     method encode
+[Worker] interface TransformStream
+[Worker]     getter readable
+[Worker]     getter writable
+[Worker]     method constructor
 [Worker] interface URL
 [Worker]     static method createObjectURL
 [Worker]     static method revokeObjectURL
@@ -928,6 +935,7 @@ Starting worker: resources/global-interface-listing-worker.js
 [Worker]     getter appVersion
 [Worker]     getter budget
 [Worker]     getter connection
+[Worker]     getter deviceMemory
 [Worker]     getter hardwareConcurrency
 [Worker]     getter onLine
 [Worker]     getter permissions

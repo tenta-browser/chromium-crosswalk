@@ -4,6 +4,8 @@
 
 #include "ash/login/ui/login_auth_user_view.h"
 #include "ash/login/ui/login_test_base.h"
+#include "ash/login/ui/login_test_utils.h"
+#include "base/bind_helpers.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/views/layout/box_layout.h"
 #include "ui/views/widget/widget.h"
@@ -21,17 +23,21 @@ class LoginAuthUserViewUnittest : public LoginTestBase {
   void SetUp() override {
     LoginTestBase::SetUp();
 
-    user_ = CreateUser("user");
-    view_ = new LoginAuthUserView(
-        user_, base::Bind([](bool auth_success) {}) /*on_auth*/,
-        base::Bind([]() {}) /*on_easy_unlock_icon_hovered*/,
-        base::Bind([]() {}) /*on_easy_unlock_icon_tapped*/,
-        base::Bind([]() {}) /*on_tap*/);
+    user_ = CreateUser("user@domain.com");
+
+    LoginAuthUserView::Callbacks auth_callbacks;
+    auth_callbacks.on_auth = base::DoNothing();
+    auth_callbacks.on_easy_unlock_icon_hovered = base::DoNothing();
+    auth_callbacks.on_easy_unlock_icon_tapped = base::DoNothing();
+    auth_callbacks.on_tap = base::DoNothing();
+    auth_callbacks.on_remove_warning_shown = base::DoNothing();
+    auth_callbacks.on_remove = base::DoNothing();
+    view_ = new LoginAuthUserView(user_, auth_callbacks);
 
     // We proxy |view_| inside of |container_| so we can control layout.
     container_ = new views::View();
     container_->SetLayoutManager(
-        new views::BoxLayout(views::BoxLayout::kVertical));
+        std::make_unique<views::BoxLayout>(views::BoxLayout::kVertical));
     container_->AddChildView(view_);
     SetWidget(CreateWidgetWithContent(container_));
   }

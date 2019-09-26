@@ -30,17 +30,16 @@ class MenuRunner;
 
 // This class provides basic drawing and mouse-over behavior for buttons
 // appearing in the toolbar.
+// TODO: Consider making ToolbarButton and AppMenuButton share a common base
+// class https://crbug.com/819854.
 class ToolbarButton : public views::ImageButton,
                       public views::ContextMenuController {
  public:
-  // Padding inside the border (around the image).
-  static constexpr int kInteriorPadding = 6;
-
-  // Takes ownership of the |model|, which can be null if no menu
-  // is to be shown.
+  // The profile and listener pointers must outlive this class. The model can
+  // be null if no menu is to be shown.
   ToolbarButton(Profile* profile,
                 views::ButtonListener* listener,
-                ui::MenuModel* model);
+                std::unique_ptr<ui::MenuModel> model);
   ~ToolbarButton() override;
 
   // Set up basic mouseover border behavior.
@@ -64,6 +63,11 @@ class ToolbarButton : public views::ImageButton,
   void OnMouseExited(const ui::MouseEvent& event) override;
   void OnGestureEvent(ui::GestureEvent* event) override;
   void GetAccessibleNodeData(ui::AXNodeData* node_data) override;
+  std::unique_ptr<views::InkDrop> CreateInkDrop() override;
+  std::unique_ptr<views::InkDropRipple> CreateInkDropRipple() const override;
+  std::unique_ptr<views::InkDropHighlight> CreateInkDropHighlight()
+      const override;
+  std::unique_ptr<views::InkDropMask> CreateInkDropMask() const override;
 
   // views::ContextMenuController:
   void ShowContextMenuForView(View* source,
@@ -93,10 +97,10 @@ class ToolbarButton : public views::ImageButton,
   std::unique_ptr<ui::MenuModel> model_;
 
   // Indicates if menu is currently showing.
-  bool menu_showing_;
+  bool menu_showing_ = false;
 
   // Y position of mouse when left mouse button is pressed.
-  int y_position_on_lbuttondown_;
+  int y_position_on_lbuttondown_ = 0;
 
   // The model adapter for the drop down menu.
   std::unique_ptr<views::MenuModelAdapter> menu_model_adapter_;

@@ -10,6 +10,7 @@
 #include <sstream>
 
 #include "base/bind.h"
+#include "base/bind_helpers.h"
 #include "base/format_macros.h"
 #include "base/macros.h"
 #include "base/strings/string_util.h"
@@ -167,7 +168,7 @@ void ShillPropertyHandler::SetTechnologyEnabled(
     }
     enabling_technologies_.insert(technology);
     shill_manager_->EnableTechnology(
-        technology, base::Bind(&base::DoNothing),
+        technology, base::DoNothing(),
         base::Bind(&ShillPropertyHandler::EnableTechnologyFailed, AsWeakPtr(),
                    technology, error_callback));
   } else {
@@ -175,7 +176,7 @@ void ShillPropertyHandler::SetTechnologyEnabled(
     enabled_technologies_.erase(technology);
     enabling_technologies_.erase(technology);
     shill_manager_->DisableTechnology(
-        technology, base::Bind(&base::DoNothing),
+        technology, base::DoNothing(),
         base::Bind(&network_handler::ShillErrorCallbackFunction,
                    "SetTechnologyEnabled Failed", technology, error_callback));
   }
@@ -194,7 +195,7 @@ void ShillPropertyHandler::SetProhibitedTechnologies(
     enabling_technologies_.erase(technology);
     enabled_technologies_.erase(technology);
     shill_manager_->DisableTechnology(
-        technology, base::Bind(&base::DoNothing),
+        technology, base::DoNothing(),
         base::Bind(&network_handler::ShillErrorCallbackFunction,
                    "DisableTechnology Failed", technology, error_callback));
   }
@@ -204,7 +205,7 @@ void ShillPropertyHandler::SetProhibitedTechnologies(
       base::JoinString(prohibited_technologies, ",");
   base::Value value(prohibited_list);
   shill_manager_->SetProperty(
-      "ProhibitedTechnologies", value, base::Bind(&base::DoNothing),
+      "ProhibitedTechnologies", value, base::DoNothing(),
       base::Bind(&network_handler::ShillErrorCallbackFunction,
                  "SetTechnologiesProhibited Failed", prohibited_list,
                  error_callback));
@@ -214,7 +215,7 @@ void ShillPropertyHandler::SetCheckPortalList(
     const std::string& check_portal_list) {
   base::Value value(check_portal_list);
   shill_manager_->SetProperty(
-      shill::kCheckPortalListProperty, value, base::Bind(&base::DoNothing),
+      shill::kCheckPortalListProperty, value, base::DoNothing(),
       base::Bind(&network_handler::ShillErrorCallbackFunction,
                  "SetCheckPortalList Failed", "Manager",
                  network_handler::ErrorCallback()));
@@ -223,10 +224,19 @@ void ShillPropertyHandler::SetCheckPortalList(
 void ShillPropertyHandler::SetWakeOnLanEnabled(bool enabled) {
   base::Value value(enabled);
   shill_manager_->SetProperty(
-      shill::kWakeOnLanEnabledProperty, value, base::Bind(&base::DoNothing),
+      shill::kWakeOnLanEnabledProperty, value, base::DoNothing(),
       base::Bind(&network_handler::ShillErrorCallbackFunction,
                  "SetWakeOnLanEnabled Failed", "Manager",
                  network_handler::ErrorCallback()));
+}
+
+void ShillPropertyHandler::SetHostname(const std::string& hostname) {
+  base::Value value(hostname);
+  shill_manager_->SetProperty(
+      shill::kHostNameProperty, value, base::DoNothing(),
+      base::BindRepeating(&network_handler::ShillErrorCallbackFunction,
+                          "SetHostname Failed", "Manager",
+                          network_handler::ErrorCallback()));
 }
 
 void ShillPropertyHandler::SetNetworkThrottlingStatus(
@@ -234,8 +244,10 @@ void ShillPropertyHandler::SetNetworkThrottlingStatus(
     uint32_t upload_rate_kbits,
     uint32_t download_rate_kbits) {
   shill_manager_->SetNetworkThrottlingStatus(
-      throttling_enabled, upload_rate_kbits, download_rate_kbits,
-      base::Bind(&base::DoNothing),
+      ShillManagerClient::NetworkThrottlingStatus{
+          throttling_enabled, upload_rate_kbits, download_rate_kbits,
+      },
+      base::DoNothing(),
       base::Bind(&network_handler::ShillErrorCallbackFunction,
                  "SetNetworkThrottlingStatus failed", "Manager",
                  network_handler::ErrorCallback()));
@@ -243,7 +255,7 @@ void ShillPropertyHandler::SetNetworkThrottlingStatus(
 
 void ShillPropertyHandler::RequestScanByType(const std::string& type) const {
   shill_manager_->RequestScan(
-      type, base::Bind(&base::DoNothing),
+      type, base::DoNothing(),
       base::Bind(&network_handler::ShillErrorCallbackFunction,
                  "RequestScan Failed", type, network_handler::ErrorCallback()));
 }
@@ -474,16 +486,14 @@ void ShillPropertyHandler::GetPropertiesCallback(
     const std::string& path,
     DBusMethodCallStatus call_status,
     const base::DictionaryValue& properties) {
-  NET_LOG(DEBUG) << "GetPropertiesCallback: "
-                 << ManagedState::TypeToString(type) << " For: " << path;
   pending_updates_[type].erase(path);
   if (call_status != DBUS_METHOD_CALL_SUCCESS) {
     // The shill service no longer exists.  This can happen when a network
     // has been removed.
-    NET_LOG(DEBUG) << "Failed to get properties for: " << path << ": "
-                   << call_status;
     return;
   }
+  NET_LOG(DEBUG) << "GetProperties received for "
+                 << ManagedState::TypeToString(type) << ": " << path;
   listener_->UpdateManagedStateProperties(type, path, properties);
 
   if (type == ManagedState::MANAGED_TYPE_NETWORK) {

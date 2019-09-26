@@ -4,34 +4,11 @@
 from core import perf_benchmark
 
 
-from measurements import v8_detached_context_age_in_gc
 import page_sets
 
 from telemetry import benchmark
-from telemetry import story
 from telemetry.timeline import chrome_trace_category_filter
 from telemetry.web_perf import timeline_based_measurement
-
-
-@benchmark.Owner(emails=['ulan@chromium.org'])
-class V8DetachedContextAgeInGC(perf_benchmark.PerfBenchmark):
-  """Measures the number of GCs needed to collect a detached context.
-
-  http://www.chromium.org/developers/design-documents/rendering-benchmarks"""
-  test = v8_detached_context_age_in_gc.V8DetachedContextAgeInGC
-  page_set = page_sets.PageReloadCasesPageSet
-
-  @classmethod
-  def Name(cls):
-    return 'v8.detached_context_age_in_gc'
-
-  def GetExpectations(self):
-    class StoryExpectations(story.expectations.StoryExpectations):
-      def SetExpectations(self):
-        self.DisableStory('Docs  (1 open document tab)',
-                          [story.expectations.ALL_WIN],
-                          'crbug.com/')
-    return StoryExpectations()
 
 
 class _Top25RuntimeStats(perf_benchmark.PerfBenchmark):
@@ -87,11 +64,3 @@ class V8Top25RuntimeStats(_Top25RuntimeStats):
 
   def CreateStorySet(self, options):
     return page_sets.V8Top25StorySet()
-
-  def GetExpectations(self):
-    class StoryExpectations(story.expectations.StoryExpectations):
-      def SetExpectations(self):
-        self.DisableBenchmark(
-            [story.expectations.ALL_ANDROID, story.expectations.ALL_WIN],
-            'crbug.com/664318')
-    return StoryExpectations()

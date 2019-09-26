@@ -17,11 +17,11 @@
 #include "ipc/ipc_message.h"
 #include "ppapi/proxy/ppapi_messages.h"
 #include "ppapi/shared_impl/url_response_info_data.h"
-#include "third_party/WebKit/public/platform/FilePathConversion.h"
-#include "third_party/WebKit/public/platform/WebHTTPHeaderVisitor.h"
-#include "third_party/WebKit/public/platform/WebString.h"
-#include "third_party/WebKit/public/platform/WebURL.h"
-#include "third_party/WebKit/public/platform/WebURLResponse.h"
+#include "third_party/blink/public/platform/file_path_conversion.h"
+#include "third_party/blink/public/platform/web_http_header_visitor.h"
+#include "third_party/blink/public/platform/web_string.h"
+#include "third_party/blink/public/platform/web_url.h"
+#include "third_party/blink/public/platform/web_url_response.h"
 
 using blink::WebHTTPHeaderVisitor;
 using blink::WebString;
@@ -31,10 +31,10 @@ namespace content {
 
 namespace {
 
-class HeaderFlattener : public WebHTTPHeaderVisitor {
+class HeadersToString : public WebHTTPHeaderVisitor {
  public:
-  HeaderFlattener() {}
-  ~HeaderFlattener() override {}
+  HeadersToString() {}
+  ~HeadersToString() override {}
 
   const std::string& buffer() const { return buffer_; }
 
@@ -88,9 +88,9 @@ void DataFromWebURLResponse(RendererPpapiHostImpl* host_impl,
         response.HttpHeaderField(WebString::FromUTF8("Location")).Utf8();
   }
 
-  HeaderFlattener flattener;
-  response.VisitHTTPHeaderFields(&flattener);
-  data.headers = flattener.buffer();
+  HeadersToString headers_to_string;
+  response.VisitHTTPHeaderFields(&headers_to_string);
+  data.headers = headers_to_string.buffer();
 
   WebString file_path = response.DownloadFilePath();
   if (!file_path.IsEmpty()) {

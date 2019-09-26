@@ -8,7 +8,6 @@
 #include "ash/shell.h"
 #include "ash/system/tray/system_tray_notifier.h"
 #include "ash/wm/tablet_mode/tablet_mode_controller.h"
-#include "base/memory/ptr_util.h"
 #include "base/memory/singleton.h"
 #include "ui/aura/client/drag_drop_delegate.h"
 #include "ui/aura/client/focus_client.h"
@@ -69,18 +68,6 @@ void WMHelper::AddFocusObserver(aura::client::FocusChangeObserver* observer) {
 void WMHelper::RemoveFocusObserver(
     aura::client::FocusChangeObserver* observer) {
   aura::client::GetFocusClient(GetPrimaryRoot())->RemoveObserver(observer);
-}
-
-void WMHelper::AddCursorObserver(aura::client::CursorClientObserver* observer) {
-  // TODO(crbug.com/631103): Mushrome doesn't have a cursor manager yet.
-  if (ash::Shell::GetAshConfig() == ash::Config::CLASSIC)
-    ash::Shell::Get()->cursor_manager()->AddObserver(observer);
-}
-
-void WMHelper::RemoveCursorObserver(
-    aura::client::CursorClientObserver* observer) {
-  if (ash::Shell::GetAshConfig() == ash::Config::CLASSIC)
-    ash::Shell::Get()->cursor_manager()->RemoveObserver(observer);
 }
 
 void WMHelper::AddTabletModeObserver(ash::TabletModeObserver* observer) {
@@ -182,20 +169,8 @@ aura::Window* WMHelper::GetFocusedWindow() const {
   return focus_client->GetFocusedWindow();
 }
 
-ui::CursorSize WMHelper::GetCursorSize() const {
-  // TODO(crbug.com/631103): Mushrome doesn't have a cursor manager yet.
-  if (ash::Shell::GetAshConfig() == ash::Config::MUS)
-    return ui::CursorSize::kNormal;
-  return ash::Shell::Get()->cursor_manager()->GetCursorSize();
-}
-
-const display::Display& WMHelper::GetCursorDisplay() const {
-  // TODO(crbug.com/631103): Mushrome doesn't have a cursor manager yet.
-  if (ash::Shell::GetAshConfig() == ash::Config::MUS) {
-    static const display::Display display;
-    return display;
-  }
-  return ash::Shell::Get()->cursor_manager()->GetDisplay();
+aura::client::CursorClient* WMHelper::GetCursorClient() {
+  return aura::client::GetCursorClient(ash::Shell::GetPrimaryRootWindow());
 }
 
 void WMHelper::AddPreTargetHandler(ui::EventHandler* handler) {
@@ -203,7 +178,8 @@ void WMHelper::AddPreTargetHandler(ui::EventHandler* handler) {
 }
 
 void WMHelper::PrependPreTargetHandler(ui::EventHandler* handler) {
-  ash::Shell::Get()->PrependPreTargetHandler(handler);
+  ash::Shell::Get()->AddPreTargetHandler(
+      handler, ui::EventTarget::Priority::kAccessibility);
 }
 
 void WMHelper::RemovePreTargetHandler(ui::EventHandler* handler) {

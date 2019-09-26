@@ -7,7 +7,6 @@ package org.chromium.content.browser.input;
 import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.Context;
-import android.content.res.Configuration;
 import android.graphics.Color;
 import android.support.test.filters.MediumTest;
 import android.support.test.filters.SmallTest;
@@ -25,6 +24,7 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
+import org.junit.rules.ExpectedException;
 import org.junit.runner.RunWith;
 
 import org.chromium.base.ThreadUtils;
@@ -51,10 +51,12 @@ import java.util.concurrent.TimeoutException;
 public class ImeTest {
     @Rule
     public ImeActivityTestRule mRule = new ImeActivityTestRule();
+    @Rule
+    public ExpectedException thrown = ExpectedException.none();
 
     @Before
     public void setUp() throws Exception {
-        mRule.setUp();
+        mRule.setUpForUrl(ImeActivityTestRule.INPUT_FORM_HTML);
     }
 
     @Test
@@ -678,33 +680,6 @@ public class ImeTest {
         }));
     }
 
-    private void attachPhysicalKeyboard() {
-        Configuration hardKeyboardConfig = new Configuration(
-                mRule.getContentViewCore().getContext().getResources().getConfiguration());
-        hardKeyboardConfig.keyboard = Configuration.KEYBOARD_QWERTY;
-        hardKeyboardConfig.keyboardHidden = Configuration.KEYBOARDHIDDEN_YES;
-        hardKeyboardConfig.hardKeyboardHidden = Configuration.HARDKEYBOARDHIDDEN_NO;
-        onConfigurationChanged(hardKeyboardConfig);
-    }
-
-    private void detachPhysicalKeyboard() {
-        Configuration softKeyboardConfig = new Configuration(
-                mRule.getContentViewCore().getContext().getResources().getConfiguration());
-        softKeyboardConfig.keyboard = Configuration.KEYBOARD_NOKEYS;
-        softKeyboardConfig.keyboardHidden = Configuration.KEYBOARDHIDDEN_NO;
-        softKeyboardConfig.hardKeyboardHidden = Configuration.HARDKEYBOARDHIDDEN_YES;
-        onConfigurationChanged(softKeyboardConfig);
-    }
-
-    private void onConfigurationChanged(final Configuration config) {
-        ThreadUtils.runOnUiThreadBlocking(new Runnable() {
-            @Override
-            public void run() {
-                mRule.getContentViewCore().onConfigurationChanged(config);
-            }
-        });
-    }
-
     private void reloadPage() throws Throwable {
         // Reload the page, then focus will be lost and keyboard should be hidden.
         mRule.fullyLoadUrl(mRule.getContentViewCore().getWebContents().getLastCommittedUrl());
@@ -715,12 +690,12 @@ public class ImeTest {
     @Feature({"TextInput"})
     @SuppressWarnings("TryFailThrowable") // TODO(tedchoc): Remove after fixing timeout.
     public void testPhysicalKeyboard_AttachDetach() throws Throwable {
-        attachPhysicalKeyboard();
+        mRule.attachPhysicalKeyboard();
         // We still call showSoftKeyboard, which will be ignored by physical keyboard.
         mRule.waitForKeyboardStates(1, 0, 1, new Integer[] {TextInputType.TEXT});
         mRule.setComposingText("a", 1);
         mRule.waitForKeyboardStates(1, 0, 1, new Integer[] {TextInputType.TEXT});
-        detachPhysicalKeyboard();
+        mRule.detachPhysicalKeyboard();
         mRule.assertWaitForKeyboardStatus(true);
         // Now we really show soft keyboard. We also call mRule.restartInput when configuration
         // changes.
@@ -733,20 +708,16 @@ public class ImeTest {
         // because render widget gets restarted. But the end result should be the same.
         mRule.assertWaitForKeyboardStatus(false);
 
-        detachPhysicalKeyboard();
+        mRule.detachPhysicalKeyboard();
 
-        try {
-            // We should not show soft keyboard here because focus has been lost.
-            CriteriaHelper.pollUiThread(new Criteria() {
-                @Override
-                public boolean isSatisfied() {
-                    return mRule.getInputMethodManagerWrapper().isShowWithoutHideOutstanding();
-                }
-            });
-            Assert.fail("Keyboard incorrectly showing");
-        } catch (AssertionError e) {
-            // TODO(tedchoc): This is horrible and should never timeout to determine success.
-        }
+        // We should not show soft keyboard here because focus has been lost.
+        thrown.expect(AssertionError.class);
+        CriteriaHelper.pollUiThread(new Criteria() {
+            @Override
+            public boolean isSatisfied() {
+                return mRule.getInputMethodManagerWrapper().isShowWithoutHideOutstanding();
+            }
+        });
     }
 
     @Test
@@ -1410,10 +1381,9 @@ public class ImeTest {
 
         mRule.setComposingText("a", 1);
         mRule.waitAndVerifyUpdateSelection(0, 1, 1, 0, 1);
-        // TODO(changwan): reduce the number of selection changes.
         mRule.waitForEventLogs(
                 "keydown(229),compositionstart(),compositionupdate(a),input(a),keyup(229),"
-                + "selectionchange,selectionchange");
+                + "selectionchange");
         mRule.clearEventLogs();
 
         mRule.finishComposingText();
@@ -1427,9 +1397,8 @@ public class ImeTest {
     public void testInputTextEvents_ComposingText() throws Throwable {
         mRule.setComposingText("a", 1);
         mRule.waitAndVerifyUpdateSelection(0, 1, 1, 0, 1);
-        // TODO(changwan): reduce the number of selection changes.
         mRule.waitForEventLogs("keydown(229),compositionstart(),compositionupdate(a),"
-                + "input(a),keyup(229),selectionchange,selectionchange");
+                + "input(a),keyup(229),selectionchange");
         mRule.clearEventLogs();
 
         mRule.finishComposingText();
@@ -1706,14 +1675,14 @@ public class ImeTest {
                                         + "  document.getElementById('div').firstChild, "
                                         + "  'composition', 1)")));
 
-        Assert.assertEquals(0x0000000L,
+        Assert.assertEquals(0x00000000L,
                 (long) Double.parseDouble(
                         JavaScriptUtils.executeJavaScriptAndWaitForResult(webContents,
                                 "internals.markerUnderlineColorForNode("
                                         + "  document.getElementById('div').firstChild, "
                                         + "  'composition', 0)")));
 
-        Assert.assertEquals(0xFF000000L,
+        Assert.assertEquals(0x00000000L,
                 (long) Double.parseDouble(
                         JavaScriptUtils.executeJavaScriptAndWaitForResult(webContents,
                                 "internals.markerUnderlineColorForNode("

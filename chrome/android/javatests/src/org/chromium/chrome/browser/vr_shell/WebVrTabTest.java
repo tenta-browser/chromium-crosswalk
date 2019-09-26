@@ -34,8 +34,7 @@ import java.util.concurrent.Callable;
  */
 @RunWith(ParameterizedRunner.class)
 @UseRunnerDelegate(ChromeJUnit4RunnerDelegate.class)
-@CommandLineFlags.Add({ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE,
-        ChromeActivityTestRule.DISABLE_NETWORK_PREDICTION_FLAG, "enable-webvr"})
+@CommandLineFlags.Add({ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE, "enable-webvr"})
 @MinAndroidSdkLevel(Build.VERSION_CODES.KITKAT) // WebVR is only supported on K+
 public class WebVrTabTest {
     @ClassParameter
@@ -44,17 +43,19 @@ public class WebVrTabTest {
     @Rule
     public RuleChain mRuleChain;
 
-    private ChromeActivityTestRule mVrTestRule;
+    private ChromeActivityTestRule mTestRule;
     private VrTestFramework mVrTestFramework;
+    private XrTestFramework mXrTestFramework;
 
     public WebVrTabTest(Callable<ChromeActivityTestRule> callable) throws Exception {
-        mVrTestRule = callable.call();
-        mRuleChain = VrTestRuleUtils.wrapRuleInVrActivityRestrictionRule(mVrTestRule);
+        mTestRule = callable.call();
+        mRuleChain = VrTestRuleUtils.wrapRuleInVrActivityRestrictionRule(mTestRule);
     }
 
     @Before
     public void setUp() throws Exception {
-        mVrTestFramework = new VrTestFramework(mVrTestRule);
+        mVrTestFramework = new VrTestFramework(mTestRule);
+        mXrTestFramework = new XrTestFramework(mTestRule);
     }
 
     /**
@@ -63,16 +64,33 @@ public class WebVrTabTest {
     @Test
     @MediumTest
     public void testPoseDataUnfocusedTab() throws InterruptedException {
-        mVrTestFramework.loadUrlAndAwaitInitialization(
-                VrTestFramework.getHtmlTestFile("test_pose_data_unfocused_tab"),
-                PAGE_LOAD_TIMEOUT_S);
-        VrTestFramework.executeStepAndWait(
-                "stepCheckFrameDataWhileFocusedTab()", mVrTestFramework.getFirstTabWebContents());
+        testPoseDataUnfocusedTabImpl(
+                VrTestFramework.getHtmlTestFile("test_pose_data_unfocused_tab"), mVrTestFramework);
+    }
 
-        mVrTestRule.loadUrlInNewTab("about:blank");
+    /**
+     * Tests that non-focused tabs don't get WebXR rAFs called.
+     */
+    @Test
+    @MediumTest
+    @CommandLineFlags.Remove({"enable-webvr"})
+    @CommandLineFlags.Add({"enable-features=WebXR"})
+    public void testPoseDataUnfocusedTab_WebXr() throws InterruptedException {
+        testPoseDataUnfocusedTabImpl(
+                XrTestFramework.getHtmlTestFile("webxr_test_pose_data_unfocused_tab"),
+                mXrTestFramework);
+    }
 
-        VrTestFramework.executeStepAndWait("stepCheckFrameDataWhileNonFocusedTab()",
-                mVrTestFramework.getFirstTabWebContents());
-        VrTestFramework.endTest(mVrTestFramework.getFirstTabWebContents());
+    private void testPoseDataUnfocusedTabImpl(String url, TestFramework framework)
+            throws InterruptedException {
+        framework.loadUrlAndAwaitInitialization(url, PAGE_LOAD_TIMEOUT_S);
+        TestFramework.executeStepAndWait(
+                "stepCheckFrameDataWhileFocusedTab()", framework.getFirstTabWebContents());
+
+        mTestRule.loadUrlInNewTab("about:blank");
+
+        TestFramework.executeStepAndWait(
+                "stepCheckFrameDataWhileNonFocusedTab()", framework.getFirstTabWebContents());
+        TestFramework.endTest(framework.getFirstTabWebContents());
     }
 }

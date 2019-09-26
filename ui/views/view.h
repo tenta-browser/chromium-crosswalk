@@ -12,6 +12,7 @@
 #include <memory>
 #include <set>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "base/compiler_specific.h"
@@ -19,7 +20,7 @@
 #include "base/logging.h"
 #include "base/macros.h"
 #include "build/build_config.h"
-#include "ui/accessibility/ax_enums.h"
+#include "ui/accessibility/ax_enums.mojom.h"
 #include "ui/base/accelerators/accelerator.h"
 #include "ui/base/class_property.h"
 #include "ui/base/dragdrop/drag_drop_types.h"
@@ -52,7 +53,7 @@ class Canvas;
 class Insets;
 class Path;
 class Transform;
-}
+}  // namespace gfx
 
 namespace ui {
 struct AXActionData;
@@ -64,7 +65,7 @@ class NativeTheme;
 class PaintContext;
 class ThemeProvider;
 class TransformRecorder;
-}
+}  // namespace ui
 
 namespace views {
 
@@ -75,7 +76,7 @@ class DragController;
 class FocusManager;
 class FocusTraversable;
 class LayoutManager;
-class NativeViewAccessibility;
+class ViewAccessibility;
 class ScrollView;
 class ViewObserver;
 class Widget;
@@ -86,7 +87,7 @@ class PreEventDispatchHandler;
 class PostEventDispatchHandler;
 class RootView;
 class ScopedChildrenLock;
-}
+}  // namespace internal
 
 /////////////////////////////////////////////////////////////////////////////
 //
@@ -263,6 +264,7 @@ class VIEWS_EXPORT View : public ui::LayerDelegate,
 
   // By default a View is owned by its parent unless specified otherwise here.
   void set_owned_by_client() { owned_by_client_ = true; }
+  bool owned_by_client() const { return owned_by_client_; }
 
   // Tree operations -----------------------------------------------------------
 
@@ -318,7 +320,7 @@ class VIEWS_EXPORT View : public ui::LayerDelegate,
   // position accessors.
   // Transformations are not applied on the size/position. For example, if
   // bounds is (0, 0, 100, 100) and it is scaled by 0.5 along the X axis, the
-  // width will still be 100 (although when painted, it will be 50x50, painted
+  // width will still be 100 (although when painted, it will be 50x100, painted
   // at location (0, 0)).
 
   void SetBounds(int x, int y, int width, int height);
@@ -510,10 +512,27 @@ class VIEWS_EXPORT View : public ui::LayerDelegate,
 
   // Gets/Sets the Layout Manager used by this view to size and place its
   // children.
+  //
   // The LayoutManager is owned by the View and is deleted when the view is
-  // deleted, or when a new LayoutManager is installed.
+  // deleted, or when a new LayoutManager is installed. Call
+  // SetLayoutManager(nullptr) to clear it.
+  //
+  // SetLayoutManager returns a bare pointer version of the input parameter
+  // (now owned by the view). If code needs to use the layout manager after
+  // being assigned, use this pattern:
+  //
+  //   views::BoxLayout* box_layout = SetLayoutManager(
+  //       std::make_unique<views::BoxLayout>(...));
+  //   box_layout->Foo();
   LayoutManager* GetLayoutManager() const;
-  void SetLayoutManager(LayoutManager* layout);
+  template <typename LayoutManager>
+  LayoutManager* SetLayoutManager(
+      std::unique_ptr<LayoutManager> layout_manager) {
+    LayoutManager* lm = layout_manager.get();
+    SetLayoutManagerImpl(std::move(layout_manager));
+    return lm;
+  }
+  void SetLayoutManager(std::nullptr_t);
 
   // Attributes ----------------------------------------------------------------
 
@@ -522,7 +541,7 @@ class VIEWS_EXPORT View : public ui::LayerDelegate,
 
   // Return the receiving view's class name. A view class is a string which
   // uniquely identifies the view class. It is intended to be used as a way to
-  // find out during run time if a view can be safely casted to a specific view
+  // find out during run time if a view can be safely cast to a specific view
   // subclass. The default implementation returns kViewClassName.
   virtual const char* GetClassName() const;
 
@@ -733,7 +752,7 @@ class VIEWS_EXPORT View : public ui::LayerDelegate,
   // The provided event is in the receiver's coordinate system.
   //
   // Return true if you processed the event and want to receive subsequent
-  // MouseDraggged and MouseReleased events.  This also stops the event from
+  // MouseDragged and MouseReleased events.  This also stops the event from
   // bubbling.  If you return false, the event will bubble through parent
   // views.
   //
@@ -808,7 +827,7 @@ class VIEWS_EXPORT View : public ui::LayerDelegate,
   virtual void SetMouseHandler(View* new_mouse_handler);
 
   // Invoked when a key is pressed or released.
-  // Subclasser should return true if the event has been processed and false
+  // Subclasses should return true if the event has been processed and false
   // otherwise. If the event has not been processed, the parent will be given a
   // chance.
   virtual bool OnKeyPressed(const ui::KeyEvent& event);
@@ -987,7 +1006,7 @@ class VIEWS_EXPORT View : public ui::LayerDelegate,
   // Provides default implementation for context menu handling. The default
   // implementation calls the ShowContextMenu of the current
   // ContextMenuController (if it is not NULL). Overridden in subclassed views
-  // to provide right-click menu display triggerd by the keyboard (i.e. for the
+  // to provide right-click menu display triggered by the keyboard (i.e. for the
   // Chrome toolbar Back and Forward buttons). No source needs to be specified,
   // as it is always equal to the current View.
   virtual void ShowContextMenu(const gfx::Point& p,
@@ -1076,6 +1095,9 @@ class VIEWS_EXPORT View : public ui::LayerDelegate,
 
   // Accessibility -------------------------------------------------------------
 
+  // Get the object managing the accessibility interface for this View.
+  ViewAccessibility& GetViewAccessibility();
+
   // Modifies |node_data| to reflect the current accessible state of this view.
   virtual void GetAccessibleNodeData(ui::AXNodeData* node_data) {}
 
@@ -1095,12 +1117,12 @@ class VIEWS_EXPORT View : public ui::LayerDelegate,
   // cases where the view is a native control that's already sending a
   // native accessibility event and the duplicate event would cause
   // problems.
-  void NotifyAccessibilityEvent(ui::AXEvent event_type,
+  void NotifyAccessibilityEvent(ax::mojom::Event event_type,
                                 bool send_native_event);
 
   // Views may override this function to know when an accessibility
   // event is fired. This will be called by NotifyAccessibilityEvent.
-  virtual void OnAccessibilityEvent(ui::AXEvent event_type);
+  virtual void OnAccessibilityEvent(ax::mojom::Event event_type);
 
   // Scrolling -----------------------------------------------------------------
   // TODO(beng): Figure out if this can live somewhere other than View, i.e.
@@ -1112,9 +1134,13 @@ class VIEWS_EXPORT View : public ui::LayerDelegate,
   // the child view, such as Viewport, to override appropriately.
   virtual void ScrollRectToVisible(const gfx::Rect& rect);
 
+  // Scrolls the view's bounds or some subset thereof to be visible. By default
+  // this function calls ScrollRectToVisible(GetLocalBounds()).
+  virtual void ScrollViewToVisible();
+
   // The following methods are used by ScrollView to determine the amount
   // to scroll relative to the visible bounds of the view. For example, a
-  // return value of 10 indicates the scrollview should scroll 10 pixels in
+  // return value of 10 indicates the scroll_view should scroll 10 pixels in
   // the appropriate direction.
   //
   // Each method takes the following parameters:
@@ -1418,7 +1444,7 @@ class VIEWS_EXPORT View : public ui::LayerDelegate,
   bool ShouldPaint() const;
 
   // Adjusts the transform of |recorder| in advance of painting.
-  void SetupTransformRecorderForPainting(
+  void SetUpTransformRecorderForPainting(
       const gfx::Vector2d& offset_from_parent,
       ui::TransformRecorder* recorder) const;
 
@@ -1507,6 +1533,9 @@ class VIEWS_EXPORT View : public ui::LayerDelegate,
   // this views location and possibly size are changed.
   void AddDescendantToNotify(View* view);
   void RemoveDescendantToNotify(View* view);
+
+  // Non-templatized backend for SetLayoutManager().
+  void SetLayoutManagerImpl(std::unique_ptr<LayoutManager> layout);
 
   // Transformations -----------------------------------------------------------
 
@@ -1804,8 +1833,8 @@ class VIEWS_EXPORT View : public ui::LayerDelegate,
 
   // Accessibility -------------------------------------------------------------
 
-  // The accessibility element used to represent this View.
-  std::unique_ptr<NativeViewAccessibility> native_view_accessibility_;
+  // Manages the accessibility interface for this View.
+  std::unique_ptr<ViewAccessibility> view_accessibility_;
 
   // Observers -------------------------------------------------------------
 

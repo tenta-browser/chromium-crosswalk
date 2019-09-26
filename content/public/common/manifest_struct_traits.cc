@@ -4,11 +4,11 @@
 
 #include "content/public/common/manifest_struct_traits.h"
 
-#include "mojo/common/common_custom_types_struct_traits.h"
-#include "third_party/WebKit/public/platform/WebDisplayModeStructTraits.h"
-#include "third_party/WebKit/public/platform/modules/screen_orientation/WebScreenOrientationEnumTraits.h"
+#include "mojo/public/cpp/base/string16_mojom_traits.h"
+#include "third_party/blink/public/platform/modules/screen_orientation/web_screen_orientation_enum_traits.h"
+#include "third_party/blink/public/platform/web_display_mode_struct_traits.h"
 #include "ui/gfx/geometry/mojo/geometry_struct_traits.h"
-#include "url/mojo/url_gurl_struct_traits.h"
+#include "url/mojom/url_gurl_mojom_traits.h"
 
 namespace mojo {
 namespace {
@@ -28,10 +28,10 @@ struct TruncatedString16 {
 }  // namespace
 
 template <>
-struct StructTraits<common::mojom::String16DataView, TruncatedString16> {
+struct StructTraits<mojo_base::mojom::String16DataView, TruncatedString16> {
   static void SetToNull(TruncatedString16* output) { output->string.reset(); }
 
-  static bool Read(common::mojom::String16DataView input,
+  static bool Read(mojo_base::mojom::String16DataView input,
                    TruncatedString16* output) {
     if (input.is_null()) {
       output->string.reset();
@@ -43,8 +43,8 @@ struct StructTraits<common::mojom::String16DataView, TruncatedString16> {
       return false;
 
     output->string.emplace();
-    return StructTraits<common::mojom::String16DataView, base::string16>::Read(
-        input, &output->string.value());
+    return StructTraits<mojo_base::mojom::String16DataView,
+                        base::string16>::Read(input, &output->string.value());
   }
 };
 
@@ -147,11 +147,7 @@ bool StructTraits<blink::mojom::ManifestShareTargetDataView,
                   content::Manifest::ShareTarget>::
     Read(blink::mojom::ManifestShareTargetDataView data,
          content::Manifest::ShareTarget* out) {
-  TruncatedString16 string;
-  if (!data.ReadUrlTemplate(&string))
-    return false;
-  out->url_template = base::NullableString16(std::move(string.string));
-  return true;
+  return data.ReadUrlTemplate(&out->url_template);
 }
 
 }  // namespace mojo

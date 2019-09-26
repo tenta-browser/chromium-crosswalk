@@ -13,8 +13,8 @@
 #include "base/feature_list.h"
 #include "base/location.h"
 #include "base/logging.h"
+#include "base/metrics/histogram_functions.h"
 #include "base/metrics/histogram_macros.h"
-#include "base/metrics/sparse_histogram.h"
 #include "base/single_thread_task_runner.h"
 #include "base/stl_util.h"
 #include "base/strings/string_number_conversions.h"
@@ -25,9 +25,7 @@
 #include "base/time/time.h"
 #include "base/trace_event/trace_event.h"
 #include "base/values.h"
-#include "crypto/ec_private_key.h"
-#include "crypto/ec_signature_creator.h"
-#include "net/base/proxy_delegate.h"
+#include "net/base/url_util.h"
 #include "net/cert/asn1_util.h"
 #include "net/cert/cert_verify_result.h"
 #include "net/cert/ct_policy_status.h"
@@ -40,8 +38,8 @@
 #include "net/log/net_log_event_type.h"
 #include "net/log/net_log_source_type.h"
 #include "net/log/net_log_with_source.h"
-#include "net/proxy/proxy_server.h"
 #include "net/quic/chromium/quic_http_utils.h"
+#include "net/quic/core/spdy_utils.h"
 #include "net/socket/socket.h"
 #include "net/socket/ssl_client_socket.h"
 #include "net/spdy/chromium/header_coalescer.h"
@@ -53,14 +51,38 @@
 #include "net/spdy/core/spdy_frame_builder.h"
 #include "net/spdy/core/spdy_protocol.h"
 #include "net/spdy/platform/api/spdy_estimate_memory_usage.h"
+#include "net/spdy/platform/api/spdy_string.h"
 #include "net/spdy/platform/api/spdy_string_utils.h"
 #include "net/ssl/channel_id_service.h"
 #include "net/ssl/ssl_cipher_suite_names.h"
 #include "net/ssl/ssl_connection_status_flags.h"
+#include "url/url_constants.h"
 
 namespace net {
 
 namespace {
+
+constexpr net::NetworkTrafficAnnotationTag
+    kSpdySessionCommandsTrafficAnnotation =
+        net::DefineNetworkTrafficAnnotation("spdy_session_control", R"(
+        semantics {
+          sender: "Spdy Session"
+          description:
+            "Sends commands to control an HTTP/2 session."
+          trigger:
+            "Required control commands like initiating stream, requesting "
+            "stream reset, changing priorities, etc."
+          data: "No user data."
+          destination: OTHER
+          destination_other:
+            "Any destination the HTTP/2 session is connected to."
+        }
+        policy {
+          cookies_allowed: NO
+          setting: "This feature cannot be disabled in settings."
+          policy_exception_justification: "Essential for network access."
+        }
+    )");
 
 const int kReadBufferSize = 8 * 1024;
 const int kDefaultConnectionAtRiskOfLossSeconds = 10;
@@ -110,12 +132,12 @@ enum PushedStreamVaryResponseHeaderValues ParseVaryInPushedResponse(
   SpdyHeaderBlock::iterator it = headers.find(kVary);
   if (it == headers.end())
     return kNoVaryHeader;
-  base::StringPiece value(it->second);
+  SpdyStringPiece value(it->second);
   if (value.empty())
     return kVaryIsEmpty;
   if (value == kStar)
     return kVaryIsStar;
-  std::string lowercase_value = ToLowerASCII(value);
+  SpdyString lowercase_value = ToLowerASCII(value);
   if (lowercase_value == kAcceptEncoding)
     return kVaryIsAcceptEncoding;
   // Both comma and newline delimiters occur in the wild.
@@ -129,7 +151,7 @@ enum PushedStreamVaryResponseHeaderValues ParseVaryInPushedResponse(
   return kVaryHasNoAcceptEncoding;
 }
 
-bool IsSpdySettingAtDefaultInitialValue(SpdySettingsIds setting_id,
+bool IsSpdySettingAtDefaultInitialValue(SpdySettingsId setting_id,
                                         uint32_t value) {
   switch (setting_id) {
     case SETTINGS_HEADER_TABLE_SIZE:
@@ -146,6 +168,8 @@ bool IsSpdySettingAtDefaultInitialValue(SpdySettingsIds setting_id,
     case SETTINGS_MAX_HEADER_LIST_SIZE:
       // There is no initial limit on the size of the header list.
       return false;
+    case SETTINGS_ENABLE_CONNECT_PROTOCOL:
+      return value == 0;
     default:
       // Undefined parameters have no initial value.
       return false;
@@ -227,25 +251,22 @@ std::unique_ptr<base::Value> NetLogSpdySendSettingsCallback(
   auto settings_list = std::make_unique<base::ListValue>();
   for (SettingsMap::const_iterator it = settings->begin();
        it != settings->end(); ++it) {
-    const SpdySettingsIds id = it->first;
+    const SpdySettingsId id = it->first;
     const uint32_t value = it->second;
-    const char* settings_string;
-    SettingsIdToString(id, &settings_string);
-    settings_list->AppendString(
-        SpdyStringPrintf("[id:%u (%s) value:%u]", id, settings_string, value));
+    settings_list->AppendString(SpdyStringPrintf(
+        "[id:%u (%s) value:%u]", id, SettingsIdToString(id).c_str(), value));
   }
   dict->Set("settings", std::move(settings_list));
   return std::move(dict);
 }
 
 std::unique_ptr<base::Value> NetLogSpdyRecvSettingCallback(
-    SpdySettingsIds id,
+    SpdySettingsId id,
     uint32_t value,
     NetLogCaptureMode /* capture_mode */) {
   auto dict = std::make_unique<base::DictionaryValue>();
-  const char* settings_string;
-  SettingsIdToString(id, &settings_string);
-  dict->SetString("id", SpdyStringPrintf("%u (%s)", id, settings_string));
+  dict->SetString(
+      "id", SpdyStringPrintf("%u (%s)", id, SettingsIdToString(id).c_str()));
   dict->SetInteger("value", value);
   return std::move(dict);
 }
@@ -591,23 +612,29 @@ SpdyStreamRequest::~SpdyStreamRequest() {
   CancelRequest();
 }
 
-int SpdyStreamRequest::StartRequest(SpdyStreamType type,
-                                    const base::WeakPtr<SpdySession>& session,
-                                    const GURL& url,
-                                    RequestPriority priority,
-                                    const NetLogWithSource& net_log,
-                                    const CompletionCallback& callback) {
+int SpdyStreamRequest::StartRequest(
+    SpdyStreamType type,
+    const base::WeakPtr<SpdySession>& session,
+    const GURL& url,
+    RequestPriority priority,
+    const SocketTag& socket_tag,
+    const NetLogWithSource& net_log,
+    CompletionOnceCallback callback,
+    const NetworkTrafficAnnotationTag& traffic_annotation) {
   DCHECK(session);
   DCHECK(!session_);
   DCHECK(!stream_);
   DCHECK(callback_.is_null());
+  DCHECK(url.is_valid()) << url.possibly_invalid_spec();
 
   type_ = type;
   session_ = session;
-  url_ = url;
+  url_ = SimplifyUrlForRequest(url);
   priority_ = priority;
+  socket_tag_ = socket_tag;
   net_log_ = net_log;
-  callback_ = callback;
+  callback_ = std::move(callback);
+  traffic_annotation_ = MutableNetworkTrafficAnnotationTag(traffic_annotation);
 
   base::WeakPtr<SpdyStream> stream;
   int rv = session->TryCreateStream(weak_ptr_factory_.GetWeakPtr(), &stream);
@@ -643,21 +670,21 @@ void SpdyStreamRequest::OnRequestCompleteSuccess(
   DCHECK(session_);
   DCHECK(!stream_);
   DCHECK(!callback_.is_null());
-  CompletionCallback callback = callback_;
+  CompletionOnceCallback callback = std::move(callback_);
   Reset();
   DCHECK(stream);
   stream_ = stream;
-  callback.Run(OK);
+  std::move(callback).Run(OK);
 }
 
 void SpdyStreamRequest::OnRequestCompleteFailure(int rv) {
   DCHECK(session_);
   DCHECK(!stream_);
   DCHECK(!callback_.is_null());
-  CompletionCallback callback = callback_;
+  CompletionOnceCallback callback = std::move(callback_);
   Reset();
   DCHECK_NE(rv, OK);
-  callback.Run(rv);
+  std::move(callback).Run(rv);
 }
 
 void SpdyStreamRequest::Reset() {
@@ -666,8 +693,10 @@ void SpdyStreamRequest::Reset() {
   stream_.reset();
   url_ = GURL();
   priority_ = MINIMUM_PRIORITY;
+  socket_tag_ = SocketTag();
   net_log_ = NetLogWithSource();
   callback_.Reset();
+  traffic_annotation_.reset();
 }
 
 // static
@@ -690,7 +719,7 @@ bool SpdySession::CanPool(TransportSecurityState* transport_security_state,
     return false;
   }
 
-  if (!ssl_info.cert->VerifyNameMatch(new_hostname, false))
+  if (!ssl_info.cert->VerifyNameMatch(new_hostname))
     return false;
 
   SpdyString pinning_failure_log;
@@ -733,11 +762,11 @@ SpdySession::SpdySession(
     bool enable_sending_initial_data,
     bool enable_ping_based_connection_checking,
     bool support_ietf_format_quic_altsvc,
+    bool is_trusted_proxy,
     size_t session_max_recv_window_size,
     const SettingsMap& initial_settings,
     TimeFunc time_func,
     ServerPushDelegate* push_delegate,
-    ProxyDelegate* proxy_delegate,
     NetLog* net_log)
     : in_io_loop_(false),
       spdy_session_key_(spdy_session_key),
@@ -746,7 +775,6 @@ SpdySession::SpdySession(
       transport_security_state_(transport_security_state),
       stream_hi_water_mark_(kFirstStreamId),
       last_accepted_push_stream_id_(0),
-      unclaimed_pushed_streams_(this),
       push_delegate_(push_delegate),
       num_pushed_streams_(0u),
       num_active_pushed_streams_(0u),
@@ -786,10 +814,11 @@ SpdySession::SpdySession(
       enable_ping_based_connection_checking_(
           enable_ping_based_connection_checking),
       support_ietf_format_quic_altsvc_(support_ietf_format_quic_altsvc),
+      is_trusted_proxy_(is_trusted_proxy),
+      support_websocket_(false),
       connection_at_risk_of_loss_time_(
           base::TimeDelta::FromSeconds(kDefaultConnectionAtRiskOfLossSeconds)),
       hung_interval_(base::TimeDelta::FromSeconds(kHungIntervalSeconds)),
-      proxy_delegate_(proxy_delegate),
       time_func_(time_func),
       weak_factory_(this) {
   net_log_.BeginEvent(
@@ -818,20 +847,35 @@ SpdySession::~SpdySession() {
   net_log_.EndEvent(NetLogEventType::HTTP2_SESSION);
 }
 
-int SpdySession::GetPushStream(const GURL& url,
-                               RequestPriority priority,
-                               SpdyStream** stream,
-                               const NetLogWithSource& stream_net_log) {
+int SpdySession::GetPushedStream(const GURL& url,
+                                 SpdyStreamId pushed_stream_id,
+                                 RequestPriority priority,
+                                 SpdyStream** stream,
+                                 const NetLogWithSource& stream_net_log) {
   CHECK(!in_io_loop_);
+  // |pushed_stream_id| must be valid.
+  DCHECK_NE(pushed_stream_id, kNoPushedStreamFound);
+  // |pushed_stream_id| must already have been claimed.
+  DCHECK_NE(pushed_stream_id,
+            pool_->push_promise_index()->FindStream(url, this));
 
   if (availability_state_ == STATE_DRAINING) {
     *stream = nullptr;
     return ERR_CONNECTION_CLOSED;
   }
 
-  *stream = GetActivePushStream(url);
-  if (!*stream)
-    return OK;
+  ActiveStreamMap::iterator active_it = active_streams_.find(pushed_stream_id);
+  if (active_it == active_streams_.end()) {
+    // A previously claimed pushed stream might not be available, for example,
+    // if the server has reset it in the meanwhile.
+    return ERR_SPDY_PUSHED_STREAM_NOT_AVAILABLE;
+  }
+
+  net_log_.AddEvent(
+      NetLogEventType::HTTP2_STREAM_ADOPTED_PUSH_STREAM,
+      base::Bind(&NetLogSpdyAdoptedPushStreamCallback, pushed_stream_id, &url));
+
+  *stream = active_it->second;
 
   DCHECK_LT(streams_pushed_and_claimed_count_, streams_pushed_count_);
   streams_pushed_and_claimed_count_++;
@@ -848,21 +892,18 @@ int SpdySession::GetPushStream(const GURL& url,
   for (auto u : updates) {
     ActiveStreamMap::iterator it = active_streams_.find(u.id);
     DCHECK(it != active_streams_.end());
-    int weight = Spdy3PriorityToHttp2Weight(
-        ConvertRequestPriorityToSpdyPriority(it->second->priority()));
-    EnqueuePriorityFrame(u.id, u.dependent_stream_id, weight, u.exclusive);
+    EnqueuePriorityFrame(u.id, u.parent_stream_id, u.weight, u.exclusive);
   }
 
   return OK;
 }
 
 void SpdySession::CancelPush(const GURL& url) {
-  UnclaimedPushedStreamContainer::const_iterator unclaimed_it =
-      unclaimed_pushed_streams_.find(url);
-  if (unclaimed_it == unclaimed_pushed_streams_.end())
+  const SpdyStreamId stream_id =
+      pool_->push_promise_index()->FindStream(url, this);
+  if (stream_id == kNoPushedStreamFound)
     return;
 
-  const SpdyStreamId stream_id = unclaimed_it->second;
   DCHECK(active_streams_.find(stream_id) != active_streams_.end());
   ResetStream(stream_id, ERROR_CODE_CANCEL, "Cancelled push stream.");
 }
@@ -912,7 +953,7 @@ void SpdySession::InitializeWithSocket(
                  READ_STATE_DO_READ, OK));
 }
 
-bool SpdySession::VerifyDomainAuthentication(const SpdyString& domain) {
+bool SpdySession::VerifyDomainAuthentication(const SpdyString& domain) const {
   if (availability_state_ == STATE_DRAINING)
     return false;
 
@@ -930,7 +971,8 @@ void SpdySession::EnqueueStreamWrite(
     std::unique_ptr<SpdyBufferProducer> producer) {
   DCHECK(frame_type == SpdyFrameType::HEADERS ||
          frame_type == SpdyFrameType::DATA);
-  EnqueueWrite(stream->priority(), frame_type, std::move(producer), stream);
+  EnqueueWrite(stream->priority(), frame_type, std::move(producer), stream,
+               stream->traffic_annotation());
 }
 
 std::unique_ptr<SpdySerializedFrame> SpdySession::CreateHeaders(
@@ -949,25 +991,25 @@ std::unique_ptr<SpdySerializedFrame> SpdySession::CreateHeaders(
   SpdyPriority spdy_priority = ConvertRequestPriorityToSpdyPriority(priority);
 
   bool has_priority = true;
-  int weight = Spdy3PriorityToHttp2Weight(spdy_priority);
-  SpdyStreamId dependent_stream_id = 0;
+  int weight = 0;
+  SpdyStreamId parent_stream_id = 0;
   bool exclusive = false;
 
-  priority_dependency_state_.OnStreamCreation(stream_id, spdy_priority,
-                                              &dependent_stream_id, &exclusive);
+  priority_dependency_state_.OnStreamCreation(
+      stream_id, spdy_priority, &parent_stream_id, &weight, &exclusive);
 
   if (net_log().IsCapturing()) {
     net_log().AddEvent(
         NetLogEventType::HTTP2_SESSION_SEND_HEADERS,
         base::Bind(&NetLogSpdyHeadersSentCallback, &block,
                    (flags & CONTROL_FLAG_FIN) != 0, stream_id, has_priority,
-                   weight, dependent_stream_id, exclusive, source_dependency));
+                   weight, parent_stream_id, exclusive, source_dependency));
   }
 
   SpdyHeadersIR headers(stream_id, std::move(block));
   headers.set_has_priority(has_priority);
   headers.set_weight(weight);
-  headers.set_parent_stream_id(dependent_stream_id);
+  headers.set_parent_stream_id(parent_stream_id);
   headers.set_exclusive(exclusive);
   headers.set_fin((flags & CONTROL_FLAG_FIN) != 0);
 
@@ -1254,7 +1296,7 @@ std::unique_ptr<base::Value> SpdySession::GetInfoAsValue() const {
   dict->SetInteger("active_streams", active_streams_.size());
 
   dict->SetInteger("unclaimed_pushed_streams",
-                   unclaimed_pushed_streams_.size());
+                   pool_->push_promise_index()->CountStreamsForSession(this));
 
   dict->SetString(
       "negotiated_protocol",
@@ -1287,15 +1329,6 @@ bool SpdySession::GetLoadTimingInfo(SpdyStreamId stream_id,
                                     LoadTimingInfo* load_timing_info) const {
   return connection_->GetLoadTimingInfo(stream_id != kFirstStreamId,
                                         load_timing_info);
-}
-
-size_t SpdySession::num_unclaimed_pushed_streams() const {
-  return unclaimed_pushed_streams_.size();
-}
-
-size_t SpdySession::count_unclaimed_pushed_streams_for_url(
-    const GURL& url) const {
-  return unclaimed_pushed_streams_.count(url);
 }
 
 int SpdySession::GetPeerAddress(IPEndPoint* address) const {
@@ -1352,6 +1385,48 @@ bool SpdySession::CloseOneIdleConnection() {
   return false;
 }
 
+bool SpdySession::ValidatePushedStream(SpdyStreamId stream_id,
+                                       const GURL& url,
+                                       const HttpRequestInfo& request_info,
+                                       const SpdySessionKey& key) const {
+  // Proxy server and privacy mode must match.
+  if (key.proxy_server() != spdy_session_key_.proxy_server() ||
+      key.privacy_mode() != spdy_session_key_.privacy_mode()) {
+    return false;
+  }
+  // Certificate must match for encrypted schemes only.
+  if (url.SchemeIsCryptographic() &&
+      !VerifyDomainAuthentication(key.host_port_pair().host())) {
+    return false;
+  }
+
+  ActiveStreamMap::const_iterator stream_it = active_streams_.find(stream_id);
+  if (stream_it == active_streams_.end()) {
+    // Only active streams should be in Http2PushPromiseIndex.
+    NOTREACHED();
+    return false;
+  }
+  const SpdyHeaderBlock& request_headers = stream_it->second->request_headers();
+  SpdyHeaderBlock::const_iterator method_it =
+      request_headers.find(kHttp2MethodHeader);
+  if (method_it == request_headers.end()) {
+    // TryCreatePushStream() would have reset the stream if it had no method.
+    NOTREACHED();
+    return false;
+  }
+
+  // Request method must match.
+  if (request_info.method != method_it->second) {
+    return false;
+  }
+
+  return true;
+}
+
+base::WeakPtr<SpdySession> SpdySession::GetWeakPtrToSession() {
+  return GetWeakPtr();
+}
+
 size_t SpdySession::DumpMemoryStats(StreamSocket::SocketMemoryStats* stats,
                                     bool* is_session_active) const {
   // TODO(xunjieli): Include |pending_create_stream_queues_| when WeakPtr is
@@ -1366,7 +1441,6 @@ size_t SpdySession::DumpMemoryStats(StreamSocket::SocketMemoryStats* stats,
          SpdyEstimateMemoryUsage(spdy_session_key_) +
          SpdyEstimateMemoryUsage(pooled_aliases_) +
          SpdyEstimateMemoryUsage(active_streams_) +
-         SpdyEstimateMemoryUsage(unclaimed_pushed_streams_) +
          SpdyEstimateMemoryUsage(created_streams_) +
          SpdyEstimateMemoryUsage(write_queue_) +
          SpdyEstimateMemoryUsage(in_flight_write_) +
@@ -1376,53 +1450,23 @@ size_t SpdySession::DumpMemoryStats(StreamSocket::SocketMemoryStats* stats,
          SpdyEstimateMemoryUsage(priority_dependency_state_);
 }
 
-SpdySession::UnclaimedPushedStreamContainer::UnclaimedPushedStreamContainer(
-    SpdySession* spdy_session)
-    : spdy_session_(spdy_session) {}
-SpdySession::UnclaimedPushedStreamContainer::~UnclaimedPushedStreamContainer() {
-}
-
-bool SpdySession::UnclaimedPushedStreamContainer::erase(const GURL& url) {
-  const_iterator it = find(url);
-  if (it == end())
+bool SpdySession::ChangeSocketTag(const SocketTag& new_tag) {
+  if (!IsAvailable() || !connection_->socket())
     return false;
 
-  erase(it);
-  return true;
-}
-
-SpdySession::UnclaimedPushedStreamContainer::iterator
-SpdySession::UnclaimedPushedStreamContainer::erase(const_iterator it) {
-  DCHECK(spdy_session_->pool_);
-  DCHECK(it != end());
-  // Only allow cross-origin push for secure resources.
-  if (it->first.SchemeIsCryptographic()) {
-    spdy_session_->pool_->push_promise_index()->UnregisterUnclaimedPushedStream(
-        it->first, spdy_session_);
-  }
-  return streams_.erase(it);
-}
-
-bool SpdySession::UnclaimedPushedStreamContainer::insert(
-    const GURL& url,
-    SpdyStreamId stream_id) {
-  DCHECK(spdy_session_->pool_);
-  auto result = streams_.insert(std::make_pair(url, stream_id));
-  if (!result.second) {
-    // Only one pushed stream is allowed for each URL.
+  // Changing the tag on the underlying socket will affect all streams,
+  // so only allow changing the tag when there are no active streams.
+  if (is_active())
     return false;
-  }
-  // Only allow cross-origin push for https resources.
-  if (url.SchemeIsCryptographic()) {
-    spdy_session_->pool_->push_promise_index()->RegisterUnclaimedPushedStream(
-        url, spdy_session_->GetWeakPtr());
-  }
-  return true;
-}
 
-size_t SpdySession::UnclaimedPushedStreamContainer::EstimateMemoryUsage()
-    const {
-  return SpdyEstimateMemoryUsage(streams_);
+  connection_->socket()->ApplySocketTag(new_tag);
+
+  SpdySessionKey new_key(spdy_session_key_.host_port_pair(),
+                         spdy_session_key_.proxy_server(),
+                         spdy_session_key_.privacy_mode(), new_tag);
+  spdy_session_key_ = new_key;
+
+  return true;
 }
 
 // {,Try}CreateStream() can be called with |in_io_loop_| set if a stream is
@@ -1438,6 +1482,10 @@ int SpdySession::TryCreateStream(
 
   if (availability_state_ == STATE_DRAINING)
     return ERR_CONNECTION_CLOSED;
+
+  // Fail if ChangeSocketTag() has been called.
+  if (request->socket_tag_ != spdy_session_key_.socket_tag())
+    return ERR_FAILED;
 
   if ((active_streams_.size() + created_streams_.size() - num_pushed_streams_ <
        max_concurrent_streams_)) {
@@ -1482,7 +1530,7 @@ int SpdySession::CreateStream(const SpdyStreamRequest& request,
   auto new_stream = std::make_unique<SpdyStream>(
       request.type(), GetWeakPtr(), request.url(), request.priority(),
       stream_initial_send_window_size_, stream_max_recv_window_size_,
-      request.net_log());
+      request.net_log(), request.traffic_annotation());
   *stream = new_stream->GetWeakPtr();
   InsertCreatedStream(std::move(new_stream));
 
@@ -1607,12 +1655,22 @@ void SpdySession::TryCreatePushStream(SpdyStreamId stream_id,
 
   streams_pushed_count_++;
 
+  // "Promised requests MUST be cacheable and MUST be safe [...]" (RFC7540
+  // Section 8.2).  Only cacheable safe request methods are GET and HEAD.
+  SpdyHeaderBlock::const_iterator it = headers.find(kHttp2MethodHeader);
+  if (it == headers.end() || (it->second != "GET" && it->second != "HEAD")) {
+    EnqueueResetStreamFrame(stream_id, request_priority,
+                            ERROR_CODE_REFUSED_STREAM,
+                            "Inadequate request method.");
+    return;
+  }
+
   // Verify that the response had a URL for us.
-  GURL gurl = GetUrlFromHeaderBlock(headers);
+  GURL gurl(SpdyUtils::GetPromisedUrlFromHeaders(headers));
   if (!gurl.is_valid()) {
-    EnqueueResetStreamFrame(
-        stream_id, request_priority, ERROR_CODE_REFUSED_STREAM,
-        "Pushed stream url was invalid: " + gurl.possibly_invalid_spec());
+    EnqueueResetStreamFrame(stream_id, request_priority,
+                            ERROR_CODE_REFUSED_STREAM,
+                            "Invalid pushed request headers.");
     return;
   }
 
@@ -1627,22 +1685,26 @@ void SpdySession::TryCreatePushStream(SpdyStreamId stream_id,
   }
 
   DCHECK(gurl.is_valid());
+  if (!gurl.SchemeIs(url::kHttpScheme) && !gurl.SchemeIs(url::kHttpsScheme)) {
+    EnqueueResetStreamFrame(stream_id, request_priority,
+                            ERROR_CODE_REFUSED_STREAM,
+                            "Only http and https resources can be pushed.");
+    return;
+  }
 
   // Cross-origin push validation.
-  GURL associated_url(associated_it->second->GetUrlFromHeaders());
+  GURL associated_url(associated_it->second->url());
   if (associated_url.GetOrigin() != gurl.GetOrigin()) {
-    if (proxy_delegate_ &&
-        proxy_delegate_->IsTrustedSpdyProxy(
-            ProxyServer(ProxyServer::SCHEME_HTTPS, host_port_pair()))) {
-      // Disallow pushing of HTTPS content by trusted proxy.
-      if (gurl.SchemeIs("https")) {
+    if (is_trusted_proxy_) {
+      if (!gurl.SchemeIs(url::kHttpScheme)) {
         EnqueueResetStreamFrame(
             stream_id, request_priority, ERROR_CODE_REFUSED_STREAM,
-            "Cross origin HTTPS content from trusted proxy.");
+            "Only http scheme allowed for cross origin push by trusted proxy.");
         return;
       }
     } else {
-      if (!gurl.SchemeIs("https") || !associated_url.SchemeIs("https")) {
+      if (!gurl.SchemeIs(url::kHttpsScheme) ||
+          !associated_url.SchemeIs(url::kHttpsScheme)) {
         EnqueueResetStreamFrame(
             stream_id, request_priority, ERROR_CODE_REFUSED_STREAM,
             "Both pushed URL and associated URL must have https scheme.");
@@ -1660,19 +1722,9 @@ void SpdySession::TryCreatePushStream(SpdyStreamId stream_id,
     }
   }
 
-  // "Promised requests MUST be cacheable and MUST be safe [...]" (RFC7540
-  // Section 8.2).  Only cacheable safe request methods are GET and HEAD.
-  SpdyHeaderBlock::const_iterator it = headers.find(kHttp2MethodHeader);
-  if (it == headers.end() ||
-      (it->second.compare("GET") != 0 && it->second.compare("HEAD") != 0)) {
-    EnqueueResetStreamFrame(stream_id, request_priority,
-                            ERROR_CODE_REFUSED_STREAM,
-                            "Inadequate request method.");
-    return;
-  }
-
   // Insertion fails if there already is a pushed stream with the same path.
-  if (!unclaimed_pushed_streams_.insert(gurl, stream_id)) {
+  if (!pool_->push_promise_index()->RegisterUnclaimedPushedStream(
+          gurl, stream_id, this)) {
     EnqueueResetStreamFrame(stream_id, request_priority,
                             ERROR_CODE_REFUSED_STREAM,
                             "Duplicate pushed stream with url: " + gurl.spec());
@@ -1685,20 +1737,43 @@ void SpdySession::TryCreatePushStream(SpdyStreamId stream_id,
                  stream_id),
       base::TimeDelta::FromSeconds(kPushedStreamLifetimeSeconds));
 
+  net::NetworkTrafficAnnotationTag traffic_annotation =
+      net::DefineNetworkTrafficAnnotation("spdy_push_stream", R"(
+        semantics {
+          sender: "Spdy Session"
+          description:
+            "When a web server needs to push a response to a client, an "
+            "incoming stream is created to reply the client with pushed "
+            "message instead of a message from the network."
+          trigger:
+            "A request by a server to push a response to the client."
+          data: "None."
+          destination: OTHER
+          destination_other:
+            "This stream is not used for sending data."
+        }
+        policy {
+          cookies_allowed: NO
+          setting: "This feature cannot be disabled."
+          policy_exception_justification: "Essential for navigation."
+        }
+    )");
+
   auto stream = std::make_unique<SpdyStream>(
       SPDY_PUSH_STREAM, GetWeakPtr(), gurl, request_priority,
-      stream_initial_send_window_size_, stream_max_recv_window_size_, net_log_);
+      stream_initial_send_window_size_, stream_max_recv_window_size_, net_log_,
+      traffic_annotation);
   stream->set_stream_id(stream_id);
 
   // Convert RequestPriority to a SpdyPriority to send in a PRIORITY frame.
   SpdyPriority spdy_priority =
       ConvertRequestPriorityToSpdyPriority(request_priority);
   SpdyStreamId dependency_id = 0;
+  int weight = 0;
   bool exclusive = false;
-  priority_dependency_state_.OnStreamCreation(stream_id, spdy_priority,
-                                              &dependency_id, &exclusive);
-  EnqueuePriorityFrame(stream_id, dependency_id,
-                       Spdy3PriorityToHttp2Weight(spdy_priority), exclusive);
+  priority_dependency_state_.OnStreamCreation(
+      stream_id, spdy_priority, &dependency_id, &weight, &exclusive);
+  EnqueuePriorityFrame(stream_id, dependency_id, weight, exclusive);
 
   // PUSH_PROMISE arrives on associated stream.
   associated_it->second->AddRawReceivedBytes(last_compressed_frame_len_);
@@ -1719,7 +1794,8 @@ void SpdySession::TryCreatePushStream(SpdyStreamId stream_id,
                            net_log_);
   }
 
-  active_it->second->OnPushPromiseHeadersReceived(std::move(headers));
+  active_it->second->OnPushPromiseHeadersReceived(std::move(headers),
+                                                  std::move(gurl));
   DCHECK(active_it->second->IsReservedRemote());
   num_pushed_streams_++;
   return;
@@ -1742,7 +1818,8 @@ void SpdySession::CloseActiveStreamIterator(ActiveStreamMap::iterator it,
   // push is hardly used. Write tests for this and fix this. (See
   // http://crbug.com/261712 .)
   if (owned_stream->type() == SPDY_PUSH_STREAM) {
-    if (unclaimed_pushed_streams_.erase(owned_stream->url())) {
+    if (pool_->push_promise_index()->UnregisterUnclaimedPushedStream(
+            owned_stream->url(), owned_stream->stream_id(), this)) {
       bytes_pushed_and_unclaimed_count_ += owned_stream->recv_bytes();
     }
     bytes_pushed_count_ += owned_stream->recv_bytes();
@@ -1820,7 +1897,8 @@ void SpdySession::EnqueuePriorityFrame(SpdyStreamId stream_id,
   EnqueueWrite(HIGHEST, SpdyFrameType::PRIORITY,
                std::make_unique<SimpleBufferProducer>(
                    std::make_unique<SpdyBuffer>(std::move(frame))),
-               base::WeakPtr<SpdyStream>());
+               base::WeakPtr<SpdyStream>(),
+               kSpdySessionCommandsTrafficAnnotation);
 }
 
 void SpdySession::PumpReadLoop(ReadState expected_read_state, int result) {
@@ -2030,7 +2108,8 @@ int SpdySession::DoWrite() {
     SpdyFrameType frame_type = SpdyFrameType::DATA;
     std::unique_ptr<SpdyBufferProducer> producer;
     base::WeakPtr<SpdyStream> stream;
-    if (!write_queue_.Dequeue(&frame_type, &producer, &stream)) {
+    if (!write_queue_.Dequeue(&frame_type, &producer, &stream,
+                              &in_flight_write_traffic_annotation)) {
       write_state_ = WRITE_STATE_IDLE;
       return ERR_IO_PENDING;
     }
@@ -2077,7 +2156,8 @@ int SpdySession::DoWrite() {
   return connection_->socket()->Write(
       write_io_buffer.get(), in_flight_write_->GetRemainingSize(),
       base::Bind(&SpdySession::PumpWriteLoop, weak_factory_.GetWeakPtr(),
-                 WRITE_STATE_DO_WRITE_COMPLETE));
+                 WRITE_STATE_DO_WRITE_COMPLETE),
+      NetworkTrafficAnnotationTag(in_flight_write_traffic_annotation));
 }
 
 int SpdySession::DoWriteComplete(int result) {
@@ -2091,6 +2171,7 @@ int SpdySession::DoWriteComplete(int result) {
     in_flight_write_frame_type_ = SpdyFrameType::DATA;
     in_flight_write_frame_size_ = 0;
     in_flight_write_stream_.reset();
+    in_flight_write_traffic_annotation.reset();
     write_state_ = WRITE_STATE_DO_WRITE;
     DoDrainSession(static_cast<Error>(result), "Write error");
     return OK;
@@ -2226,6 +2307,16 @@ void SpdySession::HandleSetting(uint32_t id, uint32_t value) {
           NetLog::IntCallback("delta_window_size", delta_window_size));
       break;
     }
+    case SETTINGS_ENABLE_CONNECT_PROTOCOL:
+      if ((value != 0 && value != 1) || (support_websocket_ && value == 0)) {
+        DoDrainSession(ERR_SPDY_PROTOCOL_ERROR,
+                       "Invalid value for SETTINGS_ENABLE_CONNECT_PROTOCOL.");
+        return;
+      }
+      if (value == 1) {
+        support_websocket_ = true;
+      }
+      break;
   }
 }
 
@@ -2361,17 +2452,21 @@ void SpdySession::EnqueueSessionWrite(
   auto buffer = std::make_unique<SpdyBuffer>(std::move(frame));
   EnqueueWrite(priority, frame_type,
                std::make_unique<SimpleBufferProducer>(std::move(buffer)),
-               base::WeakPtr<SpdyStream>());
+               base::WeakPtr<SpdyStream>(),
+               kSpdySessionCommandsTrafficAnnotation);
 }
 
-void SpdySession::EnqueueWrite(RequestPriority priority,
-                               SpdyFrameType frame_type,
-                               std::unique_ptr<SpdyBufferProducer> producer,
-                               const base::WeakPtr<SpdyStream>& stream) {
+void SpdySession::EnqueueWrite(
+    RequestPriority priority,
+    SpdyFrameType frame_type,
+    std::unique_ptr<SpdyBufferProducer> producer,
+    const base::WeakPtr<SpdyStream>& stream,
+    const NetworkTrafficAnnotationTag& traffic_annotation) {
   if (availability_state_ == STATE_DRAINING)
     return;
 
-  write_queue_.Enqueue(priority, frame_type, std::move(producer), stream);
+  write_queue_.Enqueue(priority, frame_type, std::move(producer), stream,
+                       traffic_annotation);
   MaybePostWriteLoop();
 }
 
@@ -2415,28 +2510,6 @@ void SpdySession::DeleteStream(std::unique_ptr<SpdyStream> stream, int status) {
   if (availability_state_ == STATE_AVAILABLE) {
     ProcessPendingStreamRequests();
   }
-}
-
-SpdyStream* SpdySession::GetActivePushStream(const GURL& url) {
-  UnclaimedPushedStreamContainer::const_iterator unclaimed_it =
-      unclaimed_pushed_streams_.find(url);
-  if (unclaimed_it == unclaimed_pushed_streams_.end())
-    return nullptr;
-
-  const SpdyStreamId stream_id = unclaimed_it->second;
-  unclaimed_pushed_streams_.erase(unclaimed_it);
-
-  ActiveStreamMap::iterator active_it = active_streams_.find(stream_id);
-  if (active_it == active_streams_.end()) {
-    NOTREACHED();
-    return nullptr;
-  }
-
-  SpdyStream* stream = active_it->second;
-  net_log_.AddEvent(
-      NetLogEventType::HTTP2_STREAM_ADOPTED_PUSH_STREAM,
-      base::Bind(&NetLogSpdyAdoptedPushStreamCallback, stream_id, &url));
-  return stream;
 }
 
 void SpdySession::RecordPingRTTHistogram(base::TimeDelta duration) {
@@ -2493,7 +2566,7 @@ void SpdySession::DcheckDraining() const {
   DcheckGoingAway();
   DCHECK_EQ(availability_state_, STATE_DRAINING);
   DCHECK(active_streams_.empty());
-  DCHECK(unclaimed_pushed_streams_.empty());
+  DCHECK_EQ(0u, pool_->push_promise_index()->CountStreamsForSession(this));
 }
 
 void SpdySession::DoDrainSession(Error err, const SpdyString& description) {
@@ -2532,7 +2605,7 @@ void SpdySession::DoDrainSession(Error err, const SpdyString& description) {
       NetLogEventType::HTTP2_SESSION_CLOSE,
       base::Bind(&NetLogSpdySessionCloseCallback, err, &description));
 
-  UMA_HISTOGRAM_SPARSE_SLOWLY("Net.SpdySession.ClosedOnError", -err);
+  base::UmaHistogramSparse("Net.SpdySession.ClosedOnError", -err);
 
   if (err == OK) {
     // We ought to be going away already, as this is a graceful close.
@@ -2586,21 +2659,17 @@ void SpdySession::CancelPushedStreamIfUnclaimed(SpdyStreamId stream_id) {
   if (active_it == active_streams_.end())
     return;
 
-  // Grab URL for faster lookup in unclaimed_pushed_streams_.
-  const GURL& url = active_it->second->url();
-  UnclaimedPushedStreamContainer::const_iterator unclaimed_it =
-      unclaimed_pushed_streams_.find(url);
   // Make sure to cancel the correct stream.  It is possible that the pushed
   // stream |stream_id| is already claimed, and another stream has been pushed
   // for the same URL.
-  if (unclaimed_it == unclaimed_pushed_streams_.end() ||
-      unclaimed_it->second != stream_id) {
+  const GURL& url = active_it->second->url();
+  if (pool_->push_promise_index()->FindStream(url, this) != stream_id) {
     return;
   }
 
   LogAbandonedActiveStream(active_it, ERR_TIMED_OUT);
   // CloseActiveStreamIterator() will remove the stream from
-  // |unclaimed_pushed_streams_|.
+  // |pool_->push_promise_index()|.
   ResetStreamIterator(active_it, ERROR_CODE_REFUSED_STREAM,
                       "Stream not claimed.");
 }
@@ -2676,9 +2745,13 @@ void SpdySession::OnRstStream(SpdyStreamId stream_id,
     return;
   }
 
+  DCHECK(it->second);
   CHECK_EQ(it->second->stream_id(), stream_id);
 
-  if (error_code == ERROR_CODE_NO_ERROR) {
+  if (it->second->ShouldRetryRSTPushStream()) {
+    CloseActiveStreamIterator(it,
+                              ERR_SPDY_CLAIMED_PUSHED_STREAM_RESET_BY_SERVER);
+  } else if (error_code == ERROR_CODE_NO_ERROR) {
     CloseActiveStreamIterator(it, ERR_SPDY_RST_STREAM_NO_ERROR_RECEIVED);
   } else if (error_code == ERROR_CODE_REFUSED_STREAM) {
     CloseActiveStreamIterator(it, ERR_SPDY_SERVER_REFUSED_STREAM);
@@ -2713,7 +2786,8 @@ void SpdySession::OnGoAway(SpdyStreamId last_accepted_stream_id,
   net_log_.AddEvent(
       NetLogEventType::HTTP2_SESSION_RECV_GOAWAY,
       base::Bind(&NetLogSpdyRecvGoAwayCallback, last_accepted_stream_id,
-                 active_streams_.size(), unclaimed_pushed_streams_.size(),
+                 active_streams_.size(),
+                 pool_->push_promise_index()->CountStreamsForSession(this),
                  error_code, debug_data));
   MakeUnavailable();
   if (error_code == ERROR_CODE_HTTP_1_1_REQUIRED) {
@@ -2848,7 +2922,7 @@ void SpdySession::OnSettingsAck() {
     net_log_.AddEvent(NetLogEventType::HTTP2_SESSION_RECV_SETTINGS_ACK);
 }
 
-void SpdySession::OnSetting(SpdySettingsIds id, uint32_t value) {
+void SpdySession::OnSetting(SpdySettingsId id, uint32_t value) {
   CHECK(in_io_loop_);
 
   HandleSetting(id, value);
@@ -2976,7 +3050,9 @@ void SpdySession::OnAltSvc(
     if (origin.empty())
       return;
     const GURL gurl(origin);
-    if (!gurl.SchemeIs("https"))
+    if (!gurl.is_valid() || gurl.host().empty())
+      return;
+    if (!gurl.SchemeIs(url::kHttpsScheme))
       return;
     SSLInfo ssl_info;
     if (!GetSSLInfo(&ssl_info))
@@ -2993,7 +3069,7 @@ void SpdySession::OnAltSvc(
     if (it == active_streams_.end())
       return;
     const GURL& gurl(it->second->url());
-    if (!gurl.SchemeIs("https"))
+    if (!gurl.SchemeIs(url::kHttpsScheme))
       return;
     scheme_host_port = url::SchemeHostPort(gurl);
   }

@@ -4,6 +4,7 @@
 
 #include "chrome/browser/vr/renderers/gradient_quad_renderer.h"
 
+#include "chrome/browser/vr/elements/corner_radii.h"
 #include "chrome/browser/vr/renderers/textured_quad_renderer.h"
 #include "chrome/browser/vr/vr_gl_util.h"
 #include "ui/gfx/geometry/size_f.h"
@@ -27,7 +28,11 @@ static constexpr size_t kInnerRectOffset = 6 * sizeof(GLushort);
 static constexpr char const* kVertexShader = SHADER(
   precision mediump float;
   uniform mat4 u_ModelViewProjMatrix;
-  uniform vec2 u_CornerOffset;
+  uniform vec2 u_ULCornerOffset;
+  uniform vec2 u_URCornerOffset;
+  uniform vec2 u_LRCornerOffset;
+  uniform vec2 u_LLCornerOffset;
+  uniform mediump float u_AspectRatio;
   attribute vec4 a_Position;
   attribute vec2 a_CornerPosition;
   attribute vec2 a_OffsetScale;
@@ -36,12 +41,26 @@ static constexpr char const* kVertexShader = SHADER(
 
   void main() {
     v_CornerPosition = a_CornerPosition;
+    vec2 corner_offset;
+    if (a_Position[0] < 0.0 && a_Position[1] > 0.0) {
+      corner_offset = u_ULCornerOffset;
+    } else if (a_Position[0] > 0.0 && a_Position[1] > 0.0) {
+      corner_offset = u_URCornerOffset;
+    } else if (a_Position[0] > 0.0 && a_Position[1] < 0.0) {
+      corner_offset = u_LRCornerOffset;
+    } else if (a_Position[0] < 0.0 && a_Position[1] < 0.0) {
+      corner_offset = u_LLCornerOffset;
+    }
     vec4 position = vec4(
-        a_Position[0] + u_CornerOffset[0] * a_OffsetScale[0],
-        a_Position[1] + u_CornerOffset[1] * a_OffsetScale[1],
+        a_Position[0] + corner_offset[0] * a_OffsetScale[0],
+        a_Position[1] + corner_offset[1] * a_OffsetScale[1],
         a_Position[2],
         a_Position[3]);
-    v_Position = position.xy;
+    if (u_AspectRatio > 1.0) {
+      v_Position = vec2(position.x, position.y / u_AspectRatio);
+    } else {
+      v_Position = vec2(position.x * u_AspectRatio, position.y);
+    }
     gl_Position = u_ModelViewProjMatrix * position;
   }
 );
@@ -54,11 +73,8 @@ static constexpr char const* kFragmentShader = SHADER(
   uniform vec4 u_CenterColor;
   uniform vec4 u_EdgeColor;
   void main() {
-    // NB: this is on the range [0, 1] and hits its extrema at the horizontal
-    // and vertical edges of the quad, regardless of its aspect ratio. If we
-    // want to have a true circular gradient, we will need to do some extra
-    // math.
-    float edge_color_weight = clamp(2.0 * length(v_Position), 0.0, 1.0);
+    vec2 position = v_Position;
+    float edge_color_weight = clamp(2.0 * length(position), 0.0, 1.0);
     float center_color_weight = 1.0 - edge_color_weight;
     vec4 color = u_CenterColor * center_color_weight + u_EdgeColor *
         edge_color_weight;
@@ -73,20 +89,34 @@ static constexpr char const* kFragmentShader = SHADER(
 );
 // clang-format on
 
+void SetCornerOffset(GLuint handle, float radius, const gfx::SizeF& size) {
+  if (radius == 0.0f)
+    glUniform2f(handle, 0.0, 0.0);
+  else
+    glUniform2f(handle, radius / size.width(), radius / size.height());
+}
+
 }  // namespace
 
 GradientQuadRenderer::GradientQuadRenderer()
     : BaseRenderer(kVertexShader, kFragmentShader) {
   model_view_proj_matrix_handle_ =
       glGetUniformLocation(program_handle_, "u_ModelViewProjMatrix");
-  corner_offset_handle_ =
-      glGetUniformLocation(program_handle_, "u_CornerOffset");
+  ul_corner_offset_handle_ =
+      glGetUniformLocation(program_handle_, "u_ULCornerOffset");
+  ur_corner_offset_handle_ =
+      glGetUniformLocation(program_handle_, "u_URCornerOffset");
+  lr_corner_offset_handle_ =
+      glGetUniformLocation(program_handle_, "u_LRCornerOffset");
+  ll_corner_offset_handle_ =
+      glGetUniformLocation(program_handle_, "u_LLCornerOffset");
   corner_position_handle_ =
       glGetAttribLocation(program_handle_, "a_CornerPosition");
   offset_scale_handle_ = glGetAttribLocation(program_handle_, "a_OffsetScale");
   opacity_handle_ = glGetUniformLocation(program_handle_, "u_Opacity");
   center_color_handle_ = glGetUniformLocation(program_handle_, "u_CenterColor");
   edge_color_handle_ = glGetUniformLocation(program_handle_, "u_EdgeColor");
+  aspect_ratio_handle_ = glGetUniformLocation(program_handle_, "u_AspectRatio");
 }
 
 GradientQuadRenderer::~GradientQuadRenderer() = default;
@@ -96,10 +126,14 @@ void GradientQuadRenderer::Draw(const gfx::Transform& model_view_proj_matrix,
                                 SkColor center_color,
                                 float opacity,
                                 const gfx::SizeF& element_size,
-                                float corner_radius) {
+                                const CornerRadii& radii) {
+  DCHECK(opacity > 0.f);
+  if (SkColorGetA(edge_color) == SK_AlphaTRANSPARENT &&
+      SkColorGetA(center_color) == SK_AlphaTRANSPARENT) {
+    return;
+  }
+
   glUseProgram(program_handle_);
-  glEnable(GL_BLEND);
-  glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
 
   glBindBuffer(GL_ARRAY_BUFFER, TexturedQuadRenderer::VertexBuffer());
   glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, TexturedQuadRenderer::IndexBuffer());
@@ -121,23 +155,23 @@ void GradientQuadRenderer::Draw(const gfx::Transform& model_view_proj_matrix,
                         VOID_OFFSET(kCornerPositionDataOffset));
   glEnableVertexAttribArray(corner_position_handle_);
 
-  if (corner_radius == 0.0f) {
-    glUniform2f(corner_offset_handle_, 0.0, 0.0);
-  } else {
-    glUniform2f(corner_offset_handle_, corner_radius / element_size.width(),
-                corner_radius / element_size.height());
-  }
+  SetCornerOffset(ul_corner_offset_handle_, radii.upper_left, element_size);
+  SetCornerOffset(ur_corner_offset_handle_, radii.upper_right, element_size);
+  SetCornerOffset(lr_corner_offset_handle_, radii.lower_right, element_size);
+  SetCornerOffset(ll_corner_offset_handle_, radii.lower_left, element_size);
 
   // Set the edge color to the fog color so that it seems to fade out.
   SetColorUniform(edge_color_handle_, edge_color);
   SetColorUniform(center_color_handle_, center_color);
   glUniform1f(opacity_handle_, opacity);
+  glUniform1f(aspect_ratio_handle_,
+              element_size.width() / element_size.height());
 
   // Pass in model view project matrix.
   glUniformMatrix4fv(model_view_proj_matrix_handle_, 1, false,
                      MatrixToGLArray(model_view_proj_matrix).data());
 
-  if (corner_radius == 0.0f) {
+  if (radii.IsZero()) {
     glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_SHORT,
                    VOID_OFFSET(kInnerRectOffset));
   } else {

@@ -9,6 +9,7 @@
 
 #include <memory>
 #include <string>
+#include <utility>
 
 #include "base/bind.h"
 #include "base/memory/ptr_util.h"
@@ -176,7 +177,7 @@ void CALLBACK OnGetGattEventWin(BTH_LE_GATT_EVENT_TYPE type,
     return;
 
   it->second->callback_task_runner->PostTask(
-      FROM_HERE, base::Bind(it->second->callback, base::Passed(&new_value)));
+      FROM_HERE, base::BindOnce(it->second->callback, std::move(new_value)));
 }
 
 }  // namespace
@@ -467,8 +468,8 @@ void BluetoothTaskManagerWin::DiscoverDevices(int timeout_multiplier) {
   std::vector<std::unique_ptr<DeviceState>> device_list;
   if (SearchDevices(timeout_multiplier, false, &device_list)) {
     ui_task_runner_->PostTask(
-        FROM_HERE, base::Bind(&BluetoothTaskManagerWin::OnDevicesPolled, this,
-                              base::Passed(&device_list)));
+        FROM_HERE, base::BindOnce(&BluetoothTaskManagerWin::OnDevicesPolled,
+                                  this, std::move(device_list)));
   }
 
   if (timeout_multiplier < kMaxDeviceDiscoveryTimeoutMultiplier)
@@ -483,8 +484,8 @@ void BluetoothTaskManagerWin::GetKnownDevices() {
   std::vector<std::unique_ptr<DeviceState>> device_list;
   if (SearchDevices(1, true, &device_list)) {
     ui_task_runner_->PostTask(
-        FROM_HERE, base::Bind(&BluetoothTaskManagerWin::OnDevicesPolled, this,
-                              base::Passed(&device_list)));
+        FROM_HERE, base::BindOnce(&BluetoothTaskManagerWin::OnDevicesPolled,
+                                  this, std::move(device_list)));
   }
 }
 
@@ -569,6 +570,7 @@ bool BluetoothTaskManagerWin::SearchLowEnergyDevices(
       win::BluetoothLowEnergyWrapper::GetInstance()
           ->EnumerateKnownBluetoothLowEnergyDevices(&btle_devices, &error);
   if (!success) {
+    error.insert(0, "Error calling EnumerateKnownBluetoothLowEnergyDevices: ");
     LogPollingError(error.c_str(), 0);
     return false;
   }
@@ -726,6 +728,7 @@ bool BluetoothTaskManagerWin::DiscoverLowEnergyDeviceServices(
                      ->EnumerateKnownBluetoothLowEnergyServices(
                          device_path, &services, &error);
   if (!success) {
+    error.insert(0, "Error calling EnumerateKnownBluetoothLowEnergyServices: ");
     LogPollingError(error.c_str(), 0);
     return false;
   }
@@ -757,6 +760,9 @@ bool BluetoothTaskManagerWin::SearchForGattServiceDevicePaths(
                      ->EnumerateKnownBluetoothLowEnergyGattServiceDevices(
                          &gatt_service_devices, &error);
   if (!success) {
+    error.insert(
+        0,
+        "Error calling EnumerateKnownBluetoothLowEnergyGattServiceDevices: ");
     LogPollingError(error.c_str(), 0);
     return false;
   }
@@ -774,6 +780,8 @@ bool BluetoothTaskManagerWin::SearchForGattServiceDevicePaths(
     if (!win::BluetoothLowEnergyWrapper::GetInstance()
              ->EnumerateKnownBluetoothLowEnergyServices(
                  gatt_service_device->path, &gatt_services, &error)) {
+      error.insert(0,
+                   "Error calling EnumerateKnownBluetoothLowEnergyServices: ");
       LogPollingError(error.c_str(), 0);
       continue;
     }
@@ -829,8 +837,8 @@ void BluetoothTaskManagerWin::GetGattIncludedCharacteristics(
   }
 
   ui_task_runner_->PostTask(
-      FROM_HERE, base::Bind(callback, base::Passed(&win_characteristics_info),
-                            number_of_charateristics, hr));
+      FROM_HERE, base::BindOnce(callback, std::move(win_characteristics_info),
+                                number_of_charateristics, hr));
 }
 
 void BluetoothTaskManagerWin::GetGattIncludedDescriptors(
@@ -847,8 +855,8 @@ void BluetoothTaskManagerWin::GetGattIncludedDescriptors(
               &win_descriptors_info, &number_of_descriptors);
 
   ui_task_runner_->PostTask(
-      FROM_HERE, base::Bind(callback, base::Passed(&win_descriptors_info),
-                            number_of_descriptors, hr));
+      FROM_HERE, base::BindOnce(callback, std::move(win_descriptors_info),
+                                number_of_descriptors, hr));
 }
 
 void BluetoothTaskManagerWin::ReadGattCharacteristicValue(
@@ -863,7 +871,7 @@ void BluetoothTaskManagerWin::ReadGattCharacteristicValue(
 
   ui_task_runner_->PostTask(
       FROM_HERE,
-      base::Bind(callback, base::Passed(&win_characteristic_value), hr));
+      base::BindOnce(callback, std::move(win_characteristic_value), hr));
 }
 
 void BluetoothTaskManagerWin::WriteGattCharacteristicValue(

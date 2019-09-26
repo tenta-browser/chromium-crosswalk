@@ -52,6 +52,12 @@ class HeadlessContentBrowserClient : public content::ContentBrowserClient {
       const base::Callback<void(content::CertificateRequestResultType)>&
           callback) override;
 
+  void SelectClientCertificate(
+      content::WebContents* web_contents,
+      net::SSLCertRequestInfo* cert_request_info,
+      net::ClientCertIdentityList client_certs,
+      std::unique_ptr<content::ClientCertificateDelegate> delegate) override;
+
   void ResourceDispatcherHostCreated() override;
 
   net::NetLog* GetNetLog() override;
@@ -70,6 +76,9 @@ class HeadlessContentBrowserClient : public content::ContentBrowserClient {
                       int render_process_id,
                       int render_frame_id,
                       const net::CookieOptions& options) override;
+
+  bool DoesSiteRequireDedicatedProcess(content::BrowserContext* browser_context,
+                                       const GURL& effective_site_url) override;
 
  private:
   std::unique_ptr<base::Value> GetBrowserServiceManifestOverlay();

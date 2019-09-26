@@ -3,6 +3,7 @@
 // found in the LICENSE file.
 
 #include <iterator>
+#include <memory>
 #include <string>
 #include <utility>
 #include <vector>
@@ -12,7 +13,6 @@
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/memory/ref_counted.h"
 #include "base/path_service.h"
 #include "base/run_loop.h"
@@ -79,6 +79,7 @@ class MockUpdateClient : public UpdateClient {
 
   void Update(const std::vector<std::string>& ids,
               CrxDataCallback crx_data_callback,
+              bool is_foreground,
               Callback callback) {
     DoUpdate(ids, std::move(crx_data_callback));
     std::move(callback).Run(update_client::Error::NONE);
@@ -113,10 +114,10 @@ class MockUpdateClient : public UpdateClient {
   ~MockUpdateClient() override {}
 };
 
-class FakeInstallerPolicy : public ComponentInstallerPolicy {
+class MockInstallerPolicy : public ComponentInstallerPolicy {
  public:
-  FakeInstallerPolicy() {}
-  ~FakeInstallerPolicy() override {}
+  MockInstallerPolicy() {}
+  ~MockInstallerPolicy() override {}
 
   bool VerifyInstallation(const base::DictionaryValue& manifest,
                           const base::FilePath& dir) const override {
@@ -204,7 +205,7 @@ class ComponentInstallerTest : public testing::Test {
 ComponentInstallerTest::ComponentInstallerTest() {
   EXPECT_CALL(update_client(), AddObserver(_)).Times(1);
   component_updater_ =
-      base::MakeUnique<CrxUpdateService>(config_, update_client_);
+      std::make_unique<CrxUpdateService>(config_, update_client_);
 }
 
 ComponentInstallerTest::~ComponentInstallerTest() {
@@ -217,9 +218,10 @@ void ComponentInstallerTest::RunThreads() {
 }
 
 void ComponentInstallerTest::Unpack(const base::FilePath& crx_path) {
+  auto config = base::MakeRefCounted<TestConfigurator>();
   auto component_unpacker = base::MakeRefCounted<ComponentUnpacker>(
       std::vector<uint8_t>(std::begin(kSha256Hash), std::end(kSha256Hash)),
-      crx_path, nullptr, nullptr);
+      crx_path, nullptr, config->CreateServiceManagerConnector());
   component_unpacker->Unpack(base::BindOnce(
       &ComponentInstallerTest::UnpackComplete, base::Unretained(this)));
   RunThreads();
@@ -272,7 +274,7 @@ TEST_F(ComponentInstallerTest, RegisterComponent) {
   EXPECT_CALL(update_client(), Stop()).Times(1);
 
   auto installer = base::MakeRefCounted<ComponentInstaller>(
-      base::MakeUnique<FakeInstallerPolicy>());
+      std::make_unique<MockInstallerPolicy>());
   installer->Register(component_updater(), base::OnceClosure());
 
   RunThreads();
@@ -299,7 +301,7 @@ TEST_F(ComponentInstallerTest, RegisterComponent) {
 // Tests that the unpack path is removed when the install succeeded.
 TEST_F(ComponentInstallerTest, UnpackPathInstallSuccess) {
   auto installer = base::MakeRefCounted<ComponentInstaller>(
-      base::MakeUnique<FakeInstallerPolicy>());
+      std::make_unique<MockInstallerPolicy>());
 
   Unpack(test_file("jebgalgnebhfojomionfpkfelancnnkf.crx"));
 
@@ -327,7 +329,7 @@ TEST_F(ComponentInstallerTest, UnpackPathInstallSuccess) {
 // Tests that the unpack path is removed when the install failed.
 TEST_F(ComponentInstallerTest, UnpackPathInstallError) {
   auto installer = base::MakeRefCounted<ComponentInstaller>(
-      base::MakeUnique<FakeInstallerPolicy>());
+      std::make_unique<MockInstallerPolicy>());
 
   Unpack(test_file("jebgalgnebhfojomionfpkfelancnnkf.crx"));
 

@@ -12,6 +12,10 @@
 #include "ash/app_list/model/app_list_model.h"
 #include "base/macros.h"
 
+namespace ui {
+class MenuModel;
+}  // namespace ui
+
 namespace app_list {
 
 namespace test {
@@ -23,7 +27,8 @@ class AppListTestModel : public AppListModel {
    public:
     AppListTestItem(const std::string& id, AppListTestModel* model);
     ~AppListTestItem() override;
-    void Activate(int event_flags) override;
+    void Activate(int event_flags);
+    ui::MenuModel* GetContextMenuModel();
     const char* GetItemType() const override;
 
     void SetPosition(const syncer::StringOrdinal& new_position);
@@ -52,7 +57,7 @@ class AppListTestModel : public AppListModel {
   // Creates and populate a folder with |n| test apps in it.
   AppListFolderItem* CreateAndPopulateFolderWithApps(int n);
 
-  AppListFolderItem* CreateAndAddOemFolder(const std::string& id);
+  AppListFolderItem* CreateAndAddOemFolder();
 
   AppListFolderItem* CreateSingleItemFolder(const std::string& folder_id,
                                             const std::string& item_id);

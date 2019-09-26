@@ -22,7 +22,11 @@ import org.chromium.net.ConnectionType;
  */
 @JNINamespace("offline_pages::prefetch")
 public class PrefetchBackgroundTask extends NativeBackgroundTask {
+    /** Key used in the extra data {@link Bundle} when the limitless flag is enabled. */
+    public static final String LIMITLESS_BUNDLE_KEY = "limitlessPrefetching";
+
     private static final int MINIMUM_BATTERY_PERCENTAGE_FOR_PREFETCHING = 50;
+
     private static boolean sSkipConditionCheckingForTesting = false;
 
     private long mNativeTask = 0;
@@ -33,6 +37,7 @@ public class PrefetchBackgroundTask extends NativeBackgroundTask {
     // Defaults to true so that we are rescheduled automatically if somehow we were unable to start
     // up native.
     private boolean mCachedRescheduleResult = true;
+    private boolean mLimitlessPrefetchingEnabled = false;
 
     public PrefetchBackgroundTask() {}
 
@@ -52,15 +57,23 @@ public class PrefetchBackgroundTask extends NativeBackgroundTask {
         // TODO(dewittj): * Preferences enabled.
 
         mTaskFinishedCallback = callback;
+        mLimitlessPrefetchingEnabled = taskParameters.getExtras().getBoolean(LIMITLESS_BUNDLE_KEY);
 
-        if (sSkipConditionCheckingForTesting) return NativeBackgroundTask.LOAD_NATIVE;
+        // Check current device conditions. They might be set to null when testing and for some
+        // specific Android devices.
+        final DeviceConditions deviceConditions;
+        if (!sSkipConditionCheckingForTesting) {
+            deviceConditions = DeviceConditions.getCurrentConditions(context);
+        } else {
+            deviceConditions = null;
+        }
 
-        // Check current device conditions.
-        DeviceConditions deviceConditions = DeviceConditions.getCurrentConditions(context);
-
-        if (!areBatteryConditionsMet(deviceConditions)
-                || !areNetworkConditionsMet(context, deviceConditions)
-                || deviceConditions.inPowerSaveMode()) {
+        // Note: when |deviceConditions| is null native is always loaded because with the evidence
+        // we have so far only specific devices that do not run on batteries actually return null.
+        if (deviceConditions != null
+                && (!areBatteryConditionsMet(deviceConditions)
+                           || !areNetworkConditionsMet(context, deviceConditions)
+                           || deviceConditions.inPowerSaveMode())) {
             return NativeBackgroundTask.RESCHEDULE;
         }
 
@@ -103,7 +116,11 @@ public class PrefetchBackgroundTask extends NativeBackgroundTask {
     @Override
     public void reschedule(Context context) {
         // TODO(dewittj): Set the backoff time appropriately.
-        PrefetchBackgroundTaskScheduler.scheduleTask(0);
+        if (mLimitlessPrefetchingEnabled) {
+            PrefetchBackgroundTaskScheduler.scheduleTaskLimitless(0);
+        } else {
+            PrefetchBackgroundTaskScheduler.scheduleTask(0);
+        }
     }
 
     /**
@@ -130,15 +147,18 @@ public class PrefetchBackgroundTask extends NativeBackgroundTask {
     }
 
     /** Whether battery conditions (on power or enough battery percentage) are met. */
-    private static boolean areBatteryConditionsMet(DeviceConditions deviceConditions) {
+    private boolean areBatteryConditionsMet(DeviceConditions deviceConditions) {
         return deviceConditions.isPowerConnected()
                 || (deviceConditions.getBatteryPercentage()
-                           >= MINIMUM_BATTERY_PERCENTAGE_FOR_PREFETCHING);
+                           >= MINIMUM_BATTERY_PERCENTAGE_FOR_PREFETCHING)
+                || mLimitlessPrefetchingEnabled;
     }
 
     /** Whether network conditions are met. */
-    private static boolean areNetworkConditionsMet(
-            Context context, DeviceConditions deviceConditions) {
+    private boolean areNetworkConditionsMet(Context context, DeviceConditions deviceConditions) {
+        if (mLimitlessPrefetchingEnabled) {
+            return deviceConditions.getNetConnectionType() != ConnectionType.CONNECTION_NONE;
+        }
         return !DeviceConditions.isActiveNetworkMetered(context)
                 && deviceConditions.getNetConnectionType() == ConnectionType.CONNECTION_WIFI;
     }

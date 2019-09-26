@@ -15,7 +15,11 @@ body {
 button {
   margin-top: 4px;
 }
-
+input {
+  vertical-align: middle;
+  margin-top: 0;
+  margin-bottom: 0;
+}
 p, h2, h3, h4 {
   margin: 8px 0 4px 0;
 }
@@ -51,11 +55,12 @@ p, h2, h3, h4 {
 #report {
   font-family: monospace;
 }
-#report i {
+#none {
   color: green;
   margin-left: 2em;
   font-size: x-large;
   font-weight: bold;
+  font-style: italic;
 }
 .fix-width {
   display: inline-block;
@@ -142,11 +147,6 @@ p, h2, h3, h4 {
   font-family: sans-serif;
   font-size: smaller;
 }
-#filters input {
-  vertical-align: middle;
-  margin-top: 0;
-  margin-bottom: 0;
-}
 
 .flag {
   display: inline-block;
@@ -169,9 +169,20 @@ p, h2, h3, h4 {
   color: gray;
 }
 
+#copied {
+  color: #4F8A10;
+  margin-left: 5px;
+}
+
+#flag-toolbar {
+  display: inline-block;
+}
+#flag-toolbar.hidden {
+  display: none;
+}
 </style>
 <body>
-<h3>Test run summary <span id="builder_name"></span></h3>
+<h3>Test run summary <span id="builder_name"></span> <span class="flag_name"></span></h3>
 
 <div id="right-toolbar">
   <a id="help_button" href="javascript:GUI.toggleVisibility('help')">help</a>
@@ -187,12 +198,12 @@ p, h2, h3, h4 {
   <li><b>Tab</b> to select the next test.
   <li><b>Enter</b> to see test details. This will automatically close other details.
   <li><b>ctrl A</b> to select text of all tests for easy copying.
-  <li><b>f</b> to flag.
+  <li><b>f</b> to flag/unflag a test.
   </ul>
   <p>Modifiers:</p>
   <ul>
   <li><b>Shift</b> hold shift key to keep other details open.
-  <li><b>Meta</b> meta means all. Toggle all flags, open all results (max 100).
+  <li><b>Meta</b> meta means all. Set/unset all flags or open/close all results (max 100).
   </ul>
   <p>This page lets you query and display test results.</p>
 
@@ -211,13 +222,7 @@ p, h2, h3, h4 {
   <pre>fast/forms/<a href="https://cs.chromium.org/chromium/src/third_party/WebKit/LayoutTests/fast/forms/validation-bubble-appearance-rtl-ui.html?q=validation-bubble-appearance-rtl-ui.html&dr">validation-bubble-appearance-rtl-ui.html</a></pre>
   <p>Plain text shows the test path.</p>
 
-  <h4>2. Plain text wrapped</h4>
-  All test paths are placed in the same line. This is useful to copy a list of tests to a command line.
-  For example, by pasting the wrapped paint text into a command line starting with
-  <pre>run-webkit-tests --reset-results ...</pre>
-  we can rebaseline the selected list of tests.
-
-  <h4>3. TestExpectations</a></h4>
+  <h4>2. TestExpectations</a></h4>
 <pre><a href="#">crbug.com/bug</a> layout/test/path/<a href="#">test.html</a> [ Status ]</pre>
   <p>TestExpectationsshow lines as they'd appear in <a
     href="https://chromium.googlesource.com/chromium/src/+/master/docs/testing/layout_test_expectations.md">TestExpectations</a> file.</p>
@@ -237,12 +242,12 @@ TestResult(CRASH) + TextExpectation(Failure) => [ Failure <b>Crash</b> ]</pre>
   <p>If you are doing a lot of TestExpectation edits, the hope is that this will make
   your job as easy as copy and paste.</p>
 
-  <h4>4. Crash site</h4>
+  <h4>3. Crash site</h4>
   <pre>
 ### Crash site: Internals.cpp(3455)
   editing/pasteboard/<a href="https://cs.chromium.org/chromium/src/third_party/WebKit/LayoutTests/editing/pasteboard/copy-paste-white-space.html?q=copy-paste-white-space.html&dr">copy-paste-white-space.html</a></pre>
   <p>Crash site groups "Crash" tests with similar stack traces together. For best results, use it while filtering only crashes.</p>
-  <h4>5. Text mismatch</h4>
+  <h4>4. Text mismatch</h4>
   <pre>
 ### Text mismatch failure: general text mismatch
   accessibility/dimensions-include-descendants.html
@@ -253,6 +258,9 @@ TestResult(CRASH) + TextExpectation(Failure) => [ Failure <b>Crash</b> ]</pre>
 </pre>
   <p>Text mistmatch groups "Text failure" tests together.
   </p>
+  <h4>5. Rebaseline</h4>
+    <p>Generates a bash script to rebaseline based on new results. @xiaochengh knows the details on how to use it, and @kojii is
+    our one user.</p>
   <h3>Viewing results of a single test</h3>
   <h4>Image results</h4>
   <p>Click on images to zoom in. Select image viewing mode from the popup.</p>
@@ -278,9 +286,9 @@ TestResult(CRASH) + TextExpectation(Failure) => [ Failure <b>Crash</b> ]</pre>
 <div id="dashboard">
   <div>
     <span class="fix-width">Query</span>
-    <button id="button_unexpected_fail" onclick="javascript:Query.query('Unexpected failures', Filters.unexpectedFailure, true)">
-      Unexpected Failure
-      <span id="count_unexpected_fail"></span>
+    <button id="button_regressions" onclick="javascript:Query.query('Regressions', Filters.regression, true)">
+      Regressions
+      <span id="count_regressions"></span>
     </button>
     <button onclick="javascript:Query.query('Unexpected passes', Filters.unexpectedPass, true)">
       Unexpected Pass
@@ -301,10 +309,20 @@ TestResult(CRASH) + TextExpectation(Failure) => [ Failure <b>Crash</b> ]</pre>
     <button onclick="javascript:Query.query('Flagged', Filters.flagged, true)">
       Flagged
     </button>
+    <div id="flag-toolbar" class="hidden">
+      <button onclick="javascript:Query.query('Flag failures', Filters.flagFailure, true)">
+        <span class="flag_name"></span> failures
+        <span id="count_flagfailure"></span>
+      </button>
+      <button onclick="javascript:Query.query('Flag failures', Filters.flagPass, true)">
+        <span class="flag_name"></span> passes
+        <span id="count_flagpass"></span>
+      </button>
+    </div>
   </div>
   <div id="filters">
     <span class="fix-width">Filters</span>
-    <input id="text-filter" onchange="Query.filterChanged()" type="text" placeholder="text filter, hit enter">
+    <input id="text-filter" onchange="Query.filterChanged()" type="text" placeholder="test name/bug#, hit enter">
     <label id="CRASH"><input type="checkbox">Crash <span></span></label>
     <label id="TIMEOUT"><input type="checkbox">Timeout <span></span></label>
     <label id="TEXT"><input type="checkbox">Text failure <span></span></label>
@@ -314,6 +332,7 @@ TestResult(CRASH) + TextExpectation(Failure) => [ Failure <b>Crash</b> ]</pre>
     <label id="PASS"><input type="checkbox">Pass <span></span></label>
     <label id="WONTFIX"><input type="checkbox">WontFix <span></span></label>
     <label id="MISSING"><input type="checkbox">Missing <span></span></label>
+    <label id="LEAK"><input type="checkbox">Leak <span></span></label>
   </div>
 </div>
 
@@ -323,11 +342,19 @@ TestResult(CRASH) + TextExpectation(Failure) => [ Failure <b>Crash</b> ]</pre>
   in format:
     <select id="report_format" onchange="Query.generateReport()">
       <option value="plain" selected>Plain text</option>
-      <option value="plainwrapped">Plain text wrapped</option>
       <option value="expectation">TestExpectations</option>
       <option value="crashsite">Crash site</option>
       <option value="textmismatch">Text mismatch</option>
+      <option value="rebaseline">Rebaseline script</option>
     </select>
+  <span style="margin-left: 20px">
+    <button id="copy_report" title="Copy the shown/flagged tests to clipboard in the current format"
+        onclick="GUI.copyResult(false)" disabled>Copy report</button>
+    <button id="copy_single_line" title="Copy the shown/flagged tests to clipboard in a single line for use in command lines."
+        onclick="GUI.copyResult(true)" disabled>Copy single line</button>
+    <label id="flagged_only" class="hidden"><input id="flagged_only_checkbox" type="checkbox" checked>Flagged only</label>
+    <span id="copied" class="hidden">Copied.</span>
+  </span>
 </div>
 
 <hr id="progress" align="left">
@@ -347,13 +374,14 @@ const TestResultInformation = {
   "IMAGE":      { index: 4, text: "Failure", isFailure: true, isSuccess: false },
   "IMAGE+TEXT": { index: 5, text: "Failure", isFailure: true, isSuccess: false },
   "TIMEOUT":    { index: 6, text: "Timeout", isFailure: true, isSuccess: false },
-  "SLOW":       { index: 7, text: "Slow", isFailure: false, isSuccess: true },
-  "SKIP":       { index: 8, text: "Skip", isFailure: false, isSuccess: false },
-  "MISSING":    { index: 9, text: "Missing", isFailure: false, isSuccess: false },
-  "WONTFIX":    { index: 10, text: "WontFix", isFailure: false, isSuccess: false },
-  "NEEDSMANUALREBASELINE": { index: 11, text: "NeedsManualRebaseline", isFailure: false, isSuccess: false },
-  "PASS":       { index: 12, text: "Pass", isFailure: false, isSuccess: true },
-  "NOTRUN":     { index: 13, text: "NOTRUN", isFailure: false, isSuccess: true }
+  "LEAK":       { index: 7, text: "LEAK", isFailure: true, isSuccess: false },
+  "SLOW":       { index: 8, text: "Slow", isFailure: false, isSuccess: true },
+  "SKIP":       { index: 9, text: "Skip", isFailure: false, isSuccess: false },
+  "MISSING":    { index: 10, text: "Missing", isFailure: false, isSuccess: false },
+  "WONTFIX":    { index: 11, text: "WontFix", isFailure: false, isSuccess: false },
+  "NEEDSMANUALREBASELINE": { index: 12, text: "NeedsManualRebaseline", isFailure: false, isSuccess: false },
+  "PASS":       { index: 13, text: "Pass", isFailure: false, isSuccess: true },
+  "NOTRUN":     { index: 14, text: "NOTRUN", isFailure: false, isSuccess: true }
 };
 
 // Sorted from worst to best.
@@ -375,8 +403,10 @@ class Traversal {
   }
 
   traverse(filter, action) {
+    console.time("traverse");
     action = action || function() {};
     this._helper(this.root, "", filter, action);
+    console.timeEnd("traverse");
   }
 
   reset() {
@@ -384,23 +414,17 @@ class Traversal {
     this.filteredCount = 0;
     this.lastDir = "";
     this.html = [];
-    this.resultCounts = {};
     return this;
   }
 
   _helper(node, path, filter, action) {
-    if ("actual" in node) {
+    if (GUI.isTest(node)) {
       this.testCount++;
       if (filter(node, path)) {
         this.filteredCount++;
-        // Ignore all results except final one, or not?
-        if (!(node.actualFinal in this.resultCounts))
-          this.resultCounts[node.actualFinal] = 0;
-        this.resultCounts[node.actualFinal]++;
         action(node, path, this);
       }
-    }
-    else {
+    } else {
       for (let p of node.keys())
         this._helper(node.get(p), path + "/" + p, filter, action);
     }
@@ -415,12 +439,25 @@ const PathParserGlobals = {
 class PathParser {
   constructor(path) {
     this.path = path;
-    let [href, dir, file] = path.match("/(.*)/(.*)");
-    this.dir = dir;
-    this.file = file;
-    let tmp;
-    [tmp, this.basename, this.extension] = file.match(/(.*)\.(\w+)/);
-    this.testHref = this.testBaseHref() + href.replace(/\/virtual\/[^\/]*/, "");
+    let href;
+    [href, this.dir, this.file] = path.match("/(.*/)?(.*)");
+    this.dir = this.dir || "";
+    [, this.raw_basename, this.raw_extension] = this.file.match(/(.+)\.(.+)/);
+
+    // WebKit/Tools/Scripts/webkitpy/layout_tests/port/base.py output_filename()
+    let index = this.raw_extension.indexOf("?");
+    if (index > -1) {
+      let query_string = this.raw_extension.slice(index + 1);
+      query_string = query_string.replace(/[~#%&*{}\:<>?\/|"]/g, "_");
+      this.basename = this.raw_basename + "_" + query_string;
+      this.extension = this.raw_extension.slice(0, index);
+    } else {
+      [this.basename, this.extension] = [this.raw_basename, this.raw_extension];
+    }
+
+    href = href.replace(/^\/virtual\/[^\/]*/, "");  // virtual suites
+    href = href.replace(/\?.*$/, "");               // query strings (variants)
+    this.testHref = this.testBaseHref() + href;
   }
 
   static initGlobals(fullResults) {
@@ -429,7 +466,7 @@ class PathParser {
   }
 
   resultLink(resultName) {
-    return this.dir + "/" + this.basename + resultName;
+    return this.dir + this.basename + resultName;
   }
 
   repaintOverlayLink() {
@@ -462,15 +499,15 @@ const Report = {
   getDefaultPrinter: () => {
     let val = document.querySelector("#report_format").value;
     window.localStorage.setItem("reportFormat", val);
-    switch(document.querySelector("#report_format").value) {
+    switch(val) {
       case "expectation":
         return {print: Report.printExpectation, render: Report.renderResultList};
       case "crashsite":
         return {print: Report.printCrashSite, render: Report.renderGroupCrashSite};
       case "textmismatch":
         return {print: Report.printTextMismatch, render: Report.renderGroupTextMismatch};
-      case "plainwrapped":
-        return {print: Report.printPlainTestWrapped, render: Report.renderResultList}
+      case "rebaseline":
+        return {print: Report.printRebaseline, render: Report.renderResultList};
       case "plain":
       default:
         return {print: Report.printPlainTest, render: Report.renderResultList};
@@ -478,7 +515,8 @@ const Report = {
   },
 
   printFlag: (test) => {
-   return `<div class="flag ${test.flagged ? "flagged" : ""}"></div>`;
+    return `<div class="flag ${test.flagged ? "flagged" : ""}"
+                title="Hold Meta key to flag/unflag all tests."></div>`;
   },
 
   printPlainTest: (test, path, traversal) => {
@@ -486,14 +524,8 @@ const Report = {
     let html = `
     <div class='expect' tabindex='0' data-id='${test.expectId}'>
       <div class='details'></div>${Report.printFlag(test)}
-     ${pathParser.dir}/<a target='test' tabindex='-1' href='${pathParser.testHref}'>${pathParser.file}</a>
+     ${pathParser.dir}<a target='test' tabindex='-1' href='${pathParser.testHref}'>${pathParser.file}</a>
     </div>`;
-    traversal.html.push(html);
-  },
-
-  printPlainTestWrapped: (test, path, traversal) => {
-    let pathParser = new PathParser(path);
-    let html = ` ${pathParser.dir}/${pathParser.file}`;
     traversal.html.push(html);
   },
 
@@ -536,7 +568,7 @@ const Report = {
     }
     let html = `
       <div class='expect' tabindex='0' data-id='${test.expectId}'><div class='details'></div>${Report.printFlag(test)}${bug}
-        ${pathParser.dir}/<a target='test' tabindex='-1' href='${pathParser.testHref}'>${pathParser.file}</a>
+        ${pathParser.dir}<a target='test' tabindex='-1' href='${pathParser.testHref}'>${pathParser.file}</a>
         [ ${status} ]
     </div>
     `;
@@ -548,7 +580,7 @@ const Report = {
     let key = test[key_title];
     let html = ""
       + `${Report.printFlag(test)}`
-      + pathParser.dir + "/"
+      + pathParser.dir
       + "<a target='test' tabindex='-1' href='" + pathParser.testHref + "'>"
       + pathParser.file + "</a>";
     html = "<div class='expect' tabindex='0' data-id='"+ test.expectId +"'><div class='details'></div>" + html + "</div>";
@@ -563,14 +595,58 @@ const Report = {
     Report.printWithKey(test, path, traversal, "text_mismatch");
   },
 
+  printRebaseline: (test, path, traversal) => {
+    let parser = new PathParser(path);
+    let actualNames = [];
+    let expectedNames = [];
+    switch (test.actualFinal) {
+      case "IMAGE+TEXT":
+        actualNames.push("-actual.txt");
+        expectedNames.push("-expected.txt");
+        // fall through IMAGE
+      case "IMAGE":
+        actualNames.push("-actual.png");
+        expectedNames.push("-expected.png");
+      break;
+      case "TEXT":
+        actualNames.push("-actual.txt");
+        expectedNames.push("-expected.txt");
+      break;
+      default:
+        return;
+    }
+    // Change directory if in wrong place
+    let dir = parser.dir;
+    if (dir != traversal.rebaselineDir) {
+      if (traversal.rebaselineDir) {
+        let depth = (traversal.rebaselineDir.match(/\//g) || []).length;
+        if (depth)
+          traversal.html.push(`<div>cd ${'..' + '/..'.repeat(depth - 1)};</div>`);
+      }
+      traversal.html.push(`<div>mkdir -p ${dir};</div>`);
+      traversal.html.push(`<div>cd ${dir};</div>`);
+      traversal.rebaselineDir = dir;
+    }
+    for (let i=0; i<actualNames.length; i++) {
+      let url = new URL(parser.resultLink(actualNames[i]), window.location.href);
+      if (url.href.startsWith('file://')) {
+        let actualFile = url.href.substring('file://'.length);
+        traversal.html.push(`<div>cp ${actualFile} ${parser.basename + expectedNames[i]};</div>`);
+      } else {
+        traversal.html.push(`<div>wget ${url.href};</div>`);
+        traversal.html.push(`<div>mv ${parser.basename + actualNames[i]} ${parser.basename + expectedNames[i]};</div>`);
+      }
+    }
+  },
+
   indicateNone: (report) => {
     let pre = document.createElement("div");
-    pre.innerHTML = "<i>None</i>";
+    pre.id = "none";
+    pre.textContent = "None";
     report.appendChild(pre);
   },
 
-  renderResultList: (html) => {
-    let report = document.querySelector("#report");
+  renderResultList: (html, report) => {
     if (report.childNodes.length === 0 && html.length === 0) {
       Report.indicateNone(report);
       return;
@@ -611,8 +687,7 @@ const Report = {
     return container;
   },
 
-  renderGroup: (html, keyed_title, null_title) => {
-    let report = document.querySelector("#report");
+  renderGroup: (html, report, keyed_title, null_title) => {
     if (report.childNodes.length === 0 && html.length === 0) {
       Report.indicateNone(report);
       return;
@@ -622,9 +697,12 @@ const Report = {
     html.forEach(result => {
       let key = result.key || "null";
       if (!(key in renderMap)) {
+        const number_of_items = html.filter(result => (result.key || "null") === key).length;
         let container =
             report.querySelector(`div[key="${key}"]`) ||
-            Report.createContainerForGroup(report, key, keyed_title, null_title);
+            Report.createContainerForGroup(report, key,
+                `${keyed_title} ${number_of_items}`,
+                `${null_title} ${number_of_items}`);
         renderMap[key] = {container: container, html: ""};
       }
       renderMap[key].html += result.html;
@@ -634,12 +712,12 @@ const Report = {
       renderMap[key].container.insertAdjacentHTML('beforeend', renderMap[key].html);
   },
 
-  renderGroupCrashSite: (html) => {
-    Report.renderGroup(html, "Crash site", "Didn't crash");
+  renderGroupCrashSite: (html, report) => {
+    Report.renderGroup(html, report, "Crash site", "Didn't crash");
   },
 
-  renderGroupTextMismatch: (html) => {
-    Report.renderGroup(html, "Text mismatch failure", "Didn't find text mismatch");
+  renderGroupTextMismatch: (html, report) => {
+    Report.renderGroup(html, report, "Text mismatch failure", "Didn't find text mismatch");
   },
 
   getTestById: (testId) => {
@@ -687,6 +765,10 @@ const Report = {
           toolbars.push(new PlainHtmlToolbar().createDom("Expectations are missing."));
           toolbars.push(new TextResultsToolbar().createDom(test));
           toolbars.push(new ImageResultsToolbar().createDom(test));
+          break;
+        case "LEAK":
+          toolbars.push(new SimpleLinkToolbar().createDom(
+            pathParser.resultLink("-leak-log.txt"), "Leak log", "leak log"));
           break;
         default:
           console.error("unexpected actual", test.actual);
@@ -749,17 +831,15 @@ const Query = {
     }
   },
 
-  updateFilters: function(traversal) {
+  updateFilters: function() {
     for (let el of Array.from(
           document.querySelectorAll("#filters > label"))) {
-      let count = traversal.resultCounts[el.id.replace("_", "+")];
+      let count = this.resultCounts[el.id.replace("_", "+")];
       if (count > 0) {
         el.classList.remove("hidden");
-        el.querySelector('input').checked = true;
         el.querySelector('span').innerText = count;
       } else {
         el.classList.add("hidden");
-        el.querySelector("input").checked = false;
         el.querySelector("span").innerText = "";
       }
     }
@@ -779,8 +859,26 @@ const Query = {
     let searchText = document.querySelector("#text-filter").value;
     let textFilter = (!searchText || searchText.length < 1)
       ? _ => true
-      : test => test.expectPath.includes(searchText);
-    return test => queryFilter(test) && filterMap.has(test.actualFinal) && textFilter(test);
+      : test => {
+          if (test.expectPath.includes(searchText))
+            return true;
+          if (Array.isArray(test.bugs)) {
+            for (let bug of test.bugs) {
+              if (bug.includes(searchText))
+                return true;
+            }
+          }
+          return false;
+        };
+    return test => {
+      if (!queryFilter(test) || !textFilter(test))
+        return false;
+      // Ignore all results except final one, or not?
+      if (!(test.actualFinal in this.resultCounts))
+        this.resultCounts[test.actualFinal] = 0;
+      this.resultCounts[test.actualFinal]++;
+      return filterMap.has(test.actualFinal);
+    };
   },
 
   query: function(name, queryFilter, reset) {
@@ -788,12 +886,6 @@ const Query = {
     if (reset) {
       this.resetFilters();
       this.lastQueryFilter = queryFilter;
-      let savedSearchText = document.querySelector("#text-filter").value;
-      document.querySelector("#text-filter").value = "";
-      let traversal = new Traversal(globalResults.tests);
-      traversal.traverse(this.applyFilters(queryFilter));
-      this.updateFilters(traversal);
-      document.querySelector("#text-filter").value = savedSearchText;
     }
     let composedFilter = this.applyFilters(queryFilter);
     this.generateReport(name, composedFilter);
@@ -802,6 +894,7 @@ const Query = {
   // generateReport is async, returns promise.
   // promise id fullfilled when traversal completes. Display will continue async.
   generateReport: function(name, filter, report) {
+    console.time("generateReport");
     if (this.currentRAF)
       window.cancelAnimationFrame(this.currentRAF);
     report = report || Report.getDefaultPrinter();
@@ -811,25 +904,34 @@ const Query = {
     // Store last report to redisplay.
     this.lastReport = {name: name, filter: filter};
     this.createReportPromise();
+    this.resultCounts = {};
 
     document.querySelector("#report").innerHTML = "";
     document.querySelector("#report_title").innerHTML = name;
     document.querySelector("#progress").style.width = "1%";
+    document.querySelector("#copy_report").disabled = true;
+    document.querySelector("#copy_single_line").disabled = true;
+        document.querySelector("#report_count").innerText = "";
     let traversal = new Traversal(globalResults.tests);
     let chunkSize = 1000;
     let index = 0;
     let callback = _ => {
       this.currentRAF = null;
       let html = traversal.html.slice(index, index + chunkSize);
-      report.render(html);
+      report.render(html, document.querySelector("#report"));
       index += chunkSize;
       document.querySelector("#progress").style.width = Math.min((index / traversal.html.length * 100), 100) + "%";
-      if (index < traversal.html.length)
+      if (index < traversal.html.length) {
         this.currentRAF = window.requestAnimationFrame(callback);
+      } else {
+        document.querySelector("#report_count").innerText = traversal.filteredCount;
+        GUI.updateCopyButtons();
+        console.timeEnd("generateReport");
+      }
     };
     window.setTimeout( _ => {
       traversal.traverse(filter, report.print);
-      document.querySelector("#report_count").innerText = traversal.html.length;
+      this.updateFilters();
       this.completeReportPromise(traversal);
       this.currentRAF = window.requestAnimationFrame(callback);
     }, 0);
@@ -852,33 +954,37 @@ const Filters = {
   unexpectedPass: test => {
     return !Filters.containsPass(test.expectedMap) && Filters.containsPass(test.actualMap);
   },
-  unexpectedFailure: test => {
-    if (Filters.containsPass(test.actualMap))
+  regressionFromExpectedMap: (finalResult, expectedMap) => {
+    if (expectedMap.has("NEEDSMANUALREBASELINE")
+        || expectedMap.has("NEEDSREBASELINE")
+        || expectedMap.has("WONTFIX"))
       return false;
-    if (test.expectedMap.has("NEEDSMANUALREBASELINE")
-        || test.expectedMap.has("NEEDSREBASELINE")
-        || test.expectedMap.has("WONTFIX"))
-      return false;
-    switch (test.actualFinal) {
+    switch (finalResult) {
       case "SKIP":
         return false;
       case "CRASH":
       case "TIMEOUT":
-        if (test.expected.indexOf(test.actualFinal) != -1)
+      case "LEAK":
+        if (expectedMap.has(finalResult))
           return false;
         break;
       case "TEXT":
       case "IMAGE":
       case "IMAGE+TEXT":
-        if (test.expectedMap.has("FAIL"))
+        if (expectedMap.has("FAIL"))
           return false;
         break;
       case "MISSING":
-        return false;
+        break;
       default:
-        console.error("Unexpected test result", est.actualMap.keys().next().value);
+        console.error("Unexpected test result", finalResult);
       }
     return true;
+  },
+  regression: test => {
+    if (Filters.containsPass(test.actualMap))
+      return false;
+    return Filters.regressionFromExpectedMap(test.actualFinal, test.expectedMap);
   },
   notpass: test => test.actualFinal != "PASS" && test.expected != "WONTFIX",
   actual: tag => {  // Returns comparator for tag.
@@ -889,7 +995,40 @@ const Filters = {
   wontfix: test => test.expected == "WONTFIX",
   all: _ => true,
   flaky: test => test.actualMap.size > 1,
-  flagged: test => test.flagged
+  flagged: test => test.flagged,
+  flagFailure: test => { // Tests that are failing, but expected to pass in base.
+    if (Filters.containsPass(test.actualMap))
+      return false;
+    if (test.expectedMap.has("NEEDSMANUALREBASELINE")
+        || test.expectedMap.has("NEEDSREBASELINE")
+        || test.expectedMap.has("WONTFIX"))
+      return false;
+    let baseMap = test.flagMap ? test.baseMap : test.expectedMap;
+    switch (test.actualFinal) {
+      case "SKIP":
+        return false;
+      case "CRASH":
+      case "TIMEOUT":
+      case "LEAK":
+        if (baseMap && baseMap.has(test.actualFinal))
+          return false;
+        break;
+      case "TEXT":
+      case "IMAGE":
+      case "IMAGE+TEXT":
+        if (baseMap && baseMap.has("FAIL"))
+          return false;
+        break;
+      case "MISSING":
+        break;
+      default:
+        console.error("Unexpected test result", test.actualFinal);
+      }
+    return true;
+  },
+  flagPass: test => {
+    return test.baseMap && (Filters.containsPass(test.actualMap) && !Filters.containsPass(test.baseMap));
+  }
 }; // Filters
 
 // Event handling, initialization.
@@ -904,19 +1043,24 @@ const GUI = {
     GUI.printSummary(globalResults);
     GUI.initEvents();
     PathParser.initGlobals(results);
-    // Show unexpected failures on startup.
-    document.querySelector("#button_unexpected_fail").click();
+    // Show regressions on startup.
+    document.querySelector("#button_regressions").click();
+  },
+
+  hasBaseExpectations : false,
+
+  isTest: function(o) {
+    return "actual" in o;
   },
 
   convertToMap: function(o) {
-    if ("actual" in o)
+    if (GUI.isTest(o))
       return o;
     else {
       let map = new Map();
       var keys = Object.keys(o).sort((a, b) => {
-        let a_isTest = "actual" in o[a];
-        let b_isTest = "actual" in o[b];
-        if (a_isTest == b_isTest)
+        let a_isTest = GUI.isTest(o[a]);
+        if (a_isTest == GUI.isTest(o[b]))
           return a < b ? -1 : +(a > b);
         return a_isTest ? -1 : 1;
       });
@@ -934,9 +1078,12 @@ const GUI = {
     // - test.expectPath, full path to test
     // - test.actualMap, map of actual results
     // - test.actualFinal, last result
-    // - test.expectedMap, maps of expected results
+    // - test.expectedMap, maps of all expected results
+    // - test.baseMap, map of base expected results. Can be undefined.
+    // - test.flagMap, map of flag expected results. Can be undefined.
     // For all crashing tests without crash_site, set crash_site to "Can't identify".
     let nextId = 1;
+    let baseCount = 0;
     t.traverse(
       test => true,
       (test, path) => {
@@ -954,6 +1101,16 @@ const GUI = {
         }
         if (test.actualMap.has("CRASH") && !test["crash_site"]) {
           test["crash_site"] = "Can't identify";
+        }
+        if ("base_expectations" in test) {
+          GUI.hasBaseExpectations = true;
+          baseCount++;
+          test.baseMap = new Map();
+          test.base_expectations.forEach( result => test.baseMap.set(result, true));
+        }
+        if ("flag_expectations" in test) {
+          test.flagMap = new Map();
+          test.flag_expectations.forEach( result => test.flagMap.set(result, true));
         }
       }
     );
@@ -1048,7 +1205,7 @@ const GUI = {
         ; // Clicks in anchor, input or result-frame should perform default action
       } else if (GUI.isFlag(ev.target)) {
         GUI.toggleFlag(ev.target, ev);
-      } else if (expectation) {
+      } else if (expectation && window.getSelection().type != "Range") {
         GUI.toggleResults(expectation, ev);
         ev.preventDefault();
         ev.stopPropagation();
@@ -1126,9 +1283,67 @@ const GUI = {
     selection.addRange(range);
   },
 
+  copyText: function(el) {
+    GUI.selectText(el);
+    document.execCommand("Copy");
+    document.getSelection().removeAllRanges();
+    document.querySelector("#copied").classList.remove("hidden");
+    if (GUI.endCopyTextTimer)
+      window.clearTimeout(GUI.endCopyTextTimer);
+    GUI.endCopyTextTimer = window.setTimeout(_ => {
+      document.querySelector("#copied").classList.add("hidden");
+      GUI.endCopyTextTimer = null;
+    }, 2000);
+  },
+
+  copyResult: function(asSingleLine) {
+    console.time("copyResult");
+    let flaggedOnly = document.querySelector(".flagged") &&
+                      document.querySelector("#flagged_only_checkbox").checked;
+    if (!flaggedOnly && !asSingleLine) {
+      GUI.copyText(document.querySelector("#report"));
+      return;
+    }
+
+    let printer = Report.getDefaultPrinter();
+    let singleLine = "";
+    let traversal = new Traversal(globalResults.tests);
+    traversal.traverse(Query.lastReport.filter, (test, path) => {
+      if (flaggedOnly && !test.flagged)
+        return;
+      if (asSingleLine) {
+        let pathParser = new PathParser(path);
+        singleLine += pathParser.dir + pathParser.file + " ";
+      } else {
+        printer.print(test, path, traversal);
+      }
+    });
+    let div = document.createElement("div");
+    div.setAttribute("style", "overflow: hidden; color: white; height: 1px");
+    if (asSingleLine)
+      div.textContent = singleLine;
+    else
+      printer.render(traversal.html, div);
+    document.body.appendChild(div);
+    GUI.copyText(div);
+    document.body.removeChild(div);
+    console.timeEnd("copyResult");
+  },
+
+  updateCopyButtons: function() {
+    let noResult = document.querySelector("#none");
+    document.querySelector("#copy_report").disabled = noResult;
+    document.querySelector("#copy_single_line").disabled = noResult;
+
+    let flagged_only = document.querySelector("#flagged_only");
+    if (document.querySelector(".flagged"))
+      flagged_only.classList.remove("hidden");
+    else
+      flagged_only.classList.add("hidden");
+  },
+
   printSummary: function (fullResults) {
-    if (fullResults.builder_name)
-      document.querySelector("#builder_name").innerText = fullResults.builder_name;
+    document.querySelector("#builder_name").innerText = fullResults.builder_name || document.lastModified;
     document.querySelector("#summary_passed").innerText = fullResults.num_passes;
     document.querySelector("#summary_regressions").innerText = fullResults.num_regressions;
     let failures = fullResults["num_failures_by_type"];
@@ -1144,27 +1359,48 @@ const GUI = {
     // Initialize query counts.
     let counts = {
       "count_unexpected_pass": 0,
-      "count_unexpected_fail": 0,
+      "count_regressions": 0,
       "count_testexpectations": 0,
       "count_flaky": 0,
       "count_all": 0,
+      "count_flagfailure": 0,
+      "count_flagpass" : 0
     };
     var t = new Traversal(fullResults.tests);
     t.traverse( test => {
       counts.count_all++;
       if (Filters.unexpectedPass(test))
         counts.count_unexpected_pass++;
-      if (Filters.unexpectedFailure(test))
-        counts.count_unexpected_fail++;
+      if (Filters.regression(test))
+        counts.count_regressions++;
       if (Filters.notpass(test))
         counts.count_testexpectations++;
       if (Filters.flaky(test))
         counts.count_flaky++;
+      if (Filters.flagFailure(test))
+        counts.count_flagfailure++;
+      if (Filters.flagPass(test))
+        counts.count_flagpass++;
     });
+    console.assert(
+        counts.count_regressions == fullResults.num_regressions,
+        "Numbers of regressions mismatch: in fullResult:" + fullResults.num_regressions +
+        " filtered:" + counts.count_regressions);
     for (let p in counts)
       document.querySelector("#" + p).innerText = counts[p];
 
     document.querySelector("#summary_total").innerText = counts.count_all;
+    if (!GUI.hasBaseExpectations)
+      document.querySelector("#flag-toolbar").classList.add("hidden");
+    else {
+      document.querySelector("#flag-toolbar").classList.remove("hidden");
+      let flagName = fullResults.flag_name || "";
+      flagName = flagName.replace('/', '')
+        .replace('enable-blink-features', '').replace('=', '');
+      Array.from(document.querySelectorAll(".flag_name")).forEach( el => {
+        el.innerText = flagName;
+      });
+    }
   },
 
   getExpectation: function(el) {
@@ -1206,6 +1442,7 @@ const GUI = {
         }
       }
     }
+    GUI.updateCopyButtons();
   },
 
   toggleResults: function(expectation, event) {

@@ -9,6 +9,7 @@
 
 #include <algorithm>
 #include <set>
+#include <tuple>
 #include <utility>
 
 #include "base/bits.h"
@@ -20,11 +21,11 @@
 #include "base/trace_event/memory_dump_manager.h"
 #include "gpu/command_buffer/common/gles2_cmd_utils.h"
 #include "gpu/command_buffer/service/context_state.h"
+#include "gpu/command_buffer/service/decoder_context.h"
 #include "gpu/command_buffer/service/error_state.h"
 #include "gpu/command_buffer/service/feature_info.h"
 #include "gpu/command_buffer/service/framebuffer_manager.h"
 #include "gpu/command_buffer/service/gl_stream_texture_image.h"
-#include "gpu/command_buffer/service/gles2_cmd_decoder.h"
 #include "gpu/command_buffer/service/mailbox_manager.h"
 #include "gpu/command_buffer/service/memory_tracking.h"
 #include "gpu/command_buffer/service/progress_reporter.h"
@@ -251,6 +252,9 @@ class FormatTypeValidator {
         {GL_RG, GL_RG, GL_FLOAT},
         {GL_RED, GL_RED, GL_HALF_FLOAT_OES},
         {GL_RG, GL_RG, GL_HALF_FLOAT_OES},
+
+        // Exposed by GL_EXT_texture_norm16
+        {GL_RED, GL_RED, GL_UNSIGNED_SHORT},
     };
 
     for (size_t ii = 0; ii < arraysize(kSupportedFormatTypes); ++ii) {
@@ -280,21 +284,16 @@ class FormatTypeValidator {
   }
 
  private:
-  // TODO(zmo): once std::tuple is allowed, switch over to that.
-  struct FormatType {
-    GLenum internal_format;
-    GLenum format;
-    GLenum type;
-  };
-
+  // FormatType is a tuple of <internal_format, format, type>
+  typedef std::tuple<GLenum, GLenum, GLenum> FormatType;
   struct FormatTypeCompare {
     bool operator() (const FormatType& lhs, const FormatType& rhs) const {
-      return (lhs.internal_format < rhs.internal_format ||
-              ((lhs.internal_format == rhs.internal_format) &&
-               (lhs.format < rhs.format)) ||
-              ((lhs.internal_format == rhs.internal_format) &&
-               (lhs.format == rhs.format) &&
-               (lhs.type < rhs.type)));
+      return (std::get<0>(lhs) < std::get<0>(rhs) ||
+              ((std::get<0>(lhs) == std::get<0>(rhs)) &&
+               (std::get<1>(lhs) < std::get<1>(rhs))) ||
+              ((std::get<0>(lhs) == std::get<0>(rhs)) &&
+               (std::get<1>(lhs) == std::get<1>(rhs)) &&
+               (std::get<2>(lhs) < std::get<2>(rhs))));
     }
   };
 
@@ -359,6 +358,12 @@ bool SizedFormatAvailable(const FeatureInfo* feature_info,
        internal_format == GL_RGB_YCBCR_420V_CHROMIUM) ||
       (feature_info->feature_flags().chromium_image_ycbcr_422 &&
        internal_format == GL_RGB_YCBCR_422_CHROMIUM)) {
+    return true;
+  }
+
+  if (internal_format == GL_RGB10_A2_EXT &&
+      (feature_info->feature_flags().chromium_image_xr30 ||
+       feature_info->feature_flags().chromium_image_xb30)) {
     return true;
   }
 
@@ -429,9 +434,9 @@ DecoderTextureState::DecoderTextureState(
       unpack_image_height_workaround_with_unpack_buffer(
           workarounds.unpack_image_height_workaround_with_unpack_buffer) {}
 
-TextureManager::DestructionObserver::DestructionObserver() {}
+TextureManager::DestructionObserver::DestructionObserver() = default;
 
-TextureManager::DestructionObserver::~DestructionObserver() {}
+TextureManager::DestructionObserver::~DestructionObserver() = default;
 
 TextureManager::~TextureManager() {
   for (unsigned int i = 0; i < destruction_observers_.size(); i++)
@@ -478,30 +483,6 @@ void TextureManager::Destroy() {
   DCHECK_EQ(0u, memory_type_tracker_->GetMemRepresented());
 }
 
-TextureBase::TextureBase(GLuint service_id)
-    : service_id_(service_id), target_(GL_NONE), mailbox_manager_(nullptr) {}
-
-TextureBase::~TextureBase() {
-  DCHECK_EQ(nullptr, mailbox_manager_);
-}
-
-void TextureBase::SetTarget(GLenum target) {
-  DCHECK_EQ(0u, target_);  // you can only set this once.
-  target_ = target;
-}
-
-void TextureBase::DeleteFromMailboxManager() {
-  if (mailbox_manager_) {
-    mailbox_manager_->TextureDeleted(this);
-    mailbox_manager_ = nullptr;
-  }
-}
-
-void TextureBase::SetMailboxManager(MailboxManager* mailbox_manager) {
-  DCHECK(!mailbox_manager_ || mailbox_manager_ == mailbox_manager);
-  mailbox_manager_ = mailbox_manager;
-}
-
 TexturePassthrough::TexturePassthrough(GLuint service_id, GLenum target)
     : TextureBase(service_id),
       have_context_(true),
@@ -545,7 +526,7 @@ gl::GLImage* TexturePassthrough::GetLevelImage(GLenum target,
   DCHECK(face_idx < level_images_.size());
   DCHECK(level >= 0);
 
-  if (static_cast<GLint>(level_images_[face_idx].size()) < level) {
+  if (static_cast<GLint>(level_images_[face_idx].size()) <= level) {
     return nullptr;
   }
 
@@ -648,8 +629,7 @@ Texture::LevelInfo::LevelInfo(const LevelInfo& rhs)
       estimated_size(rhs.estimated_size),
       internal_workaround(rhs.internal_workaround) {}
 
-Texture::LevelInfo::~LevelInfo() {
-}
+Texture::LevelInfo::~LevelInfo() = default;
 
 Texture::FaceInfo::FaceInfo()
     : num_mip_levels(0) {
@@ -657,8 +637,7 @@ Texture::FaceInfo::FaceInfo()
 
 Texture::FaceInfo::FaceInfo(const FaceInfo& other) = default;
 
-Texture::FaceInfo::~FaceInfo() {
-}
+Texture::FaceInfo::~FaceInfo() = default;
 
 Texture::CanRenderCondition Texture::GetCanRenderCondition() const {
   if (target_ == 0)
@@ -1578,7 +1557,7 @@ void Texture::Update() {
   completeness_dirty_ = false;
 }
 
-bool Texture::ClearRenderableLevels(GLES2Decoder* decoder) {
+bool Texture::ClearRenderableLevels(DecoderContext* decoder) {
   DCHECK(decoder);
   if (cleared_) {
     return true;
@@ -1664,8 +1643,7 @@ void Texture::InitTextureMaxAnisotropyIfNeeded(GLenum target) {
   glTexParameterfv(target, GL_TEXTURE_MAX_ANISOTROPY_EXT, params);
 }
 
-bool Texture::ClearLevel(
-    GLES2Decoder* decoder, GLenum target, GLint level) {
+bool Texture::ClearLevel(DecoderContext* decoder, GLenum target, GLint level) {
   DCHECK(decoder);
   size_t face_index = GLES2Util::GLTargetToFaceIndex(target);
   if (face_index >= face_infos_.size() || level < 0 ||
@@ -2165,15 +2143,16 @@ void TextureManager::SetLevelCleared(TextureRef* ref,
   ref->texture()->SetLevelCleared(target, level, cleared);
 }
 
-bool TextureManager::ClearRenderableLevels(
-    GLES2Decoder* decoder, TextureRef* ref) {
+bool TextureManager::ClearRenderableLevels(DecoderContext* decoder,
+                                           TextureRef* ref) {
   DCHECK(ref);
   return ref->texture()->ClearRenderableLevels(decoder);
 }
 
-bool TextureManager::ClearTextureLevel(
-    GLES2Decoder* decoder, TextureRef* ref,
-    GLenum target, GLint level) {
+bool TextureManager::ClearTextureLevel(DecoderContext* decoder,
+                                       TextureRef* ref,
+                                       GLenum target,
+                                       GLint level) {
   DCHECK(ref);
   Texture* texture = ref->texture();
   if (texture->num_uncleared_mips() == 0) {
@@ -2637,6 +2616,12 @@ bool TextureManager::ValidateTexImage(
           "pixel unpack buffer should not be mapped to client memory");
       return false;
     }
+    if (buffer->IsBoundForTransformFeedbackAndOther()) {
+      ERRORSTATE_SET_GL_ERROR(
+          error_state, GL_INVALID_OPERATION, function_name,
+          "pixel unpack buffer is simultaneously bound for transform feedback");
+      return error::kNoError;
+    }
     base::CheckedNumeric<uint32_t> size = args.pixels_size;
     GLuint offset = ToGLuint(args.pixels);
     size += offset;
@@ -2681,9 +2666,6 @@ void TextureManager::DoCubeMapWorkaround(
     TextureRef* texture_ref,
     const char* function_name,
     const DoTexImageArguments& args) {
-  // This workaround code does not work with an unpack buffer bound.
-  ScopedResetPixelUnpackBuffer scoped_reset_pbo(state);
-
   std::vector<GLenum> undefined_faces;
   Texture* texture = texture_ref->texture();
   if (texture_state->force_cube_complete ||
@@ -2715,6 +2697,8 @@ void TextureManager::DoCubeMapWorkaround(
   DoTexImageArguments new_args = args;
   std::unique_ptr<char[]> zero(new char[args.pixels_size]);
   memset(zero.get(), 0, args.pixels_size);
+  // Need to clear PIXEL_UNPACK_BUFFER and UNPACK params for data uploading.
+  state->PushTextureUnpackState();
   for (GLenum face : undefined_faces) {
     new_args.target = face;
     new_args.pixels = zero.get();
@@ -2722,6 +2706,7 @@ void TextureManager::DoCubeMapWorkaround(
                function_name, texture_ref, new_args);
     texture->MarkLevelAsInternalWorkaround(face, args.level);
   }
+  state->RestoreUnpackState();
 }
 
 void TextureManager::ValidateAndDoTexImage(
@@ -2821,7 +2806,8 @@ void TextureManager::ValidateAndDoTexImage(
     }
   }
 
-  if (texture_state->unpack_alignment_workaround_with_unpack_buffer && buffer) {
+  if (texture_state->unpack_alignment_workaround_with_unpack_buffer && buffer &&
+      args.width && args.height && args.depth) {
     uint32_t buffer_size = static_cast<uint32_t>(buffer->size());
     if (buffer_size - args.pixels_size - ToGLuint(args.pixels) < args.padding) {
       // In ValidateTexImage(), we already made sure buffer size is no less
@@ -2932,6 +2918,12 @@ bool TextureManager::ValidateTexSubImage(ContextState* state,
           "pixel unpack buffer should not be mapped to client memory");
       return false;
     }
+    if (buffer->IsBoundForTransformFeedbackAndOther()) {
+      ERRORSTATE_SET_GL_ERROR(
+          error_state, GL_INVALID_OPERATION, function_name,
+          "pixel unpack buffer is simultaneously bound for transform feedback");
+      return error::kNoError;
+    }
     base::CheckedNumeric<uint32_t> size = args.pixels_size;
     GLuint offset = ToGLuint(args.pixels);
     size += offset;
@@ -2970,7 +2962,7 @@ bool TextureManager::ValidateTexSubImage(ContextState* state,
 }
 
 void TextureManager::ValidateAndDoTexSubImage(
-    GLES2Decoder* decoder,
+    DecoderContext* decoder,
     DecoderTextureState* texture_state,
     ContextState* state,
     DecoderFramebufferState* framebuffer_state,
@@ -3050,7 +3042,8 @@ void TextureManager::ValidateAndDoTexSubImage(
     }
   }
 
-  if (texture_state->unpack_alignment_workaround_with_unpack_buffer && buffer) {
+  if (texture_state->unpack_alignment_workaround_with_unpack_buffer && buffer &&
+      args.width && args.height && args.depth) {
     uint32_t buffer_size = static_cast<uint32_t>(buffer->size());
     if (buffer_size - args.pixels_size - ToGLuint(args.pixels) < args.padding) {
       DoTexSubImageWithAlignmentWorkaround(texture_state, state, args);
@@ -3334,6 +3327,36 @@ GLenum TextureManager::AdjustTexFormat(const gles2::FeatureInfo* feature_info,
   return format;
 }
 
+// static
+GLenum TextureManager::AdjustTexStorageFormat(
+    const gles2::FeatureInfo* feature_info,
+    GLenum format) {
+  // We need to emulate luminance/alpha on core profile only.
+  if (feature_info->gl_version_info().is_desktop_core_profile) {
+    switch (format) {
+      case GL_ALPHA8_EXT:
+        return GL_R8_EXT;
+      case GL_LUMINANCE8_EXT:
+        return GL_R8_EXT;
+      case GL_LUMINANCE8_ALPHA8_EXT:
+        return GL_RG8_EXT;
+      case GL_ALPHA16F_EXT:
+        return GL_R16F_EXT;
+      case GL_LUMINANCE16F_EXT:
+        return GL_R16F_EXT;
+      case GL_LUMINANCE_ALPHA16F_EXT:
+        return GL_RG16F_EXT;
+      case GL_ALPHA32F_EXT:
+        return GL_R32F_EXT;
+      case GL_LUMINANCE32F_EXT:
+        return GL_R32F_EXT;
+      case GL_LUMINANCE_ALPHA32F_EXT:
+        return GL_RG32F_EXT;
+    }
+  }
+  return format;
+}
+
 void TextureManager::DoTexImage(
     DecoderTextureState* texture_state,
     ContextState* state,
@@ -3542,6 +3565,7 @@ GLenum TextureManager::ExtractFormatFromStorageFormat(GLenum internalformat) {
     case GL_R8_SNORM:
     case GL_R16F:
     case GL_R32F:
+    case GL_R16_EXT:
       return GL_RED;
     case GL_R8UI:
     case GL_R8I:
@@ -3690,6 +3714,8 @@ GLenum TextureManager::ExtractTypeFromStorageFormat(GLenum internalformat) {
       return GL_UNSIGNED_SHORT;
     case GL_R16I:
       return GL_SHORT;
+    case GL_R16_EXT:
+      return GL_UNSIGNED_SHORT;
     case GL_R32UI:
       return GL_UNSIGNED_INT;
     case GL_R32I:

@@ -12,6 +12,7 @@
 
 #include "base/callback.h"
 #include "components/offline_pages/core/offline_page_item.h"
+#include "components/offline_pages/core/offline_page_thumbnail.h"
 
 class GURL;
 
@@ -40,6 +41,12 @@ enum class SavePageResult {
   INTERSTITIAL_PAGE,
   // Failed to compute digest for the archive file.
   DIGEST_CALCULATION_FAILED,
+  // Unable to move the file into a public directory.
+  FILE_MOVE_FAILED,
+  // Unable to add the file to the system download manager.
+  ADD_TO_DOWNLOAD_MANAGER_FAILED,
+  // Unable to get write permission on public directory.
+  PERMISSION_DENIED,
   // NOTE: always keep this entry at the end. Add new result types only
   // immediately above this line. Make sure to update the corresponding
   // histogram enum accordingly.
@@ -86,6 +93,7 @@ enum class URLSearchMode {
 typedef std::vector<int64_t> MultipleOfflineIdResult;
 typedef std::vector<OfflinePageItem> MultipleOfflinePageItemResult;
 
+// TODO(carlosk): All or most of these should use base::OnceCallback.
 typedef base::Callback<void(SavePageResult, int64_t)> SavePageCallback;
 typedef base::Callback<void(AddPageResult, int64_t)> AddPageCallback;
 typedef base::Callback<void(DeletePageResult)> DeletePageCallback;
@@ -98,6 +106,15 @@ typedef base::Callback<void(const MultipleOfflinePageItemResult&)>
     MultipleOfflinePageItemCallback;
 typedef base::Callback<bool(const GURL&)> UrlPredicate;
 typedef base::Callback<void(int64_t)> SizeInBytesCallback;
+typedef base::OnceCallback<void(std::unique_ptr<OfflinePageThumbnail>)>
+    GetThumbnailCallback;
+typedef base::OnceCallback<void(bool)> CleanupThumbnailsCallback;
+
+// Callbacks used for publishing an offline page.
+using PublishPageCallback =
+    base::OnceCallback<void(const base::FilePath&, SavePageResult)>;
+using UpdateFilePathDoneCallback = base::OnceCallback<void(bool)>;
+
 }  // namespace offline_pages
 
 #endif  // COMPONENTS_OFFLINE_PAGES_CORE_OFFLINE_PAGE_TYPES_H_

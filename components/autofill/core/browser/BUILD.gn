@@ -3,6 +3,7 @@
 # found in the LICENSE file.
 
 import("//build/config/chrome_build.gni")
+import("//testing/libfuzzer/fuzzer_test.gni")
 
 static_library("browser") {
   sources = [
@@ -151,8 +152,6 @@ static_library("browser") {
     "validation.h",
     "webdata/autocomplete_sync_bridge.cc",
     "webdata/autocomplete_sync_bridge.h",
-    "webdata/autocomplete_syncable_service.cc",
-    "webdata/autocomplete_syncable_service.h",
     "webdata/autofill_change.cc",
     "webdata/autofill_change.h",
     "webdata/autofill_data_type_controller.cc",
@@ -236,7 +235,7 @@ static_library("browser") {
     "//components/pref_registry",
     "//components/prefs",
     "//components/security_state/core",
-    "//components/signin/core/browser",
+    "//components/signin/core/browser:signin_metrics",
     "//components/strings",
     "//components/sync",
     "//components/variations/net",
@@ -244,6 +243,7 @@ static_library("browser") {
     "//components/webdata/common",
     "//google_apis",
     "//net",
+    "//services/identity/public/cpp",
     "//services/metrics/public/cpp:metrics_cpp",
     "//services/metrics/public/cpp:ukm_builders",
     "//sql",
@@ -266,10 +266,6 @@ static_library("browser") {
   }
 
   configs += [ "//build/config/compiler:no_size_t_to_int_warning" ]
-
-  if (is_mac) {
-    libs = [ "AddressBook.framework" ]
-  }
 }
 
 static_library("test_support") {
@@ -279,6 +275,8 @@ static_library("test_support") {
     "autofill_test_utils.h",
     "data_driven_test.cc",
     "data_driven_test.h",
+    "payments/test_payments_client.cc",
+    "payments/test_payments_client.h",
     "suggestion_test_helpers.h",
     "test_address_normalizer.cc",
     "test_address_normalizer.h",
@@ -286,14 +284,28 @@ static_library("test_support") {
     "test_autofill_client.h",
     "test_autofill_clock.cc",
     "test_autofill_clock.h",
+    "test_autofill_download_manager.cc",
+    "test_autofill_download_manager.h",
     "test_autofill_driver.cc",
     "test_autofill_driver.h",
     "test_autofill_external_delegate.cc",
     "test_autofill_external_delegate.h",
+    "test_autofill_manager.cc",
+    "test_autofill_manager.h",
+    "test_autofill_provider.cc",
+    "test_autofill_provider.h",
+    "test_credit_card_save_manager.cc",
+    "test_credit_card_save_manager.h",
+    "test_form_data_importer.cc",
+    "test_form_data_importer.h",
+    "test_form_structure.cc",
+    "test_form_structure.h",
     "test_personal_data_manager.cc",
     "test_personal_data_manager.h",
     "test_region_data_loader.cc",
     "test_region_data_loader.h",
+    "test_sync_service.cc",
+    "test_sync_service.h",
   ]
 
   if (!is_android) {
@@ -316,10 +328,12 @@ static_library("test_support") {
     "//components/os_crypt:test_support",
     "//components/pref_registry",
     "//components/prefs:test_support",
-    "//components/signin/core/browser",
+    "//components/sync",
+    "//components/sync:test_support_driver",
     "//components/ukm",
     "//components/ukm:test_support",
     "//google_apis:test_support",
+    "//services/identity/public/cpp:test_support",
     "//skia",
     "//testing/gtest",
     "//third_party/libaddressinput:util",
@@ -437,8 +451,6 @@ source_set("unit_tests") {
     "//components/prefs:test_support",
     "//components/resources",
     "//components/security_state/core",
-    "//components/signin/core/browser",
-    "//components/signin/core/browser:test_support",
     "//components/strings",
     "//components/sync",
     "//components/sync:test_support_driver",
@@ -452,6 +464,7 @@ source_set("unit_tests") {
     "//google_apis",
     "//google_apis:test_support",
     "//net:test_support",
+    "//services/identity/public/cpp:test_support",
     "//services/metrics/public/cpp:ukm_builders",
     "//sql",
     "//testing/gmock",
@@ -466,4 +479,17 @@ source_set("unit_tests") {
   if (!is_ios) {
     deps += [ "//components/policy/core/common" ]
   }
+}
+
+fuzzer_test("form_structure_fuzzer") {
+  sources = [
+    "form_structure_fuzzer.cc",
+  ]
+  deps = [
+    ":browser",
+    "//base:base",
+    "//components/autofill/core/common:common",
+  ]
+  seed_corpus = "form_structure_fuzzer_corpus"
+  dict = "form_structure_fuzzer.dict"
 }

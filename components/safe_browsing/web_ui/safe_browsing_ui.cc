@@ -6,6 +6,7 @@
 
 #include <stddef.h>
 #include <algorithm>
+#include <memory>
 #include <utility>
 #include <vector>
 
@@ -280,7 +281,7 @@ SafeBrowsingUI::SafeBrowsingUI(content::WebUI* web_ui)
   // Register callback handler.
   // Handles messages from JavaScript to C++ via chrome.send().
   web_ui->AddMessageHandler(
-      base::MakeUnique<SafeBrowsingUIHandler>(browser_context));
+      std::make_unique<SafeBrowsingUIHandler>(browser_context));
 
   // Add localized string resources.
   html_source->AddLocalizedString("sbUnderConstruction",
@@ -383,19 +384,20 @@ void SafeBrowsingUIHandler::NotifyThreatDetailsJsListener(
 
 void SafeBrowsingUIHandler::RegisterMessages() {
   web_ui()->RegisterMessageCallback(
-      "getExperiments", base::Bind(&SafeBrowsingUIHandler::GetExperiments,
-                                   base::Unretained(this)));
+      "getExperiments",
+      base::BindRepeating(&SafeBrowsingUIHandler::GetExperiments,
+                          base::Unretained(this)));
   web_ui()->RegisterMessageCallback(
-      "getPrefs",
-      base::Bind(&SafeBrowsingUIHandler::GetPrefs, base::Unretained(this)));
+      "getPrefs", base::BindRepeating(&SafeBrowsingUIHandler::GetPrefs,
+                                      base::Unretained(this)));
   web_ui()->RegisterMessageCallback(
       "getDatabaseManagerInfo",
-      base::Bind(&SafeBrowsingUIHandler::GetDatabaseManagerInfo,
-                 base::Unretained(this)));
+      base::BindRepeating(&SafeBrowsingUIHandler::GetDatabaseManagerInfo,
+                          base::Unretained(this)));
   web_ui()->RegisterMessageCallback(
       "getSentThreatDetails",
-      base::Bind(&SafeBrowsingUIHandler::GetSentThreatDetails,
-                 base::Unretained(this)));
+      base::BindRepeating(&SafeBrowsingUIHandler::GetSentThreatDetails,
+                          base::Unretained(this)));
 }
 
 }  // namespace safe_browsing

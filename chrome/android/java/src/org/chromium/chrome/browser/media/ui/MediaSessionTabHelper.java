@@ -17,6 +17,7 @@ import org.chromium.base.SysUtils;
 import org.chromium.base.VisibleForTesting;
 import org.chromium.blink.mojom.MediaSessionAction;
 import org.chromium.chrome.R;
+import org.chromium.chrome.browser.favicon.LargeIconBridge;
 import org.chromium.chrome.browser.metrics.MediaNotificationUma;
 import org.chromium.chrome.browser.metrics.MediaSessionUMA;
 import org.chromium.chrome.browser.tab.EmptyTabObserver;
@@ -47,6 +48,8 @@ public class MediaSessionTabHelper implements MediaImageCallback {
     static final int HIDE_NOTIFICATION_DELAY_MILLIS = 1000;
 
     private Tab mTab;
+    @VisibleForTesting
+    LargeIconBridge mLargeIconBridge;
     private Bitmap mPageMediaImage;
     @VisibleForTesting
     Bitmap mFavicon;
@@ -153,6 +156,7 @@ public class MediaSessionTabHelper implements MediaImageCallback {
         mHandler.postDelayed(mHideNotificationDelayedTask, HIDE_NOTIFICATION_DELAY_MILLIS);
 
         mNotificationInfoBuilder = null;
+        mFavicon = null;
     }
 
     private void hideNotificationImmediately() {
@@ -209,8 +213,9 @@ public class MediaSessionTabHelper implements MediaImageCallback {
                 }
 
                 if (mFallbackTitle == null) mFallbackTitle = sanitizeMediaTitle(mTab.getTitle());
+
                 mCurrentMetadata = getMetadata();
-                mCurrentMediaImage = getNotificationImage();
+                mCurrentMediaImage = getCachedNotificationImage();
                 mNotificationInfoBuilder =
                         new MediaNotificationInfo.Builder()
                                 .setMetadata(mCurrentMetadata)
@@ -220,7 +225,6 @@ public class MediaSessionTabHelper implements MediaImageCallback {
                                 .setPrivate(mTab.isIncognito())
                                 .setNotificationSmallIcon(R.drawable.audio_playing)
                                 .setNotificationLargeIcon(mCurrentMediaImage)
-                                .setDefaultNotificationLargeIcon(R.drawable.audio_playing_square)
                                 .setMediaSessionImage(mPageMediaImage)
                                 .setActions(MediaNotificationInfo.ACTION_PLAY_PAUSE
                                         | MediaNotificationInfo.ACTION_SWIPEAWAY)
@@ -229,6 +233,14 @@ public class MediaSessionTabHelper implements MediaImageCallback {
                                 .setListener(mControlsListener)
                                 .setMediaSessionActions(mMediaSessionActions);
 
+                // Do not show notification icon till we get the favicon from the LargeIconBridge
+                // since we do not need to show default icon then change it to favicon. It is ok to
+                // wait here since the favicon is loaded from local cache in favicon service sql
+                // database.
+                if (mCurrentMediaImage == null && !fetchFaviconImage()) {
+                    mNotificationInfoBuilder.setDefaultNotificationLargeIcon(
+                            R.drawable.audio_playing_square);
+                }
                 showNotification();
                 Activity activity = getActivityFromTab(mTab);
                 if (activity != null) {
@@ -285,10 +297,7 @@ public class MediaSessionTabHelper implements MediaImageCallback {
         @Override
         public void onFaviconUpdated(Tab tab, Bitmap icon) {
             assert tab == mTab;
-
-            if (!updateFavicon(icon)) return;
-
-            updateNotificationImage();
+            updateFavicon(icon);
         }
 
         @Override
@@ -358,6 +367,10 @@ public class MediaSessionTabHelper implements MediaImageCallback {
             hideNotificationImmediately();
             mTab.removeObserver(this);
             mTab = null;
+            if (mLargeIconBridge != null) {
+                mLargeIconBridge.destroy();
+                mLargeIconBridge = null;
+            }
         }
     };
 
@@ -425,24 +438,27 @@ public class MediaSessionTabHelper implements MediaImageCallback {
     }
 
     /**
-     * Updates the best favicon if the given icon is better.
-     * @return whether the best favicon is updated.
+     * Updates the best favicon if the given icon is better and the favicon is shown in
+     * notification.
      */
-    private boolean updateFavicon(Bitmap icon) {
-        if (icon == null) return false;
+    private void updateFavicon(Bitmap icon) {
+        if (icon == null) return;
+
+        // Store the favicon only if notification is being shown. Otherwise the favicon is
+        // obtained from large icon bridge when needed.
+        if (isNotificationHiddingOrHidden() || mPageMediaImage != null) return;
 
         // Disable favicons in notifications for low memory devices on O
         // where the notification icon is optional.
-        if (SysUtils.isLowEndDevice() && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
-            return false;
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && SysUtils.isLowEndDevice()) return;
 
-        if (!MediaNotificationManager.isBitmapSuitableAsMediaImage(icon)) return false;
+        if (!MediaNotificationManager.isBitmapSuitableAsMediaImage(icon)) return;
         if (mFavicon != null && (icon.getWidth() < mFavicon.getWidth()
                                         || icon.getHeight() < mFavicon.getHeight())) {
-            return false;
+            return;
         }
         mFavicon = MediaNotificationManager.downscaleIconToIdealSize(icon);
-        return true;
+        updateNotificationImage(mFavicon);
     }
 
     /**
@@ -495,11 +511,11 @@ public class MediaSessionTabHelper implements MediaImageCallback {
     @Override
     public void onImageDownloaded(Bitmap image) {
         mPageMediaImage = MediaNotificationManager.downscaleIconToIdealSize(image);
-        updateNotificationImage();
+        mFavicon = null;
+        updateNotificationImage(mPageMediaImage);
     }
 
-    private void updateNotificationImage() {
-        Bitmap newMediaImage = getNotificationImage();
+    private void updateNotificationImage(Bitmap newMediaImage) {
         if (mCurrentMediaImage == newMediaImage) return;
 
         mCurrentMediaImage = newMediaImage;
@@ -510,8 +526,43 @@ public class MediaSessionTabHelper implements MediaImageCallback {
         showNotification();
     }
 
-    private Bitmap getNotificationImage() {
-        return (mPageMediaImage != null) ? mPageMediaImage : mFavicon;
+    private Bitmap getCachedNotificationImage() {
+        if (mPageMediaImage != null) return mPageMediaImage;
+        if (mFavicon != null) return mFavicon;
+        return null;
+    }
+
+    /**
+     * Fetch favicon image and update the notification when available.
+     * @return if the favicon will be updated.
+     */
+    private boolean fetchFaviconImage() {
+        if (mTab == null) return false;
+        WebContents webContents = mTab.getWebContents();
+        if (webContents == null) return false;
+        String pageUrl = webContents.getLastCommittedUrl();
+        int size = MediaNotificationManager.MINIMAL_MEDIA_IMAGE_SIZE_PX;
+        if (mLargeIconBridge == null) {
+            mLargeIconBridge = new LargeIconBridge(mTab.getProfile());
+        }
+        LargeIconBridge.LargeIconCallback callback = new LargeIconBridge.LargeIconCallback() {
+            @Override
+            public void onLargeIconAvailable(
+                    Bitmap icon, int fallbackColor, boolean isFallbackColorDefault, int iconType) {
+                if (isNotificationHiddingOrHidden()) return;
+                if (icon == null) {
+                    // If we do not have any favicon then make sure we show default sound icon. This
+                    // icon is used by notification manager only if we do not show any icon.
+                    mNotificationInfoBuilder.setDefaultNotificationLargeIcon(
+                            R.drawable.audio_playing_square);
+                    showNotification();
+                } else {
+                    updateFavicon(icon);
+                }
+            }
+        };
+
+        return mLargeIconBridge.getLargeIconForUrl(pageUrl, size, callback);
     }
 
     private boolean isNotificationHiddingOrHidden() {

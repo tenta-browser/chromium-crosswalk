@@ -129,7 +129,7 @@ id<GREYAction> ScrollDown() {
 
 + (void)reload {
   // On iPhone Reload button is a part of tools menu, so open it.
-  if (IsCompact()) {
+  if (IsCompactWidth()) {
     [self openToolsMenu];
   }
   [[EarlGrey selectElementWithMatcher:chrome_test_util::ReloadButton()]
@@ -137,7 +137,7 @@ id<GREYAction> ScrollDown() {
 }
 
 + (void)openShareMenu {
-  if (IsCompact()) {
+  if (IsCompactWidth()) {
     [ChromeEarlGreyUI openToolsMenu];
   }
   [[EarlGrey selectElementWithMatcher:chrome_test_util::ShareButton()]
@@ -176,6 +176,8 @@ id<GREYAction> ScrollDown() {
   // Cannot directly scroll on |kSignInConfirmationCollectionViewId| because it
   // is a MDC collection view, not a UICollectionView, so itself is not
   // scrollable.
+  // Wait until the sync confirmation is displayed.
+  [[GREYUIThreadExecutor sharedInstance] drainUntilIdle];
   id<GREYMatcher> signinUICollectionViewMatcher = grey_allOf(
       grey_ancestor(grey_accessibilityID(kSigninConfirmationCollectionViewId)),
       grey_kindOfClass([UICollectionView class]), nil);

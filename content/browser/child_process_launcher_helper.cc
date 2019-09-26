@@ -6,10 +6,21 @@
 
 #include "base/command_line.h"
 #include "base/metrics/histogram_macros.h"
+#include "base/no_destructor.h"
+#include "base/single_thread_task_runner.h"
+#include "base/task_scheduler/lazy_task_runner.h"
+#include "base/task_scheduler/post_task.h"
+#include "base/task_scheduler/single_thread_task_runner_thread_mode.h"
+#include "base/task_scheduler/task_traits.h"
 #include "content/browser/child_process_launcher.h"
+#include "content/public/browser/child_process_launcher_utils.h"
 #include "content/public/common/content_switches.h"
 #include "content/public/common/sandboxed_process_launcher_delegate.h"
 #include "mojo/edk/embedder/platform_channel_pair.h"
+
+#if defined(OS_ANDROID)
+#include "content/browser/android/launcher_thread.h"
+#endif
 
 namespace content {
 namespace internal {
@@ -17,7 +28,7 @@ namespace internal {
 namespace {
 
 void RecordHistogramsOnLauncherThread(base::TimeDelta launch_time) {
-  DCHECK_CURRENTLY_ON(BrowserThread::PROCESS_LAUNCHER);
+  DCHECK(CurrentlyOnProcessLauncherTaskRunner());
   // Log the launch time, separating out the first one (which will likely be
   // slower due to the rest of the browser initializing at the same time).
   static bool done_first_launch = false;
@@ -32,9 +43,10 @@ void RecordHistogramsOnLauncherThread(base::TimeDelta launch_time) {
 }  // namespace
 
 ChildProcessLauncherHelper::Process::Process(Process&& other)
-  : process(std::move(other.process))
-#if defined(OS_LINUX)
-   , zygote(other.zygote)
+    : process(std::move(other.process))
+#if BUILDFLAG(USE_ZYGOTE_HANDLE)
+      ,
+      zygote(other.zygote)
 #endif
 {
 }
@@ -44,7 +56,7 @@ ChildProcessLauncherHelper::Process::Process::operator=(
     ChildProcessLauncherHelper::Process&& other) {
   DCHECK_NE(this, &other);
   process = std::move(other.process);
-#if defined(OS_LINUX)
+#if BUILDFLAG(USE_ZYGOTE_HANDLE)
   zygote = other.zygote;
 #endif
   return *this;
@@ -84,14 +96,14 @@ void ChildProcessLauncherHelper::StartLaunchOnClientThread() {
     mojo_client_handle_ = channel_pair.PassClientHandle();
   }
 
-  BrowserThread::PostTask(
-      BrowserThread::PROCESS_LAUNCHER, FROM_HERE,
+  GetProcessLauncherTaskRunner()->PostTask(
+      FROM_HERE,
       base::BindOnce(&ChildProcessLauncherHelper::LaunchOnLauncherThread,
                      this));
 }
 
 void ChildProcessLauncherHelper::LaunchOnLauncherThread() {
-  DCHECK_CURRENTLY_ON(BrowserThread::PROCESS_LAUNCHER);
+  DCHECK(CurrentlyOnProcessLauncherTaskRunner());
 
   begin_launch_time_ = base::TimeTicks::Now();
 
@@ -145,7 +157,7 @@ void ChildProcessLauncherHelper::PostLaunchOnLauncherThread(
   BrowserThread::PostTask(
       client_thread_id_, FROM_HERE,
       base::BindOnce(&ChildProcessLauncherHelper::PostLaunchOnClientThread,
-                     this, base::Passed(&process), launch_result));
+                     this, std::move(process), launch_result));
 }
 
 void ChildProcessLauncherHelper::PostLaunchOnClientThread(
@@ -166,18 +178,51 @@ std::string ChildProcessLauncherHelper::GetProcessType() {
 // static
 void ChildProcessLauncherHelper::ForceNormalProcessTerminationAsync(
     ChildProcessLauncherHelper::Process process) {
-  if (BrowserThread::CurrentlyOn(BrowserThread::PROCESS_LAUNCHER)) {
+  if (CurrentlyOnProcessLauncherTaskRunner()) {
     ForceNormalProcessTerminationSync(std::move(process));
     return;
   }
   // On Posix, EnsureProcessTerminated can lead to 2 seconds of sleep!
   // So don't do this on the UI/IO threads.
-  BrowserThread::PostTask(
-      BrowserThread::PROCESS_LAUNCHER, FROM_HERE,
+  GetProcessLauncherTaskRunner()->PostTask(
+      FROM_HERE,
       base::BindOnce(
           &ChildProcessLauncherHelper::ForceNormalProcessTerminationSync,
-          base::Passed(&process)));
+          std::move(process)));
 }
 
 }  // namespace internal
+
+// static
+base::SingleThreadTaskRunner* GetProcessLauncherTaskRunner() {
+#if defined(OS_ANDROID)
+  // Android specializes Launcher thread so it is accessible in java.
+  // Note Android never does clean shutdown, so shutdown use-after-free
+  // concerns are not a problem in practice.
+  // This process launcher thread will use the Java-side process-launching
+  // thread, instead of creating its own separate thread on C++ side. Note
+  // that means this thread will not be joined on shutdown, and may cause
+  // use-after-free if anything tries to access objects deleted by
+  // AtExitManager, such as non-leaky LazyInstance.
+  static base::NoDestructor<scoped_refptr<base::SingleThreadTaskRunner>>
+      launcher_task_runner(
+          android::LauncherThread::GetMessageLoop()->task_runner());
+  return (*launcher_task_runner).get();
+#else   // defined(OS_ANDROID)
+  // TODO(http://crbug.com/820200): Investigate whether we could use
+  // SequencedTaskRunner on platforms other than Windows.
+  static base::LazySingleThreadTaskRunner launcher_task_runner =
+      LAZY_SINGLE_THREAD_TASK_RUNNER_INITIALIZER(
+          base::TaskTraits({base::MayBlock(), base::TaskPriority::USER_BLOCKING,
+                            base::TaskShutdownBehavior::BLOCK_SHUTDOWN}),
+          base::SingleThreadTaskRunnerThreadMode::DEDICATED);
+  return launcher_task_runner.Get().get();
+#endif  // defined(OS_ANDROID)
+}
+
+// static
+bool CurrentlyOnProcessLauncherTaskRunner() {
+  return GetProcessLauncherTaskRunner()->RunsTasksInCurrentSequence();
+}
+
 }  // namespace content

@@ -4,6 +4,8 @@
 
 #include "ash/app_list/model/app_list_item_list.h"
 
+#include <utility>
+
 #include "ash/app_list/model/app_list_item.h"
 #include "base/memory/ptr_util.h"
 
@@ -213,6 +215,11 @@ std::unique_ptr<AppListItem> AppListItemList::RemoveItemAt(size_t index) {
 void AppListItemList::DeleteItemAt(size_t index) {
   std::unique_ptr<AppListItem> item = RemoveItemAt(index);
   // |item| will be deleted on destruction.
+}
+
+void AppListItemList::DeleteAllItems() {
+  while (!app_list_items_.empty())
+    DeleteItemAt(app_list_items_.size() - 1);
 }
 
 void AppListItemList::EnsureValidItemPosition(AppListItem* item) {

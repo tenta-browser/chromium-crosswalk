@@ -5,7 +5,6 @@
 #include "chrome/browser/installable/installable_manager.h"
 
 #include "base/command_line.h"
-#include "base/memory/ptr_util.h"
 #include "base/run_loop.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/histogram_tester.h"
@@ -494,7 +493,8 @@ IN_PROC_BROWSER_TEST_F(InstallableManagerBrowserTest,
 
     NavigateAndRunInstallableManager(browser(), tester.get(),
                                      GetManifestParams(),
-                                     "/banners/play_app_test_page.html");
+                                     GetURLOfPageWithServiceWorkerAndManifest(
+                                         "/banners/play_app_manifest.json"));
     run_loop.Run();
 
     EXPECT_FALSE(tester->manifest().IsEmpty());
@@ -949,7 +949,7 @@ IN_PROC_BROWSER_TEST_F(InstallableManagerBrowserTest,
 
   content::WebContents* web_contents =
       browser()->tab_strip_model()->GetActiveWebContents();
-  auto manager = base::MakeUnique<LazyWorkerInstallableManager>(
+  auto manager = std::make_unique<LazyWorkerInstallableManager>(
       web_contents, sw_run_loop.QuitClosure());
 
   {
@@ -1043,7 +1043,7 @@ IN_PROC_BROWSER_TEST_F(InstallableManagerBrowserTest,
 
   content::WebContents* web_contents =
       browser()->tab_strip_model()->GetActiveWebContents();
-  auto manager = base::MakeUnique<LazyWorkerInstallableManager>(
+  auto manager = std::make_unique<LazyWorkerInstallableManager>(
       web_contents, sw_run_loop.QuitClosure());
 
   // Load a URL with no service worker.
@@ -1088,7 +1088,7 @@ IN_PROC_BROWSER_TEST_F(InstallableManagerBrowserTest,
 
   content::WebContents* web_contents =
       browser()->tab_strip_model()->GetActiveWebContents();
-  auto manager = base::MakeUnique<LazyWorkerInstallableManager>(
+  auto manager = std::make_unique<LazyWorkerInstallableManager>(
       web_contents, sw_run_loop.QuitClosure());
 
   manager->RecordMenuOpenHistogram();
@@ -1142,7 +1142,7 @@ IN_PROC_BROWSER_TEST_F(InstallableManagerBrowserTest,
   content::WebContents* web_contents =
       browser()->tab_strip_model()->GetActiveWebContents();
   base::RunLoop sw_run_loop;
-  auto manager = base::MakeUnique<LazyWorkerInstallableManager>(
+  auto manager = std::make_unique<LazyWorkerInstallableManager>(
       web_contents, sw_run_loop.QuitClosure());
 
   // Load a URL with no service worker.
@@ -1328,7 +1328,7 @@ IN_PROC_BROWSER_TEST_F(InstallableManagerBrowserTest,
                        ManifestUrlChangeFlushesState) {
   content::WebContents* web_contents =
       browser()->tab_strip_model()->GetActiveWebContents();
-  auto manager = base::MakeUnique<ResetDataInstallableManager>(web_contents);
+  auto manager = std::make_unique<ResetDataInstallableManager>(web_contents);
 
   // Start on a page with no manifest.
   ui_test_utils::NavigateToURL(

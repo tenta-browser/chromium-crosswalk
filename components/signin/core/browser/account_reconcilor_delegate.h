@@ -8,7 +8,9 @@
 #include <string>
 #include <vector>
 
+#include "base/time/time.h"
 #include "google_apis/gaia/gaia_auth_util.h"
+#include "google_apis/gaia/google_service_auth_error.h"
 
 class AccountReconcilor;
 
@@ -17,6 +19,17 @@ namespace signin {
 // Base class for AccountReconcilorDelegate.
 class AccountReconcilorDelegate {
  public:
+  // Options for revoking refresh tokens.
+  enum class RevokeTokenOption {
+    // Do not revoke the token.
+    kDoNotRevoke,
+    // Revoke the token if it is in auth error state.
+    kRevokeIfInError,
+    // Revoke the token.
+    // TODO(droger): remove this when Dice is launched.
+    kRevoke
+  };
+
   virtual ~AccountReconcilorDelegate() {}
 
   // Returns true if the reconcilor should reconcile the profile. Defaults to
@@ -41,14 +54,24 @@ class AccountReconcilorDelegate {
       const std::string& primary_account,
       bool first_execution) const;
 
-  // Returns true if all secondary accounts should be cleared at the beginning
-  // of the reconcile.
-  virtual bool ShouldRevokeAllSecondaryTokensBeforeReconcile(
+  // Returns whether secondary accounts should be cleared at the beginning of
+  // the reconcile.
+  virtual RevokeTokenOption ShouldRevokeSecondaryTokensBeforeReconcile(
       const std::vector<gaia::ListedAccount>& gaia_accounts);
 
   // Called when reconcile is finished.
   virtual void OnReconcileFinished(const std::string& first_account,
                                    bool reconcile_is_noop) {}
+
+  // Returns the desired timeout for account reconciliation. If reconciliation
+  // does not happen within this time, it is aborted and |this| delegate is
+  // informed via |OnReconcileError|, with an error state of
+  // GoogleServiceAuthError::CONNECTION_FAILED. If a delegate does not wish to
+  // set a timeout for account reconciliation, it should not override this
+  // method. Default: |base::TimeDelta::Max()|.
+  virtual base::TimeDelta GetReconcileTimeout() const;
+
+  virtual void OnReconcileError(const GoogleServiceAuthError& error);
 
   void set_reconcilor(AccountReconcilor* reconcilor) {
     reconcilor_ = reconcilor;

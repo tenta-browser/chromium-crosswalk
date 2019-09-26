@@ -23,6 +23,7 @@
 #include "extensions/browser/api/file_handlers/mime_util.h"
 #include "mojo/edk/embedder/embedder.h"
 #include "mojo/edk/embedder/scoped_platform_handle.h"
+#include "net/base/escape.h"
 #include "storage/browser/fileapi/file_system_context.h"
 
 namespace arc {
@@ -126,6 +127,13 @@ ArcFileSystemBridge* ArcFileSystemBridge::GetForBrowserContext(
   return ArcFileSystemBridgeFactory::GetForBrowserContext(context);
 }
 
+// static
+ArcFileSystemBridge* ArcFileSystemBridge::GetForBrowserContextForTesting(
+    content::BrowserContext* context) {
+  DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
+  return ArcFileSystemBridgeFactory::GetForBrowserContextForTesting(context);
+}
+
 void ArcFileSystemBridge::AddObserver(Observer* observer) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
   observer_list_.AddObserver(observer);
@@ -145,7 +153,10 @@ void ArcFileSystemBridge::GetFileName(const std::string& url,
     std::move(callback).Run(base::nullopt);
     return;
   }
-  std::move(callback).Run(url_decoded.ExtractFileName());
+  std::move(callback).Run(net::UnescapeURLComponent(
+      url_decoded.ExtractFileName(),
+      net::UnescapeRule::SPACES |
+          net::UnescapeRule::URL_SPECIAL_CHARS_EXCEPT_PATH_SEPARATORS));
 }
 
 void ArcFileSystemBridge::GetFileSize(const std::string& url,

@@ -5,6 +5,8 @@ include_rules = [
   "+ios/web",
   "+mojo/public",
   "+net",
+  "+services/network/network_context.h",
+  "+services/network/public/mojom",
   "+ui",
 
   # Needed to embed the ServiceManager in //ios/web.

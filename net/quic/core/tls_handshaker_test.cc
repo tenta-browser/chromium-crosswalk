@@ -4,13 +4,15 @@
 
 #include "net/quic/core/tls_client_handshaker.h"
 #include "net/quic/core/tls_server_handshaker.h"
+#include "net/quic/platform/api/quic_arraysize.h"
+#include "net/quic/platform/api/quic_ptr_util.h"
+#include "net/quic/platform/api/quic_string.h"
 #include "net/quic/platform/api/quic_test.h"
 #include "net/quic/test_tools/crypto_test_utils.h"
 #include "net/quic/test_tools/fake_proof_source.h"
 #include "net/quic/test_tools/quic_test_utils.h"
 #include "net/tools/quic/test_tools/mock_quic_session_visitor.h"
 
-using std::string;
 
 namespace net {
 namespace test {
@@ -24,16 +26,16 @@ class FakeProofVerifier : public ProofVerifier {
       : verifier_(crypto_test_utils::ProofVerifierForTesting()) {}
 
   QuicAsyncStatus VerifyProof(
-      const string& hostname,
+      const QuicString& hostname,
       const uint16_t port,
-      const string& server_config,
+      const QuicString& server_config,
       QuicTransportVersion quic_version,
       QuicStringPiece chlo_hash,
-      const std::vector<string>& certs,
-      const string& cert_sct,
-      const string& signature,
+      const std::vector<QuicString>& certs,
+      const QuicString& cert_sct,
+      const QuicString& signature,
       const ProofVerifyContext* context,
-      string* error_details,
+      QuicString* error_details,
       std::unique_ptr<ProofVerifyDetails>* details,
       std::unique_ptr<ProofVerifierCallback> callback) override {
     return verifier_->VerifyProof(
@@ -42,10 +44,10 @@ class FakeProofVerifier : public ProofVerifier {
   }
 
   QuicAsyncStatus VerifyCertChain(
-      const string& hostname,
-      const std::vector<string>& certs,
+      const QuicString& hostname,
+      const std::vector<QuicString>& certs,
       const ProofVerifyContext* context,
-      string* error_details,
+      QuicString* error_details,
       std::unique_ptr<ProofVerifyDetails>* details,
       std::unique_ptr<ProofVerifierCallback> callback) override {
     if (!active_) {
@@ -75,7 +77,7 @@ class FakeProofVerifier : public ProofVerifier {
   class FailingProofVerifierCallback : public ProofVerifierCallback {
    public:
     void Run(bool ok,
-             const std::string& error_details,
+             const QuicString& error_details,
              std::unique_ptr<ProofVerifyDetails>* details) override {
       FAIL();
     }
@@ -83,10 +85,10 @@ class FakeProofVerifier : public ProofVerifier {
 
   class VerifyChainPendingOp {
    public:
-    VerifyChainPendingOp(const string& hostname,
-                         const std::vector<string>& certs,
+    VerifyChainPendingOp(const QuicString& hostname,
+                         const std::vector<QuicString>& certs,
                          const ProofVerifyContext* context,
-                         string* error_details,
+                         QuicString* error_details,
                          std::unique_ptr<ProofVerifyDetails>* details,
                          std::unique_ptr<ProofVerifierCallback> callback,
                          ProofVerifier* delegate)
@@ -111,10 +113,10 @@ class FakeProofVerifier : public ProofVerifier {
     }
 
    private:
-    string hostname_;
-    std::vector<string> certs_;
+    QuicString hostname_;
+    std::vector<QuicString> certs_;
     const ProofVerifyContext* context_;
-    string* error_details_;
+    QuicString* error_details_;
     std::unique_ptr<ProofVerifyDetails>* details_;
     std::unique_ptr<ProofVerifierCallback> callback_;
     ProofVerifier* delegate_;
@@ -152,10 +154,10 @@ class TestQuicCryptoStream : public QuicCryptoStream {
   }
 
   void WriteCryptoData(const QuicStringPiece& data) override {
-    pending_writes_.push_back(string(data));
+    pending_writes_.push_back(QuicString(data));
   }
 
-  const std::vector<string>& pending_writes() { return pending_writes_; }
+  const std::vector<QuicString>& pending_writes() { return pending_writes_; }
 
   // Sends the pending frames to |stream| and clears the array of pending
   // writes.
@@ -170,7 +172,7 @@ class TestQuicCryptoStream : public QuicCryptoStream {
   }
 
  private:
-  std::vector<string> pending_writes_;
+  std::vector<QuicString> pending_writes_;
 };
 
 class TestQuicCryptoClientStream : public TestQuicCryptoStream {
@@ -178,17 +180,14 @@ class TestQuicCryptoClientStream : public TestQuicCryptoStream {
   explicit TestQuicCryptoClientStream(QuicSession* session)
       : TestQuicCryptoStream(session),
         proof_verifier_(new FakeProofVerifier),
-        ssl_ctx_(SSL_CTX_new(TLS_with_buffers_method())),
+        ssl_ctx_(TlsClientHandshaker::CreateSslCtx()),
         handshaker_(new TlsClientHandshaker(
             this,
             session,
             QuicServerId("test.example.com", 443),
             proof_verifier_.get(),
             ssl_ctx_.get(),
-            crypto_test_utils::ProofVerifyContextForTesting())) {
-    SSL_CTX_set_min_proto_version(ssl_ctx_.get(), TLS1_3_VERSION);
-    SSL_CTX_set_max_proto_version(ssl_ctx_.get(), TLS1_3_VERSION);
-  }
+            crypto_test_utils::ProofVerifyContextForTesting())) {}
 
   ~TestQuicCryptoClientStream() override = default;
 
@@ -212,16 +211,11 @@ class TestQuicCryptoServerStream : public TestQuicCryptoStream {
                              FakeProofSource* proof_source)
       : TestQuicCryptoStream(session),
         proof_source_(proof_source),
-        ssl_ctx_(SSL_CTX_new(TLS_with_buffers_method())),
+        ssl_ctx_(TlsServerHandshaker::CreateSslCtx()),
         handshaker_(new TlsServerHandshaker(this,
                                             session,
                                             ssl_ctx_.get(),
-                                            proof_source_)) {
-    SSL_CTX_set_min_proto_version(ssl_ctx_.get(), TLS1_3_VERSION);
-    SSL_CTX_set_max_proto_version(ssl_ctx_.get(), TLS1_3_VERSION);
-    SSL_CTX_set_tlsext_servername_callback(
-        ssl_ctx_.get(), TlsServerHandshaker::SelectCertificateCallback);
-  }
+                                            proof_source_)) {}
 
   ~TestQuicCryptoServerStream() override = default;
 
@@ -257,13 +251,15 @@ class TlsHandshakerTest : public QuicTest {
         server_conn_(new MockQuicConnection(&conn_helper_,
                                             &alarm_factory_,
                                             Perspective::IS_SERVER)),
-        client_session_(client_conn_),
-        server_session_(server_conn_),
-        client_stream_(&client_session_),
-        server_stream_(
-            new TestQuicCryptoServerStream(&server_session_, &proof_source_)) {
-    EXPECT_FALSE(client_stream_.encryption_established());
-    EXPECT_FALSE(client_stream_.handshake_confirmed());
+        client_session_(client_conn_, /*create_mock_crypto_stream=*/false),
+        server_session_(server_conn_, /*create_mock_crypto_stream=*/false) {
+    client_stream_ = new TestQuicCryptoClientStream(&client_session_);
+    client_session_.SetCryptoStream(client_stream_);
+    server_stream_ =
+        new TestQuicCryptoServerStream(&server_session_, &proof_source_);
+    server_session_.SetCryptoStream(server_stream_);
+    EXPECT_FALSE(client_stream_->encryption_established());
+    EXPECT_FALSE(client_stream_->handshake_confirmed());
     EXPECT_FALSE(server_stream_->encryption_established());
     EXPECT_FALSE(server_stream_->handshake_confirmed());
   }
@@ -275,21 +271,21 @@ class TlsHandshakerTest : public QuicTest {
   MockQuicSession client_session_;
   MockQuicSession server_session_;
 
-  TestQuicCryptoClientStream client_stream_;
   FakeProofSource proof_source_;
-  std::unique_ptr<TestQuicCryptoServerStream> server_stream_;
+  TestQuicCryptoClientStream* client_stream_;
+  TestQuicCryptoServerStream* server_stream_;
 };
 
 TEST_F(TlsHandshakerTest, CryptoHandshake) {
   EXPECT_CALL(*client_conn_, CloseConnection(_, _, _)).Times(0);
   EXPECT_CALL(*server_conn_, CloseConnection(_, _, _)).Times(0);
-  client_stream_.CryptoConnect();
-  MoveStreamFrames(&client_stream_, server_stream_.get());
+  client_stream_->CryptoConnect();
+  MoveStreamFrames(client_stream_, server_stream_);
 
-  // TODO(nharper): Once encryption keys are set, check that
-  // encryption_established() is true on the streams.
-  EXPECT_TRUE(client_stream_.handshake_confirmed());
+  EXPECT_TRUE(client_stream_->handshake_confirmed());
+  EXPECT_TRUE(client_stream_->encryption_established());
   EXPECT_TRUE(server_stream_->handshake_confirmed());
+  EXPECT_TRUE(server_stream_->encryption_established());
 }
 
 TEST_F(TlsHandshakerTest, HandshakeWithAsyncProofSource) {
@@ -301,18 +297,18 @@ TEST_F(TlsHandshakerTest, HandshakeWithAsyncProofSource) {
   proof_source->Activate();
 
   // Start handshake.
-  client_stream_.CryptoConnect();
-  MoveStreamFrames(&client_stream_, server_stream_.get());
+  client_stream_->CryptoConnect();
+  MoveStreamFrames(client_stream_, server_stream_);
 
   ASSERT_EQ(proof_source->NumPendingCallbacks(), 1);
   proof_source->InvokePendingCallback(0);
 
-  MoveStreamFrames(&client_stream_, server_stream_.get());
+  MoveStreamFrames(client_stream_, server_stream_);
 
-  // TODO(nharper): Once encryption keys are set, check that
-  // encryption_established() is true on the streams.
-  EXPECT_TRUE(client_stream_.handshake_confirmed());
+  EXPECT_TRUE(client_stream_->handshake_confirmed());
+  EXPECT_TRUE(client_stream_->encryption_established());
   EXPECT_TRUE(server_stream_->handshake_confirmed());
+  EXPECT_TRUE(server_stream_->encryption_established());
 }
 
 TEST_F(TlsHandshakerTest, CancelPendingProofSource) {
@@ -324,11 +320,11 @@ TEST_F(TlsHandshakerTest, CancelPendingProofSource) {
   proof_source->Activate();
 
   // Start handshake.
-  client_stream_.CryptoConnect();
-  MoveStreamFrames(&client_stream_, server_stream_.get());
+  client_stream_->CryptoConnect();
+  MoveStreamFrames(client_stream_, server_stream_);
 
   ASSERT_EQ(proof_source->NumPendingCallbacks(), 1);
-  server_stream_.reset();
+  server_stream_ = nullptr;
 
   proof_source->InvokePendingCallback(0);
 }
@@ -338,27 +334,27 @@ TEST_F(TlsHandshakerTest, HandshakeWithAsyncProofVerifier) {
   EXPECT_CALL(*server_conn_, CloseConnection(_, _, _)).Times(0);
   // Enable FakeProofVerifier to capture call to VerifyCertChain and run it
   // asynchronously.
-  FakeProofVerifier* proof_verifier = client_stream_.GetFakeProofVerifier();
+  FakeProofVerifier* proof_verifier = client_stream_->GetFakeProofVerifier();
   proof_verifier->Activate();
 
   // Start handshake.
-  client_stream_.CryptoConnect();
-  MoveStreamFrames(&client_stream_, server_stream_.get());
+  client_stream_->CryptoConnect();
+  MoveStreamFrames(client_stream_, server_stream_);
 
   ASSERT_EQ(proof_verifier->NumPendingCallbacks(), 1u);
   proof_verifier->InvokePendingCallback(0);
 
-  MoveStreamFrames(&client_stream_, server_stream_.get());
+  MoveStreamFrames(client_stream_, server_stream_);
 
-  // TODO(nharper): Once encryption keys are set, check that
-  // encryption_established() is true on the streams.
-  EXPECT_TRUE(client_stream_.handshake_confirmed());
+  EXPECT_TRUE(client_stream_->handshake_confirmed());
+  EXPECT_TRUE(client_stream_->encryption_established());
   EXPECT_TRUE(server_stream_->handshake_confirmed());
+  EXPECT_TRUE(server_stream_->encryption_established());
 }
 
 TEST_F(TlsHandshakerTest, ClientConnectionClosedOnTlsAlert) {
   // Have client send ClientHello.
-  client_stream_.CryptoConnect();
+  client_stream_->CryptoConnect();
   EXPECT_CALL(*client_conn_, CloseConnection(QUIC_HANDSHAKE_FAILED, _, _));
 
   // Send fake "internal_error" fatal TLS alert from server to client.
@@ -372,11 +368,11 @@ TEST_F(TlsHandshakerTest, ClientConnectionClosedOnTlsAlert) {
       80,  // AlertDescription internal_error
   };
   QuicStreamFrame alert(kCryptoStreamId, false,
-                        client_stream_.stream_bytes_read(),
-                        QuicStringPiece(alert_msg, arraysize(alert_msg)));
-  client_stream_.OnStreamFrame(alert);
+                        client_stream_->stream_bytes_read(),
+                        QuicStringPiece(alert_msg, QUIC_ARRAYSIZE(alert_msg)));
+  client_stream_->OnStreamFrame(alert);
 
-  EXPECT_FALSE(client_stream_.handshake_confirmed());
+  EXPECT_FALSE(client_stream_->handshake_confirmed());
 }
 
 TEST_F(TlsHandshakerTest, ServerConnectionClosedOnTlsAlert) {
@@ -394,7 +390,7 @@ TEST_F(TlsHandshakerTest, ServerConnectionClosedOnTlsAlert) {
   };
   QuicStreamFrame alert(kCryptoStreamId, false,
                         server_stream_->stream_bytes_read(),
-                        QuicStringPiece(alert_msg, arraysize(alert_msg)));
+                        QuicStringPiece(alert_msg, QUIC_ARRAYSIZE(alert_msg)));
   server_stream_->OnStreamFrame(alert);
 
   EXPECT_FALSE(server_stream_->handshake_confirmed());

@@ -16,6 +16,7 @@ import org.chromium.chrome.browser.customtabs.CustomTabActivity;
 import org.chromium.chrome.browser.download.items.OfflineContentAggregatorNotificationBridgeUiFactory;
 import org.chromium.chrome.browser.snackbar.Snackbar;
 import org.chromium.chrome.browser.snackbar.SnackbarManager;
+import org.chromium.chrome.browser.util.AccessibilityUtil;
 import org.chromium.components.offline_items_collection.LegacyHelpers;
 
 /**
@@ -23,7 +24,8 @@ import org.chromium.components.offline_items_collection.LegacyHelpers;
  */
 public class DownloadSnackbarController implements SnackbarManager.SnackbarController {
     public static final int INVALID_NOTIFICATION_ID = -1;
-    private static final int SNACKBAR_DURATION_IN_MILLISECONDS = 5000;
+    private static final int SNACKBAR_DURATION_MS = 7000;
+    private static final int SNACKBAR_ACCESSIBILITY_DURATION_MS = 15000;
     private final Context mContext;
 
     private static class ActionDataInfo {
@@ -59,7 +61,8 @@ public class DownloadSnackbarController implements SnackbarManager.SnackbarContr
                 mContext.startActivity(new Intent(DownloadManager.ACTION_VIEW_DOWNLOADS)
                                                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
             } else {
-                manager.openDownloadedContent(download.downloadInfo, download.systemDownloadId);
+                manager.openDownloadedContent(download.downloadInfo, download.systemDownloadId,
+                        DownloadMetrics.SNACK_BAR);
             }
         } else {
             OfflineContentAggregatorNotificationBridgeUiFactory.instance().openItem(
@@ -91,7 +94,7 @@ public class DownloadSnackbarController implements SnackbarManager.SnackbarContr
         if (getSnackbarManager() == null) return;
         Snackbar snackbar;
         if (getActivity() instanceof CustomTabActivity) {
-            String packageLabel = BuildInfo.getPackageLabel();
+            String packageLabel = BuildInfo.getInstance().hostPackageLabel;
             snackbar = Snackbar.make(mContext.getString(R.string.download_succeeded_message,
                     downloadInfo.getFileName(), packageLabel),
                     this, Snackbar.TYPE_NOTIFICATION, Snackbar.UMA_DOWNLOAD_SUCCEEDED);
@@ -101,7 +104,7 @@ public class DownloadSnackbarController implements SnackbarManager.SnackbarContr
                     this, Snackbar.TYPE_NOTIFICATION, Snackbar.UMA_DOWNLOAD_SUCCEEDED);
         }
         // TODO(qinmin): Coalesce snackbars if multiple downloads finish at the same time.
-        snackbar.setDuration(SNACKBAR_DURATION_IN_MILLISECONDS).setSingleLine(false);
+        snackbar.setDuration(getSnackbarDurationMs()).setSingleLine(false);
         ActionDataInfo info = null;
         if (canBeResolved || !LegacyHelpers.isLegacyDownload(downloadInfo.getContentId())
                 || usesAndroidDownloadManager) {
@@ -124,10 +127,10 @@ public class DownloadSnackbarController implements SnackbarManager.SnackbarContr
     public void onDownloadFailed(String errorMessage, boolean showAllDownloads) {
         if (getSnackbarManager() == null) return;
         // TODO(qinmin): Coalesce snackbars if multiple downloads finish at the same time.
-        Snackbar snackbar = Snackbar
-                .make(errorMessage, this, Snackbar.TYPE_NOTIFICATION, Snackbar.UMA_DOWNLOAD_FAILED)
-                .setSingleLine(false)
-                .setDuration(SNACKBAR_DURATION_IN_MILLISECONDS);
+        Snackbar snackbar = Snackbar.make(errorMessage, this, Snackbar.TYPE_NOTIFICATION,
+                                            Snackbar.UMA_DOWNLOAD_FAILED)
+                                    .setSingleLine(false)
+                                    .setDuration(getSnackbarDurationMs());
         if (showAllDownloads) {
             snackbar.setAction(
                     mContext.getString(R.string.open_downloaded_label),
@@ -150,5 +153,10 @@ public class DownloadSnackbarController implements SnackbarManager.SnackbarContr
             return ((SnackbarManager.SnackbarManageable) activity).getSnackbarManager();
         }
         return null;
+    }
+
+    private static int getSnackbarDurationMs() {
+        return AccessibilityUtil.isAccessibilityEnabled() ? SNACKBAR_ACCESSIBILITY_DURATION_MS
+                                                          : SNACKBAR_DURATION_MS;
     }
 }

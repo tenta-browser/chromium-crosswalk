@@ -8,6 +8,7 @@
 
 #include <utility>
 
+#include "base/files/platform_file.h"
 #include "base/macros.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/ozone/platform/drm/gpu/crtc_controller.h"
@@ -20,9 +21,6 @@
 #include "ui/ozone/platform/drm/gpu/screen_manager.h"
 
 namespace {
-
-void EmptySwapCallback(gfx::SwapResult) {
-}
 
 // Create a basic mode for a 6x4 screen.
 const drmModeModeInfo kDefaultMode =
@@ -500,11 +498,13 @@ TEST_F(ScreenManagerTest, EnableControllerWhenWindowHasBuffer) {
       new ui::DrmWindow(1, device_manager_.get(), screen_manager_.get()));
   window->Initialize(buffer_generator_.get());
   window->SetBounds(GetPrimaryBounds());
+
   scoped_refptr<ui::ScanoutBuffer> buffer = buffer_generator_->Create(
-      drm_, DRM_FORMAT_XRGB8888, GetPrimaryBounds().size());
+      drm_, DRM_FORMAT_XRGB8888, {}, GetPrimaryBounds().size());
   window->SchedulePageFlip(
-      std::vector<ui::OverlayPlane>(1, ui::OverlayPlane(buffer)),
-      base::Bind(&EmptySwapCallback));
+      std::vector<ui::OverlayPlane>(
+          1, ui::OverlayPlane(buffer, base::kInvalidPlatformFile)),
+      base::DoNothing());
   screen_manager_->AddWindow(1, std::move(window));
 
   screen_manager_->AddDisplayController(drm_, kPrimaryCrtc, kPrimaryConnector);
@@ -512,7 +512,7 @@ TEST_F(ScreenManagerTest, EnableControllerWhenWindowHasBuffer) {
       drm_, kPrimaryCrtc, kPrimaryConnector, GetPrimaryBounds().origin(),
       kDefaultMode);
 
-  EXPECT_EQ(buffer->GetFramebufferId(), drm_->current_framebuffer());
+  EXPECT_EQ(buffer->GetOpaqueFramebufferId(), drm_->current_framebuffer());
 
   window = screen_manager_->RemoveWindow(1);
   window->Shutdown();
@@ -529,8 +529,9 @@ TEST_F(ScreenManagerTest, RejectBufferWithIncompatibleModifiers) {
                                             GetPrimaryBounds().size());
 
   window->SchedulePageFlip(
-      std::vector<ui::OverlayPlane>(1, ui::OverlayPlane(buffer)),
-      base::Bind(&EmptySwapCallback));
+      std::vector<ui::OverlayPlane>(
+          1, ui::OverlayPlane(buffer, base::kInvalidPlatformFile)),
+      base::DoNothing());
   screen_manager_->AddWindow(1, std::move(window));
 
   screen_manager_->AddDisplayController(drm_, kPrimaryCrtc, kPrimaryConnector);

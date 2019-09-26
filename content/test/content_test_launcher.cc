@@ -52,12 +52,6 @@ class ContentBrowserTestSuite : public ContentTestSuiteBase {
  public:
   ContentBrowserTestSuite(int argc, char** argv)
       : ContentTestSuiteBase(argc, argv) {
-#if BUILDFLAG(ENABLE_MUS)
-    // TODO(786453): This should be removed once mus can run without viz.
-    auto* cmd = base::CommandLine::ForCurrentProcess();
-    if (cmd->HasSwitch(switches::kMus))
-      cmd->AppendSwitchASCII(switches::kMus, switches::kMusHostVizValue);
-#endif
   }
   ~ContentBrowserTestSuite() override {}
 
@@ -125,7 +119,7 @@ class ContentTestLauncherDelegate : public TestLauncherDelegate {
 
  protected:
   ContentMainDelegate* CreateContentMainDelegate() override {
-    return new ShellMainDelegate();
+    return new ShellMainDelegate(true);
   }
 
  private:

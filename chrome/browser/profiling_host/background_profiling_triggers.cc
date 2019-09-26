@@ -15,7 +15,7 @@
 #include "content/public/common/process_type.h"
 #include "services/resource_coordinator/public/cpp/memory_instrumentation/memory_instrumentation.h"
 
-namespace profiling {
+namespace heap_profiling {
 
 namespace {
 // Check memory usage every hour. Trigger slow report if needed.
@@ -74,36 +74,20 @@ void BackgroundProfilingTriggers::StartTimer() {
   DCHECK(content::BrowserThread::CurrentlyOn(content::BrowserThread::UI));
 
   // Register a repeating timer to check memory usage periodically.
-  timer_.Start(
-      FROM_HERE, base::TimeDelta::FromHours(kRepeatingCheckMemoryDelayInHours),
-      base::Bind(&BackgroundProfilingTriggers::PerformMemoryUsageChecks,
-                 weak_ptr_factory_.GetWeakPtr()));
+  timer_.Start(FROM_HERE,
+               base::TimeDelta::FromHours(kRepeatingCheckMemoryDelayInHours),
+               base::BindRepeating(
+                   &BackgroundProfilingTriggers::PerformMemoryUsageChecks,
+                   weak_ptr_factory_.GetWeakPtr()));
 }
 
 bool BackgroundProfilingTriggers::IsAllowedToUpload() const {
-  if (!ChromeMetricsServiceAccessor::IsMetricsAndCrashReportingEnabled()) {
-    return false;
-  }
-
-  // Do not upload if there is an incognito session running in any profile.
-  std::vector<Profile*> profiles =
-      g_browser_process->profile_manager()->GetLoadedProfiles();
-  for (Profile* profile : profiles) {
-    if (profile->HasOffTheRecordProfile()) {
-      return false;
-    }
-  }
-
-  return true;
+  return ChromeMetricsServiceAccessor::IsMetricsAndCrashReportingEnabled();
 }
 
 bool BackgroundProfilingTriggers::IsOverTriggerThreshold(
     int content_process_type,
     uint32_t private_footprint_kb) {
-  if (!host_->ShouldProfileProcessType(content_process_type)) {
-    return false;
-  }
-
   switch (content_process_type) {
     case content::ProcessType::PROCESS_TYPE_BROWSER:
       return private_footprint_kb > kBrowserProcessMallocTriggerKb;
@@ -126,15 +110,22 @@ void BackgroundProfilingTriggers::PerformMemoryUsageChecks() {
     return;
   }
 
-  memory_instrumentation::MemoryInstrumentation::GetInstance()
-      ->RequestGlobalDump(
-          base::Bind(&BackgroundProfilingTriggers::OnReceivedMemoryDump,
-                     weak_ptr_factory_.GetWeakPtr()));
+  auto callback = base::BindOnce(
+      [](base::WeakPtr<BackgroundProfilingTriggers> weak_ptr,
+         std::vector<base::ProcessId> result) {
+        memory_instrumentation::MemoryInstrumentation::GetInstance()
+            ->RequestGlobalDump(
+                base::Bind(&BackgroundProfilingTriggers::OnReceivedMemoryDump,
+                           std::move(weak_ptr), std::move(result)));
+      },
+      weak_ptr_factory_.GetWeakPtr());
+  host_->GetProfiledPids(std::move(callback));
 }
 
 void BackgroundProfilingTriggers::OnReceivedMemoryDump(
+    std::vector<base::ProcessId> profiled_pids,
     bool success,
-    memory_instrumentation::mojom::GlobalMemoryDumpPtr dump) {
+    std::unique_ptr<memory_instrumentation::GlobalMemoryDump> dump) {
   DCHECK(content::BrowserThread::CurrentlyOn(content::BrowserThread::UI));
 
   if (!success) {
@@ -142,9 +133,12 @@ void BackgroundProfilingTriggers::OnReceivedMemoryDump(
   }
 
   bool should_send_report = false;
-  for (const auto& proc : dump->process_dumps) {
-    if (IsOverTriggerThreshold(GetContentProcessType(proc->process_type),
-                               proc->os_dump->private_footprint_kb)) {
+  for (const auto& proc : dump->process_dumps()) {
+    if (std::find(profiled_pids.begin(), profiled_pids.end(), proc.pid()) ==
+        profiled_pids.end())
+      continue;
+    if (IsOverTriggerThreshold(GetContentProcessType(proc.process_type()),
+                               proc.os_dump().private_footprint_kb)) {
       should_send_report = true;
       break;
     }
@@ -156,12 +150,12 @@ void BackgroundProfilingTriggers::OnReceivedMemoryDump(
     // If a report was sent, throttle the memory data collection rate to
     // kThrottledReportRepeatingCheckMemoryDelayInHours to avoid sending too
     // many reports from a known problematic client.
-    timer_.Start(
-        FROM_HERE,
-        base::TimeDelta::FromHours(
-            kThrottledReportRepeatingCheckMemoryDelayInHours),
-        base::Bind(&BackgroundProfilingTriggers::PerformMemoryUsageChecks,
-                   weak_ptr_factory_.GetWeakPtr()));
+    timer_.Start(FROM_HERE,
+                 base::TimeDelta::FromHours(
+                     kThrottledReportRepeatingCheckMemoryDelayInHours),
+                 base::BindRepeating(
+                     &BackgroundProfilingTriggers::PerformMemoryUsageChecks,
+                     weak_ptr_factory_.GetWeakPtr()));
   }
 }
 
@@ -170,4 +164,4 @@ void BackgroundProfilingTriggers::TriggerMemoryReport() {
   host_->RequestProcessReport("MEMLOG_BACKGROUND_TRIGGER");
 }
 
-}  // namespace profiling
+}  // namespace heap_profiling

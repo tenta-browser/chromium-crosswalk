@@ -4,7 +4,8 @@
 
 #include "chrome/browser/vr/elements/vector_icon.h"
 
-#include "base/memory/ptr_util.h"
+#include <memory>
+
 #include "chrome/browser/vr/elements/ui_texture.h"
 #include "ui/gfx/paint_vector_icon.h"
 #include "ui/gfx/scoped_canvas.h"
@@ -21,17 +22,11 @@ class VectorIconTexture : public UiTexture {
 
   SkColor GetColor() const { return color_; }
 
-  void SetIcon(const gfx::VectorIcon& icon) {
-    SetAndDirty(&icon_no_1x_.path, icon.path);
+  void SetIcon(const gfx::VectorIcon* icon) {
+    SetAndDirty(&icon_no_1x_.rep, icon ? icon->rep : nullptr);
   }
 
  private:
-  gfx::Size GetPreferredTextureSize(int width) const override {
-    return gfx::Size(width, width);
-  }
-
-  gfx::SizeF GetDrawnSize() const override { return size_; }
-
   void Draw(SkCanvas* sk_canvas, const gfx::Size& texture_size) override {
     if (icon_no_1x_.is_empty())
       return;
@@ -49,14 +44,14 @@ class VectorIconTexture : public UiTexture {
   }
 
   gfx::SizeF size_;
-  gfx::VectorIcon icon_no_1x_{nullptr, nullptr};
+  gfx::VectorIcon icon_no_1x_{};
   SkColor color_ = SK_ColorWHITE;
   DISALLOW_COPY_AND_ASSIGN(VectorIconTexture);
 };
 
-VectorIcon::VectorIcon(int maximum_width_pixels)
-    : TexturedElement(maximum_width_pixels),
-      texture_(base::MakeUnique<VectorIconTexture>()) {}
+VectorIcon::VectorIcon(int texture_width)
+    : texture_(std::make_unique<VectorIconTexture>()),
+      texture_width_(texture_width) {}
 VectorIcon::~VectorIcon() {}
 
 void VectorIcon::SetColor(SkColor color) {
@@ -68,11 +63,23 @@ SkColor VectorIcon::GetColor() const {
 }
 
 void VectorIcon::SetIcon(const gfx::VectorIcon& icon) {
+  texture_->SetIcon(&icon);
+}
+
+void VectorIcon::SetIcon(const gfx::VectorIcon* icon) {
   texture_->SetIcon(icon);
 }
 
 UiTexture* VectorIcon::GetTexture() const {
   return texture_.get();
+}
+
+bool VectorIcon::TextureDependsOnMeasurement() const {
+  return false;
+}
+
+gfx::Size VectorIcon::MeasureTextureSize() {
+  return gfx::Size(texture_width_, texture_width_);
 }
 
 void VectorIcon::DrawVectorIcon(gfx::Canvas* canvas,
@@ -88,7 +95,7 @@ void VectorIcon::DrawVectorIcon(gfx::Canvas* canvas,
   // 1x version if device scale factor isn't set. See crbug.com/749146. If all
   // icons end up being drawn via VectorIcon instances, this will not be
   // required (the 1x version is automatically elided by this class).
-  gfx::VectorIcon icon_no_1x{icon.path, nullptr};
+  gfx::VectorIcon icon_no_1x{icon.rep};
   PaintVectorIcon(canvas, icon_no_1x, size_px, color);
 }
 

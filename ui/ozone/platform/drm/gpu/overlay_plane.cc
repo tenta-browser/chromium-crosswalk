@@ -10,22 +10,29 @@
 
 namespace ui {
 
-OverlayPlane::OverlayPlane(const scoped_refptr<ScanoutBuffer>& buffer)
+OverlayPlane::OverlayPlane(const scoped_refptr<ScanoutBuffer>& buffer,
+                           int fence_fd)
     : buffer(buffer),
       plane_transform(gfx::OVERLAY_TRANSFORM_NONE),
       display_bounds(gfx::Point(), buffer->GetSize()),
-      crop_rect(0, 0, 1, 1) {}
+      crop_rect(0, 0, 1, 1),
+      enable_blend(false),
+      fence_fd(fence_fd) {}
 
 OverlayPlane::OverlayPlane(const scoped_refptr<ScanoutBuffer>& buffer,
                            int z_order,
                            gfx::OverlayTransform plane_transform,
                            const gfx::Rect& display_bounds,
-                           const gfx::RectF& crop_rect)
+                           const gfx::RectF& crop_rect,
+                           bool enable_blend,
+                           int fence_fd)
     : buffer(buffer),
       z_order(z_order),
       plane_transform(plane_transform),
       display_bounds(display_bounds),
-      crop_rect(crop_rect) {}
+      crop_rect(crop_rect),
+      enable_blend(enable_blend),
+      fence_fd(fence_fd) {}
 
 OverlayPlane::OverlayPlane(const OverlayPlane& other) = default;
 

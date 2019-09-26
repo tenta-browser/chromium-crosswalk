@@ -95,6 +95,15 @@ class ContentSuggestionsProvider {
   virtual void FetchSuggestionImage(const ContentSuggestion::ID& suggestion_id,
                                     ImageFetchedCallback callback) = 0;
 
+  // Fetches the image data for the suggestion with the given ID and returns it
+  // through the callback. This fetch may occur locally or from the internet.
+  // If that suggestion doesn't exist, doesn't have an image or if the fetch
+  // fails, the callback gets empty data. The callback will not be called
+  // synchronously.
+  virtual void FetchSuggestionImageData(
+      const ContentSuggestion::ID& suggestion_id,
+      ImageDataFetchedCallback callback) = 0;
+
   // Fetches more suggestions for the given category. The new suggestions
   // will not include any suggestion of the |known_suggestion_ids| sets.
   // As a result of this call, the provider:
@@ -130,8 +139,10 @@ class ContentSuggestionsProvider {
   // Called when the sign in state has changed. Should be used instead of
   // directly registering with the SignInManager so that the
   // ContentSuggestionService can control the order of the updates between
-  // the providers and the observers.
-  virtual void OnSignInStateChanged() {}
+  // the providers and the observers. |has_signed_in| is true if the state
+  // change was due to the user signin in and false if the state change was due
+  // to the user signing out.
+  virtual void OnSignInStateChanged(bool has_signed_in) {}
 
   // Used only for debugging purposes. Retrieves suggestions for the given
   // |category| that have previously been dismissed and are still stored in the

@@ -14,8 +14,8 @@
  * limitations under the License.
  */
 
-#ifndef SkUserConfig_DEFINED
-#define SkUserConfig_DEFINED
+#ifndef SKIA_CONFIG_SKUSERCONFIG_H_
+#define SKIA_CONFIG_SKUSERCONFIG_H_
 
 /*  SkTypes.h, the root of the public header files, does the following trick:
 
@@ -94,16 +94,6 @@
 #define SK_SUPPORT_UNITTEST
 #endif
 
-/* If cross process SkPictureImageFilters are not explicitly enabled then
-   they are always disabled.
- */
-#ifndef SK_ALLOW_CROSSPROCESS_PICTUREIMAGEFILTERS
-    #ifndef SK_DISALLOW_CROSSPROCESS_PICTUREIMAGEFILTERS
-        #define SK_DISALLOW_CROSSPROCESS_PICTUREIMAGEFILTERS
-    #endif
-#endif
-
-
 /* If your system embeds skia and has complex event logging, define this
    symbol to name a file that maps the following macros to your system's
    equivalents:
@@ -148,14 +138,7 @@ SK_API void SkDebugf_FileLine(const char* file, int line, bool fatal,
 #define SK_B32_SHIFT    0
 #endif
 
-#if defined(SK_BUILD_FOR_WIN32)
-
-#define SK_BUILD_FOR_WIN
-
-// Skia uses this deprecated bzero function to fill zeros into a string.
-#define bzero(str, len) memset(str, 0, len)
-
-#elif defined(SK_BUILD_FOR_MAC)
+#if defined(SK_BUILD_FOR_MAC)
 
 #define SK_CPU_LENDIAN
 #undef  SK_CPU_BENDIAN
@@ -204,10 +187,6 @@ SK_API void SkDebugf_FileLine(const char* file, int line, bool fatal,
 #define SK_USE_LEGACY_DISTANCE_FIELDS
 #endif
 
-#ifndef SK_SUPPORT_LEGACY_BLUR_IMAGE
-#define SK_SUPPORT_LEGACY_BLUR_IMAGE
-#endif
-
 // Skia is enabling this feature soon. Chrome probably does
 // not want it for M64
 #ifndef SK_DISABLE_EXPLICIT_GPU_RESOURCE_ALLOCATION
@@ -220,26 +199,35 @@ SK_API void SkDebugf_FileLine(const char* file, int line, bool fatal,
 #define SK_DISABLE_RENDER_TARGET_SORTING
 #endif
 
-#ifndef SK_SUPPORT_LEGACY_DELTA_AA
-#define SK_SUPPORT_LEGACY_DELTA_AA
-#endif
-
-#ifndef SK_USE_LEGACY_INTERP_BLUR
-#define SK_USE_LEGACY_INTERP_BLUR
-#endif
-
-#ifndef SK_SUPPORT_LEGACY_SMALLRECT_AA
-#define SK_SUPPORT_LEGACY_SMALLRECT_AA
-#endif
-
 #ifndef SK_SUPPORT_LEGACY_TILED_BITMAPS
 #define SK_SUPPORT_LEGACY_TILED_BITMAPS
 #endif
 
-#ifndef SK_COLOR_SPACE_XFORM_LEGACY_PIPELINE
-#define SK_COLOR_SPACE_XFORM_LEGACY_PIPELINE
+// remove after rebaselining svg layout tests
+#ifndef SK_SUPPORT_LEGACY_SVG_ARC_TO
+#define SK_SUPPORT_LEGACY_SVG_ARC_TO
 #endif
 
+// Remove after M66 branch to use new read/writePixels implementations
+#ifndef SK_LEGACY_GPU_PIXEL_OPS
+#define SK_LEGACY_GPU_PIXEL_OPS
+#endif
+
+#ifndef SK_SUPPORT_LEGACY_YUV_COLORSPACE
+#define SK_SUPPORT_LEGACY_YUV_COLORSPACE
+#endif
+
+#ifndef SK_SUPPORT_LEGACY_BACKEND_OBJECTS
+#define SK_SUPPORT_LEGACY_BACKEND_OBJECTS
+#endif
+
+// Max. verb count for paths rendered by the edge-AA tessellating path renderer.
+#define GR_AA_TESSELLATOR_MAX_VERB_COUNT 10
+
+
+#ifndef SK_SUPPORT_LEGACY_PATH_DAA_BIT
+#define SK_SUPPORT_LEGACY_PATH_DAA_BIT
+#endif
 
 ///////////////////////// Imported from BUILD.gn and skia_common.gypi
 

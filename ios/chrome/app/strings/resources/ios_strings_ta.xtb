@@ -34,10 +34,13 @@
 <translation id="145015347812617860"><ph name="COUNT" /> உருப்படிகள்</translation>
 <translation id="1491277525950327607">அமைப்பை நிலைமாற்ற, இருமுறை தட்டவும்</translation>
 <translation id="152234381334907219">எப்போதும் சேமிக்காதவை</translation>
+<translation id="1532451416480227577">Google Pay இல் உள்ள முகவரிகளையும் கிரெடிட் கார்டுகளையும் காட்டு</translation>
 <translation id="1540800554400757039">முகவரி 1</translation>
 <translation id="1545749641540134597">QR குறியீட்டை ஸ்கேன் செய்க</translation>
 <translation id="1580783302095112590">மின்னஞ்சல் அனுப்பப்பட்டது.</translation>
+<translation id="1582732959743469162">இவ்வாறு செய்தால் உங்களின் தற்போதைய பதிவிறக்கத்திற்கான அனைத்துச் செயல்பாடும் நிறுத்தப்படும்.</translation>
 <translation id="1612730193129642006">தாவல் கட்டத்தைக் காட்டும் பொத்தான்</translation>
+<translation id="1644574205037202324">வரலாறு</translation>
 <translation id="1646446875146297738">‘கண்காணிக்க வேண்டாம்’ என்பதை இயக்குவது, உங்கள் உலாவல் ட்ராஃபிக்குடன் ஒரு கோரிக்கை இணைக்கப்படும் என்று பொருளாகும். கோரிக்கைக்கு இணையதளம் பதிலளிக்கிறதா என்பதையும், கோரிக்கை எப்படிப் புரிந்துகொள்ளப்பட்டது என்பதையும் பொறுத்து விளைவுகள் இருக்கும்.
 
 எடுத்துக்காட்டாக, நீங்கள் பார்வையிட்ட பிற இணையதளங்களைச் சார்ந்திராத விளம்பரங்களை உங்களுக்குக் காட்டுவதன் மூலம் இந்தக் கோரிக்கைக்குச் சில இணையதளங்கள் பதிலளிக்கலாம். பல இணையதளங்கள் தொடர்ந்து உங்கள் உலாவல் தரவைச் சேகரித்து பயன்படுத்தும். எடுத்துக்காட்டாக, பாதுகாப்பை மேம்படுத்த, தங்களின் இணையதளங்களில் உள்ளடக்கம், சேவைகள், விளம்பரங்கள் மற்றும் பரிந்துரைகளை வழங்க மற்றும் புள்ளிவிவர அறிக்கைகளை உருவாக்க அதைப் பயன்படுத்தும். <ph name="BEGIN_LINK" />மேலும் அறிக<ph name="END_LINK" /></translation>
@@ -96,6 +99,7 @@
 <translation id="2718352093833049315">வைஃபையில் மட்டும்</translation>
 <translation id="2747003861858887689">முந்தைய புலம்</translation>
 <translation id="2780046210906776326">மின்னஞ்சல் கணக்குகள் எதுவுமில்லை</translation>
+<translation id="2781692009645368755">Google Pay</translation>
 <translation id="2800683595868705743">தாவல் மாற்றியிலிருந்து வெளியேறு</translation>
 <translation id="283291358677939992">பக்கத்தில் கண்டறி...</translation>
 <translation id="2834956026595107950"><ph name="TITLE" />, <ph name="STATE" />, <ph name="URL" /></translation>
@@ -121,6 +125,7 @@
 <translation id="3175081911749765310">இணைய சேவைகள்</translation>
 <translation id="3207960819495026254">புக்மார்க் செய்யப்பட்டது</translation>
 <translation id="3210163015918861891">ஒத்திசைவு முடக்கத்தில்</translation>
+<translation id="3224641773458703735">கடவுச்சொற்களை ஏற்ற, முதலில் உங்கள் சாதனத்தில் கடவுக்குறியீட்டை அமைக்க வேண்டும்.</translation>
 <translation id="3240426699337459095">இணைப்பு நகலெடுக்கப்பட்டது</translation>
 <translation id="3244271242291266297">MM</translation>
 <translation id="3252394070589632019"><ph name="VALUE" />, <ph name="ADDITIONAL_INFO" />, <ph name="INDEX" /> / <ph name="NUM_SUGGESTIONS" /></translation>
@@ -132,6 +137,7 @@
 <translation id="3393920035788932672">பாப்-அப்கள் அனுமதிக்கப்பட்டன</translation>
 <translation id="3445288400492335833"><ph name="MINUTES" /> நி.</translation>
 <translation id="3448016392200048164">காட்சிப் பிரிப்பு</translation>
+<translation id="3469166899695866866">பதிவிறக்கத்தை நிறுத்தவா?</translation>
 <translation id="3474624961160222204"><ph name="NAME" /> கணக்கில் தொடர்க</translation>
 <translation id="3474649192738347024">படிவங்கள் நிரப்பப்பட்டன.</translation>
 <translation id="3478058380795961209">காலாவதியாகும் மாதம்</translation>
@@ -151,8 +157,10 @@
 <translation id="3771033907050503522">மறைநிலைத் தாவல்கள்</translation>
 <translation id="3779810277399252432">இணைய இணைப்பு இல்லை.</translation>
 <translation id="3783017676699494206">படத்தைச் சேமி</translation>
+<translation id="3789841737615482174">நிறுவுக</translation>
 <translation id="385051799172605136">முந்தைய பக்கம்</translation>
 <translation id="3897092660631435901">மெனு</translation>
+<translation id="3915450441834151894">தளம் குறித்த தகவல்</translation>
 <translation id="3928666092801078803">எனது தரவை ஒன்றிணை</translation>
 <translation id="3950820424414687140">உள்நுழைக</translation>
 <translation id="3963231839620026525">புதிய மறைநிலைத் தாவல்</translation>
@@ -161,6 +169,7 @@
 <translation id="4002066346123236978">தலைப்பு</translation>
 <translation id="4038354071007134711">கோப்பைத் திறக்கக்கூடிய பயன்பாடு சாதனத்தில் இல்லை.</translation>
 <translation id="4049507953662678203">இணைய இணைப்பு இருப்பதை உறுதிசெய்து, மீண்டும் முயலவும்.</translation>
+<translation id="4084682180776658562">புக்மார்க்</translation>
 <translation id="411254640334432676">பதிவிறக்கம் தோல்வி.</translation>
 <translation id="4121993058175073134">மொத்த-ஏற்றுமதி தரவை அனுப்புவதற்கு, அமைப்புகளின் பயன்பாட்டில் உங்கள் மின்னஞ்சல் கணக்கை உள்ளமைக்கவும்.</translation>
 <translation id="4124987746317609294">நேர வரம்பு</translation>
@@ -179,11 +188,13 @@
 <translation id="4378154925671717803">தொலைபேசி</translation>
 <translation id="441868831736628555">தனியுரிமை அறிக்கை</translation>
 <translation id="4460091562821778167">ஒவ்வொரு முறையும் எந்தப் பயன்பாட்டைப் பயன்படுத்த வேண்டும் எனக் கேள்</translation>
+<translation id="4496373720959965247">தாவல்களைச் சேர்த்து, பக்கங்களுக்கு இடையில் மாறலாம்</translation>
 <translation id="4508750114462689118">உள்நுழைவு விளம்பரத்தை மூடு</translation>
 <translation id="4526249700380860531"><ph name="BEGIN_LINK" />passwords.google.com<ph name="END_LINK" /> இல் சேமித்த கடவுச்சொற்களைப் பார்க்கலாம் மற்றும் நிர்வகிக்கலாம்.</translation>
 <translation id="4536418791685807335">மீண்டும் உள்நுழைந்து முயலவும்.</translation>
 <translation id="457386861538956877">மேலும்...</translation>
 <translation id="461440297010471931">Google மூலம் தேடுகிறது</translation>
+<translation id="4619615317237390068">பிற சாதனங்களின் தாவல்கள்</translation>
 <translation id="4620246317052452550">நீங்கள் படித்த பக்கங்கள்</translation>
 <translation id="4636930964841734540">தகவல்</translation>
 <translation id="4659667755519643272">தாவல் மாற்றியைத் துவக்கு</translation>
@@ -214,6 +225,7 @@
 <translation id="5197255632782567636">இணையம்</translation>
 <translation id="5228579091201413441">ஒத்திசைவை இயக்கு</translation>
 <translation id="5244474230056479698"><ph name="EMAIL" />க்கு ஒத்திசைக்கிறது</translation>
+<translation id="527973086555161537">இணையத்தில் தனிப்பட்ட முறையில் உலாவ ஒரு தாவலைத் திறக்கலாம்.</translation>
 <translation id="5300589172476337783">காண்பி</translation>
 <translation id="5317780077021120954">சேமி</translation>
 <translation id="5327248766486351172">பெயர்</translation>
@@ -222,7 +234,6 @@
 <translation id="5433691172869980887">பயனர்பெயர் நகலெடுக்கப்பட்டது</translation>
 <translation id="54401264925851789">பக்க பாதுகாப்புத் தகவல்</translation>
 <translation id="5525269841082836315">கடவுச்சொற்றொடரை உருவாக்கவும்</translation>
-<translation id="5531274207066050939">Google Payments</translation>
 <translation id="5548760955356983418">ஹேண்ட்ஆஃப் இந்தச் சாதனத்தில் ஒரு இணையதளத்தில் உலாவத் தொடங்கி, அதே தளத்தில், Mac இல் தொடர்ந்து எளிதாக உலாவ அனுமதிக்கிறது. தற்போது திறந்து வைத்திருக்கும் இணையதளம், உங்கள் Mac இன் ஐகான்கள் பட்டியலில் காட்டப்படும்.
 
 அமைப்புகளின் பொது பிரிவிலும் ஹேண்ட்ஆஃப் இயக்கப்பட்டிருக்க வேண்டும் மற்றும் உங்கள் சாதனங்கள் ஒரே iCloud கணக்கைப் பயன்படுத்த வேண்டும்.</translation>
@@ -246,8 +257,8 @@
 <translation id="5871497086027727873">1 உருப்படி நகர்த்தப்பட்டது</translation>
 <translation id="5911030830365207728">Google மொழியாக்கம்</translation>
 <translation id="5916664084637901428">இயக்கு</translation>
+<translation id="5938160824633642847">உங்கள் சாதனச் சேமிப்பகம் கிட்டத்தட்ட நிரம்பிவிட்டது. இடத்தைக் காலியாக்கி, மீண்டும் முயலவும்.</translation>
 <translation id="5948291296578561264">உங்கள் பட நூலகத்தில் படங்களைச் சேமிக்க இது அனுமதிக்கும்.</translation>
-<translation id="5953603475187800576">Google Payments இல் உள்ள முகவரிகளையும் கிரெடிட் கார்டுகளையும் காட்டு</translation>
 <translation id="5955891643922670672">ஆஃப்லைன் பதிப்பைப் பார்க்கிறீர்கள்</translation>
 <translation id="5964480694698977962">புதிய மறைநிலைத் தாவலை உருவாக்கு</translation>
 <translation id="5965679971710331625">உள்நுழைந்துள்ளீர்கள்</translation>
@@ -278,7 +289,9 @@
 <translation id="633809752005859102">நிச்சயமாக ஏதோ தவறு ஏற்பட்டுள்ளது. அதைச் சரிசெய்வோம்.</translation>
 <translation id="6342069812937806050">இப்போது</translation>
 <translation id="6344783595350022745">உரையை அழி</translation>
+<translation id="6346549652287021269">புதிய பதிவிறக்கத்தை தொடங்கவா?</translation>
 <translation id="6362362396625799311">மறைநிலைத் தாவல்கள் இல்லை</translation>
+<translation id="6374469231428023295">மீண்டும் முயலவும்</translation>
 <translation id="6380866119319257197">கடவுச்சொற்றொடரை மறந்துவிட்டால் அல்லது இந்த அமைப்பை மாற்ற விரும்பினால், <ph name="BEGIN_LINK" />ஒத்திசைவை மீட்டமைக்கவும்<ph name="END_LINK" /></translation>
 <translation id="6389470377220713856">அட்டையிலுள்ள பெயர்</translation>
 <translation id="6406506848690869874">Sync</translation>
@@ -287,6 +300,7 @@
 
 <ph name="TIME" /> அன்று உங்கள் தரவு உங்கள் ஒத்திசைவு கடவுச்சொற்றொடரைக் கொண்டு என்க்ரிப்ட் செய்யப்பட்டது. ஒத்திசைவைத் தொடங்க, அதை உள்ளிடவும்.</translation>
 <translation id="6418346271604475326">PDF தயாராகிறது</translation>
+<translation id="6434591244308415567">பிழை ஏற்பட்டது. பிறகு முயலவும்.</translation>
 <translation id="6445051938772793705">நாடு</translation>
 <translation id="6445981559479772097">செய்தி அனுப்பப்பட்டது.</translation>
 <translation id="6464071786529933911">புதிய மறைநிலைத் தாவலில் திற</translation>
@@ -297,6 +311,7 @@
 <translation id="6657585470893396449">கடவுச்சொல்</translation>
 <translation id="667999046851023355">ஆவணம்</translation>
 <translation id="6713747756340119864">Google Apps</translation>
+<translation id="6730682669179532099">கடவுச்சொற்களை ஏற்ற முடியவில்லை</translation>
 <translation id="6762156594045689028">இந்த அமைப்பை மாற்ற, <ph name="BEGIN_LINK" />ஒத்திசைவை மீட்டமைக்கவும்<ph name="END_LINK" /></translation>
 <translation id="6780034285637185932">அஞ்சல் குறியீடு</translation>
 <translation id="6785453220513215166">சிதைவு அறிக்கையை அனுப்புகிறது...</translation>
@@ -306,13 +321,17 @@
 <translation id="681368974849482173">புத்தகக்குறி உருவாக்கப்பட்டது</translation>
 <translation id="6896758677409633944">நகலெடு</translation>
 <translation id="6903907808598579934">ஒத்திசைவை இயக்கு</translation>
+<translation id="6914783257214138813">ஏற்றிய கோப்பைப் பார்க்கக்கூடிய அனைவரும் உங்கள் கடவுச்சொற்களைப் பார்க்க முடியும்.</translation>
 <translation id="6945221475159498467">தேர்ந்தெடு</translation>
 <translation id="6973630695168034713">கோப்புறைகள்</translation>
+<translation id="6979158407327259162">Google இயக்ககம்</translation>
 <translation id="7004499039102548441">சமீபத்திய தாவல்கள்</translation>
 <translation id="7006788746334555276">உள்ளடக்க அமைப்புகள்</translation>
+<translation id="7029809446516969842">கடவுச்சொற்கள்</translation>
 <translation id="7031882061095297553">இதற்கு ஒத்திசை</translation>
 <translation id="7053983685419859001">தடு</translation>
 <translation id="7062545763355031412">சரி, கணக்குகளை மாற்று</translation>
+<translation id="7102005569666697658">பதிவிறக்குகிறது… <ph name="FILE_SIZE" /></translation>
 <translation id="7108338896283013870">மறை</translation>
 <translation id="7133798577887235672">முழுப் பெயர்</translation>
 <translation id="7136892417564438900">கேமரா இல்லை</translation>
@@ -323,6 +342,7 @@
 <translation id="7203585745079012652">பதில்களை மீண்டும் படி</translation>
 <translation id="722055596168483966">Google சேவைகளைத் தனிப்பயனாக்கு</translation>
 <translation id="7272437679830969316">அடையாளத்தைச் சரிபார்க்க முடியவில்லை. கடவுச்சொல் நகலெடுக்கப்படவில்லை.</translation>
+<translation id="7291368939935408496">கடவுச்சொற்கள் தயாராகின்றன...</translation>
 <translation id="7336264872878993241"><ph name="PERCENT" /> சதவீதம் பதிவிறக்கப்பட்டது</translation>
 <translation id="7346909386216857016">சரி, புரிந்தது</translation>
 <translation id="7400418766976504921">URL</translation>
@@ -337,7 +357,6 @@
 <translation id="7514365320538308">பதிவிறக்கு</translation>
 <translation id="7537586195939242955">வருந்துகிறோம், இந்த நேரத்தில் உங்கள் பாஸை பாஸ்புக்கில் நிறுவ முடியாது.</translation>
 <translation id="7561196759112975576">எப்போதும்</translation>
-<translation id="7588950540487816470">இயல்நிலை இணையம்</translation>
 <translation id="7603852183842204213">பாப்-அப்கள் தடுக்கப்பட்டன (<ph name="NUMBER_OF_BLOCKED_POPUPS" />)</translation>
 <translation id="7605594153474022051">ஒத்திசைவு வேலை செய்யவில்லை</translation>
 <translation id="7638584964844754484">தவறான கடவுத்தொடர்</translation>
@@ -348,23 +367,29 @@
 <translation id="7769602470925380267">சரி, வெளியேறு</translation>
 <translation id="7772032839648071052">கடவுச்சொற்றொடரை உறுதி செய்க</translation>
 <translation id="780301667611848630">தேவையில்லை</translation>
+<translation id="7856733331829174190">பதிவிறக்க முடியவில்லை</translation>
 <translation id="7859704718976024901">உலாவல் வரலாறு</translation>
 <translation id="7938254975914653459">ஃபேஸ்டைம்</translation>
+<translation id="7939128259257418052">கடவுச்சொற்களை ஏற்று...</translation>
 <translation id="7947953824732555851">ஏற்று உள்நுழைக</translation>
 <translation id="7961015016161918242">எப்போதும் இல்லை</translation>
 <translation id="7971521879845308059">பாப்-அப்களைத் தடு</translation>
 <translation id="7982789257301363584">நெட்வொர்க்</translation>
 <translation id="8019783059653722575">இதன் மூலம் படங்களைச் சேமித்துப் பதிவேற்றலாம்.</translation>
+<translation id="802154636333426148">பதிவிறக்க முடியவில்லை</translation>
 <translation id="8023878949384262191">பிரிவை விரிவாக்கும்.</translation>
 <translation id="8059533439631660104">பிரிவைச் சுருக்கும்.</translation>
 <translation id="806745655614357130">எனது தரவைத் தனியாக வை</translation>
+<translation id="8073670137947914548">பதிவிறக்கம் முடிவடைந்தது</translation>
 <translation id="8076014560081431679">சேமித்த தள அமைப்புகள் நீக்கப்படாது, அவை உங்கள் உலாவல் தகவல்களைப் பிரதிபலிக்கக்கூடும். <ph name="BEGIN_LINK" />மேலும் அறிக<ph name="END_LINK" /></translation>
 <translation id="8080028325999236607">எல்லா தாவல்களையும் மூடு</translation>
+<translation id="8114753159095730575">கோப்பைப் பதிவிறக்கிக்கொள்ளலாம். திரையின் அடிப்பகுதிக்கு அருகில், விருப்பங்கள் உள்ளன.</translation>
 <translation id="8205564605687841303">ரத்துசெய்</translation>
 <translation id="8225985093977202398">தற்காலிகமாகச் சேமிக்கப்பட்ட படங்களும் கோப்புகளும்</translation>
 <translation id="8261506727792406068">நீக்கு</translation>
 <translation id="8272426682713568063">கிரெடிட் கார்டுகள்</translation>
 <translation id="8281781826761538115">இயல்பு - <ph name="DEFAULT_LOCALE" /></translation>
+<translation id="8328777765163860529">எல்லாவற்றையும் மூடு</translation>
 <translation id="8381750437846184350">தேடல், விளம்பரங்கள் மற்றும் பிற Google சேவைகளைத் தனிப்பயனாக்க, உங்கள் உலாவல் வரலாற்றை Google எவ்வாறு பயன்படுத்துகிறது என்பதைக் கட்டுப்படுத்துக</translation>
 <translation id="842017693807136194">இதன் மூலம் உள்நுழைந்துள்ளீர்கள்:</translation>
 <translation id="8428045167754449968">மாநகரம் / நகரம்</translation>
@@ -407,7 +432,6 @@
 <translation id="9083392325882095631">1 உருப்படி</translation>
 <translation id="9100610230175265781">கடவுச்சொற்றொடர் தேவை</translation>
 <translation id="9148126808321036104">மீண்டும் உள்நுழைக</translation>
-<translation id="91549621916703028">உங்கள் அனைத்துப் பணிகளுக்கும் பல தாவல்களை உருவாக்கலாம்</translation>
 <translation id="9157836665414082580">உரையாடல்களை மறை</translation>
 <translation id="9188680907066685419">நிர்வகிக்கப்படும் கணக்கிலிருந்து வெளியேறு</translation>
 <translation id="9203116392574189331">ஹேண்ட்ஆஃப்</translation>

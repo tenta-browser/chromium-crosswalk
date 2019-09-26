@@ -14,23 +14,21 @@
   <template>
     <style include="md-select cr-shared-style">
       :host {
-        --card-max-width: 928px;
-        --card-min-width: 600px;
         height: 100%;
-      }
-
-      .shortcut-card {
-        margin: 0 auto 16px auto;
-        max-width: var(--card-max-width);
-        min-width: var(--card-min-width);
-        width: 90%;
       }
 
       .shortcut-card {
         @apply --cr-primary-text;
         @apply --shadow-elevation-2dp;
         background-color: white;
+        border-radius: 2px;
+        margin: 0 auto 16px auto;
         padding-bottom: 8px;
+        width: var(--cr-toolbar-field-width);
+      }
+
+      .shortcut-card:last-of-type {
+        margin-bottom: 64px;
       }
 
       #container {
@@ -76,15 +74,15 @@
 
       .icon {
         -webkit-margin-end: 20px;
-        height: 16px;
-        width: 16px;
+        height: 20px;
+        width: 20px;
       }
 
       .card-controls {
         /* We line up the controls with the name, which is after the
-           20px left padding + 16px icon + 20px margin on the icon. */
+           20px left padding + 20px icon + 20px margin on the icon. */
         -webkit-margin-end: 20px;
-        -webkit-margin-start: 56px;
+        -webkit-margin-start: 60px;
       }
     </style>
     <div id="container">

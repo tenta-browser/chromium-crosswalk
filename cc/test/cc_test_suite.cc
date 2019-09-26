@@ -14,7 +14,7 @@ namespace cc {
 CCTestSuite::CCTestSuite(int argc, char** argv)
     : base::TestSuite(argc, argv) {}
 
-CCTestSuite::~CCTestSuite() {}
+CCTestSuite::~CCTestSuite() = default;
 
 void CCTestSuite::Initialize() {
   base::TestSuite::Initialize();
@@ -22,9 +22,7 @@ void CCTestSuite::Initialize() {
   gl::GLSurfaceTestSupport::InitializeOneOff();
   viz::Paths::RegisterPathProvider();
 
-  base::ThreadIdNameManager::GetInstance()->SetName(
-      base::PlatformThread::CurrentId(),
-      "Main");
+  base::ThreadIdNameManager::GetInstance()->SetName("Main");
 
   base::DiscardableMemoryAllocator::SetInstance(&discardable_memory_allocator_);
 }

@@ -7,12 +7,13 @@
 #import <Foundation/Foundation.h>
 
 #include <limits>
+#include <memory>
 
+#include "base/auto_reset.h"
 #include "base/logging.h"
 #include "base/mac/call_with_eh_frame.h"
 #include "base/mac/scoped_cftyperef.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/message_loop/timer_slack.h"
 #include "base/run_loop.h"
 #include "base/time/time.h"
@@ -24,7 +25,18 @@
 
 namespace base {
 
+// kMessageLoopExclusiveRunLoopMode must be defined before kAllModes to generate
+// a sane static initialization order.
+const CFStringRef kMessageLoopExclusiveRunLoopMode =
+    CFSTR("kMessageLoopExclusiveRunLoopMode");
+
 namespace {
+
+// kCFRunLoopCommonModes is const but not constexpr; hence kAllModes is
+// initialized at run-time. This initialization being trivial, constant, and
+// without side-effects: this is fine.
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wglobal-constructors"
 
 // AppKit RunLoop modes observed to potentially run tasks posted to Chrome's
 // main thread task runner. Some are internal to AppKit but must be observed to
@@ -44,6 +56,8 @@ const CFStringRef kAllModes[] = {
     // Process work when AppKit is highlighting an item on the main menubar.
     CFSTR("NSUnhighlightMenuRunLoopMode"),
 };
+
+#pragma clang diagnostic pop  // -Wglobal-constructors
 
 // Mask that determines which modes in |kAllModes| to use.
 enum { kCommonModeMask = 0x1, kAllModesMask = 0xf };
@@ -110,10 +124,6 @@ void __ChromeCFRunLoopTimerSetValid(CFRunLoopTimerRef timer, bool valid) {
 #endif  // !defined(OS_IOS)
 
 }  // namespace
-
-// static
-const CFStringRef kMessageLoopExclusiveRunLoopMode =
-    CFSTR("kMessageLoopExclusiveRunLoopMode");
 
 // A scoper for autorelease pools created from message pump run loops.
 // Avoids dirtying up the ScopedNSAutoreleasePool interface for the rare
@@ -327,7 +337,7 @@ void MessagePumpCFRunLoopBase::SetModeMask(int mode_mask) {
     bool enable = mode_mask & (0x1 << i);
     if (enable == !enabled_modes_[i]) {
       enabled_modes_[i] =
-          enable ? base::MakeUnique<ScopedModeEnabler>(this, i) : nullptr;
+          enable ? std::make_unique<ScopedModeEnabler>(this, i) : nullptr;
     }
   }
 }
@@ -719,13 +729,13 @@ MessagePumpNSRunLoop::~MessagePumpNSRunLoop() {
 }
 
 void MessagePumpNSRunLoop::DoRun(Delegate* delegate) {
+  AutoReset<bool> auto_reset_keep_running(&keep_running_, true);
+
   while (keep_running_) {
     // NSRunLoop manages autorelease pools itself.
     [[NSRunLoop currentRunLoop] runMode:NSDefaultRunLoopMode
                              beforeDate:[NSDate distantFuture]];
   }
-
-  keep_running_ = true;
 }
 
 void MessagePumpNSRunLoop::Quit() {
@@ -789,6 +799,7 @@ MessagePumpNSApplication::~MessagePumpNSApplication() {
 }
 
 void MessagePumpNSApplication::DoRun(Delegate* delegate) {
+  AutoReset<bool> auto_reset_keep_running(&keep_running_, true);
   bool last_running_own_loop_ = running_own_loop_;
 
   // NSApp must be initialized by calling:
@@ -815,7 +826,6 @@ void MessagePumpNSApplication::DoRun(Delegate* delegate) {
         [NSApp sendEvent:event];
       }
     }
-    keep_running_ = true;
   }
 
   running_own_loop_ = last_running_own_loop_;
@@ -908,13 +918,13 @@ bool MessagePumpMac::IsHandlingSendEvent() {
 #endif  // !defined(OS_IOS)
 
 // static
-MessagePump* MessagePumpMac::Create() {
+std::unique_ptr<MessagePump> MessagePumpMac::Create() {
   if ([NSThread isMainThread]) {
 #if defined(OS_IOS)
-    return new MessagePumpUIApplication;
+    return std::make_unique<MessagePumpUIApplication>();
 #else
     if ([NSApp conformsToProtocol:@protocol(CrAppProtocol)])
-      return new MessagePumpCrApplication;
+      return std::make_unique<MessagePumpCrApplication>();
 
     // The main-thread MessagePump implementations REQUIRE an NSApp.
     // Executables which have specific requirements for their
@@ -922,11 +932,11 @@ MessagePump* MessagePumpMac::Create() {
     // creating an event loop.
     [NSApplication sharedApplication];
     g_not_using_cr_app = true;
-    return new MessagePumpNSApplication;
+    return std::make_unique<MessagePumpNSApplication>();
 #endif
   }
 
-  return new MessagePumpNSRunLoop;
+  return std::make_unique<MessagePumpNSRunLoop>();
 }
 
 }  // namespace base

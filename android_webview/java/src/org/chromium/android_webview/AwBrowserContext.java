@@ -7,6 +7,7 @@ package org.chromium.android_webview;
 import android.content.Context;
 import android.content.SharedPreferences;
 
+import org.chromium.base.memory.MemoryPressureMonitor;
 import org.chromium.content.browser.ContentViewStatics;
 
 /**
@@ -24,6 +25,7 @@ public class AwBrowserContext {
     private AwGeolocationPermissions mGeolocationPermissions;
     private AwFormDatabase mFormDatabase;
     private AwServiceWorkerController mServiceWorkerController;
+    private AwTracingController mTracingController;
     private Context mApplicationContext;
 
     public AwBrowserContext(SharedPreferences sharedPreferences, Context applicationContext) {
@@ -31,6 +33,20 @@ public class AwBrowserContext {
         mApplicationContext = applicationContext;
 
         PlatformServiceBridge.getInstance().setSafeBrowsingHandler();
+
+        // Register MemoryPressureMonitor callbacks and make sure it polls only if there is at
+        // least one WebView around.
+        MemoryPressureMonitor.INSTANCE.registerComponentCallbacks();
+        AwContentsLifecycleNotifier.addObserver(new AwContentsLifecycleNotifier.Observer() {
+            @Override
+            public void onFirstWebViewCreated() {
+                MemoryPressureMonitor.INSTANCE.enablePolling();
+            }
+            @Override
+            public void onLastWebViewDestroyed() {
+                MemoryPressureMonitor.INSTANCE.disablePolling();
+            }
+        });
     }
 
     public AwGeolocationPermissions getGeolocationPermissions() {
@@ -52,6 +68,13 @@ public class AwBrowserContext {
             mServiceWorkerController = new AwServiceWorkerController(mApplicationContext, this);
         }
         return mServiceWorkerController;
+    }
+
+    public AwTracingController getTracingController() {
+        if (mTracingController == null) {
+            mTracingController = new AwTracingController();
+        }
+        return mTracingController;
     }
 
     /**

@@ -568,10 +568,10 @@ class InstrumentationTestInstance(test_instance.TestInstance):
     self._test_package = self._test_apk.GetPackageName()
     all_instrumentations = self._test_apk.GetAllInstrumentations()
     all_junit3_runner_classes = [
-        x for x in all_instrumentations if ('true' not in x.get(
+        x for x in all_instrumentations if ('0xffffffff' not in x.get(
             'chromium-junit4', ''))]
     all_junit4_test_runner_classes = [
-        x for x in all_instrumentations if ('true' in x.get(
+        x for x in all_instrumentations if ('0xffffffff' in x.get(
             'chromium-junit4', ''))]
 
     if len(all_junit3_runner_classes) > 1:
@@ -676,7 +676,6 @@ class InstrumentationTestInstance(test_instance.TestInstance):
   def _initializeTestControlAttributes(self, args):
     self._screenshot_dir = args.screenshot_dir
     self._timeout_scale = args.timeout_scale or 1
-    self._ui_screenshot_dir = args.ui_screenshot_dir
     self._wait_for_java_debugger = args.wait_for_java_debugger
 
   def _initializeTestCoverageAttributes(self, args):
@@ -807,10 +806,6 @@ class InstrumentationTestInstance(test_instance.TestInstance):
   @property
   def total_external_shards(self):
     return self._total_external_shards
-
-  @property
-  def ui_screenshot_dir(self):
-    return self._ui_screenshot_dir
 
   @property
   def wait_for_java_debugger(self):

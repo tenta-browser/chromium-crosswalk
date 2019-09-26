@@ -9,13 +9,8 @@
 
 #include "base/macros.h"
 #include "content/renderer/device_sensors/device_sensor_event_pump.h"
-#include "content/renderer/shared_memory_seqlock_reader.h"
-#include "device/sensors/public/cpp/orientation_data.h"
-#include "device/sensors/public/interfaces/orientation.mojom.h"
-
-namespace blink {
-class WebDeviceOrientationListener;
-}
+#include "services/device/public/cpp/generic_sensor/orientation_data.h"
+#include "third_party/blink/public/platform/modules/device_orientation/web_device_orientation_listener.h"
 
 namespace content {
 
@@ -37,10 +32,27 @@ class CONTENT_EXPORT DeviceOrientationEventPumpBase
 
  protected:
   void FireEvent() override;
-  bool InitializeReader(base::SharedMemoryHandle handle) override;
+  void DidStartIfPossible() override;
+
+  void SendStartMessageImpl();
+
+  SensorEntry relative_orientation_sensor_;
+  SensorEntry absolute_orientation_sensor_;
+
+ private:
+  friend class DeviceOrientationEventPumpTest;
+  friend class DeviceAbsoluteOrientationEventPumpTest;
+
+  // DeviceSensorEventPump:
+  bool SensorsReadyOrErrored() const override;
+
+  void GetDataFromSharedMemory(device::OrientationData* data);
 
   bool ShouldFireEvent(const device::OrientationData& data) const;
 
+  bool absolute_;
+  bool fall_back_to_absolute_orientation_sensor_;
+  bool should_suspend_absolute_orientation_sensor_ = false;
   device::OrientationData data_;
   std::unique_ptr<DeviceOrientationSharedMemoryReader> reader_;
 

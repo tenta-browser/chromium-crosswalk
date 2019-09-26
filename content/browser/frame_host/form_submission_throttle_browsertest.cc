@@ -26,10 +26,6 @@ class FormSubmissionBrowserTest : public ContentBrowserTest {
 
 IN_PROC_BROWSER_TEST_F(FormSubmissionBrowserTest,
                        CheckContentSecurityPolicyFormAction) {
-  // The FormSubmissionThrottle isn't used without PlzNavigate.
-  if (!IsBrowserSideNavigationEnabled())
-    return;
-
   const struct {
     GURL main_page_url;
     GURL form_page_url;
@@ -76,7 +72,9 @@ IN_PROC_BROWSER_TEST_F(FormSubmissionBrowserTest,
         0,                       // pending_nav_entry_id
         false,                   // started_from_context_menu
         CSPDisposition::CHECK,   // should_check_main_world_csp
-        true);                   // is_form_submission
+        true,                    // is_form_submission
+        base::nullopt,           // suggested_filename
+        nullptr);                // navigation_ui_data
 
     // Test the expectations with a FormSubmissionThrottle.
     std::unique_ptr<NavigationThrottle> throttle =
@@ -91,10 +89,6 @@ IN_PROC_BROWSER_TEST_F(FormSubmissionBrowserTest,
 
 IN_PROC_BROWSER_TEST_F(FormSubmissionBrowserTest,
                        CheckContentSecurityPolicyFormActionBypassCSP) {
-  // The FormSubmissionThrottle isn't used without PlzNavigate.
-  if (!IsBrowserSideNavigationEnabled())
-    return;
-
   GURL main_url = embedded_test_server()->GetURL(
       "/form_submission_throttle/form_action_none.html");
   GURL form_url = embedded_test_server()->GetURL("/simple_page.html");
@@ -116,7 +110,9 @@ IN_PROC_BROWSER_TEST_F(FormSubmissionBrowserTest,
       0,                             // pending_nav_entry_id
       false,                         // started_from_context_menu
       CSPDisposition::DO_NOT_CHECK,  // should_check_main_world_csp
-      true);                         // is_form_submission
+      true,                          // is_form_submission
+      base::nullopt,                 // suggested_filename
+      nullptr);                      // navigation_ui_data
 
   // Test that the navigation is allowed because "should_by_pass_main_world_csp"
   // is true, even if it is a form submission and the policy is

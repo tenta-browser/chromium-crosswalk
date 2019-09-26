@@ -10,7 +10,6 @@
 #include "base/logging.h"
 #include "base/mac/foundation_util.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/strings/string16.h"
 #include "components/omnibox/browser/omnibox_edit_model.h"
 #include "components/security_state/core/security_state_ui.h"
@@ -20,10 +19,14 @@
 #include "ios/chrome/browser/chrome_url_constants.h"
 #include "ios/chrome/browser/experimental_flags.h"
 #import "ios/chrome/browser/ui/commands/browser_commands.h"
-#include "ios/chrome/browser/ui/omnibox/location_bar_delegate.h"
-#import "ios/chrome/browser/ui/omnibox/location_bar_view.h"
-#include "ios/chrome/browser/ui/omnibox/omnibox_popup_view_ios.h"
+#import "ios/chrome/browser/ui/fullscreen/fullscreen_controller_factory.h"
+#import "ios/chrome/browser/ui/fullscreen/scoped_fullscreen_disabler.h"
+#import "ios/chrome/browser/ui/location_bar/location_bar_legacy_view.h"
+#import "ios/chrome/browser/ui/location_bar/location_bar_url_loader.h"
+#import "ios/chrome/browser/ui/omnibox/location_bar_delegate.h"
 #import "ios/chrome/browser/ui/omnibox/omnibox_text_field_ios.h"
+#import "ios/chrome/browser/ui/omnibox/popup/omnibox_popup_coordinator.h"
+#include "ios/chrome/browser/ui/omnibox/popup/omnibox_popup_view_ios.h"
 #include "ios/chrome/browser/ui/ui_util.h"
 #import "ios/chrome/browser/ui/uikit_ui_util.h"
 #include "ios/chrome/grit/ios_strings.h"
@@ -40,8 +43,6 @@
 #endif
 
 namespace {
-const CGFloat kClearTextButtonWidth = 28;
-const CGFloat kClearTextButtonHeight = 28;
 
 // Workaround for https://crbug.com/527084 . If there is connection
 // information, always show the icon. Remove this once connection info
@@ -78,41 +79,6 @@ bool IsCurrentPageOffline(web::WebState* webState) {
 
 }  // namespace
 
-// An ObjC bridge class to allow taps on the clear button to be sent to a C++
-// class.
-@interface OmniboxClearButtonBridge : NSObject
-
-- (instancetype)initWithOmniboxView:(OmniboxViewIOS*)omniboxView
-    NS_DESIGNATED_INITIALIZER;
-
-- (instancetype)init NS_UNAVAILABLE;
-
-- (void)clearText;
-
-@end
-
-@implementation OmniboxClearButtonBridge {
-  OmniboxViewIOS* _omniboxView;
-}
-
-- (instancetype)initWithOmniboxView:(OmniboxViewIOS*)omniboxView {
-  self = [super init];
-  if (self) {
-    _omniboxView = omniboxView;
-  }
-  return self;
-}
-
-- (instancetype)init {
-  NOTREACHED();
-  return nil;
-}
-
-- (void)clearText {
-  _omniboxView->ClearText();
-}
-
-@end
 
 // An ObjC bridge class to map between a UIControl action and the
 // dispatcher command that displays the page info popup.
@@ -141,37 +107,42 @@ bool IsCurrentPageOffline(web::WebState* webState) {
 @end
 
 LocationBarControllerImpl::LocationBarControllerImpl(
-    LocationBarView* location_bar_view,
+    LocationBarLegacyView* location_bar_view,
     ios::ChromeBrowserState* browser_state,
     id<LocationBarDelegate> delegate,
     id<BrowserCommands> dispatcher)
-    : edit_view_(base::MakeUnique<OmniboxViewIOS>(location_bar_view.textField,
+    : edit_view_(std::make_unique<OmniboxViewIOS>(location_bar_view.textField,
                                                   this,
                                                   this,
                                                   browser_state)),
       location_bar_view_(location_bar_view),
       delegate_(delegate),
-      dispatcher_(dispatcher) {
+      dispatcher_(dispatcher),
+      browser_state_(browser_state) {
   DCHECK([delegate_ toolbarModel]);
+  DCHECK(browser_state_);
   show_hint_text_ = true;
 
   InstallLocationIcon();
-  CreateClearTextIcon(browser_state->IsOffTheRecord());
 }
 
 LocationBarControllerImpl::~LocationBarControllerImpl() {}
 
-std::unique_ptr<OmniboxPopupViewIOS> LocationBarControllerImpl::CreatePopupView(
+OmniboxPopupCoordinator* LocationBarControllerImpl::CreatePopupCoordinator(
     id<OmniboxPopupPositioner> positioner) {
   std::unique_ptr<OmniboxPopupViewIOS> popup_view =
-      base::MakeUnique<OmniboxPopupViewIOS>(edit_view_->browser_state(),
-                                            edit_view_->model(),
-                                            edit_view_.get(), positioner);
+      std::make_unique<OmniboxPopupViewIOS>(edit_view_->model(),
+                                            edit_view_.get());
 
   edit_view_->model()->set_popup_model(popup_view->model());
   edit_view_->SetPopupProvider(popup_view.get());
 
-  return popup_view;
+  OmniboxPopupCoordinator* coordinator =
+      [[OmniboxPopupCoordinator alloc] initWithPopupView:std::move(popup_view)];
+  coordinator.browserState = browser_state_;
+  coordinator.positioner = positioner;
+
+  return coordinator;
 }
 
 void LocationBarControllerImpl::HideKeyboardAndEndEditing() {
@@ -203,7 +174,7 @@ void LocationBarControllerImpl::OnAutocompleteAccept(
   if (gurl.is_valid()) {
     transition = ui::PageTransitionFromInt(
         transition | ui::PAGE_TRANSITION_FROM_ADDRESS_BAR);
-    [delegate_ loadGURLFromLocationBar:gurl transition:transition];
+    [URLLoader_ loadGURLFromLocationBar:gurl transition:transition];
   }
 }
 
@@ -220,7 +191,6 @@ void LocationBarControllerImpl::OnChanged() {
       bool show_icon_for_state = security_state::ShouldAlwaysShowIcon(
           toolbarModel->GetSecurityLevel(false));
       bool page_has_downgraded_HTTPS =
-          experimental_flags::IsPageIconForDowngradedHTTPSEnabled() &&
           DoesCurrentPageHaveCertInfo(GetWebState());
       if (show_icon_for_state || page_has_downgraded_HTTPS || page_is_offline) {
         [location_bar_view_ setLeadingButtonHidden:NO];
@@ -231,7 +201,6 @@ void LocationBarControllerImpl::OnChanged() {
       }
     }
   }
-  UpdateRightDecorations();
 
   NSString* placeholderText =
       show_hint_text_ ? l10n_util::GetNSString(IDS_OMNIBOX_EMPTY_HINT) : nil;
@@ -271,7 +240,9 @@ void LocationBarControllerImpl::OnKillFocus() {
     [location_bar_view_.textField setPlaceholder:placeholderText];
   }
 
-  UpdateRightDecorations();
+  // Stop disabling fullscreen since the loation bar is no longer focused.
+  fullscreen_disabler_ = nullptr;
+
   [delegate_ locationBarHasResignedFirstResponder];
 }
 
@@ -292,7 +263,13 @@ void LocationBarControllerImpl::OnSetFocus() {
   if (IsIPadIdiom()) {
     [location_bar_view_.textField setPlaceholder:nil];
   }
-  UpdateRightDecorations();
+
+  // Disable fullscreen while focused so that the location bar cannot be scolled
+  // offscreen.
+  fullscreen_disabler_ = std::make_unique<ScopedFullscreenDisabler>(
+      FullscreenControllerFactory::GetInstance()->GetForBrowserState(
+          browser_state_));
+
   [delegate_ locationBarHasBecomeFirstResponder];
 }
 
@@ -305,7 +282,7 @@ ToolbarModel* LocationBarControllerImpl::GetToolbarModel() {
 }
 
 web::WebState* LocationBarControllerImpl::GetWebState() {
-  return [delegate_ getWebState];
+  return [delegate_ webState];
 }
 
 void LocationBarControllerImpl::InstallLocationIcon() {
@@ -333,47 +310,6 @@ void LocationBarControllerImpl::InstallLocationIcon() {
   // The placeholder image is only shown when in edit mode on iPhone, and always
   // shown on iPad.
   [location_bar_view_ setLeadingButtonHidden:!IsIPadIdiom()];
-}
-
-void LocationBarControllerImpl::CreateClearTextIcon(bool is_incognito) {
-  UIButton* button = [UIButton buttonWithType:UIButtonTypeCustom];
-  UIImage* omniBoxClearImage = is_incognito
-                                   ? NativeImage(IDR_IOS_OMNIBOX_CLEAR_OTR)
-                                   : NativeImage(IDR_IOS_OMNIBOX_CLEAR);
-  UIImage* omniBoxClearPressedImage =
-      is_incognito ? NativeImage(IDR_IOS_OMNIBOX_CLEAR_OTR_PRESSED)
-                   : NativeImage(IDR_IOS_OMNIBOX_CLEAR_PRESSED);
-  [button setImage:omniBoxClearImage forState:UIControlStateNormal];
-  [button setImage:omniBoxClearPressedImage forState:UIControlStateHighlighted];
-
-  CGRect frame = CGRectZero;
-  frame.size = CGSizeMake(kClearTextButtonWidth, kClearTextButtonHeight);
-  [button setFrame:frame];
-
-  clear_button_bridge_ =
-      [[OmniboxClearButtonBridge alloc] initWithOmniboxView:edit_view_.get()];
-  [button addTarget:clear_button_bridge_
-                action:@selector(clearText)
-      forControlEvents:UIControlEventTouchUpInside];
-  clear_text_button_ = button;
-
-  SetA11yLabelAndUiAutomationName(clear_text_button_,
-                                  IDS_IOS_ACCNAME_CLEAR_TEXT, @"Clear Text");
-}
-
-void LocationBarControllerImpl::UpdateRightDecorations() {
-  DCHECK(clear_text_button_);
-  if (!edit_view_->model()->has_focus()) {
-    // Do nothing for iPhone. The right view will be set to nil after the
-    // omnibox animation is completed.
-    if (IsIPadIdiom())
-      [location_bar_view_.textField setRightView:nil];
-  } else if ([location_bar_view_.textField displayedText].empty()) {
-    [location_bar_view_.textField setRightView:nil];
-  } else {
-    [location_bar_view_.textField setRightView:clear_text_button_];
-    [clear_text_button_ setAlpha:1];
-  }
 }
 
 #pragma mark - LeftImageProvider

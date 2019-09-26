@@ -9,9 +9,9 @@
 #include "base/memory/ptr_util.h"
 #include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
+#include "device/vr/public/mojom/vr_service.mojom.h"
 #include "device/vr/test/fake_vr_device.h"
 #include "device/vr/test/fake_vr_service_client.h"
-#include "device/vr/vr_service.mojom.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace device {
@@ -21,7 +21,9 @@ class VRDisplayImplTest : public testing::Test {
   VRDisplayImplTest() {}
   ~VRDisplayImplTest() override {}
   void onDisplaySynced() {}
-  void onPresentComplete(bool success) {
+  void onPresentComplete(
+      bool success,
+      device::mojom::VRDisplayFrameTransportOptionsPtr transport_options) {
     is_request_presenting_success_ = success;
   }
 
@@ -44,7 +46,7 @@ class VRDisplayImplTest : public testing::Test {
     device::mojom::VRSubmitFrameClientPtr submit_client = nullptr;
     device::mojom::VRPresentationProviderRequest request = nullptr;
     display_impl->RequestPresent(
-        std::move(submit_client), std::move(request),
+        std::move(submit_client), std::move(request), nullptr,
         base::Bind(&VRDisplayImplTest::onPresentComplete,
                    base::Unretained(this)));
   }

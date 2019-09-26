@@ -6,7 +6,6 @@
 
 #include "base/bind.h"
 #include "base/files/file_path.h"
-#include "base/memory/ptr_util.h"
 #include "base/sequenced_task_runner.h"
 #include "base/task_scheduler/post_task.h"
 #include "chrome/common/chrome_constants.h"
@@ -26,23 +25,24 @@ namespace {
 
 // Returns true if previews can be shown for |type|.
 bool IsPreviewsTypeEnabled(previews::PreviewsType type) {
-  bool server_previews_enabled = base::FeatureList::IsEnabled(
-      data_reduction_proxy::features::kDataReductionProxyDecidesTransform);
+  bool server_previews_enabled =
+      previews::params::ArePreviewsAllowed() &&
+      base::FeatureList::IsEnabled(
+          data_reduction_proxy::features::kDataReductionProxyDecidesTransform);
   switch (type) {
     case previews::PreviewsType::OFFLINE:
       return previews::params::IsOfflinePreviewsEnabled();
     case previews::PreviewsType::LOFI:
-      return server_previews_enabled ||
-             previews::params::IsClientLoFiEnabled() ||
-             data_reduction_proxy::params::IsLoFiOnViaFlags();
+      return server_previews_enabled || previews::params::IsClientLoFiEnabled();
     case previews::PreviewsType::LITE_PAGE:
-      return server_previews_enabled ||
-             (data_reduction_proxy::params::IsLoFiOnViaFlags() &&
-              data_reduction_proxy::params::AreLitePagesEnabledViaFlags());
+      return server_previews_enabled;
     case previews::PreviewsType::AMP_REDIRECTION:
       return previews::params::IsAMPRedirectionPreviewEnabled();
     case previews::PreviewsType::NOSCRIPT:
       return previews::params::IsNoScriptPreviewsEnabled();
+    case previews::PreviewsType::UNSPECIFIED:
+      // Not a real previews type so treat as false.
+      return false;
     case previews::PreviewsType::NONE:
     case previews::PreviewsType::LAST:
       break;
@@ -66,6 +66,7 @@ int GetPreviewsTypeVersion(previews::PreviewsType type) {
     case previews::PreviewsType::NOSCRIPT:
       return previews::params::NoScriptPreviewsVersion();
     case previews::PreviewsType::NONE:
+    case previews::PreviewsType::UNSPECIFIED:
     case previews::PreviewsType::LAST:
       break;
   }
@@ -110,16 +111,16 @@ void PreviewsService::Initialize(
       base::CreateSequencedTaskRunnerWithTraits(
           {base::MayBlock(), base::TaskPriority::BACKGROUND});
 
-  previews_ui_service_ = base::MakeUnique<previews::PreviewsUIService>(
+  previews_ui_service_ = std::make_unique<previews::PreviewsUIService>(
       previews_io_data, io_task_runner,
-      base::MakeUnique<previews::PreviewsOptOutStoreSQL>(
+      std::make_unique<previews::PreviewsOptOutStoreSQL>(
           io_task_runner, background_task_runner,
           profile_path.Append(chrome::kPreviewsOptOutDBFilename),
           GetEnabledPreviews()),
       optimization_guide_service
-          ? base::MakeUnique<previews::PreviewsOptimizationGuide>(
+          ? std::make_unique<previews::PreviewsOptimizationGuide>(
                 optimization_guide_service, io_task_runner)
           : nullptr,
       base::Bind(&IsPreviewsTypeEnabled),
-      base::MakeUnique<previews::PreviewsLogger>());
+      std::make_unique<previews::PreviewsLogger>());
 }

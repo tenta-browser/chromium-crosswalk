@@ -20,7 +20,8 @@
 #include "components/data_reduction_proxy/core/common/data_reduction_proxy_switches.h"
 #include "components/data_reduction_proxy/proto/client_config.pb.h"
 #include "components/variations/variations_associated_data.h"
-#include "net/proxy/proxy_server.h"
+#include "net/base/proxy_server.h"
+#include "net/http/http_status_code.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -75,13 +76,6 @@ TEST_F(DataReductionProxyParamsTest, Flags) {
       switches::kDataReductionProxyFallback, "http://ovveride-2.com/");
   TestDataReductionProxyParams params;
   CheckValues(params, "http://ovveride-1.com/", "http://ovveride-2.com/");
-}
-
-TEST_F(DataReductionProxyParamsTest, AndroidOnePromoFieldTrial) {
-  EXPECT_TRUE(params::IsIncludedInAndroidOnePromoFieldTrialForTesting(
-      "google/sprout/sprout:4.4.4/KPW53/1379542:user/release-keys"));
-  EXPECT_FALSE(params::IsIncludedInAndroidOnePromoFieldTrialForTesting(
-      "google/hammerhead/hammerhead:5.0/LRX210/1570415:user/release-keys"));
 }
 
 TEST_F(DataReductionProxyParamsTest, IsClientConfigEnabled) {
@@ -234,8 +228,10 @@ TEST_F(DataReductionProxyParamsTest, QuicFieldTrial) {
     if (!test.enable_warmup_url)
       variation_params["enable_warmup"] = "false";
 
-    if (!test.warmup_url.empty())
+    if (!test.warmup_url.empty()) {
       variation_params["warmup_url"] = test.warmup_url;
+      variation_params["whitelisted_probe_http_response_code"] = "204";
+    }
     ASSERT_TRUE(variations::AssociateVariationParams(
         params::GetQuicFieldTrialName(), test.trial_group_name,
         variation_params));
@@ -247,11 +243,44 @@ TEST_F(DataReductionProxyParamsTest, QuicFieldTrial) {
     EXPECT_EQ(test.expected_enabled, params::IsIncludedInQuicFieldTrial());
     if (!test.warmup_url.empty()) {
       EXPECT_EQ(GURL(test.warmup_url), params::GetWarmupURL());
+      EXPECT_TRUE(params::IsWhitelistedHttpResponseCodeForProbes(200));
+      EXPECT_TRUE(params::IsWhitelistedHttpResponseCodeForProbes(net::HTTP_OK));
+      EXPECT_TRUE(params::IsWhitelistedHttpResponseCodeForProbes(204));
+      EXPECT_FALSE(params::IsWhitelistedHttpResponseCodeForProbes(302));
+      EXPECT_FALSE(params::IsWhitelistedHttpResponseCodeForProbes(307));
+      EXPECT_TRUE(params::IsWhitelistedHttpResponseCodeForProbes(404));
     } else {
-      EXPECT_EQ(GURL("http://check.googlezip.net/generate_204"),
+      EXPECT_EQ(GURL("http://check.googlezip.net/e2e_probe"),
                 params::GetWarmupURL());
     }
-    EXPECT_TRUE(params::FetchWarmupURLEnabled());
+    EXPECT_TRUE(params::FetchWarmupProbeURLEnabled());
+  }
+}
+
+TEST_F(DataReductionProxyParamsTest, QuicFieldTrialDefaultResponseCodeWarmup) {
+  ASSERT_FALSE(base::CommandLine::ForCurrentProcess()->HasSwitch(
+      switches::kDisableDataReductionProxyWarmupURLFetch));
+
+  EXPECT_TRUE(params::IsIncludedInQuicFieldTrial());
+  EXPECT_EQ(GURL("http://check.googlezip.net/e2e_probe"),
+            params::GetWarmupURL());
+  EXPECT_TRUE(params::FetchWarmupProbeURLEnabled());
+
+  const struct {
+    int http_response_code;
+    bool expected_whitelisted;
+  } tests[] = {{200, true},
+               {net::HTTP_OK, true},
+               {204, false},
+               {301, false},
+               {net::HTTP_TEMPORARY_REDIRECT, false},
+               {404, true},
+               {net::HTTP_NOT_FOUND, true}};
+
+  for (const auto& test : tests) {
+    EXPECT_EQ(test.expected_whitelisted,
+              params::IsWhitelistedHttpResponseCodeForProbes(
+                  test.http_response_code));
   }
 }
 

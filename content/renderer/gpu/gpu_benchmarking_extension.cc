@@ -16,7 +16,6 @@
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "cc/layers/layer.h"
 #include "cc/paint/skia_paint_canvas.h"
@@ -43,25 +42,21 @@
 #include "gpu/config/gpu_driver_bug_workaround_type.h"
 #include "gpu/ipc/common/gpu_messages.h"
 #include "services/service_manager/public/cpp/interface_provider.h"
-#include "third_party/WebKit/public/platform/WebMouseEvent.h"
-#include "third_party/WebKit/public/web/WebImageCache.h"
-#include "third_party/WebKit/public/web/WebKit.h"
-#include "third_party/WebKit/public/web/WebLocalFrame.h"
-#include "third_party/WebKit/public/web/WebPrintParams.h"
-#include "third_party/WebKit/public/web/WebSettings.h"
-#include "third_party/WebKit/public/web/WebView.h"
+#include "third_party/blink/public/platform/web_mouse_event.h"
+#include "third_party/blink/public/web/blink.h"
+#include "third_party/blink/public/web/web_image_cache.h"
+#include "third_party/blink/public/web/web_local_frame.h"
+#include "third_party/blink/public/web/web_print_params.h"
+#include "third_party/blink/public/web/web_settings.h"
+#include "third_party/blink/public/web/web_view.h"
 #include "third_party/skia/include/core/SkData.h"
 #include "third_party/skia/include/core/SkGraphics.h"
 #include "third_party/skia/include/core/SkPicture.h"
 #include "third_party/skia/include/core/SkPictureRecorder.h"
-#include "third_party/skia/include/core/SkPixelRef.h"
-#include "third_party/skia/include/core/SkPixelSerializer.h"
-#include "third_party/skia/include/core/SkStream.h"
 // Note that headers in third_party/skia/src are fragile.  This is
 // an experimental, fragile, and diagnostic-only document type.
 #include "third_party/skia/src/utils/SkMultiPictureDocument.h"
 #include "ui/events/base_event_utils.h"
-#include "ui/gfx/codec/png_codec.h"
 #include "v8/include/v8.h"
 
 #if defined(OS_WIN) && !defined(NDEBUG)
@@ -80,59 +75,6 @@ using blink::WebView;
 namespace content {
 
 namespace {
-
-class EncodingSerializer : public SkPixelSerializer {
- protected:
-  bool onUseEncodedData(const void* data, size_t len) override { return true; }
-
-  SkData* onEncode(const SkPixmap& pixmap) override {
-    std::vector<uint8_t> vector;
-
-    const base::CommandLine& commandLine =
-        *base::CommandLine::ForCurrentProcess();
-    if (commandLine.HasSwitch(switches::kSkipReencodingOnSKPCapture)) {
-        // In this case, we just want to store some useful information
-        // about the image to replace the missing encoded data.
-
-        // First make sure that the data does not accidentally match any
-        // image signatures.
-        vector.push_back(0xFF);
-        vector.push_back(0xFF);
-        vector.push_back(0xFF);
-        vector.push_back(0xFF);
-
-        // Save the width and height.
-        uint32_t width = pixmap.width();
-        uint32_t height = pixmap.height();
-        vector.push_back(width & 0xFF);
-        vector.push_back((width >> 8) & 0xFF);
-        vector.push_back((width >> 16) & 0xFF);
-        vector.push_back((width >> 24) & 0xFF);
-        vector.push_back(height & 0xFF);
-        vector.push_back((height >> 8) & 0xFF);
-        vector.push_back((height >> 16) & 0xFF);
-        vector.push_back((height >> 24) & 0xFF);
-
-        // Save any additional information about the bitmap that may be
-        // interesting.
-        vector.push_back(pixmap.colorType());
-        vector.push_back(pixmap.alphaType());
-        return SkData::MakeWithCopy(&vector.front(), vector.size()).release();
-    } else {
-      SkBitmap bm;
-      // The const_cast is fine, since we only read from the bitmap.
-      if (bm.installPixels(pixmap.info(),
-                           const_cast<void*>(pixmap.addr()),
-                           pixmap.rowBytes())) {
-        if (gfx::PNGCodec::EncodeBGRASkBitmap(bm, false, &vector)) {
-          return SkData::MakeWithCopy(&vector.front(), vector.size()).release();
-        }
-      }
-    }
-    return nullptr;
-  }
-};
-
 class SkPictureSerializer {
  public:
   explicit SkPictureSerializer(const base::FilePath& dirpath)
@@ -163,8 +105,8 @@ class SkPictureSerializer {
       SkFILEWStream file(filepath.c_str());
       DCHECK(file.isValid());
 
-      EncodingSerializer serializer;
-      picture->serialize(&file, &serializer);
+      auto data = picture->serialize();
+      file.write(data->data(), data->size());
       file.fsync();
     }
   }
@@ -601,11 +543,6 @@ gin::ObjectTemplateBuilder GpuBenchmarking::GetObjectTemplateBuilder(
       .SetMethod("visualViewportY", &GpuBenchmarking::VisualViewportY)
       .SetMethod("visualViewportHeight", &GpuBenchmarking::VisualViewportHeight)
       .SetMethod("visualViewportWidth", &GpuBenchmarking::VisualViewportWidth)
-      // TODO(bokan): Temporary bit on gpuBenchmarking to let telemetry know
-      // when changes to gesture methods have landed in Chrome and it can start
-      // passing visual viewport coordinates. Will be removed once all changes
-      // are rolled. crbug.com/610021.
-      .SetValue("gesturesExpectedInViewportCoordinates", 1)
       .SetMethod("clearImageCache", &GpuBenchmarking::ClearImageCache)
       .SetMethod("runMicroBenchmark", &GpuBenchmarking::RunMicroBenchmark)
       .SetMethod("sendMessageToMicroBenchmark",
@@ -632,9 +569,14 @@ void GpuBenchmarking::SetRasterizeOnlyVisibleContent() {
   context.compositor()->SetRasterizeOnlyVisibleContent();
 }
 
+namespace {
+sk_sp<SkDocument> make_multipicturedocument(SkWStream* stream) {
+  return SkMakeMultiPictureDocument(stream);
+}
+}  // namespace
 void GpuBenchmarking::PrintPagesToSkPictures(v8::Isolate* isolate,
                                              const std::string& filename) {
-  PrintDocumentTofile(isolate, filename, &SkMakeMultiPictureDocument);
+  PrintDocumentTofile(isolate, filename, &make_multipicturedocument);
 }
 
 void GpuBenchmarking::PrintPagesToXPS(v8::Isolate* isolate,
@@ -1027,8 +969,12 @@ bool GpuBenchmarking::PointerActionSequence(gin::Arguments* args) {
   // Get all the pointer actions from the user input and wrap them into a
   // SyntheticPointerActionListParams object.
   ActionsParser actions_parser(value.get());
-  if (!actions_parser.ParsePointerActionSequence())
+  if (!actions_parser.ParsePointerActionSequence()) {
+    // TODO(dtapuska): Throw an error here, some layout tests start
+    // failing when this is done though.
+    // args->ThrowTypeError(actions_parser.error_message());
     return false;
+  }
 
   if (!GetOptionalArg(args, &callback)) {
     args->ThrowError();

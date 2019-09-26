@@ -700,12 +700,9 @@ void DrawElementsInstancedANGLE(GLenum mode,
                                 GLsizei primcount) override;
 void VertexAttribDivisorANGLE(GLuint index, GLuint divisor) override;
 void GenMailboxCHROMIUM(GLbyte* mailbox) override;
-void ProduceTextureCHROMIUM(GLenum target, const GLbyte* mailbox) override;
 void ProduceTextureDirectCHROMIUM(GLuint texture,
-                                  GLenum target,
                                   const GLbyte* mailbox) override;
-GLuint CreateAndConsumeTextureCHROMIUM(GLenum target,
-                                       const GLbyte* mailbox) override;
+GLuint CreateAndConsumeTextureCHROMIUM(const GLbyte* mailbox) override;
 void BindUniformLocationCHROMIUM(GLuint program,
                                  GLint location,
                                  const char* name) override;
@@ -721,12 +718,16 @@ void DiscardFramebufferEXT(GLenum target,
                            GLsizei count,
                            const GLenum* attachments) override;
 void LoseContextCHROMIUM(GLenum current, GLenum other) override;
-GLuint64 InsertFenceSyncCHROMIUM() override;
-void GenSyncTokenCHROMIUM(GLuint64 fence_sync, GLbyte* sync_token) override;
-void GenUnverifiedSyncTokenCHROMIUM(GLuint64 fence_sync,
-                                    GLbyte* sync_token) override;
+void GenSyncTokenCHROMIUM(GLbyte* sync_token) override;
+void GenUnverifiedSyncTokenCHROMIUM(GLbyte* sync_token) override;
 void VerifySyncTokensCHROMIUM(GLbyte** sync_tokens, GLsizei count) override;
 void WaitSyncTokenCHROMIUM(const GLbyte* sync_token) override;
+void UnpremultiplyAndDitherCopyCHROMIUM(GLuint source_id,
+                                        GLuint dest_id,
+                                        GLint x,
+                                        GLint y,
+                                        GLsizei width,
+                                        GLsizei height) override;
 void DrawBuffersEXT(GLsizei count, const GLenum* bufs) override;
 void DiscardBackbufferCHROMIUM() override;
 void ScheduleOverlayPlaneCHROMIUM(GLint plane_z_order,
@@ -739,7 +740,8 @@ void ScheduleOverlayPlaneCHROMIUM(GLint plane_z_order,
                                   GLfloat uv_x,
                                   GLfloat uv_y,
                                   GLfloat uv_width,
-                                  GLfloat uv_height) override;
+                                  GLfloat uv_height,
+                                  GLboolean enable_blend) override;
 void ScheduleCALayerSharedStateCHROMIUM(GLfloat opacity,
                                         GLboolean is_clipped,
                                         const GLfloat* clip_rect,
@@ -754,7 +756,6 @@ void ScheduleCALayerCHROMIUM(GLuint contents_texture_id,
 void ScheduleCALayerInUseQueryCHROMIUM(GLsizei count,
                                        const GLuint* textures) override;
 void CommitOverlayPlanesCHROMIUM() override;
-void SwapInterval(GLint interval) override;
 void FlushDriverCachesCHROMIUM() override;
 GLuint GetLastFlushIdCHROMIUM() override;
 void ScheduleDCLayerSharedStateCHROMIUM(GLfloat opacity,
@@ -896,26 +897,11 @@ void BeginRasterCHROMIUM(GLuint texture_id,
                          GLuint sk_color,
                          GLuint msaa_sample_count,
                          GLboolean can_use_lcd_text,
-                         GLboolean use_distance_field_text,
-                         GLint pixel_config) override;
-void RasterCHROMIUM(const cc::DisplayItemList* list,
-                    GLint translate_x,
-                    GLint translate_y,
-                    GLint clip_x,
-                    GLint clip_y,
-                    GLint clip_w,
-                    GLint clip_h,
-                    GLfloat post_translate_x,
-                    GLfloat post_translate_y,
-                    GLfloat post_scale) override;
+                         GLint color_type,
+                         GLuint color_space_transfer_cache_id) override;
+void* MapRasterCHROMIUM(GLsizeiptr size) override;
+void UnmapRasterCHROMIUM(GLsizeiptr written_size) override;
 void EndRasterCHROMIUM() override;
-void CreateTransferCacheEntryCHROMIUM(
-    GLuint64 handle_id,
-    GLuint handle_shm_id,
-    GLuint handle_shm_offset,
-    const cc::ClientTransferCacheEntry& entry) override;
-void DeleteTransferCacheEntryCHROMIUM(GLuint64 handle_id) override;
-void UnlockTransferCacheEntryCHROMIUM(GLuint64 handle_id) override;
 void TexStorage2DImageCHROMIUM(GLenum target,
                                GLenum internalFormat,
                                GLenum bufferUsage,
@@ -924,4 +910,8 @@ void TexStorage2DImageCHROMIUM(GLenum target,
 void SetColorSpaceMetadataCHROMIUM(GLuint texture_id,
                                    GLColorSpace color_space) override;
 void WindowRectanglesEXT(GLenum mode, GLsizei count, const GLint* box) override;
+GLuint CreateGpuFenceCHROMIUM() override;
+GLuint CreateClientGpuFenceCHROMIUM(ClientGpuFence source) override;
+void WaitGpuFenceCHROMIUM(GLuint gpu_fence_id) override;
+void DestroyGpuFenceCHROMIUM(GLuint gpu_fence_id) override;
 #endif  // GPU_COMMAND_BUFFER_CLIENT_GLES2_TRACE_IMPLEMENTATION_AUTOGEN_H_

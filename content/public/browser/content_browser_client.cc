@@ -12,19 +12,23 @@
 #include "base/logging.h"
 #include "build/build_config.h"
 #include "content/public/browser/client_certificate_delegate.h"
+#include "content/public/browser/login_delegate.h"
 #include "content/public/browser/memory_coordinator_delegate.h"
 #include "content/public/browser/navigation_ui_data.h"
 #include "content/public/browser/network_service_instance.h"
+#include "content/public/browser/page_navigator.h"
 #include "content/public/browser/vpn_service_proxy.h"
-#include "content/public/common/content_features.h"
 #include "content/public/common/url_loader_throttle.h"
 #include "device/geolocation/public/cpp/location_provider.h"
 #include "media/audio/audio_manager.h"
 #include "media/base/cdm_factory.h"
-#include "media/media_features.h"
+#include "media/media_buildflags.h"
 #include "mojo/public/cpp/bindings/associated_interface_ptr.h"
 #include "net/ssl/client_cert_identity.h"
+#include "net/ssl/client_cert_store.h"
 #include "net/url_request/url_request_context_getter.h"
+#include "services/network/public/cpp/features.h"
+#include "services/network/public/cpp/resource_request.h"
 #include "services/service_manager/sandbox/sandbox_type.h"
 #include "storage/browser/quota/quota_manager.h"
 #include "ui/gfx/image/image_skia.h"
@@ -78,6 +82,12 @@ bool ContentBrowserClient::ShouldUseProcessPerSite(
   return false;
 }
 
+bool ContentBrowserClient::ShouldUseSpareRenderProcessHost(
+    BrowserContext* browser_context,
+    const GURL& site_url) {
+  return true;
+}
+
 bool ContentBrowserClient::DoesSiteRequireDedicatedProcess(
     BrowserContext* browser_context,
     const GURL& effective_site_url) {
@@ -89,11 +99,8 @@ bool ContentBrowserClient::ShouldLockToOrigin(BrowserContext* browser_context,
   return true;
 }
 
-bool ContentBrowserClient::ShouldBypassDocumentBlocking(
-    const url::Origin& initiator,
-    const GURL& url,
-    ResourceType resource_type) {
-  return false;
+const char* ContentBrowserClient::GetInitatorSchemeBypassingDocumentBlocking() {
+  return nullptr;
 }
 
 void ContentBrowserClient::GetAdditionalViewSourceSchemes(
@@ -168,13 +175,6 @@ std::unique_ptr<media::CdmFactory> ContentBrowserClient::CreateCdmFactory() {
   return nullptr;
 }
 
-bool ContentBrowserClient::ShouldSwapProcessesForRedirect(
-    BrowserContext* browser_context,
-    const GURL& current_url,
-    const GURL& new_url) {
-  return false;
-}
-
 bool ContentBrowserClient::ShouldAssignSiteForURL(const GURL& url) {
   return true;
 }
@@ -184,11 +184,22 @@ ContentBrowserClient::GetOriginsRequiringDedicatedProcess() {
   return std::vector<url::Origin>();
 }
 
+bool ContentBrowserClient::ShouldEnableStrictSiteIsolation() {
+  // By default --site-per-process is turned off for //content embedders.
+  // This ensures that embedders like ChromeCast and/or Opera are not forced
+  // into --site-per-process.
+  return false;
+}
+
 bool ContentBrowserClient::IsFileAccessAllowed(
     const base::FilePath& path,
     const base::FilePath& absolute_path,
     const base::FilePath& profile_path) {
   return true;
+}
+
+bool ContentBrowserClient::ForceSniffingFileUrlsForHtml() {
+  return false;
 }
 
 std::string ContentBrowserClient::GetApplicationLocale() {
@@ -238,13 +249,6 @@ bool ContentBrowserClient::IsDataSaverEnabled(BrowserContext* context) {
   return false;
 }
 
-std::unique_ptr<net::HttpRequestHeaders>
-ContentBrowserClient::GetAdditionalNavigationRequestHeaders(
-    BrowserContext* context,
-    const GURL& url) const {
-  return nullptr;
-}
-
 bool ContentBrowserClient::AllowGetCookie(const GURL& url,
                                           const GURL& first_party,
                                           const net::CookieList& cookie_list,
@@ -269,7 +273,7 @@ void ContentBrowserClient::AllowWorkerFileSystem(
     ResourceContext* context,
     const std::vector<std::pair<int, int> >& render_frames,
     base::Callback<void(bool)> callback) {
-  callback.Run(true);
+  std::move(callback).Run(true);
 }
 
 bool ContentBrowserClient::AllowWorkerIndexedDB(
@@ -532,6 +536,26 @@ std::unique_ptr<base::Value> ContentBrowserClient::GetServiceManifestOverlay(
   return nullptr;
 }
 
+ContentBrowserClient::OutOfProcessServiceInfo::OutOfProcessServiceInfo() =
+    default;
+
+ContentBrowserClient::OutOfProcessServiceInfo::OutOfProcessServiceInfo(
+    const base::string16& process_name)
+    : process_name(process_name) {
+  DCHECK(!process_name.empty());
+}
+
+ContentBrowserClient::OutOfProcessServiceInfo::OutOfProcessServiceInfo(
+    const base::string16& process_name,
+    const std::string& process_group)
+    : process_name(process_name), process_group(process_group) {
+  DCHECK(!process_name.empty());
+  DCHECK(!process_group.empty());
+}
+
+ContentBrowserClient::OutOfProcessServiceInfo::~OutOfProcessServiceInfo() =
+    default;
+
 bool ContentBrowserClient::ShouldTerminateOnServiceQuit(
     const service_manager::Identity& id) {
   return false;
@@ -558,7 +582,11 @@ ContentBrowserClient::GetTaskSchedulerInitParams() {
 
 std::vector<std::unique_ptr<URLLoaderThrottle>>
 ContentBrowserClient::CreateURLLoaderThrottles(
-    const base::Callback<WebContents*()>& wc_getter) {
+    const network::ResourceRequest& request,
+    ResourceContext* resource_context,
+    const base::RepeatingCallback<WebContents*()>& wc_getter,
+    NavigationUIData* navigation_ui_data,
+    int frame_tree_node_id) {
   return std::vector<std::unique_ptr<URLLoaderThrottle>>();
 }
 
@@ -571,16 +599,24 @@ void ContentBrowserClient::RegisterNonNetworkSubresourceURLLoaderFactories(
     const GURL& frame_url,
     NonNetworkURLLoaderFactoryMap* factories) {}
 
-mojom::NetworkContextPtr ContentBrowserClient::CreateNetworkContext(
+bool ContentBrowserClient::WillCreateURLLoaderFactory(
+    RenderFrameHost* frame,
+    bool is_navigation,
+    network::mojom::URLLoaderFactoryRequest* factory_request) {
+  return false;
+}
+
+network::mojom::NetworkContextPtr ContentBrowserClient::CreateNetworkContext(
     BrowserContext* context,
     bool in_memory,
     const base::FilePath& relative_partition_path) {
-  if (!base::FeatureList::IsEnabled(features::kNetworkService))
+  if (!base::FeatureList::IsEnabled(network::features::kNetworkService))
     return nullptr;
 
-  mojom::NetworkContextPtr network_context;
-  mojom::NetworkContextParamsPtr context_params =
-      mojom::NetworkContextParams::New();
+  network::mojom::NetworkContextPtr network_context;
+  network::mojom::NetworkContextParamsPtr context_params =
+      network::mojom::NetworkContextParams::New();
+  context_params->user_agent = GetContentClient()->GetUserAgent();
   context_params->enable_data_url_support = true;
   context_params->enable_file_url_support = true;
   GetNetworkService()->CreateNetworkContext(MakeRequest(&network_context),
@@ -597,9 +633,91 @@ bool ContentBrowserClient::ShouldOverrideUrlLoading(
     bool has_user_gesture,
     bool is_redirect,
     bool is_main_frame,
-    ui::PageTransition transition) {
-  return false;
+    ui::PageTransition transition,
+    bool* ignore_navigation) {
+  return true;
 }
 #endif
+
+bool ContentBrowserClient::AllowRenderingMhtmlOverHttp(
+    NavigationUIData* navigation_ui_data) {
+  return false;
+}
+
+bool ContentBrowserClient::ShouldForceDownloadResource(
+    const GURL& url,
+    const std::string& mime_type) {
+  return false;
+}
+
+void ContentBrowserClient::CreateUsbDeviceManager(
+    RenderFrameHost* render_frame_host,
+    device::mojom::UsbDeviceManagerRequest request) {}
+
+void ContentBrowserClient::CreateUsbChooserService(
+    RenderFrameHost* render_frame_host,
+    device::mojom::UsbChooserServiceRequest request) {}
+
+bool ContentBrowserClient::ShowPaymentHandlerWindow(
+    content::BrowserContext* browser_context,
+    const GURL& url,
+    base::OnceCallback<void(bool, int, int)> callback) {
+  return false;
+}
+
+bool ContentBrowserClient::ShouldCreateTaskScheduler() {
+  return true;
+}
+
+bool ContentBrowserClient::ShouldPermitIndividualAttestationForWebauthnRPID(
+    content::BrowserContext* browser_context,
+    const std::string& rp_id) {
+  return false;
+}
+
+void ContentBrowserClient::ShouldReturnAttestationForWebauthnRPID(
+    content::RenderFrameHost* rfh,
+    const std::string& rp_id,
+    const url::Origin& origin,
+    base::OnceCallback<void(bool)> callback) {
+  std::move(callback).Run(true);
+}
+
+bool ContentBrowserClient::IsFocused(content::WebContents* web_contents) {
+  return true;
+}
+
+std::unique_ptr<net::ClientCertStore>
+ContentBrowserClient::CreateClientCertStore(ResourceContext* resource_context) {
+  return nullptr;
+}
+
+scoped_refptr<LoginDelegate> ContentBrowserClient::CreateLoginDelegate(
+    net::AuthChallengeInfo* auth_info,
+    content::ResourceRequestInfo::WebContentsGetter web_contents_getter,
+    bool is_main_frame,
+    const GURL& url,
+    bool first_auth_attempt,
+    const base::Callback<void(const base::Optional<net::AuthCredentials>&)>&
+        auth_required_callback) {
+  return nullptr;
+}
+
+bool ContentBrowserClient::HandleExternalProtocol(
+    const GURL& url,
+    ResourceRequestInfo::WebContentsGetter web_contents_getter,
+    int child_id,
+    NavigationUIData* navigation_data,
+    bool is_main_frame,
+    ui::PageTransition page_transition,
+    bool has_user_gesture) {
+  return true;
+}
+
+std::unique_ptr<OverlayWindow>
+ContentBrowserClient::CreateWindowForPictureInPicture(
+    PictureInPictureWindowController* controller) {
+  return nullptr;
+}
 
 }  // namespace content

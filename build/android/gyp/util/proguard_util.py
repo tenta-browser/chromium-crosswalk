@@ -8,7 +8,7 @@ import time
 from util import build_utils
 
 
-class _ProguardOutputFilter(object):
+class ProguardOutputFilter(object):
   """ProGuard outputs boring stuff to stdout (proguard version, jar path, etc)
   as well as interesting stuff (notes, warnings, etc). If stdout is entirely
   boring, this class suppresses the output.
@@ -16,7 +16,7 @@ class _ProguardOutputFilter(object):
 
   IGNORE_RE = re.compile(
       r'Pro.*version|Note:|Reading|Preparing|Printing|ProgramClass:|Searching|'
-      r'jar \[|\d+ class path entries checked|.*:.*(?:MANIFEST\.MF|\.empty)')
+      r'jar \[|\d+ class path entries checked')
 
   def __init__(self):
     self._last_line_ignored = False
@@ -46,8 +46,6 @@ class ProguardCmdBuilder(object):
   def __init__(self, proguard_jar):
     assert os.path.exists(proguard_jar)
     self._proguard_jar_path = proguard_jar
-    self._tested_apk_info_path = None
-    self._tested_apk_info = None
     self._mapping = None
     self._libraries = None
     self._injars = None
@@ -62,11 +60,6 @@ class ProguardCmdBuilder(object):
     assert self._cmd is None
     assert self._outjar is None
     self._outjar = path
-
-  def tested_apk_info(self, tested_apk_info_path):
-    assert self._cmd is None
-    assert self._tested_apk_info is None
-    self._tested_apk_info_path = tested_apk_info_path
 
   def mapping(self, path):
     assert self._cmd is None
@@ -118,9 +111,6 @@ class ProguardCmdBuilder(object):
       'java', '-jar', self._proguard_jar_path,
       '-forceprocessing',
     ]
-    if self._tested_apk_info_path:
-      tested_apk_info = build_utils.ReadJson(self._tested_apk_info_path)
-      self._configs += tested_apk_info['configs']
 
     for path in self._config_exclusions:
       self._configs.remove(path)
@@ -138,8 +128,11 @@ class ProguardCmdBuilder(object):
     for optimization in self._disabled_optimizations:
       cmd += [ '-optimizations', '!' + optimization ]
 
+    # Filter to just .class files to avoid warnings about multiple inputs having
+    # the same files in META_INF/.
     cmd += [
-      '-injars', ':'.join(self._injars)
+        '-injars',
+        ':'.join('{}(**.class)'.format(x) for x in self._injars)
     ]
 
     for config_file in self._configs:
@@ -165,8 +158,6 @@ class ProguardCmdBuilder(object):
     inputs = self._configs + self._injars
     if self._libraries:
       inputs += self._libraries
-    if self._tested_apk_info_path:
-      inputs += [self._tested_apk_info_path]
     return inputs
 
   def GetInputs(self):
@@ -223,8 +214,8 @@ class ProguardCmdBuilder(object):
     stdout_filter = None
     stderr_filter = None
     if not self._verbose:
-      stdout_filter = _ProguardOutputFilter()
-      stderr_filter = _ProguardOutputFilter()
+      stdout_filter = ProguardOutputFilter()
+      stderr_filter = ProguardOutputFilter()
     start_time = time.time()
     build_utils.CheckOutput(self._cmd, print_stdout=True,
                             print_stderr=True,

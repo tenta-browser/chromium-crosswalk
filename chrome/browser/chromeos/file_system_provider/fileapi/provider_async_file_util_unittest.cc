@@ -14,7 +14,6 @@
 #include "base/files/file_path.h"
 #include "base/files/scoped_temp_dir.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/memory/weak_ptr.h"
 #include "base/run_loop.h"
 #include "chrome/browser/chromeos/file_system_provider/fake_extension_provider.h"
@@ -54,8 +53,7 @@ class EventLogger {
     result_.reset(new base::File::Error(error));
   }
 
-  void OnCreateOrOpen(base::File file,
-                      const base::Closure& on_close_callback) {
+  void OnCreateOrOpen(base::File file, base::OnceClosure on_close_callback) {
     if (file.IsValid())
       result_.reset(new base::File::Error(base::File::FILE_OK));
 
@@ -130,8 +128,7 @@ class FileSystemProviderProviderAsyncFileUtilTest : public testing::Test {
         content::CreateFileSystemContextForTesting(NULL, data_dir_.GetPath());
 
     Service* service = Service::Get(profile_);  // Owned by its factory.
-    service->SetExtensionProviderForTesting(
-        std::make_unique<FakeExtensionProvider>());
+    service->RegisterProvider(FakeExtensionProvider::Create(kExtensionId));
 
     const base::File::Error result = service->MountFileSystem(
         kProviderId, MountOptions(kFileSystemId, "Testing File System"));
@@ -155,7 +152,7 @@ class FileSystemProviderProviderAsyncFileUtilTest : public testing::Test {
 
   std::unique_ptr<storage::FileSystemOperationContext>
   CreateOperationContext() {
-    return base::MakeUnique<storage::FileSystemOperationContext>(
+    return std::make_unique<storage::FileSystemOperationContext>(
         file_system_context_.get());
   }
 

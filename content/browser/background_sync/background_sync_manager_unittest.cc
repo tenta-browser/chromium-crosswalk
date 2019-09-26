@@ -14,7 +14,6 @@
 #include "base/location.h"
 #include "base/logging.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/metrics/field_trial.h"
 #include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
@@ -23,7 +22,6 @@
 #include "base/threading/thread_task_runner_handle.h"
 #include "content/browser/background_sync/background_sync_network_observer.h"
 #include "content/browser/background_sync/background_sync_status.h"
-#include "content/browser/browser_thread_impl.h"
 #include "content/browser/service_worker/embedded_worker_test_helper.h"
 #include "content/browser/service_worker/service_worker_context_core.h"
 #include "content/browser/service_worker/service_worker_context_wrapper.h"
@@ -34,17 +32,17 @@
 #include "content/public/browser/background_sync_parameters.h"
 #include "content/public/browser/permission_type.h"
 #include "content/public/test/background_sync_test_util.h"
+#include "content/public/test/mock_permission_manager.h"
 #include "content/public/test/test_browser_context.h"
 #include "content/public/test/test_browser_thread_bundle.h"
 #include "content/public/test/test_utils.h"
 #include "content/test/mock_background_sync_controller.h"
-#include "content/test/mock_permission_manager.h"
 #include "content/test/test_background_sync_manager.h"
 #include "net/base/network_change_notifier.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/WebKit/public/platform/modules/permissions/permission_status.mojom.h"
-#include "third_party/WebKit/public/platform/modules/serviceworker/service_worker_registration.mojom.h"
+#include "third_party/blink/public/mojom/service_worker/service_worker_registration.mojom.h"
+#include "third_party/blink/public/platform/modules/permissions/permission_status.mojom.h"
 
 namespace content {
 
@@ -136,18 +134,18 @@ class BackgroundSyncManagerTest : public testing::Test {
   void RegisterServiceWorkers() {
     bool called_1 = false;
     bool called_2 = false;
+    blink::mojom::ServiceWorkerRegistrationOptions options1;
+    options1.scope = GURL(kPattern1);
+    blink::mojom::ServiceWorkerRegistrationOptions options2;
+    options2.scope = GURL(kPattern2);
     helper_->context()->RegisterServiceWorker(
-        GURL(kScript1),
-        blink::mojom::ServiceWorkerRegistrationOptions(GURL(kPattern1)),
-        nullptr,
+        GURL(kScript1), options1,
         base::AdaptCallbackForRepeating(
             base::BindOnce(&RegisterServiceWorkerCallback, &called_1,
                            &sw_registration_id_1_)));
 
     helper_->context()->RegisterServiceWorker(
-        GURL(kScript2),
-        blink::mojom::ServiceWorkerRegistrationOptions(GURL(kPattern2)),
-        nullptr,
+        GURL(kScript2), options2,
         base::AdaptCallbackForRepeating(
             base::BindOnce(&RegisterServiceWorkerCallback, &called_2,
                            &sw_registration_id_2_)));
@@ -1339,8 +1337,7 @@ TEST_F(BackgroundSyncManagerTest, LastChance) {
   InitFailedSyncEventTest();
 
   EXPECT_TRUE(Register(sync_options_1_));
-  EXPECT_EQ(blink::mojom::BackgroundSyncEventLastChance::IS_NOT_LAST_CHANCE,
-            test_background_sync_manager_->last_chance());
+  EXPECT_FALSE(test_background_sync_manager_->last_chance());
   EXPECT_TRUE(GetRegistration(sync_options_1_));
 
   // Run it again.
@@ -1348,8 +1345,7 @@ TEST_F(BackgroundSyncManagerTest, LastChance) {
   test_background_sync_manager_->RunDelayedTask();
   base::RunLoop().RunUntilIdle();
   EXPECT_FALSE(GetRegistration(sync_options_1_));
-  EXPECT_EQ(blink::mojom::BackgroundSyncEventLastChance::IS_LAST_CHANCE,
-            test_background_sync_manager_->last_chance());
+  EXPECT_TRUE(test_background_sync_manager_->last_chance());
 }
 
 }  // namespace content

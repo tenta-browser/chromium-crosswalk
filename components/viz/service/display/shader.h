@@ -203,7 +203,6 @@ class VIZ_SERVICE_EXPORT VertexShader {
   int uv_tex_offset_location_ = -1;
 
   // Matrix to transform the position.
-  bool has_matrix_ = false;
   int matrix_location_ = -1;
 
   // Used only with POSITION_SOURCE_ATTRIBUTE_INDEXED_UNIFORM.
@@ -293,6 +292,12 @@ class VIZ_SERVICE_EXPORT FragmentShader {
 
   ColorConversionMode color_conversion_mode_ = COLOR_CONVERSION_MODE_NONE;
   const gfx::ColorTransform* color_transform_ = nullptr;
+
+  bool has_output_color_matrix_ = false;
+  int output_color_matrix_location_ = -1;
+
+  bool has_tint_color_matrix_ = false;
+  int tint_color_matrix_location_ = -1;
 
   // YUV uniform locations.
   int y_texture_location_ = -1;

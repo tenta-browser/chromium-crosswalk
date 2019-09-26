@@ -6,11 +6,11 @@
 
 #include <algorithm>
 #include <cmath>
+#include <memory>
 #include <utility>
 
 #include "base/format_macros.h"
 #include "base/logging.h"
-#include "base/memory/ptr_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/values.h"
 
@@ -98,7 +98,7 @@ StatsEventSubscriber::SimpleHistogram::GetHistogram() const {
 
 StatsEventSubscriber::StatsEventSubscriber(
     EventMediaType event_media_type,
-    base::TickClock* clock,
+    const base::TickClock* clock,
     ReceiverTimeOffsetEstimator* offset_estimator)
     : event_media_type_(event_media_type),
       clock_(clock),
@@ -227,9 +227,9 @@ void StatsEventSubscriber::UpdateFirstLastEventTime(base::TimeTicks timestamp,
 std::unique_ptr<base::DictionaryValue> StatsEventSubscriber::GetStats() const {
   StatsMap stats_map;
   GetStatsInternal(&stats_map);
-  auto ret = base::MakeUnique<base::DictionaryValue>();
+  auto ret = std::make_unique<base::DictionaryValue>();
 
-  auto stats = base::MakeUnique<base::DictionaryValue>();
+  auto stats = std::make_unique<base::DictionaryValue>();
   for (StatsMap::const_iterator it = stats_map.begin(); it != stats_map.end();
        ++it) {
     // Round to 3 digits after the decimal point.

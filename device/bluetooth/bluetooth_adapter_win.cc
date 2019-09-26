@@ -21,7 +21,6 @@
 #include "device/bluetooth/bluetooth_socket_win.h"
 #include "device/bluetooth/bluetooth_task_manager_win.h"
 #include "device/bluetooth/bluetooth_uuid.h"
-#include "net/log/net_log_source.h"
 
 namespace device {
 
@@ -261,12 +260,12 @@ void BluetoothAdapterWin::DevicesPolled(
       base::STLSetIntersection<DeviceAddressSet>(known_devices, new_devices);
   for (const auto& device_state : devices) {
     if (added_devices.find(device_state->address) != added_devices.end()) {
-      BluetoothDeviceWin* device_win =
-          new BluetoothDeviceWin(this, *device_state, ui_task_runner_,
-                                 socket_thread_, NULL, net::NetLogSource());
-      devices_[device_state->address] = base::WrapUnique(device_win);
+      auto device_win = std::make_unique<BluetoothDeviceWin>(
+          this, *device_state, ui_task_runner_, socket_thread_);
+      BluetoothDeviceWin* device_win_raw = device_win.get();
+      devices_[device_state->address] = std::move(device_win);
       for (auto& observer : observers_)
-        observer.DeviceAdded(this, device_win);
+        observer.DeviceAdded(this, device_win_raw);
     } else if (changed_devices.find(device_state->address) !=
                changed_devices.end()) {
       auto iter = devices_.find(device_state->address);
@@ -287,6 +286,12 @@ void BluetoothAdapterWin::DevicesPolled(
       }
     }
   }
+}
+
+// BluetoothAdapterWin should override SetPowered() instead.
+bool BluetoothAdapterWin::SetPoweredImpl(bool powered) {
+  NOTREACHED();
+  return false;
 }
 
 // If the method is called when |discovery_status_| is DISCOVERY_STOPPING,
@@ -335,7 +340,7 @@ void BluetoothAdapterWin::Init() {
 }
 
 void BluetoothAdapterWin::InitForTest(
-    scoped_refptr<base::SequencedTaskRunner> ui_task_runner,
+    scoped_refptr<base::SingleThreadTaskRunner> ui_task_runner,
     scoped_refptr<base::SequencedTaskRunner> bluetooth_task_runner) {
   ui_task_runner_ = ui_task_runner;
   if (!ui_task_runner_)

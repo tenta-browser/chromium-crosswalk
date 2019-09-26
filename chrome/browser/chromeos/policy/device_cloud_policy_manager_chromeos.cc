@@ -15,7 +15,6 @@
 #include "base/files/file_path.h"
 #include "base/logging.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/path_service.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/sys_info.h"
@@ -69,6 +68,11 @@ const char kRialtoRequisition[] = "rialto";
 
 const char kZeroTouchEnrollmentForced[] = "forced";
 const char kZeroTouchEnrollmentHandsOff[] = "hands-off";
+
+// Default frequency for uploading enterprise status reports. Can be overriden
+// by Device Policy.
+constexpr base::TimeDelta kDeviceStatusUploadFrequency =
+    base::TimeDelta::FromHours(3);
 
 // Fetches a machine statistic value from StatisticsProvider, returns an empty
 // string on failure.
@@ -371,13 +375,14 @@ void DeviceCloudPolicyManagerChromeOS::NotifyDisconnected() {
 void DeviceCloudPolicyManagerChromeOS::CreateStatusUploader() {
   status_uploader_.reset(new StatusUploader(
       client(),
-      base::MakeUnique<DeviceStatusCollector>(
+      std::make_unique<DeviceStatusCollector>(
           local_state_, chromeos::system::StatisticsProvider::GetInstance(),
           DeviceStatusCollector::VolumeInfoFetcher(),
           DeviceStatusCollector::CPUStatisticsFetcher(),
           DeviceStatusCollector::CPUTempFetcher(),
-          DeviceStatusCollector::AndroidStatusFetcher()),
-      task_runner_));
+          DeviceStatusCollector::AndroidStatusFetcher(),
+          true /* is_enterprise_device */),
+      task_runner_, kDeviceStatusUploadFrequency));
 }
 
 }  // namespace policy

@@ -26,6 +26,8 @@ class ExtensionSettingsUIBrowserTest : public WebUIBrowserTest {
   ExtensionSettingsUIBrowserTest();
   ~ExtensionSettingsUIBrowserTest() override;
 
+  void SetUpCommandLine(base::CommandLine* command_line) override;
+
  protected:
   void InstallGoodExtension();
 
@@ -49,6 +51,9 @@ class ExtensionSettingsUIBrowserTest : public WebUIBrowserTest {
 
   // Enables the error console so errors are displayed in the extensions page.
   void EnableErrorConsole();
+
+  // Sets the DevMode status for the current profile.
+  void SetDevModeEnabled(bool enabled);
 
   // Shrinks the web contents view in order to ensure vertical overflow.
   void ShrinkWebContentsView();

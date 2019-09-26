@@ -174,14 +174,14 @@ IN_PROC_BROWSER_TEST_F(AutomationApiTest, TabsAutomationHostsPermissions) {
 }
 
 #if defined(USE_AURA)
-// Flaky, see http://crbug.com/637525
+// TODO(https://crbug.com/754870): Disabled due to flakiness.
 IN_PROC_BROWSER_TEST_F(AutomationApiTest, DISABLED_Desktop) {
   ASSERT_TRUE(RunExtensionSubtest("automation/tests/desktop", "desktop.html"))
       << message_;
 }
 
 #if defined(OS_CHROMEOS)
-// TODO(crbug.com/615908): Flaky on CrOS sanitizers.
+// TODO(https://crbug.com/754870): Flaky on CrOS sanitizers.
 IN_PROC_BROWSER_TEST_F(AutomationApiTest, DISABLED_DesktopInitialFocus) {
   ASSERT_TRUE(
       RunExtensionSubtest("automation/tests/desktop", "initial_focus.html"))
@@ -194,7 +194,7 @@ IN_PROC_BROWSER_TEST_F(AutomationApiTest, DesktopFocusWeb) {
       << message_;
 }
 
-// Flaky, see https://crbug.com/724923.
+// TODO(https://crbug.com/622387): flaky.
 IN_PROC_BROWSER_TEST_F(AutomationApiTest, DISABLED_DesktopFocusIframe) {
   StartEmbeddedTestServer();
   ASSERT_TRUE(
@@ -202,7 +202,8 @@ IN_PROC_BROWSER_TEST_F(AutomationApiTest, DISABLED_DesktopFocusIframe) {
       << message_;
 }
 
-IN_PROC_BROWSER_TEST_F(AutomationApiTest, DesktopHitTestIframe) {
+// TODO(https://crbug.com/622387): flaky.
+IN_PROC_BROWSER_TEST_F(AutomationApiTest, DISABLED_DesktopHitTestIframe) {
   StartEmbeddedTestServer();
   ASSERT_TRUE(
       RunExtensionSubtest("automation/tests/desktop", "hit_test_iframe.html"))
@@ -247,7 +248,7 @@ IN_PROC_BROWSER_TEST_F(AutomationApiTest, DesktopHitTest) {
       << message_;
 }
 
-// Flaky, see http://crbug.com/435449
+// TODO(https://crbug.com/754870): flaky.
 IN_PROC_BROWSER_TEST_F(AutomationApiTest, DISABLED_DesktopLoadTabs) {
   ASSERT_TRUE(RunExtensionSubtest("automation/tests/desktop", "load_tabs.html"))
       << message_;
@@ -280,10 +281,16 @@ IN_PROC_BROWSER_TEST_F(AutomationApiTest, Find) {
       << message_;
 }
 
-// TODO(crbug.com/725420) Flaky
-IN_PROC_BROWSER_TEST_F(AutomationApiTest, DISABLED_Attributes) {
+IN_PROC_BROWSER_TEST_F(AutomationApiTest, Attributes) {
   StartEmbeddedTestServer();
   ASSERT_TRUE(RunExtensionSubtest("automation/tests/tabs", "attributes.html"))
+      << message_;
+}
+
+IN_PROC_BROWSER_TEST_F(AutomationApiTest, ReverseRelations) {
+  StartEmbeddedTestServer();
+  ASSERT_TRUE(
+      RunExtensionSubtest("automation/tests/tabs", "reverse_relations.html"))
       << message_;
 }
 
@@ -326,6 +333,12 @@ class AutomationApiTestWithDeviceScaleFactor : public AutomationApiTest {
 IN_PROC_BROWSER_TEST_F(AutomationApiTestWithDeviceScaleFactor, LocationScaled) {
   StartEmbeddedTestServer();
   ASSERT_TRUE(RunPlatformAppTest("automation/tests/location_scaled"))
+      << message_;
+}
+
+IN_PROC_BROWSER_TEST_F(AutomationApiTestWithDeviceScaleFactor, HitTest) {
+  StartEmbeddedTestServer();
+  ASSERT_TRUE(RunExtensionSubtest("automation/tests/desktop", "hit_test.html"))
       << message_;
 }
 

@@ -9,7 +9,7 @@
 #include "media/base/audio_renderer_sink.h"
 #include "media/blink/webaudiosourceprovider_impl.h"
 #include "media/blink/webmediaplayer_impl.h"
-#include "third_party/WebKit/public/platform/WebMediaPlayer.h"
+#include "third_party/blink/public/platform/web_media_player.h"
 
 namespace content {
 
@@ -44,8 +44,9 @@ bool HtmlAudioElementCapturerSource::EnsureSourceIsStarted() {
   DCHECK(thread_checker_.CalledOnValidThread());
   if (audio_source_ && !is_started_) {
     base::ThreadTaskRunnerHandle::Get()->PostTask(
-        FROM_HERE, base::Bind(&HtmlAudioElementCapturerSource::SetAudioCallback,
-                              weak_factory_.GetWeakPtr()));
+        FROM_HERE,
+        base::BindOnce(&HtmlAudioElementCapturerSource::SetAudioCallback,
+                       weak_factory_.GetWeakPtr()));
     is_started_ = true;
   }
   return is_started_;

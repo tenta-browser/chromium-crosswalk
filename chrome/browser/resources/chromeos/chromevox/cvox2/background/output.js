@@ -87,7 +87,7 @@ Output = function() {
    * @type {cvox.QueueMode}
    * @private
    */
-  this.queueMode_ = cvox.QueueMode.QUEUE;
+  this.queueMode_;
 
   /**
    * @type {boolean}
@@ -97,6 +97,9 @@ Output = function() {
 
   /** @private {!Object<string, boolean>} */
   this.suppressions_ = {};
+
+  /** @private {boolean} */
+  this.enableHints_ = true;
 };
 
 /**
@@ -122,7 +125,7 @@ Output.SPACE = ' ';
 Output.ROLE_INFO_ = {
   alert: {msgId: 'role_alert'},
   alertDialog: {msgId: 'role_alertdialog', outputContextFirst: true},
-  article: {msgId: 'role_article', inherits: 'abstractContainer'},
+  article: {msgId: 'role_article', inherits: 'abstractItem'},
   application: {msgId: 'role_application', inherits: 'abstractContainer'},
   banner: {msgId: 'role_banner', inherits: 'abstractContainer'},
   button: {msgId: 'role_button', earconId: 'BUTTON'},
@@ -152,7 +155,8 @@ Output.ROLE_INFO_ = {
   list: {msgId: 'role_list'},
   listBox: {msgId: 'role_listbox', earconId: 'LISTBOX'},
   listBoxOption: {msgId: 'role_listitem', earconId: 'LIST_ITEM'},
-  listItem: {msgId: 'role_listitem', earconId: 'LIST_ITEM'},
+  listItem:
+      {msgId: 'role_listitem', earconId: 'LIST_ITEM', inherits: 'abstractItem'},
   log: {
     msgId: 'role_log',
   },
@@ -222,7 +226,6 @@ Output.STATE_INFO_ = {
   expanded: {on: {msgId: 'aria_expanded_true'}},
   multiselectable: {on: {msgId: 'aria_multiselectable_true'}},
   required: {on: {msgId: 'aria_required_true'}},
-  selected: {on: {msgId: 'aria_selected_true'}},
   visited: {on: {msgId: 'visited_state'}}
 };
 
@@ -279,18 +282,29 @@ Output.PRESSED_STATE_MAP = {
 Output.RULES = {
   navigate: {
     'default': {
-      speak: `$name $value $state $restriction $role $description`,
+      speak: `$name $node(activeDescendant) $value $state $restriction $role
+          $description`,
       braille: ``
     },
     abstractContainer: {
       enter: `$nameFromNode $role $state $description`,
       leave: `@exited_container($role)`
     },
+    abstractItem: {
+      // Note that ChromeVox generally does not output position/count. Only for
+      // some roles (see sub-output rules) or when explicitly provided by an
+      // author (via posInSet), do we include them in the output.
+      enter: `$nameFromNode $role $state $restriction $description
+          $if($posInSet, @describe_index($posInSet, $setSize))`,
+      speak: `$state $nameOrTextContent= $role
+          $if($posInSet, @describe_index($posInSet, $setSize))
+          $description $restriction`
+    },
     abstractRange: {
       speak: `$if($valueForRange, $valueForRange, $value)
           $if($minValueForRange, @aria_value_min($minValueForRange))
           $if($maxValueForRange, @aria_value_max($maxValueForRange))
-          $name $role $description $state $restriction`
+          $name $node(activeDescendant) $role $description $state $restriction`
     },
     alert: {
       enter: `$name $role $state`,
@@ -304,25 +318,14 @@ Output.RULES = {
     },
     cell: {
       enter: {
-        speak: `@cell_summary($if($ariaCellRowIndex, $ariaCellRowIndex,
-            $tableCellRowIndex),
-            $if($ariaCellColumnIndex, $ariaCellColumnIndex,
-            $tableCellColumnIndex)) $node(tableColumnHeader) $state`,
-        braille: `$state @cell_summary($if($ariaCellRowIndex, $ariaCellRowIndex,
-            $tableCellRowIndex),
-            $if($ariaCellColumnIndex, $ariaCellColumnIndex,
-            $tableCellColumnIndex)) $node(tableColumnHeader)`,
+        speak: `$cellIndexText $node(tableColumnHeader) $state`,
+        braille: `$state $cellIndexText $node(tableColumnHeader)`,
       },
-      speak: `$name @cell_summary($if($ariaCellRowIndex, $ariaCellRowIndex,
-          $tableCellRowIndex),
-          $if($ariaCellColumnIndex, $ariaCellColumnIndex,
-          $tableCellColumnIndex)) $node(tableColumnHeader)
+      speak: `$name $cellIndexText $node(tableColumnHeader)
           $state $description`,
       braille: `$state
-          $name @cell_summary($if($ariaCellRowIndex, $ariaCellRowIndex,
-          $tableCellRowIndex),
-          $if($ariaCellColumnIndex, $ariaCellColumnIndex,
-          $tableCellColumnIndex)) $node(tableColumnHeader) $description`
+          $name $cellIndexText $node(tableColumnHeader) $description
+          $if($selected, @aria_selected_true)`
     },
     checkBox: {
       speak: `$if($checked, $earcon(CHECK_ON), $earcon(CHECK_OFF))
@@ -346,7 +349,8 @@ Output.RULES = {
     },
     group: {
       enter: `$nameFromNode $state $restriction $description`,
-      speak: `$nameOrDescendants $value $state $restriction $description`,
+      speak: `$nameOrDescendants $value $state $restriction $roleDescription
+          $description`,
       leave: ``
     },
     heading: {
@@ -365,6 +369,9 @@ Output.RULES = {
     },
     inlineTextBox: {speak: `$name=`},
     inputTime: {enter: `$nameFromNode $role $state $restriction $description`},
+    labelText: {
+      speak: `$name $value $state $restriction $roleDescription $description`,
+    },
     lineBreak: {speak: `$name=`},
     link: {
       enter: `$nameFromNode= $role $state $restriction`,
@@ -383,13 +390,17 @@ Output.RULES = {
     },
     listBoxOption: {
       speak: `$state $name $role @describe_index($posInSet, $setSize)
-          $description $restriction`
+          $description $restriction
+          $nif($selected, @aria_selected_false)`,
+      braille: `$state $name $role @describe_index($posInSet, $setSize)
+          $description $restriction
+          $if($selected, @aria_selected_true, @aria_selected_false)`
     },
-    listItem: {enter: `$name= $role $state $description`},
     listMarker: {speak: `$name`},
     menu: {
       enter: `$name $role`,
-      speak: `$name $role @@list_with_items($countChildren(menuItem))
+      speak: `$name $node(activeDescendant)
+          $role @@list_with_items($countChildren(menuItem))
           $description $state $restriction`
     },
     menuItem: {
@@ -405,38 +416,52 @@ Output.RULES = {
     menuItemRadio: {
       speak: `$if($checked, $earcon(CHECK_ON), $earcon(CHECK_OFF))
           $if($checked, @describe_radio_selected($name),
-          @describe_radio_unselected($name)) $state $restriction
+          @describe_radio_unselected($name)) $state $roleDescription
+          $restriction
           $description @describe_index($posInSet, $setSize) `
     },
     menuListOption: {
-      speak: `$name @role_menuitem
-          @describe_index($posInSet, $setSize) $state
+      speak: `$name $role @describe_index($posInSet, $setSize) $state
+          $nif($selected, @aria_selected_false)
+          $restriction $description`,
+      braille: `$name $role @describe_index($posInSet, $setSize) $state
+          $if($selected, @aria_selected_true, @aria_selected_false)
           $restriction $description`
     },
-    paragraph: {speak: `$descendants`},
+    paragraph: {speak: `$nameOrDescendants`},
     popUpButton: {
-      speak: `$value $name $role @aria_has_popup
+      speak: `$if($value, $value, $descendants) $name $role @aria_has_popup
           $state $restriction $description`
     },
     radioButton: {
       speak: `$if($checked, $earcon(CHECK_ON), $earcon(CHECK_OFF))
           $if($checked, @describe_radio_selected($name),
-          @describe_radio_unselected($name)) $description $state
-          $restriction`
+          @describe_radio_unselected($name))
+          @describe_index($posInSet, $setSize)
+          $roleDescription $description $state $restriction`
     },
     rootWebArea: {enter: `$name`, speak: `$if($name, $name, $docUrl)`},
-    region: {speak: `$state $nameOrTextContent $description`},
-    row: {enter: `$node(tableRowHeader)`},
-    rowHeader: {speak: `$nameOrTextContent $description $state`},
+    region: {speak: `$state $nameOrTextContent $description $roleDescription`},
+    row: {
+      enter: `$node(tableRowHeader)`,
+      speak: `$name $node(activeDescendant) $value $state $restriction $role
+          $if($selected, @aria_selected_true) $description`
+    },
+    rowHeader: {
+      speak: `$nameOrTextContent $description $roleDescription
+        $state $if($selected, @aria_selected_true)`
+    },
     staticText: {speak: `$name=`},
     switch: {
       speak: `$if($checked, $earcon(CHECK_ON), $earcon(CHECK_OFF))
           $if($checked, @describe_switch_on($name),
-          @describe_switch_off($name)) $description $state $restriction`
+          @describe_switch_off($name)) $roleDescription
+          $description $state $restriction`
     },
     tab: {
-      speak: `@describe_tab($name) $description
-          @describe_index($posInSet, $setSize) $state $restriction `,
+      speak: `@describe_tab($name) $roleDescription $description
+          @describe_index($posInSet, $setSize) $state $restriction
+          $if($selected, @aria_selected_true)`,
     },
     table: {
       enter: `@table_summary($name,
@@ -444,17 +469,25 @@ Output.RULES = {
           $if($ariaColumnCount, $ariaColumnCount, $tableColumnCount))
           $node(tableHeader)`
     },
-    tableHeaderContainer: {speak: `$nameOrTextContent $state $description`},
+    tableHeaderContainer: {
+      speak: `$nameOrTextContent $state $roleDescription
+        $description`
+    },
     tabList: {
       speak: `$name $node(activeDescendant) $state $restriction $role
           $description`,
     },
     textField: {
-      speak: `$name $value $if($multiline, @tag_textarea,
-          $if($inputType, $inputType, $role)) $description $state $restriction`,
-      braille: ``
+      speak: `$name $value
+          $if($roleDescription, $roleDescription,
+              $if($multiline, @tag_textarea,
+                  $if($inputType, $inputType, $role)))
+          $description $state $restriction`
     },
-    timer: {speak: `$nameFromNode $descendants $value $state $description`},
+    timer: {
+      speak: `$nameFromNode $descendants $value $state $role
+        $description`
+    },
     toggleButton: {
       speak: `$if($checked, $earcon(CHECK_ON), $earcon(CHECK_OFF))
           $name $role $pressed $description $state $restriction`
@@ -470,6 +503,7 @@ Output.RULES = {
           @describe_depth($hierarchicalLevel)`,
       speak: `$name
           $role $description $state $restriction
+          $nif($selected, @aria_selected_false)
           @describe_index($posInSet, $setSize)
           @describe_depth($hierarchicalLevel)`
     },
@@ -603,8 +637,33 @@ Output.isTruthy = function(node, attrib) {
   switch (attrib) {
     case 'checked':
       return node.checked && node.checked !== 'false';
+
+    // Chrome automatically calculates these attributes.
+    case 'posInSet':
+      return node.htmlAttributes['aria-posinset'];
+    case 'setSize':
+      return node.htmlAttributes['aria-setsize'];
+
+    // These attributes default to false for empty strings.
+    case 'roleDescription':
+      return !!node.roleDescription;
+    case 'selected':
+      return node.selected === true;
     default:
       return node[attrib] !== undefined || node.state[attrib];
+  }
+};
+
+/**
+ * represents something 'falsey', e.g.: for selected:
+ * node.selected === false
+ */
+Output.isFalsey = function(node, attrib) {
+  switch (attrib) {
+    case 'selected':
+      return node.selected === false;
+    default:
+      return !Output.isTruthy(node, attrib);
   }
 };
 
@@ -760,6 +819,15 @@ Output.prototype = {
   },
 
   /**
+   * Don't include hints in subsequent output.
+   * @return {Output}
+   */
+  withoutHints: function() {
+    this.enableHints_ = false;
+    return this;
+  },
+
+  /**
    * Suppresses processing of a token for subsequent formatting commands.
    * @param {string} token
    * @return {Output}
@@ -833,11 +901,13 @@ Output.prototype = {
    */
   go: function() {
     // Speech.
-    var queueMode = cvox.QueueMode.FLUSH;
-    if (Output.forceModeForNextSpeechUtterance_ !== undefined)
-      queueMode = Output.forceModeForNextSpeechUtterance_;
-    else if (this.queueMode_ !== undefined)
-      queueMode = this.queueMode_;
+    var queueMode = cvox.QueueMode.CATEGORY_FLUSH;
+    if (Output.forceModeForNextSpeechUtterance_ !== undefined) {
+      queueMode = /** @type{cvox.QueueMode} */ (
+          Output.forceModeForNextSpeechUtterance_);
+    } else if (this.queueMode_ !== undefined) {
+      queueMode = /** @type{cvox.QueueMode} */ (this.queueMode_);
+    }
 
     if (this.speechBuffer_.length > 0)
       Output.forceModeForNextSpeechUtterance_ = undefined;
@@ -930,6 +1000,8 @@ Output.prototype = {
       this.subNode_(range, prevRange, type, buff);
     else
       this.range_(range, prevRange, type, buff);
+
+    this.hint_(range, uniqueAncestors, buff);
   },
 
   /**
@@ -995,8 +1067,10 @@ Output.prototype = {
             options.annotation.push(new Output.SelectionSpan(
                 node.textSelStart || 0, node.textSelEnd || 0));
 
-            selectedText = node.value.substring(
-                node.textSelStart || 0, node.textSelEnd || 0);
+            if (node.value) {
+              selectedText = node.value.substring(
+                  node.textSelStart || 0, node.textSelEnd || 0);
+            }
           }
           options.annotation.push(token);
           if (selectedText && !this.formatOptions_.braille) {
@@ -1037,12 +1111,19 @@ Output.prototype = {
           options.annotation.push('name');
           this.append_(buff, node.name || '', options);
         } else if (token == 'nameOrDescendants') {
+          // This token is similar to nameOrTextContent except it gathers rich
+          // output for descendants. It also lets name from contents override
+          // the descendants text if |node| has only static text children.
           options.annotation.push(token);
           if (node.name &&
-              node.nameFrom != chrome.automation.NameFromType.CONTENTS)
+              (node.nameFrom != 'contents' ||
+               node.children.every(function(child) {
+                 return child.role == RoleType.STATIC_TEXT;
+               }))) {
             this.append_(buff, node.name || '', options);
-          else
+          } else {
             this.format_(node, '$descendants', buff);
+          }
         } else if (token == 'description') {
           if (node.name == node.description || node.value == node.description)
             return;
@@ -1106,14 +1187,26 @@ Output.prototype = {
               this.format_(node, formatString, buff);
           }
         } else if (token == 'descendants') {
-          if (!node || AutomationPredicate.leafOrStaticText(node))
+          if (!node)
             return;
 
-          // Construct a range to the leftmost and rightmost leaves.
-          var leftmost = AutomationUtil.findNodePre(
-              node, Dir.FORWARD, AutomationPredicate.leafOrStaticText);
-          var rightmost = AutomationUtil.findNodePre(
-              node, Dir.BACKWARD, AutomationPredicate.leafOrStaticText);
+          var leftmost = node;
+          var rightmost = node;
+          if (AutomationPredicate.leafOrStaticText(node)) {
+            // Find any deeper leaves, if any, by starting from one level down.
+            leftmost = node.firstChild;
+            rightmost = node.lastChild;
+            if (!leftmost || !rightmost)
+              return;
+          }
+
+          // Construct a range to the leftmost and rightmost leaves. This range
+          // gets rendered below which results in output that is the same as if
+          // a user navigated through the entire subtree of |node|.
+          leftmost = AutomationUtil.findNodePre(
+              leftmost, Dir.FORWARD, AutomationPredicate.leafOrStaticText);
+          rightmost = AutomationUtil.findNodePre(
+              rightmost, Dir.BACKWARD, AutomationPredicate.leafOrStaticText);
           if (!leftmost || !rightmost)
             return;
 
@@ -1167,28 +1260,77 @@ Output.prototype = {
           value = String(value + 1);
           options.annotation.push(token);
           this.append_(buff, value, options);
-        } else if (token == 'node') {
-          if (!tree.firstChild || !node[tree.firstChild.value])
-            return;
-          var related = node[tree.firstChild.value];
-          this.node_(related, related, Output.EventType.NAVIGATE, buff);
-        } else if (token == 'nameOrTextContent') {
-          if (node.name) {
-            this.format_(node, '$name', buff);
+        } else if (token == 'cellIndexText') {
+          if (node.htmlAttributes['aria-coltext']) {
+            var value = node.htmlAttributes['aria-coltext'];
+            var row = node;
+            while (row && row.role != RoleType.ROW)
+              row = row.parent;
+            if (!row || !row.htmlAttributes['aria-rowtext'])
+              return;
+            value += row.htmlAttributes['aria-rowtext'];
+            this.append_(buff, value, options);
           } else {
-            var walker = new AutomationTreeWalker(node, Dir.FORWARD, {
-              visit: AutomationPredicate.leafOrStaticText,
-              leaf: AutomationPredicate.leafOrStaticText
-            });
-            var outputStrings = [];
-            while (walker.next().node &&
-                   walker.phase == AutomationTreeWalkerPhase.DESCENDANT) {
-              if (walker.node.name)
-                outputStrings.push(walker.node.name);
-            }
-            var joinedOutput = outputStrings.join(' ');
-            this.append_(buff, joinedOutput, options);
+            this.format_(
+                node, ` @cell_summary($if($ariaCellRowIndex, $ariaCellRowIndex,
+                    $tableCellRowIndex),
+                $if($ariaCellColumnIndex, $ariaCellColumnIndex,
+                     $tableCellColumnIndex))`,
+                buff);
           }
+        } else if (token == 'node') {
+          if (!tree.firstChild)
+            return;
+
+          var relationName = tree.firstChild.value;
+          if (node[relationName]) {
+            var related = node[relationName];
+            this.node_(related, related, Output.EventType.NAVIGATE, buff);
+          } else if (
+              relationName == 'tableColumnHeader' &&
+              node.role == RoleType.CELL) {
+            // Because table columns do not contain cells as descendants, we
+            // must search for the correct column.
+            var columnIndex = node.tableCellColumnIndex;
+            if (opt_prevNode) {
+              // Skip output when previous position falls on the same column.
+              while (opt_prevNode &&
+                     !AutomationPredicate.cellLike(opt_prevNode)) {
+                opt_prevNode = opt_prevNode.parent;
+              }
+
+              if (opt_prevNode &&
+                  opt_prevNode.tableCellColumnIndex == columnIndex)
+                return;
+            }
+            var tableLike = node.parent && node.parent.parent;
+            if (!tableLike || !AutomationPredicate.table(tableLike))
+              return;
+            var column = tableLike.children.find(function(candidate) {
+              return columnIndex === candidate.tableColumnIndex;
+            });
+            if (column && column.tableColumnHeader &&
+                column.tableColumnHeader.name) {
+              this.append_(buff, column.tableColumnHeader.name, options);
+            }
+          }
+        } else if (token == 'nameOrTextContent') {
+          if (node.name && node.nameFrom != 'contents') {
+            this.format_(node, '$name', buff);
+            return;
+          }
+          var walker = new AutomationTreeWalker(node, Dir.FORWARD, {
+            visit: AutomationPredicate.leafOrStaticText,
+            leaf: AutomationPredicate.leafOrStaticText
+          });
+          var outputStrings = [];
+          while (walker.next().node &&
+                 walker.phase == AutomationTreeWalkerPhase.DESCENDANT) {
+            if (walker.node.name)
+              outputStrings.push(walker.node.name);
+          }
+          var finalOutput = outputStrings.join(' ');
+          this.append_(buff, finalOutput, options);
         } else if (node[token] !== undefined) {
           options.annotation.push(token);
           var value = node[token];
@@ -1211,9 +1353,6 @@ Output.prototype = {
               resolvedInfo.msgId + '_brl' :
               resolvedInfo.msgId;
           var msg = Msgs.getMsg(msgId);
-          if (token == StateType.SELECTED)
-            options.annotation.push(new Output.SelectionSpan(
-                buff.length, buff.length + msg.length));
           this.append_(buff, msg, options);
         } else if (token == 'posInSet') {
           if (node.posInSet !== undefined)
@@ -1232,7 +1371,14 @@ Output.prototype = {
             var attrib = cond.value.slice(1);
             if (Output.isTruthy(node, attrib))
               this.format_(node, cond.nextSibling, buff);
-            else
+            else if (Output.isFalsey(node, attrib))
+              this.format_(node, cond.nextSibling.nextSibling, buff);
+          } else if (token == 'nif') {
+            var cond = tree.firstChild;
+            var attrib = cond.value.slice(1);
+            if (Output.isFalsey(node, attrib))
+              this.format_(node, cond.nextSibling, buff);
+            else if (Output.isTruthy(node, attrib))
               this.format_(node, cond.nextSibling.nextSibling, buff);
           } else if (token == 'earcon') {
             // Ignore unless we're generating speech output.
@@ -1619,6 +1765,44 @@ Output.prototype = {
     var loc = range.start.node.boundsForRange(rangeStart, rangeEnd);
     if (loc)
       this.locations_.push(loc);
+  },
+
+  hint_: function(range, uniqueAncestors, buff) {
+    if (!this.enableHints_ || localStorage['useVerboseMode'] != 'true')
+      return;
+
+    var node = range.start.node;
+    if (!node) {
+      this.append_(buff, Msgs.getMsg('warning_no_current_range'));
+      return;
+    }
+
+    // Add hints by priority.
+    if (node.restriction == chrome.automation.Restriction.DISABLED) {
+      // No hints here without further context such as form validation.
+      return;
+    }
+
+    if (node.state[StateType.EDITABLE] && cvox.ChromeVox.isStickyPrefOn)
+      this.format_(node, '@sticky_mode_enabled', buff);
+
+    if (AutomationPredicate.checkable(node))
+      this.format_(node, '@hint_checkable', buff);
+    if (AutomationPredicate.clickable(node))
+      this.format_(node, '@hint_clickable', buff);
+    if (node.autoComplete == 'list' || node.autoComplete == 'both')
+      this.format_(node, '@hint_autocomplete_list', buff);
+    if (node.autoComplete == 'inline' || node.autoComplete == 'both')
+      this.format_(node, '@hint_autocomplete_inline', buff);
+    if (node.accessKey)
+      this.append_(buff, Msgs.getMsg('access_key', [node.accessKey]));
+
+    // Ancestry based hints.
+    if (uniqueAncestors.find(AutomationPredicate.table))
+      this.format_(node, '@hint_table', buff);
+    if (uniqueAncestors.find(
+            AutomationPredicate.roles([RoleType.MENU, RoleType.MENU_BAR])))
+      this.format_(node, '@hint_menu', buff);
   },
 
   /**

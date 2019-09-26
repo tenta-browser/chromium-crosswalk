@@ -83,7 +83,7 @@ class HpackDecoderTest : public ::testing::TestWithParam<bool>,
   HpackDecoderTest() : decoder_(this, 4096) {
     fragment_the_hpack_block_ = GetParam();
   }
-  ~HpackDecoderTest() override {}
+  ~HpackDecoderTest() override = default;
 
   void OnHeaderListStart() override {
     ASSERT_FALSE(saw_start_);
@@ -121,7 +121,7 @@ class HpackDecoderTest : public ::testing::TestWithParam<bool>,
   // error_message may be used in a GOAWAY frame as the Opaque Data.
   void OnHeaderErrorDetected(Http2StringPiece error_message) override {
     ASSERT_TRUE(saw_start_);
-    error_messages_.push_back(error_message.as_string());
+    error_messages_.push_back(Http2String(error_message));
     // No further callbacks should be made at this point, so replace 'this' as
     // the listener with mock_listener_, which is a strict mock, so will
     // generate an error for any calls.

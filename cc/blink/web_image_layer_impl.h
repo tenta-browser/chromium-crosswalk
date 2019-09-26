@@ -10,7 +10,7 @@
 #include "base/macros.h"
 #include "cc/blink/cc_blink_export.h"
 #include "cc/paint/paint_image.h"
-#include "third_party/WebKit/public/platform/WebImageLayer.h"
+#include "third_party/blink/public/platform/web_image_layer.h"
 
 namespace cc_blink {
 
@@ -23,7 +23,9 @@ class WebImageLayerImpl : public blink::WebImageLayer {
 
   // blink::WebImageLayer implementation.
   blink::WebLayer* Layer() override;
-  void SetImage(cc::PaintImage image) override;
+  void SetImage(PaintImage image,
+                const SkMatrix& matrix,
+                bool uses_width_as_height) override;
   void SetNearestNeighbor(bool nearest_neighbor) override;
 
  private:

@@ -20,10 +20,10 @@
 #include "components/prefs/scoped_user_pref_update.h"
 #include "components/sync/model/string_ordinal.h"
 #include "extensions/browser/blacklist_state.h"
-#include "extensions/browser/extension_scoped_prefs.h"
+#include "extensions/browser/disable_reason.h"
+#include "extensions/browser/extension_prefs_scope.h"
 #include "extensions/browser/install_flag.h"
 #include "extensions/common/constants.h"
-#include "extensions/common/disable_reason.h"
 #include "extensions/common/extension.h"
 #include "extensions/common/extension_id.h"
 #include "extensions/common/url_pattern_set.h"
@@ -70,7 +70,7 @@ class URLPatternSet;
 //       preference. Extension-controlled preferences are stored in
 //       PrefValueStore::extension_prefs(), which this class populates and
 //       maintains as the underlying extensions change.
-class ExtensionPrefs : public ExtensionScopedPrefs, public KeyedService {
+class ExtensionPrefs : public KeyedService {
  public:
   using ExtensionsInfo = std::vector<std::unique_ptr<ExtensionInfo>>;
 
@@ -160,17 +160,12 @@ class ExtensionPrefs : public ExtensionScopedPrefs, public KeyedService {
       ExtensionPrefValueMap* extension_pref_value_map,
       bool extensions_disabled,
       const std::vector<ExtensionPrefsObserver*>& early_observers,
-      std::unique_ptr<base::Clock> clock);
+      base::Clock* clock);
 
   ~ExtensionPrefs() override;
 
   // Convenience function to get the ExtensionPrefs for a BrowserContext.
   static ExtensionPrefs* Get(content::BrowserContext* context);
-
-  // Returns all installed extensions from extension preferences provided by
-  // |pref_service|. This is exposed for ProtectedPrefsWatcher because it needs
-  // access to the extension ID list before the ExtensionService is initialized.
-  static ExtensionIdList GetExtensionsFrom(const PrefService* pref_service);
 
   // Add or remove an observer from the ExtensionPrefs.
   void AddObserver(ExtensionPrefsObserver* observer);
@@ -238,35 +233,33 @@ class ExtensionPrefs : public ExtensionScopedPrefs, public KeyedService {
   // Populates |out| with the ids of all installed extensions.
   void GetExtensions(ExtensionIdList* out) const;
 
-  // ExtensionScopedPrefs methods:
   void UpdateExtensionPref(const std::string& id,
                            base::StringPiece key,
-                           std::unique_ptr<base::Value> value) override;
+                           std::unique_ptr<base::Value> value);
 
-  void DeleteExtensionPrefs(const std::string& id) override;
+  void DeleteExtensionPrefs(const std::string& id);
 
   bool ReadPrefAsBoolean(const std::string& extension_id,
                          base::StringPiece pref_key,
-                         bool* out_value) const override;
+                         bool* out_value) const;
 
   bool ReadPrefAsInteger(const std::string& extension_id,
                          base::StringPiece pref_key,
-                         int* out_value) const override;
+                         int* out_value) const;
 
   bool ReadPrefAsString(const std::string& extension_id,
                         base::StringPiece pref_key,
-                        std::string* out_value) const override;
+                        std::string* out_value) const;
 
   bool ReadPrefAsList(const std::string& extension_id,
                       base::StringPiece pref_key,
-                      const base::ListValue** out_value) const override;
+                      const base::ListValue** out_value) const;
 
-  bool ReadPrefAsDictionary(
-      const std::string& extension_id,
-      base::StringPiece pref_key,
-      const base::DictionaryValue** out_value) const override;
+  bool ReadPrefAsDictionary(const std::string& extension_id,
+                            base::StringPiece pref_key,
+                            const base::DictionaryValue** out_value) const;
 
-  bool HasPrefForExtension(const std::string& extension_id) const override;
+  bool HasPrefForExtension(const std::string& extension_id) const;
 
   // Did the extension ask to escalate its permission during an upgrade?
   bool DidExtensionEscalatePermissions(const std::string& id) const;
@@ -563,9 +556,18 @@ class ExtensionPrefs : public ExtensionScopedPrefs, public KeyedService {
   bool GetDNRRulesetChecksum(const ExtensionId& extension_id,
                              int* dnr_ruleset_checksum) const;
 
+  // Sets the set of whitelisted pages for the given |extension_id|.
+  void SetDNRWhitelistedPages(const ExtensionId& extension_id,
+                              URLPatternSet set);
+
+  // Returns the set of whitelisted pages for the given |extension_id|.
+  URLPatternSet GetDNRWhitelistedPages(const ExtensionId& extension_id) const;
+
   // When called before the ExtensionService is created, alerts that are
   // normally suppressed in first run will still trigger.
   static void SetRunAlertsInFirstRunForTest();
+
+  void ClearExternalUninstallForTesting(const ExtensionId& id);
 
  private:
   friend class ExtensionPrefsBlacklistedExtensions;  // Unit test.
@@ -584,7 +586,7 @@ class ExtensionPrefs : public ExtensionScopedPrefs, public KeyedService {
                  PrefService* prefs,
                  const base::FilePath& root_dir,
                  ExtensionPrefValueMap* extension_pref_value_map,
-                 std::unique_ptr<base::Clock> clock,
+                 base::Clock* clock,
                  bool extensions_disabled,
                  const std::vector<ExtensionPrefsObserver*>& early_observers);
 
@@ -616,11 +618,12 @@ class ExtensionPrefs : public ExtensionScopedPrefs, public KeyedService {
   void SetExtensionBlacklisted(const std::string& extension_id,
                                bool is_blacklisted);
 
-  // Converts |new_value| to a list of strings and sets the |pref_key| pref
-  // belonging to |extension_id|.
+  // Converts |set| to a list of strings and sets the |pref_key| pref belonging
+  // to |extension_id|. If |set| is empty, the preference for |pref_key| is
+  // cleared.
   void SetExtensionPrefURLPatternSet(const std::string& extension_id,
                                      base::StringPiece pref_key,
-                                     const URLPatternSet& new_value);
+                                     const URLPatternSet& set);
 
   // Read the boolean preference entry and return true if the preference exists
   // and the preference's value is true; false otherwise.
@@ -688,7 +691,11 @@ class ExtensionPrefs : public ExtensionScopedPrefs, public KeyedService {
       const base::Optional<int>& dnr_ruleset_checksum,
       prefs::DictionaryValueUpdate* extension_dict) const;
 
-  void InitExtensionControlledPrefs(ExtensionPrefValueMap* value_map);
+  void InitExtensionControlledPrefs(const ExtensionsInfo& extensions_info);
+
+  // Loads preferences for the given |extension_id| into the pref value map.
+  void LoadExtensionControlledPrefs(const ExtensionId& extension_id,
+                                    ExtensionPrefsScope scope);
 
   // Helper function to complete initialization of the values in
   // |extension_dict| for an extension install. Also see
@@ -712,7 +719,7 @@ class ExtensionPrefs : public ExtensionScopedPrefs, public KeyedService {
   // Weak pointer, owned by BrowserContext.
   ExtensionPrefValueMap* extension_pref_value_map_;
 
-  std::unique_ptr<base::Clock> clock_;
+  base::Clock* clock_;
 
   bool extensions_disabled_;
 

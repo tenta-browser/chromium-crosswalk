@@ -12,16 +12,14 @@ namespace cc_blink {
 CCBlinkTestSuite::CCBlinkTestSuite(int argc, char** argv)
     : base::TestSuite(argc, argv) {}
 
-CCBlinkTestSuite::~CCBlinkTestSuite() {}
+CCBlinkTestSuite::~CCBlinkTestSuite() = default;
 
 void CCBlinkTestSuite::Initialize() {
   base::TestSuite::Initialize();
 
   message_loop_.reset(new base::MessageLoop);
 
-  base::ThreadIdNameManager::GetInstance()->SetName(
-      base::PlatformThread::CurrentId(),
-      "Main");
+  base::ThreadIdNameManager::GetInstance()->SetName("Main");
 }
 
 void CCBlinkTestSuite::Shutdown() {

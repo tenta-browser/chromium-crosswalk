@@ -7,12 +7,13 @@
 
 #include "base/callback.h"
 #include "base/macros.h"
+#include "device/vr/public/mojom/vr_service.mojom.h"
 #include "device/vr/vr_export.h"
-#include "device/vr/vr_service.mojom.h"
 
 namespace device {
 
-// Must match VRViewerType in enums.xml.
+// These values are persisted to logs. Entries should not be renumbered and
+// numeric values should never be reused.
 enum class VrViewerType {
   GVR_UNKNOWN = 0,
   GVR_CARDBOARD = 1,
@@ -23,6 +24,14 @@ enum class VrViewerType {
   OPENVR_VIVE = 21,
   OPENVR_RIFT_CV1 = 22,
   VIEWER_TYPE_COUNT,
+};
+
+// These values are persisted to logs. Entries should not be renumbered and
+// numeric values should never be reused.
+enum class XrRuntimeAvailable {
+  NONE = 0,
+  OPENVR = 1,
+  COUNT,
 };
 
 const unsigned int VR_DEVICE_LAST_ID = 0xFFFFFFFF;
@@ -41,6 +50,9 @@ class DEVICE_VR_EXPORT VRDevice {
   virtual void Focus() = 0;
   virtual mojom::VRDisplayInfoPtr GetVRDisplayInfo() = 0;
   virtual void SetMagicWindowEnabled(bool enabled) = 0;
+
+  // The fallback device should only be provided in lieu of other devices.
+  virtual bool IsFallbackDevice() = 0;
 
   // TODO(mthiesse): The browser should handle browser-side exiting of
   // presentation before device/ is even aware presentation is being exited.

@@ -123,6 +123,12 @@ void AttemptAutoMountOnUIThread(
       base::BindOnce(std::move(callback), base::File::FILE_ERROR_NOT_FOUND));
 }
 
+content::WebContents* GetWebContentsFromFrameTreeNodeID(
+    int frame_tree_node_id) {
+  DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
+  return content::WebContents::FromFrameTreeNodeId(frame_tree_node_id);
+}
+
 }  // namespace
 
 MediaFileSystemBackend::MediaFileSystemBackend(
@@ -167,20 +173,19 @@ std::string MediaFileSystemBackend::ConstructMountName(
   name.append(extension_id);
   name.append("-");
   if (pref_id != kInvalidMediaGalleryPrefId)
-    name.append(base::Uint64ToString(pref_id));
+    name.append(base::NumberToString(pref_id));
   base::ReplaceChars(name, " /", "_", &name);
   return name;
 }
 
 // static
 bool MediaFileSystemBackend::AttemptAutoMountForURLRequest(
-    const net::URLRequest* url_request,
+    const storage::FileSystemRequestInfo& request_info,
     const storage::FileSystemURL& filesystem_url,
-    const std::string& storage_domain,
     base::OnceCallback<void(base::File::Error result)> callback) {
-  if (storage_domain.empty() ||
+  if (request_info.storage_domain.empty() ||
       filesystem_url.type() != storage::kFileSystemTypeExternal ||
-      storage_domain != filesystem_url.origin().host()) {
+      request_info.storage_domain != filesystem_url.origin().host()) {
     return false;
   }
 
@@ -196,16 +201,24 @@ bool MediaFileSystemBackend::AttemptAutoMountForURLRequest(
                         base::CompareCase::SENSITIVE))
     return false;
 
-  const content::ResourceRequestInfo* request_info =
-      content::ResourceRequestInfo::ForRequest(url_request);
-  if (!request_info)
-    return false;
+  content::ResourceRequestInfo::WebContentsGetter web_contents_getter;
+  if (request_info.content_id) {
+    web_contents_getter = base::BindRepeating(
+        &GetWebContentsFromFrameTreeNodeID, request_info.content_id);
+  } else {
+    const content::ResourceRequestInfo* resource_request_info =
+        content::ResourceRequestInfo::ForRequest(request_info.request);
+    if (!resource_request_info)
+      return false;
+    web_contents_getter =
+        resource_request_info->GetWebContentsGetterForRequest();
+  }
 
   content::BrowserThread::PostTask(
       content::BrowserThread::UI, FROM_HERE,
-      base::BindOnce(&AttemptAutoMountOnUIThread,
-                     request_info->GetWebContentsGetterForRequest(),
-                     storage_domain, mount_point, std::move(callback)));
+      base::BindOnce(&AttemptAutoMountOnUIThread, web_contents_getter,
+                     request_info.storage_domain, mount_point,
+                     std::move(callback)));
   return true;
 }
 

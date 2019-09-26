@@ -6,7 +6,9 @@
 
 #include <math.h>
 #include <algorithm>
+#include <utility>
 
+#include "base/android/android_hardware_buffer_compat.h"
 #include "base/memory/ptr_util.h"
 #include "base/time/time.h"
 #include "base/trace_event/trace_event.h"
@@ -27,16 +29,22 @@ namespace device {
 
 namespace {
 
-// Default downscale factor for computing the recommended WebVR
+// Default downscale factor for computing the recommended WebVR/WebXR
 // renderWidth/Height from the 1:1 pixel mapped size. Using a rather
 // aggressive downscale due to the high overhead of copying pixels
 // twice before handing off to GVR. For comparison, the polyfill
 // uses approximately 0.55 on a Pixel XL.
 static constexpr float kWebVrRecommendedResolutionScale = 0.5;
+static constexpr float kWebXrRecommendedResolutionScale = 0.7;
 
-gfx::Size GetRecommendedWebVrSize(gvr::GvrApi* gvr_api) {
-  // Pick a reasonable default size for the WebVR transfer surface
-  // based on a downscaled 1:1 render resolution. This size will also
+// The scale factor for WebXR on devices that don't have shared buffer
+// support. (Android N and earlier.)
+static constexpr float kWebXrNoSharedBufferResolutionScale = 0.5;
+
+gfx::Size GetMaximumWebVrSize(gvr::GvrApi* gvr_api) {
+  // Get the default, unscaled size for the WebVR transfer surface
+  // based on the optimal 1:1 render resolution. A scalar will be applied to
+  // this value in the renderer to reduce the render load. This size will also
   // be reported to the client via CreateVRDisplayInfo as the
   // client-recommended renderWidth/renderHeight and for the GVR
   // framebuffer. If the client chooses a different size or resizes it
@@ -45,9 +53,7 @@ gfx::Size GetRecommendedWebVrSize(gvr::GvrApi* gvr_api) {
   gvr::Sizei render_target_size =
       gvr_api->GetMaximumEffectiveRenderTargetSize();
 
-  gfx::Size webvr_size(
-      render_target_size.width * kWebVrRecommendedResolutionScale,
-      render_target_size.height * kWebVrRecommendedResolutionScale);
+  gfx::Size webvr_size(render_target_size.width, render_target_size.height);
 
   // Ensure that the width is an even number so that the eyes each
   // get the same size, the recommended renderWidth is per eye
@@ -64,12 +70,12 @@ mojom::VREyeParametersPtr CreateEyeParamater(
     gvr::GvrApi* gvr_api,
     gvr::Eye eye,
     const gvr::BufferViewportList& buffers,
-    const gfx::Size& recommended_size) {
+    const gfx::Size& maximum_size) {
   mojom::VREyeParametersPtr eye_params = mojom::VREyeParameters::New();
   eye_params->fieldOfView = mojom::VRFieldOfView::New();
   eye_params->offset.resize(3);
-  eye_params->renderWidth = recommended_size.width() / 2;
-  eye_params->renderHeight = recommended_size.height();
+  eye_params->renderWidth = maximum_size.width() / 2;
+  eye_params->renderHeight = maximum_size.height();
 
   gvr::BufferViewport eye_viewport = gvr_api->CreateBufferViewport();
   buffers.GetBufferViewport(eye, &eye_viewport);
@@ -107,11 +113,23 @@ mojom::VRDisplayInfoPtr CreateVRDisplayInfo(gvr::GvrApi* gvr_api,
       gvr_api->CreateEmptyBufferViewportList();
   gvr_buffer_viewports.SetToRecommendedBufferViewports();
 
-  gfx::Size recommended_size = GetRecommendedWebVrSize(gvr_api);
+  gfx::Size maximum_size = GetMaximumWebVrSize(gvr_api);
   device->leftEye = CreateEyeParamater(gvr_api, GVR_LEFT_EYE,
-                                       gvr_buffer_viewports, recommended_size);
+                                       gvr_buffer_viewports, maximum_size);
   device->rightEye = CreateEyeParamater(gvr_api, GVR_RIGHT_EYE,
-                                        gvr_buffer_viewports, recommended_size);
+                                        gvr_buffer_viewports, maximum_size);
+
+  // This scalar will be applied in the renderer to the recommended render
+  // target sizes. For WebVR it will always be applied, for WebXR it can be
+  // overridden.
+  if (base::AndroidHardwareBufferCompat::IsSupportAvailable()) {
+    device->webxr_default_framebuffer_scale = kWebXrRecommendedResolutionScale;
+  } else {
+    device->webxr_default_framebuffer_scale =
+        kWebXrNoSharedBufferResolutionScale;
+  }
+  device->webvr_default_framebuffer_scale = kWebVrRecommendedResolutionScale;
+
   return device;
 }
 
@@ -125,7 +143,9 @@ std::unique_ptr<GvrDevice> GvrDevice::Create() {
 }
 
 GvrDevice::GvrDevice() : weak_ptr_factory_(this) {
-  GetGvrDelegateProvider();
+  GvrDelegateProvider* delegate_provider = GetGvrDelegateProvider();
+  if (!delegate_provider || delegate_provider->ShouldDisableGvrDevice())
+    return;
   JNIEnv* env = base::android::AttachCurrentThread();
   non_presenting_context_.Reset(
       Java_NonPresentingGvrContext_create(env, reinterpret_cast<jlong>(this)));
@@ -148,10 +168,11 @@ void GvrDevice::RequestPresent(
     VRDisplayImpl* display,
     mojom::VRSubmitFrameClientPtr submit_client,
     mojom::VRPresentationProviderRequest request,
+    mojom::VRRequestPresentOptionsPtr present_options,
     mojom::VRDisplayHost::RequestPresentCallback callback) {
   GvrDelegateProvider* delegate_provider = GetGvrDelegateProvider();
   if (!delegate_provider) {
-    std::move(callback).Run(false);
+    std::move(callback).Run(false, nullptr);
     return;
   }
 
@@ -159,18 +180,20 @@ void GvrDevice::RequestPresent(
   // pauses Chrome.
   delegate_provider->RequestWebVRPresent(
       std::move(submit_client), std::move(request), GetVRDisplayInfo(),
-      base::Bind(&GvrDevice::OnRequestPresentResult,
-                 weak_ptr_factory_.GetWeakPtr(), base::Passed(&callback),
-                 base::Unretained(display)));
+      std::move(present_options),
+      base::BindOnce(&GvrDevice::OnRequestPresentResult,
+                     weak_ptr_factory_.GetWeakPtr(), std::move(callback),
+                     base::Unretained(display)));
 }
 
 void GvrDevice::OnRequestPresentResult(
     mojom::VRDisplayHost::RequestPresentCallback callback,
     VRDisplayImpl* display,
-    bool result) {
+    bool result,
+    mojom::VRDisplayFrameTransportOptionsPtr transport_options) {
   if (result)
     SetPresentingDisplay(display);
-  std::move(callback).Run(result);
+  std::move(callback).Run(result, std::move(transport_options));
 }
 
 void GvrDevice::ExitPresent() {
@@ -195,10 +218,14 @@ void GvrDevice::OnListeningForActivate(bool listening) {
 
 void GvrDevice::PauseTracking() {
   gvr_api_->PauseTracking();
+  JNIEnv* env = base::android::AttachCurrentThread();
+  Java_NonPresentingGvrContext_pause(env, non_presenting_context_);
 }
 
 void GvrDevice::ResumeTracking() {
   gvr_api_->ResumeTracking();
+  JNIEnv* env = base::android::AttachCurrentThread();
+  Java_NonPresentingGvrContext_resume(env, non_presenting_context_);
 }
 
 GvrDelegateProvider* GvrDevice::GetGvrDelegateProvider() {
@@ -210,7 +237,8 @@ GvrDelegateProvider* GvrDevice::GetGvrDelegateProvider() {
   return delegate_provider;
 }
 
-void GvrDevice::OnDIPScaleChanged(JNIEnv* env, const JavaRef<jobject>& obj) {
+void GvrDevice::OnDisplayConfigurationChanged(JNIEnv* env,
+                                              const JavaRef<jobject>& obj) {
   SetVRDisplayInfo(CreateVRDisplayInfo(gvr_api_.get(), GetId()));
 }
 

@@ -13,7 +13,7 @@
 #include "media/base/media_switches.h"
 #include "media/base/video_frame.h"
 #include "media/blink/webmediaplayer_params.h"
-#include "third_party/WebKit/public/platform/WebVideoFrameSubmitter.h"
+#include "third_party/blink/public/platform/web_video_frame_submitter.h"
 
 namespace media {
 
@@ -25,7 +25,7 @@ VideoFrameCompositor::VideoFrameCompositor(
     const scoped_refptr<base::SingleThreadTaskRunner>& task_runner,
     std::unique_ptr<blink::WebVideoFrameSubmitter> submitter)
     : task_runner_(task_runner),
-      tick_clock_(new base::DefaultTickClock()),
+      tick_clock_(base::DefaultTickClock::GetInstance()),
       background_rendering_enabled_(true),
       background_rendering_timer_(
           FROM_HERE,
@@ -43,8 +43,6 @@ VideoFrameCompositor::VideoFrameCompositor(
       last_interval_(base::TimeDelta::FromSecondsD(1.0 / 60)),
       callback_(nullptr),
       submitter_(std::move(submitter)),
-      surface_layer_for_video_enabled_(
-          base::FeatureList::IsEnabled(media::kUseSurfaceLayerForVideo)),
       weak_ptr_factory_(this) {
   background_rendering_timer_.SetTaskRunner(task_runner_);
   if (submitter_.get()) {
@@ -65,18 +63,19 @@ VideoFrameCompositor::~VideoFrameCompositor() {
   DCHECK(!rendering_);
   if (client_)
     client_->StopUsingProvider();
-  if (submitter_)
-    submitter_->StopUsingProvider();
 }
 
-void VideoFrameCompositor::EnableSubmission(const viz::FrameSinkId& id) {
+void VideoFrameCompositor::EnableSubmission(const viz::FrameSinkId& id,
+                                            media::VideoRotation rotation) {
   DCHECK(task_runner_->BelongsToCurrentThread());
+  submitter_->SetRotation(rotation);
   submitter_->StartSubmitting(id);
+  client_ = submitter_.get();
 }
 
 bool VideoFrameCompositor::IsClientSinkAvailable() {
   DCHECK(task_runner_->BelongsToCurrentThread());
-  return client_ || submitter_;
+  return client_;
 }
 
 void VideoFrameCompositor::OnRendererStateUpdate(bool new_state) {
@@ -110,17 +109,10 @@ void VideoFrameCompositor::OnRendererStateUpdate(bool new_state) {
   if (!IsClientSinkAvailable())
     return;
 
-  if (submitter_) {
-    if (rendering_)
-      submitter_->StartRendering();
-    else
-      submitter_->StopRendering();
-  } else {
-    if (rendering_)
-      client_->StartRendering();
-    else
-      client_->StopRendering();
-  }
+  if (rendering_)
+    client_->StartRendering();
+  else
+    client_->StopRendering();
 }
 
 void VideoFrameCompositor::SetVideoFrameProviderClient(
@@ -203,10 +195,7 @@ void VideoFrameCompositor::PaintSingleFrame(
   }
   if (ProcessNewFrame(frame, repaint_duplicate_frame) &&
       IsClientSinkAvailable()) {
-    if (!submitter_)
-      client_->DidReceiveFrame();
-    else
-      submitter_->DidReceiveFrame();
+    client_->DidReceiveFrame();
   }
 }
 
@@ -232,9 +221,9 @@ void VideoFrameCompositor::UpdateCurrentFrameIfStale() {
 }
 
 void VideoFrameCompositor::SetOnNewProcessedFrameCallback(
-    const OnNewProcessedFrameCB& cb) {
+    OnNewProcessedFrameCB cb) {
   DCHECK(task_runner_->BelongsToCurrentThread());
-  new_processed_frame_cb_ = cb;
+  new_processed_frame_cb_ = std::move(cb);
 }
 
 bool VideoFrameCompositor::ProcessNewFrame(
@@ -254,7 +243,7 @@ bool VideoFrameCompositor::ProcessNewFrame(
   SetCurrentFrame(frame);
 
   if (!new_processed_frame_cb_.is_null())
-    base::ResetAndReturn(&new_processed_frame_cb_).Run(base::TimeTicks::Now());
+    std::move(new_processed_frame_cb_).Run(base::TimeTicks::Now());
 
   return true;
 }
@@ -264,12 +253,8 @@ void VideoFrameCompositor::BackgroundRender() {
   const base::TimeTicks now = tick_clock_->NowTicks();
   last_background_render_ = now;
   bool new_frame = CallRender(now, now + last_interval_, true);
-  if (new_frame && IsClientSinkAvailable()) {
-    if (!submitter_)
-      client_->DidReceiveFrame();
-    else
-      submitter_->DidReceiveFrame();
-  }
+  if (new_frame && IsClientSinkAvailable())
+    client_->DidReceiveFrame();
 }
 
 bool VideoFrameCompositor::CallRender(base::TimeTicks deadline_min,
@@ -311,6 +296,10 @@ bool VideoFrameCompositor::CallRender(base::TimeTicks deadline_min,
   if (background_rendering_enabled_)
     background_rendering_timer_.Reset();
   return new_frame || had_new_background_frame;
+}
+
+void VideoFrameCompositor::UpdateRotation(media::VideoRotation rotation) {
+  submitter_->SetRotation(rotation);
 }
 
 }  // namespace media

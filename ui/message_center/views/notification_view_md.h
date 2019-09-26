@@ -9,18 +9,23 @@
 
 #include "base/gtest_prod_util.h"
 #include "base/macros.h"
+#include "base/optional.h"
+#include "base/time/time.h"
 #include "ui/message_center/message_center_export.h"
 #include "ui/message_center/views/message_view.h"
+#include "ui/views/animation/ink_drop_observer.h"
 #include "ui/views/controls/button/button.h"
+#include "ui/views/controls/button/image_button.h"
 #include "ui/views/controls/button/label_button.h"
 #include "ui/views/controls/textfield/textfield.h"
 #include "ui/views/controls/textfield/textfield_controller.h"
-#include "ui/views/view_targeter_delegate.h"
 
 namespace views {
+class ImageButton;
 class Label;
 class LabelButton;
 class ProgressBar;
+class RadioButton;
 }
 
 namespace message_center {
@@ -33,7 +38,7 @@ class ProportionalImageView;
 // message next to each other within a single column.
 class ItemView : public views::View {
  public:
-  explicit ItemView(const message_center::NotificationItem& item);
+  explicit ItemView(const NotificationItem& item);
   ~ItemView() override;
 
   const char* GetClassName() const override;
@@ -51,19 +56,17 @@ class CompactTitleMessageView : public views::View {
 
   const char* GetClassName() const override;
 
-  void OnPaint(gfx::Canvas* canvas) override;
+  gfx::Size CalculatePreferredSize() const override;
+  void Layout() override;
 
-  void set_title(const base::string16& title) { title_ = title; }
-  void set_message(const base::string16& message) { message_ = message; }
+  void set_title(const base::string16& title);
+  void set_message(const base::string16& message);
 
  private:
   DISALLOW_COPY_AND_ASSIGN(CompactTitleMessageView);
 
-  base::string16 title_;
-  base::string16 message_;
-
-  views::Label* title_view_ = nullptr;
-  views::Label* message_view_ = nullptr;
+  views::Label* title_ = nullptr;
+  views::Label* message_ = nullptr;
 };
 
 class LargeImageView : public views::View {
@@ -111,9 +114,8 @@ class NotificationButtonMD : public views::LabelButton {
   // |placeholder| is placeholder text shown on the input field. Only used when
   // |is_inline_reply| is true.
   NotificationButtonMD(views::ButtonListener* listener,
-                       bool is_inline_reply,
                        const base::string16& label,
-                       const base::string16& placeholder);
+                       const base::Optional<base::string16>& placeholder);
   ~NotificationButtonMD() override;
 
   void SetText(const base::string16& text) override;
@@ -124,12 +126,12 @@ class NotificationButtonMD : public views::LabelButton {
 
   SkColor enabled_color_for_testing() { return label()->enabled_color(); }
 
-  bool is_inline_reply() const { return is_inline_reply_; }
-  const base::string16& placeholder() const { return placeholder_; }
+  const base::Optional<base::string16>& placeholder() const {
+    return placeholder_;
+  }
 
  private:
-  const bool is_inline_reply_;
-  const base::string16 placeholder_;
+  const base::Optional<base::string16> placeholder_;
 
   DISALLOW_COPY_AND_ASSIGN(NotificationButtonMD);
 };
@@ -141,26 +143,71 @@ class NotificationInputDelegate {
   virtual ~NotificationInputDelegate() = default;
 };
 
-class NotificationInputMD : public views::Textfield,
-                            public views::TextfieldController {
+class NotificationInputTextfieldMD : public views::Textfield {
  public:
-  NotificationInputMD(NotificationInputDelegate* delegate);
-  ~NotificationInputMD() override;
-
-  bool HandleKeyEvent(views::Textfield* sender,
-                      const ui::KeyEvent& key_event) override;
+  NotificationInputTextfieldMD(views::TextfieldController* controller);
+  ~NotificationInputTextfieldMD() override;
 
   void set_index(size_t index) { index_ = index; }
   void set_placeholder(const base::string16& placeholder);
 
+  size_t index() const { return index_; };
+
+ private:
+  // |index_| is the notification action index that should be passed as the
+  // argument of ClickOnNotificationButtonWithReply.
+  size_t index_ = 0;
+
+  DISALLOW_COPY_AND_ASSIGN(NotificationInputTextfieldMD);
+};
+
+class NotificationInputReplyButtonMD : public views::ImageButton {
+ public:
+  NotificationInputReplyButtonMD(views::ButtonListener* listener);
+  ~NotificationInputReplyButtonMD() override;
+
+  void SetNormalImage();
+  void SetPlaceholderImage();
+
+ private:
+  DISALLOW_COPY_AND_ASSIGN(NotificationInputReplyButtonMD);
+};
+
+class NotificationInputContainerMD : public views::InkDropHostView,
+                                     public views::ButtonListener,
+                                     public views::TextfieldController {
+ public:
+  NotificationInputContainerMD(NotificationInputDelegate* delegate);
+  ~NotificationInputContainerMD() override;
+
+  void AnimateBackground(const ui::LocatedEvent& event);
+
+  // Overridden from views::InkDropHostView:
+  void AddInkDropLayer(ui::Layer* ink_drop_layer) override;
+  void RemoveInkDropLayer(ui::Layer* ink_drop_layer) override;
+  std::unique_ptr<views::InkDropRipple> CreateInkDropRipple() const override;
+  SkColor GetInkDropBaseColor() const override;
+
+  // Overridden from views::TextfieldController:
+  bool HandleKeyEvent(views::Textfield* sender,
+                      const ui::KeyEvent& key_event) override;
+  void OnAfterUserAction(views::Textfield* sender) override;
+
+  // Overridden from views::ButtonListener:
+  void ButtonPressed(views::Button* sender, const ui::Event& event) override;
+
+  NotificationInputTextfieldMD* textfield() const { return textfield_; };
+  NotificationInputReplyButtonMD* button() const { return button_; };
+
  private:
   NotificationInputDelegate* const delegate_;
 
-  // |index_| is the notification action index that should be passed as the
-  // argument of MessageViewDelegate::ClickOnNotificationButtonWithReply.
-  size_t index_ = 0;
+  views::InkDropContainerView* const ink_drop_container_;
 
-  DISALLOW_COPY_AND_ASSIGN(NotificationInputMD);
+  NotificationInputTextfieldMD* const textfield_;
+  NotificationInputReplyButtonMD* const button_;
+
+  DISALLOW_COPY_AND_ASSIGN(NotificationInputContainerMD);
 };
 
 // View that displays all current types of notification (web, basic, image, and
@@ -169,41 +216,55 @@ class NotificationInputMD : public views::Textfield,
 // returned by the Create() factory method below.
 class MESSAGE_CENTER_EXPORT NotificationViewMD
     : public MessageView,
+      public views::InkDropObserver,
       public NotificationInputDelegate,
-      public views::ButtonListener,
-      public views::ViewTargeterDelegate {
+      public views::ButtonListener {
  public:
-  NotificationViewMD(MessageViewDelegate* controller,
-                     const Notification& notification);
+  static const char kMessageViewSubClassName[];
+
+  explicit NotificationViewMD(const Notification& notification);
   ~NotificationViewMD() override;
 
   void Activate();
+
+  void AddBackgroundAnimation(const ui::Event& event);
+  void RemoveBackgroundAnimation();
 
   // Overridden from views::View:
   void Layout() override;
   void OnFocus() override;
   void ScrollRectToVisible(const gfx::Rect& rect) override;
-  gfx::NativeCursor GetCursor(const ui::MouseEvent& event) override;
-  void OnMouseEntered(const ui::MouseEvent& event) override;
-  void OnMouseExited(const ui::MouseEvent& event) override;
   bool OnMousePressed(const ui::MouseEvent& event) override;
+  bool OnMouseDragged(const ui::MouseEvent& event) override;
+  void OnMouseReleased(const ui::MouseEvent& event) override;
+  void OnMouseEvent(ui::MouseEvent* event) override;
+  void OnGestureEvent(ui::GestureEvent* event) override;
+
+  // Overridden from views::InkDropHostView:
+  void AddInkDropLayer(ui::Layer* ink_drop_layer) override;
+  void RemoveInkDropLayer(ui::Layer* ink_drop_layer) override;
+  std::unique_ptr<views::InkDropRipple> CreateInkDropRipple() const override;
+  SkColor GetInkDropBaseColor() const override;
 
   // Overridden from MessageView:
   void UpdateWithNotification(const Notification& notification) override;
   void ButtonPressed(views::Button* sender, const ui::Event& event) override;
-  bool IsCloseButtonFocused() const override;
-  void RequestFocusOnCloseButton() override;
   void UpdateControlButtonsVisibility() override;
   NotificationControlButtonsView* GetControlButtonsView() const override;
   bool IsExpanded() const override;
   void SetExpanded(bool expanded) override;
+  bool IsManuallyExpandedOrCollapsed() const override;
+  void SetManuallyExpandedOrCollapsed(bool value) override;
+  void OnSettingsButtonPressed(const ui::Event& event) override;
+  const char* GetMessageViewSubClassName() const final;
+
+  // views::InkDropObserver:
+  void InkDropAnimationStarted() override;
+  void InkDropRippleAnimationEnded(views::InkDropState ink_drop_state) override;
 
   // Overridden from NotificationInputDelegate:
   void OnNotificationInputSubmit(size_t index,
                                  const base::string16& text) override;
-
-  // views::ViewTargeterDelegate:
-  views::View* TargetForRect(views::View* root, const gfx::Rect& rect) override;
 
  private:
   FRIEND_TEST_ALL_PREFIXES(NotificationViewMDTest, CreateOrUpdateTest);
@@ -215,6 +276,8 @@ class MESSAGE_CENTER_EXPORT NotificationViewMD
   FRIEND_TEST_ALL_PREFIXES(NotificationViewMDTest, ExpandLongMessage);
   FRIEND_TEST_ALL_PREFIXES(NotificationViewMDTest, TestAccentColor);
   FRIEND_TEST_ALL_PREFIXES(NotificationViewMDTest, UseImageAsIcon);
+  FRIEND_TEST_ALL_PREFIXES(NotificationViewMDTest, NotificationWithoutIcon);
+  FRIEND_TEST_ALL_PREFIXES(NotificationViewMDTest, InlineSettings);
 
   friend class NotificationViewMDTest;
 
@@ -234,16 +297,24 @@ class MESSAGE_CENTER_EXPORT NotificationViewMD
   void CreateOrUpdateSmallIconView(const Notification& notification);
   void CreateOrUpdateImageView(const Notification& notification);
   void CreateOrUpdateActionButtonViews(const Notification& notification);
+  void CreateOrUpdateInlineSettingsViews(const Notification& notification);
 
   bool IsExpandable();
   void ToggleExpanded();
   void UpdateViewForExpandedState(bool expanded);
+  void ToggleInlineSettings(const ui::Event& event);
+
+  views::InkDropContainerView* const ink_drop_container_;
 
   // View containing close and settings buttons
   std::unique_ptr<NotificationControlButtonsView> control_buttons_view_;
 
   // Whether this notification is expanded or not.
   bool expanded_ = false;
+
+  // True if the notification is expanded/collapsed by user interaction.
+  // If true, MessagePopupCollection will not auto-collapse the notification.
+  bool manually_expanded_or_collapsed_ = false;
 
   // Whether hiding icon on the right side when expanded.
   bool hide_icon_on_expanded_ = false;
@@ -258,12 +329,13 @@ class MESSAGE_CENTER_EXPORT NotificationViewMD
   NotificationHeaderView* header_row_ = nullptr;
   views::View* content_row_ = nullptr;
   views::View* actions_row_ = nullptr;
+  views::View* settings_row_ = nullptr;
 
   // Containers for left and right side on |content_row_|
   views::View* left_content_ = nullptr;
   views::View* right_content_ = nullptr;
 
-  // Views which are dinamicallly created inside view hierarchy.
+  // Views which are dynamically created inside view hierarchy.
   views::Label* title_view_ = nullptr;
   BoundedLabel* message_view_ = nullptr;
   views::Label* status_view_ = nullptr;
@@ -274,9 +346,16 @@ class MESSAGE_CENTER_EXPORT NotificationViewMD
   views::ProgressBar* progress_bar_view_ = nullptr;
   CompactTitleMessageView* compact_title_message_view_ = nullptr;
   views::View* action_buttons_row_ = nullptr;
-  NotificationInputMD* inline_reply_ = nullptr;
+  NotificationInputContainerMD* inline_reply_ = nullptr;
+
+  // Views for inline settings.
+  views::RadioButton* block_all_button_ = nullptr;
+  views::RadioButton* dont_block_button_ = nullptr;
+  views::LabelButton* settings_done_button_ = nullptr;
 
   std::unique_ptr<ui::EventHandler> click_activator_;
+
+  base::TimeTicks last_mouse_pressed_timestamp_;
 
   DISALLOW_COPY_AND_ASSIGN(NotificationViewMD);
 };

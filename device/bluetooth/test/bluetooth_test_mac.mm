@@ -7,6 +7,7 @@
 #import <CoreBluetooth/CoreBluetooth.h>
 #include <stdint.h>
 
+#include "base/bind.h"
 #import "base/mac/foundation_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/sys_string_conversions.h"
@@ -51,6 +52,7 @@ scoped_nsobject<NSDictionary> CreateAdvertisementData(
     NSString* name,
     NSArray* uuids,
     NSDictionary* service_data,
+    NSData* manufacturer_data,
     NSNumber* tx_power) {
   NSMutableDictionary* advertisement_data(
       [NSMutableDictionary dictionaryWithDictionary:@{
@@ -69,6 +71,11 @@ scoped_nsobject<NSDictionary> CreateAdvertisementData(
   if (service_data) {
     [advertisement_data setObject:service_data
                            forKey:CBAdvertisementDataServiceDataKey];
+  }
+
+  if (service_data) {
+    [advertisement_data setObject:manufacturer_data
+                           forKey:CBAdvertisementDataManufacturerDataKey];
   }
 
   if (tx_power) {
@@ -131,6 +138,9 @@ void BluetoothTestMac::InitWithFakeAdapter() {
     mock_central_manager_->get().bluetoothTestMac = this;
     [mock_central_manager_->get() setState:CBCentralManagerStatePoweredOn];
     adapter_mac_->SetCentralManagerForTesting((id)mock_central_manager_->get());
+    adapter_mac_->SetPowerStateFunctionForTesting(
+        base::BindRepeating(&BluetoothTestMac::SetMockControllerPowerState,
+                            base::Unretained(this)));
   }
 }
 
@@ -164,6 +174,7 @@ BluetoothDevice* BluetoothTestMac::SimulateLowEnergyDevice(int device_ordinal) {
   NSArray* uuids;
   NSNumber* rssi;
   NSDictionary* service_data;
+  NSData* manufacturer_data;
   NSNumber* tx_power;
 
   switch (device_ordinal) {
@@ -179,6 +190,9 @@ BluetoothDevice* BluetoothTestMac::SimulateLowEnergyDevice(int device_ordinal) {
         [CBUUID UUIDWithString:@(kTestUUIDHeartRate)] :
             [NSData dataWithBytes:(unsigned char[]){1} length:1]
       };
+      manufacturer_data =
+          [NSData dataWithBytes:(unsigned char[]){0xE0, 0x00, 1, 2, 3, 4}
+                         length:6];
       tx_power = @(static_cast<int8_t>(TestTxPower::LOWEST));
       break;
     case 2:
@@ -195,6 +209,8 @@ BluetoothDevice* BluetoothTestMac::SimulateLowEnergyDevice(int device_ordinal) {
         [CBUUID UUIDWithString:@(kTestUUIDImmediateAlert)] :
             [NSData dataWithBytes:(unsigned char[]){0, 2} length:2]
       };
+      manufacturer_data =
+          [NSData dataWithBytes:(unsigned char[]){0xE0, 0x00} length:2];
       tx_power = @(static_cast<int8_t>(TestTxPower::LOWER));
       break;
     case 3:
@@ -203,6 +219,7 @@ BluetoothDevice* BluetoothTestMac::SimulateLowEnergyDevice(int device_ordinal) {
       rssi = @(static_cast<int8_t>(TestRSSI::LOW));
       uuids = nil;
       service_data = nil;
+      manufacturer_data = nil;
       tx_power = nil;
       break;
     case 4:
@@ -211,6 +228,7 @@ BluetoothDevice* BluetoothTestMac::SimulateLowEnergyDevice(int device_ordinal) {
       rssi = @(static_cast<int8_t>(TestRSSI::MEDIUM));
       uuids = nil;
       service_data = nil;
+      manufacturer_data = nil;
       tx_power = nil;
       break;
     case 5:
@@ -219,6 +237,7 @@ BluetoothDevice* BluetoothTestMac::SimulateLowEnergyDevice(int device_ordinal) {
       rssi = @(static_cast<int8_t>(TestRSSI::HIGH));
       uuids = nil;
       service_data = nil;
+      manufacturer_data = nil;
       tx_power = nil;
       break;
     default:
@@ -229,6 +248,7 @@ BluetoothDevice* BluetoothTestMac::SimulateLowEnergyDevice(int device_ordinal) {
       rssi = nil;
       uuids = nil;
       service_data = nil;
+      manufacturer_data = nil;
       tx_power = nil;
   }
   scoped_nsobject<MockCBPeripheral> mock_peripheral([[MockCBPeripheral alloc]
@@ -239,7 +259,7 @@ BluetoothDevice* BluetoothTestMac::SimulateLowEnergyDevice(int device_ordinal) {
              centralManager:central_manager
       didDiscoverPeripheral:[mock_peripheral peripheral]
           advertisementData:CreateAdvertisementData(name, uuids, service_data,
-                                                    tx_power)
+                                                    manufacturer_data, tx_power)
                        RSSI:rssi];
   return observer.last_device();
 }
@@ -544,6 +564,37 @@ void BluetoothTestMac::SimulateGattDescriptorReadNSNumberMac(
     short value) {
   NSNumber* number = [NSNumber numberWithShort:value];
   [GetCBMockDescriptor(descriptor) simulateReadWithValue:number error:nil];
+}
+
+void BluetoothTestMac::SetMockControllerPowerState(int powered) {
+  // We are posting a task so that the state only gets updated in the next cycle
+  // and pending callbacks are not executed immediately.
+  adapter_mac_->ui_task_runner_->PostTask(
+      FROM_HERE,
+      base::BindOnce(
+          [](base::WeakPtr<BluetoothAdapterMac> adapter_mac, int powered) {
+            // Guard against deletion of the adapter.
+            if (!adapter_mac)
+              return;
+
+            auto* mock_central_manager =
+                base::mac::ObjCCastStrict<MockCentralManager>(
+                    adapter_mac->GetCentralManager());
+            [mock_central_manager
+                setState:powered ? CBCentralManagerStatePoweredOn
+                                 : CBCentralManagerStatePoweredOff];
+            [mock_central_manager.delegate
+                centralManagerDidUpdateState:adapter_mac->GetCentralManager()];
+            // On real devices, the Bluetooth classic code will call
+            // DidChangePoweredState() and dispatch the AdapterPoweredChanged
+            // event. Test code does not fake Bluetooth classic behavior so we
+            // call the method and dispatch the event directly.
+            // BT classic code related to powering the adapter is tested in
+            // BluetoothAdapterMacTest.PollAndChangePower.
+            adapter_mac->DidChangePoweredState();
+            adapter_mac->NotifyAdapterPoweredChanged(powered);
+          },
+          adapter_mac_->weak_ptr_factory_.GetWeakPtr(), powered));
 }
 
 void BluetoothTest::AddServicesToDeviceMac(

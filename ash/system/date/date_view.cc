@@ -6,6 +6,8 @@
 
 #include "ash/shell.h"
 #include "ash/strings/grit/ash_strings.h"
+#include "ash/system/model/clock_model.h"
+#include "ash/system/model/system_tray_model.h"
 #include "ash/system/tray/system_tray_controller.h"
 #include "ash/system/tray/tray_constants.h"
 #include "ash/system/tray/tray_popup_item_style.h"
@@ -78,12 +80,13 @@ void BaseDateTimeView::UpdateText() {
 
 void BaseDateTimeView::GetAccessibleNodeData(ui::AXNodeData* node_data) {
   ActionableView::GetAccessibleNodeData(node_data);
-  node_data->role = ui::AX_ROLE_TIME;
+  node_data->role = ax::mojom::Role::kTime;
 }
 
 BaseDateTimeView::BaseDateTimeView(SystemTrayItem* owner)
     : ActionableView(owner, TrayPopupInkDropStyle::INSET_BOUNDS),
-      hour_type_(Shell::Get()->system_tray_controller()->hour_clock_type()) {
+      hour_type_(
+          Shell::Get()->system_tray_model()->clock()->hour_clock_type()) {
   SetTimer(base::Time::Now());
   SetFocusBehavior(FocusBehavior::NEVER);
 }
@@ -116,7 +119,7 @@ void BaseDateTimeView::UpdateTextInternal(const base::Time& now) {
                     base::ASCIIToUTF16(", ") +
                     base::TimeFormatFriendlyDate(now));
 
-  NotifyAccessibilityEvent(ui::AX_EVENT_TEXT_CHANGED, true);
+  NotifyAccessibilityEvent(ax::mojom::Event::kTextChanged, true);
 }
 
 void BaseDateTimeView::ChildPreferredSizeChanged(views::View* child) {
@@ -127,14 +130,14 @@ void BaseDateTimeView::ChildPreferredSizeChanged(views::View* child) {
 
 DateView::DateView(SystemTrayItem* owner)
     : BaseDateTimeView(owner), action_(DateAction::NONE) {
-  views::BoxLayout* box_layout =
-      new views::BoxLayout(views::BoxLayout::kHorizontal,
-                           gfx::Insets(0, kTrayPopupLabelHorizontalPadding), 0);
+  auto box_layout = std::make_unique<views::BoxLayout>(
+      views::BoxLayout::kHorizontal,
+      gfx::Insets(0, kTrayPopupLabelHorizontalPadding), 0);
   box_layout->set_main_axis_alignment(
       views::BoxLayout::MAIN_AXIS_ALIGNMENT_CENTER);
   box_layout->set_cross_axis_alignment(
       views::BoxLayout::CROSS_AXIS_ALIGNMENT_CENTER);
-  SetLayoutManager(box_layout);
+  SetLayoutManager(std::move(box_layout));
   date_label_ = TrayPopupUtils::CreateDefaultLabel();
   UpdateTextInternal(base::Time::Now());
   TrayPopupItemStyle style(TrayPopupItemStyle::FontStyle::SYSTEM_INFO);
@@ -158,7 +161,7 @@ void DateView::SetAction(DateAction action) {
 }
 
 void DateView::UpdateTimeFormat() {
-  hour_type_ = Shell::Get()->system_tray_controller()->hour_clock_type();
+  hour_type_ = Shell::Get()->system_tray_model()->clock()->hour_clock_type();
   UpdateText();
 }
 
@@ -198,7 +201,7 @@ TimeView::TimeView(ClockLayout clock_layout) : BaseDateTimeView(nullptr) {
 TimeView::~TimeView() = default;
 
 void TimeView::UpdateTimeFormat() {
-  hour_type_ = Shell::Get()->system_tray_controller()->hour_clock_type();
+  hour_type_ = Shell::Get()->system_tray_model()->clock()->hour_clock_type();
   UpdateText();
 }
 
@@ -258,11 +261,12 @@ void TimeView::UpdateClockLayout(ClockLayout clock_layout) {
   if (clock_layout == ClockLayout::HORIZONTAL_CLOCK) {
     RemoveChildView(vertical_label_hours_.get());
     RemoveChildView(vertical_label_minutes_.get());
-    SetLayoutManager(new views::FillLayout());
+    SetLayoutManager(std::make_unique<views::FillLayout>());
     AddChildView(horizontal_label_.get());
   } else {
     RemoveChildView(horizontal_label_.get());
-    views::GridLayout* layout = views::GridLayout::CreateAndInstall(this);
+    views::GridLayout* layout =
+        SetLayoutManager(std::make_unique<views::GridLayout>(this));
     const int kColumnId = 0;
     views::ColumnSet* columns = layout->AddColumnSet(kColumnId);
     columns->AddPaddingColumn(0, kVerticalClockLeftPadding);

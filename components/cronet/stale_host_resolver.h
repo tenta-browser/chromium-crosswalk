@@ -15,9 +15,9 @@ namespace cronet {
 // A HostResolver that wraps a HostResolverImpl and uses it to make requests,
 // but "impatiently" returns stale data (if available and usable) after a delay,
 // to reduce DNS latency at the expense of accuracy.
-class NET_EXPORT StaleHostResolver : public net::HostResolver {
+class StaleHostResolver : public net::HostResolver {
  public:
-  struct NET_EXPORT StaleOptions {
+  struct StaleOptions {
     StaleOptions();
 
     // How long to wait before returning stale data, if available.
@@ -70,8 +70,16 @@ class NET_EXPORT StaleHostResolver : public net::HostResolver {
   int ResolveFromCache(const RequestInfo& info,
                        net::AddressList* addresses,
                        const net::NetLogWithSource& net_log) override;
+  int ResolveStaleFromCache(
+      const RequestInfo& info,
+      net::AddressList* addresses,
+      net::HostCache::EntryStaleness* stale_info,
+      const net::NetLogWithSource& source_net_log) override;
   void SetDnsClientEnabled(bool enabled) override;
   net::HostCache* GetHostCache() override;
+  bool HasCached(base::StringPiece hostname,
+                 net::HostCache::Entry::Source* source_out,
+                 net::HostCache::EntryStaleness* stale_out) const override;
   std::unique_ptr<base::Value> GetDnsConfigAsValue() const override;
 
  private:

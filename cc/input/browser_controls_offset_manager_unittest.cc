@@ -9,7 +9,6 @@
 #include <memory>
 
 #include "base/logging.h"
-#include "base/memory/ptr_util.h"
 #include "base/time/time.h"
 #include "cc/input/browser_controls_offset_manager_client.h"
 #include "cc/layers/layer_impl.h"
@@ -44,7 +43,7 @@ class MockBrowserControlsOffsetManagerClient
     root_scroll_layer_ = LayerImpl::Create(active_tree_.get(), 1);
   }
 
-  ~MockBrowserControlsOffsetManagerClient() override {}
+  ~MockBrowserControlsOffsetManagerClient() override = default;
 
   void DidChangeBrowserControlsPosition() override {
     redraw_needed_ = true;

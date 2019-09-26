@@ -8,10 +8,6 @@
        It expects two FunctionCall for InjectedScript, two TimerInstall events, two FunctionCall events and one TimerRemove event to be logged with performActions.js script name and some line number.\n`);
   await TestRunner.loadModule('performance_test_runner');
   await TestRunner.showPanel('timeline');
-  await TestRunner.evaluateInPagePromise(`
-      if (!window.testRunner)
-          setTimeout(performActions, 2000);
-  `);
 
   function performActions() {
     var callback;
@@ -29,17 +25,16 @@
     }
   }
 
-  var source = performActions.toString();
-  source += '\n//# sourceURL=performActions.js';
-  TestRunner.evaluateInPage(source, startTimeline);
+  const source = performActions.toString() + '\n//# sourceURL=performActions.js';
+  await new Promise(resolve => TestRunner.evaluateInPage(source, resolve));
 
-  function startTimeline() {
-    PerformanceTestRunner.invokeAsyncWithTimeline('performActions', finish);
-  }
+  const linkifier = new Components.Linkifier();
+  const recordTypes = new Set(['TimerInstall', 'TimerRemove', 'FunctionCall']);
 
-  var linkifier = new Components.Linkifier();
+  await PerformanceTestRunner.invokeAsyncWithTimeline('performActions');
+  PerformanceTestRunner.walkTimelineEventTree(formatter);
+  TestRunner.completeTest();
 
-  var recordTypes = new Set(['TimerInstall', 'TimerRemove', 'FunctionCall']);
   function formatter(event) {
     if (!recordTypes.has(event.name))
       return;
@@ -54,10 +49,5 @@
       return;
     TestRunner.addResult(
         'details.textContent for ' + event.name + ' event: \'' + details.textContent.replace(/VM[\d]+/, 'VM') + '\'');
-  }
-
-  function finish() {
-    PerformanceTestRunner.walkTimelineEventTree(formatter);
-    TestRunner.completeTest();
   }
 })();

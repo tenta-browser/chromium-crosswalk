@@ -9,7 +9,6 @@
 
 #include "base/bind.h"
 #include "base/logging.h"
-#include "base/memory/ptr_util.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "chrome/browser/chromeos/app_mode/kiosk_app_manager.h"
 #include "chrome/browser/chromeos/file_manager/app_id.h"
@@ -198,8 +197,8 @@ void ConsentProviderDelegate::ShowNotification(
     const Extension& extension,
     const base::WeakPtr<file_manager::Volume>& volume,
     bool writable) {
-  RequestFileSystemNotification::ShowAutoGrantedNotification(
-      profile_, extension, volume, writable);
+  ShowNotificationForAutoGrantedRequestFileSystem(profile_, extension, volume,
+                                                  writable);
 }
 
 bool ConsentProviderDelegate::IsAutoLaunched(const Extension& extension) {

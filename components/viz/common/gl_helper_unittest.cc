@@ -8,6 +8,7 @@
 #include <string.h>
 #include <cmath>
 #include <string>
+#include <tuple>
 #include <vector>
 
 #include <GLES2/gl2.h>
@@ -49,7 +50,7 @@ const char* kQualityNames[] = {
 class GLHelperTest : public testing::Test {
  protected:
   void SetUp() override {
-    gpu::gles2::ContextCreationAttribHelper attributes;
+    gpu::ContextCreationAttribs attributes;
     attributes.alpha_size = 8;
     attributes.depth_size = 24;
     attributes.red_size = 8;
@@ -61,15 +62,17 @@ class GLHelperTest : public testing::Test {
     attributes.bind_generates_resource = false;
 
     context_ = gpu::GLInProcessContext::CreateWithoutInit();
-    auto result = context_->Initialize(nullptr,                 /* service */
-                                       nullptr,                 /* surface */
-                                       true,                    /* offscreen */
-                                       gpu::kNullSurfaceHandle, /* window */
-                                       nullptr, /* share_context */
-                                       attributes, gpu::SharedMemoryLimits(),
-                                       nullptr, /* gpu_memory_buffer_manager */
-                                       nullptr, /* image_factory */
-                                       base::ThreadTaskRunnerHandle::Get());
+    auto result =
+        context_->Initialize(nullptr,                 /* service */
+                             nullptr,                 /* surface */
+                             true,                    /* offscreen */
+                             gpu::kNullSurfaceHandle, /* window */
+                             nullptr,                 /* share_context */
+                             attributes, gpu::SharedMemoryLimits(),
+                             nullptr, /* gpu_memory_buffer_manager */
+                             nullptr, /* image_factory */
+                             nullptr /* gpu_channel_manager_delegate */,
+                             base::ThreadTaskRunnerHandle::Get());
     DCHECK_EQ(result, gpu::ContextResult::kSuccess);
     gl_ = context_->GetImplementation();
     gpu::ContextSupport* support = context_->GetImplementation();
@@ -1502,20 +1505,20 @@ int kRGBReadBackSizes[] = {3, 6, 16};
 
 class GLHelperPixelReadbackTest
     : public GLHelperPixelTest,
-      public ::testing::WithParamInterface<std::tr1::tuple<unsigned int,
-                                                           unsigned int,
-                                                           unsigned int,
-                                                           unsigned int,
-                                                           unsigned int>> {};
+      public ::testing::WithParamInterface<std::tuple<unsigned int,
+                                                      unsigned int,
+                                                      unsigned int,
+                                                      unsigned int,
+                                                      unsigned int>> {};
 
 // Per pixel tests, all sizes are small so that we can print
 // out the generated bitmaps.
 TEST_P(GLHelperPixelReadbackTest, ScaleTest) {
-  unsigned int q_index = std::tr1::get<0>(GetParam());
-  unsigned int x = std::tr1::get<1>(GetParam());
-  unsigned int y = std::tr1::get<2>(GetParam());
-  unsigned int dst_x = std::tr1::get<3>(GetParam());
-  unsigned int dst_y = std::tr1::get<4>(GetParam());
+  unsigned int q_index = std::get<0>(GetParam());
+  unsigned int x = std::get<1>(GetParam());
+  unsigned int y = std::get<2>(GetParam());
+  unsigned int dst_x = std::get<3>(GetParam());
+  unsigned int dst_y = std::get<4>(GetParam());
 
   for (int flip_output = 0; flip_output <= 1; ++flip_output) {
     for (int pattern = 0; pattern < 3; ++pattern) {
@@ -1539,11 +1542,11 @@ TEST_P(GLHelperPixelReadbackTest, ScalePatching) {
   for (int flipped_source = 0; flipped_source <= 1; ++flipped_source) {
     for (int pattern = 0; pattern < 3; ++pattern) {
       TestScalePatching(
-          gfx::Vector2d(kRGBReadBackSizes[std::tr1::get<1>(GetParam())],
-                        kRGBReadBackSizes[std::tr1::get<2>(GetParam())]),
-          gfx::Vector2d(kRGBReadBackSizes[std::tr1::get<3>(GetParam())],
-                        kRGBReadBackSizes[std::tr1::get<4>(GetParam())]),
-          pattern, std::tr1::get<0>(GetParam()), !!flipped_source);
+          gfx::Vector2d(kRGBReadBackSizes[std::get<1>(GetParam())],
+                        kRGBReadBackSizes[std::get<2>(GetParam())]),
+          gfx::Vector2d(kRGBReadBackSizes[std::get<3>(GetParam())],
+                        kRGBReadBackSizes[std::get<4>(GetParam())]),
+          pattern, std::get<0>(GetParam()), !!flipped_source);
       if (HasFailure()) {
         return;
       }
@@ -1554,11 +1557,11 @@ TEST_P(GLHelperPixelReadbackTest, ScalePatching) {
 // Per pixel tests, all sizes are small so that we can print
 // out the generated bitmaps.
 TEST_P(GLHelperPixelReadbackTest, CropScaleReadbackAndCleanTextureTest) {
-  unsigned int q_index = std::tr1::get<0>(GetParam());
-  unsigned int x = std::tr1::get<1>(GetParam());
-  unsigned int y = std::tr1::get<2>(GetParam());
-  unsigned int dst_x = std::tr1::get<3>(GetParam());
-  unsigned int dst_y = std::tr1::get<4>(GetParam());
+  unsigned int q_index = std::get<0>(GetParam());
+  unsigned int x = std::get<1>(GetParam());
+  unsigned int y = std::get<2>(GetParam());
+  unsigned int dst_x = std::get<3>(GetParam());
+  unsigned int dst_y = std::get<4>(GetParam());
 
   const SkColorType kColorTypes[] = {
       kAlpha_8_SkColorType, kRGBA_8888_SkColorType, kBGRA_8888_SkColorType};

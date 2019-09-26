@@ -7,28 +7,27 @@
 #include <set>
 #include <utility>
 
-#include "ash/app_list/model/app_list_folder_item.h"
-#include "ash/app_list/model/app_list_item.h"
-#include "ash/app_list/model/app_list_model.h"
-#include "ash/app_list/model/app_list_model_observer.h"
 #include "base/command_line.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/stl_util.h"
 #include "base/strings/string_util.h"
 #include "base/values.h"
 #include "build/build_config.h"
-#include "chrome/browser/apps/drive/drive_app_provider.h"
 #include "chrome/browser/chromeos/arc/arc_util.h"
 #include "chrome/browser/chromeos/file_manager/app_id.h"
 #include "chrome/browser/chromeos/genius_app/app_id.h"
 #include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/profiles/profile.h"
+#include "chrome/browser/ui/app_list/app_list_model_updater.h"
 #include "chrome/browser/ui/app_list/app_list_service.h"
 #include "chrome/browser/ui/app_list/arc/arc_app_item.h"
 #include "chrome/browser/ui/app_list/arc/arc_app_list_prefs.h"
 #include "chrome/browser/ui/app_list/arc/arc_app_model_builder.h"
 #include "chrome/browser/ui/app_list/arc/arc_app_utils.h"
+#include "chrome/browser/ui/app_list/chrome_app_list_item.h"
+#include "chrome/browser/ui/app_list/chrome_app_list_model_updater.h"
+#include "chrome/browser/ui/app_list/crostini/crostini_app_model_builder.h"
+#include "chrome/browser/ui/app_list/crostini/crostini_util.h"
 #include "chrome/browser/ui/app_list/extension_app_item.h"
 #include "chrome/browser/ui/app_list/extension_app_model_builder.h"
 #include "chrome/common/chrome_switches.h"
@@ -45,7 +44,6 @@
 #include "extensions/browser/uninstall_reason.h"
 #include "extensions/common/constants.h"
 #include "extensions/common/one_shot_event.h"
-#include "ui/app_list/app_list_switches.h"
 #include "ui/base/l10n/l10n_util.h"
 
 using syncer::SyncChange;
@@ -54,18 +52,11 @@ namespace app_list {
 
 namespace {
 
-const char kNameKey[] = "name";
-const char kParentIdKey[] = "parent_id";
-const char kPositionKey[] = "position";
-const char kPinPositionKey[] = "pin_position";
-const char kTypeKey[] = "type";
-
-// Prefix for a sync id of a Drive app. Drive app ids are in a different
-// format and have to be used because a Drive app could have only an URL
-// without a matching Chrome app. To differentiate the Drive app id from
-// Chrome app ids, this prefix will be added to create the sync item id
-// for a Drive app item.
-const char kDriveAppSyncIdPrefix[] = "drive-app-";
+constexpr char kNameKey[] = "name";
+constexpr char kParentIdKey[] = "parent_id";
+constexpr char kPositionKey[] = "position";
+constexpr char kPinPositionKey[] = "pin_position";
+constexpr char kTypeKey[] = "type";
 
 void UpdateSyncItemFromSync(const sync_pb::AppListSpecifics& specifics,
                             AppListSyncableService::SyncItem* item) {
@@ -81,7 +72,7 @@ void UpdateSyncItemFromSync(const sync_pb::AppListSpecifics& specifics,
   }
 }
 
-bool UpdateSyncItemFromAppItem(const AppListItem* app_item,
+bool UpdateSyncItemFromAppItem(const ChromeAppListItem* app_item,
                                AppListSyncableService::SyncItem* sync_item) {
   DCHECK_EQ(sync_item->item_id, app_item->id());
   bool changed = false;
@@ -136,41 +127,31 @@ bool IsUnRemovableDefaultApp(const std::string& id) {
 }
 
 void UninstallExtension(ExtensionService* service, const std::string& id) {
-  if (service) {
-    ExtensionService::UninstallExtensionHelper(
-        service, id, extensions::UNINSTALL_REASON_SYNC);
+  if (service && service->GetInstalledExtension(id)) {
+    service->UninstallExtension(id, extensions::UNINSTALL_REASON_SYNC,
+                                nullptr /* error */);
   }
 }
 
-bool GetAppListItemType(AppListItem* item,
-                        sync_pb::AppListSpecifics::AppListItemType* type) {
-  const char* item_type = item->GetItemType();
-  if (item_type == ExtensionAppItem::kItemType) {
-    *type = sync_pb::AppListSpecifics::TYPE_APP;
-  } else if (item_type == ArcAppItem::kItemType) {
-    *type = sync_pb::AppListSpecifics::TYPE_APP;
-  } else if (item_type == AppListFolderItem::kItemType) {
-    *type = sync_pb::AppListSpecifics::TYPE_FOLDER;
-  } else {
-    LOG(ERROR) << "Unrecognized model type: " << item_type;
-    return false;
-  }
-  return true;
+sync_pb::AppListSpecifics::AppListItemType GetAppListItemType(
+    const ChromeAppListItem* item) {
+  if (item->is_folder())
+    return sync_pb::AppListSpecifics::TYPE_FOLDER;
+  else
+    return sync_pb::AppListSpecifics::TYPE_APP;
 }
 
+// TODO(http://crbug.com/794724): Remove after M65 goes stable.
 bool IsDriveAppSyncId(const std::string& sync_id) {
+  // Prefix for a sync id of a Drive app. Drive app ids are in a different
+  // format and have to be used because a Drive app could have only an URL
+  // without a matching Chrome app. To differentiate the Drive app id from
+  // Chrome app ids, this prefix will be added to create the sync item id
+  // for a Drive app item.
+  constexpr char kDriveAppSyncIdPrefix[] = "drive-app-";
+
   return base::StartsWith(sync_id, kDriveAppSyncIdPrefix,
                           base::CompareCase::SENSITIVE);
-}
-
-std::string GetDriveAppSyncId(const std::string& drive_app_id) {
-  return kDriveAppSyncIdPrefix + drive_app_id;
-}
-
-std::string GetDriveAppIdFromSyncId(const std::string& sync_id) {
-  if (!IsDriveAppSyncId(sync_id))
-    return std::string();
-  return sync_id.substr(strlen(kDriveAppSyncIdPrefix));
 }
 
 void RemoveSyncItemFromLocalStorage(Profile* profile,
@@ -213,7 +194,26 @@ bool IsDefaultSyncItem(const AppListSyncableService::SyncItem* sync_item) {
              syncer::StringOrdinal::CreateInitialOrdinal());
 }
 
+AppListSyncableService::ModelUpdaterFactoryCallback*
+    g_model_updater_factory_callback_for_test_ = nullptr;
+
 }  // namespace
+
+// AppListSyncableService::ScopedModelUpdaterFactoryForTest
+
+AppListSyncableService::ScopedModelUpdaterFactoryForTest::
+    ScopedModelUpdaterFactoryForTest(
+        const ModelUpdaterFactoryCallback& factory) {
+  DCHECK(factory);
+  factory_ = factory;
+  g_model_updater_factory_callback_for_test_ = &factory_;
+}
+
+AppListSyncableService::ScopedModelUpdaterFactoryForTest::
+    ~ScopedModelUpdaterFactoryForTest() {
+  DCHECK_EQ(&factory_, g_model_updater_factory_callback_for_test_);
+  g_model_updater_factory_callback_for_test_ = nullptr;
+}
 
 // AppListSyncableService::SyncItem
 
@@ -227,39 +227,44 @@ AppListSyncableService::SyncItem::SyncItem(
 AppListSyncableService::SyncItem::~SyncItem() {
 }
 
-// AppListSyncableService::ModelObserver
+// AppListSyncableService::ModelUpdaterDelegate
 
-class AppListSyncableService::ModelObserver : public AppListModelObserver {
+class AppListSyncableService::ModelUpdaterDelegate
+    : public AppListModelUpdaterDelegate {
  public:
-  explicit ModelObserver(AppListSyncableService* owner)
-      : owner_(owner),
-        adding_item_(NULL) {
-    DVLOG(2) << owner_ << ": ModelObserver Added";
-    owner_->GetModel()->AddObserver(this);
+  explicit ModelUpdaterDelegate(AppListSyncableService* owner) : owner_(owner) {
+    DVLOG(2) << owner_ << ": ModelUpdaterDelegate Added";
+    owner_->GetModelUpdater()->SetDelegate(this);
   }
 
-  ~ModelObserver() override {
-    owner_->GetModel()->RemoveObserver(this);
-    DVLOG(2) << owner_ << ": ModelObserver Removed";
+  ~ModelUpdaterDelegate() override {
+    owner_->GetModelUpdater()->SetDelegate(nullptr);
+    DVLOG(2) << owner_ << ": ModelUpdaterDelegate Removed";
   }
 
  private:
-  // AppListModelObserver
-  void OnAppListItemAdded(AppListItem* item) override {
-    DCHECK(!adding_item_);
-    adding_item_ = item;  // Ignore updates while adding an item.
+  // ChromeAppListModelUpdaterDelegate
+  void OnAppListItemAdded(ChromeAppListItem* item) override {
+    DCHECK(adding_item_id_.empty());
+    adding_item_id_ = item->id();  // Ignore updates while adding an item.
     VLOG(2) << owner_ << " OnAppListItemAdded: " << item->ToDebugString();
     owner_->AddOrUpdateFromSyncItem(item);
-    adding_item_ = NULL;
+    adding_item_id_.clear();
+
+    // Sync OEM name if it was created on demand on ash side.
+    if (item->id() == ash::kOemFolderId &&
+        item->name() != owner_->oem_folder_name_) {
+      item->SetName(owner_->oem_folder_name_);
+    }
   }
 
-  void OnAppListItemWillBeDeleted(AppListItem* item) override {
-    DCHECK(!adding_item_);
+  void OnAppListItemWillBeDeleted(ChromeAppListItem* item) override {
+    DCHECK(adding_item_id_.empty());
     VLOG(2) << owner_ << " OnAppListItemDeleted: " << item->ToDebugString();
     // Don't sync folder removal in case the folder still exists on another
     // device (e.g. with device specific items in it). Empty folders will be
     // deleted when the last item is removed (in PruneEmptySyncFolders()).
-    if (item->GetItemType() == AppListFolderItem::kItemType)
+    if (item->is_folder())
       return;
 
     if (item->GetItemType() == ArcAppItem::kItemType) {
@@ -271,11 +276,11 @@ class AppListSyncableService::ModelObserver : public AppListModelObserver {
     owner_->RemoveSyncItem(item->id());
   }
 
-  void OnAppListItemUpdated(AppListItem* item) override {
-    if (adding_item_) {
+  void OnAppListItemUpdated(ChromeAppListItem* item) override {
+    if (!adding_item_id_.empty()) {
       // Adding an item may trigger update notifications which should be
       // ignored.
-      DCHECK_EQ(adding_item_, item);
+      DCHECK_EQ(adding_item_id_, item->id());
       return;
     }
     VLOG(2) << owner_ << " OnAppListItemUpdated: " << item->ToDebugString();
@@ -283,45 +288,12 @@ class AppListSyncableService::ModelObserver : public AppListModelObserver {
   }
 
   AppListSyncableService* owner_;
-  AppListItem* adding_item_;  // Unowned pointer to item being added.
+  std::string adding_item_id_;
 
-  DISALLOW_COPY_AND_ASSIGN(ModelObserver);
-};
-
-// AppListSyncableService::ModelUpdater
-
-class AppListSyncableService::ModelUpdater : public AppListModelUpdater {
- public:
-  explicit ModelUpdater(AppListModel* model) : model_(model) {}
-  ~ModelUpdater() override {}
-  void AddItem(std::unique_ptr<AppListItem> app_item) override {
-    model_->AddItem(std::move(app_item));
-  }
-  void RemoveItem(const std::string& id) override { model_->DeleteItem(id); }
-  void RemoveUninstalledItem(const std::string& id) override {
-    model_->DeleteUninstalledItem(id);
-  }
-  AppListItem* FindItem(const std::string& id) override {
-    return model_->FindItem(id);
-  }
-  size_t ItemCount() override {
-    return model_->top_level_item_list()->item_count();
-  }
-
-  AppListItem* ItemAt(size_t index) override {
-    return model_->top_level_item_list()->item_at(index);
-  }
-
- private:
-  AppListModel* model_;
-  DISALLOW_COPY_AND_ASSIGN(ModelUpdater);
+  DISALLOW_COPY_AND_ASSIGN(ModelUpdaterDelegate);
 };
 
 // AppListSyncableService
-
-// static
-const char AppListSyncableService::kOemFolderId[] =
-    "ddb1da55-d478-4243-8642-56d3041f0263";
 
 // static
 void AppListSyncableService::RegisterProfilePrefs(
@@ -334,11 +306,14 @@ AppListSyncableService::AppListSyncableService(
     extensions::ExtensionSystem* extension_system)
     : profile_(profile),
       extension_system_(extension_system),
-      model_(new AppListModel),
-      model_updater_(new ModelUpdater(model_.get())),
       initial_sync_data_processed_(false),
       first_app_list_sync_(true),
       weak_ptr_factory_(this) {
+  if (g_model_updater_factory_callback_for_test_)
+    model_updater_ = g_model_updater_factory_callback_for_test_->Run();
+  else
+    model_updater_ = std::make_unique<ChromeAppListModelUpdater>(profile);
+
   if (!extension_system) {
     LOG(ERROR) << "AppListSyncableService created with no ExtensionSystem";
     return;
@@ -346,8 +321,6 @@ AppListSyncableService::AppListSyncableService(
 
   oem_folder_name_ =
       l10n_util::GetStringUTF8(IDS_APP_LIST_OEM_DEFAULT_FOLDER_NAME);
-
-  model_->SetFoldersEnabled(true);
 
   if (IsExtensionServiceReady()) {
     BuildModel();
@@ -360,7 +333,7 @@ AppListSyncableService::AppListSyncableService(
 
 AppListSyncableService::~AppListSyncableService() {
   // Remove observers.
-  model_observer_.reset();
+  model_updater_delegate_.reset();
 }
 
 bool AppListSyncableService::IsExtensionServiceReady() const {
@@ -426,16 +399,17 @@ void AppListSyncableService::BuildModel() {
   apps_builder_.reset(new ExtensionAppModelBuilder(controller));
   if (arc::IsArcAllowedForProfile(profile_))
     arc_apps_builder_.reset(new ArcAppModelBuilder(controller));
+  if (IsExperimentalCrostiniUIAvailable())
+    crostini_apps_builder_.reset(new CrostiniAppModelBuilder(controller));
+
   DCHECK(profile_);
   SyncStarted();
   apps_builder_->Initialize(this, profile_, model_updater_.get());
   if (arc_apps_builder_.get())
     arc_apps_builder_->Initialize(this, profile_, model_updater_.get());
 
-  if (app_list::switches::IsDriveAppsInAppListEnabled() &&
-      !::switches::ExtensionsDisabled()) {
-    drive_app_provider_.reset(new DriveAppProvider(profile_, this));
-  }
+  if (crostini_apps_builder_.get())
+    crostini_apps_builder_->Initialize(this, profile_, model_updater_.get());
 
   HandleUpdateFinished();
 }
@@ -459,43 +433,6 @@ size_t AppListSyncableService::GetNumSyncItemsForTest() {
   return sync_items_.size();
 }
 
-void AppListSyncableService::ResetDriveAppProviderForTest() {
-  drive_app_provider_.reset();
-}
-
-void AppListSyncableService::Shutdown() {
-  // DriveAppProvider touches other KeyedServices in its dtor and needs be
-  // released in shutdown stage.
-  drive_app_provider_.reset();
-}
-
-void AppListSyncableService::TrackUninstalledDriveApp(
-    const std::string& drive_app_id) {
-  const std::string sync_id = GetDriveAppSyncId(drive_app_id);
-  SyncItem* sync_item = FindSyncItem(sync_id);
-  if (sync_item) {
-    DCHECK_EQ(sync_item->item_type,
-              sync_pb::AppListSpecifics::TYPE_REMOVE_DEFAULT_APP);
-    return;
-  }
-
-  sync_item = CreateSyncItem(
-      sync_id, sync_pb::AppListSpecifics::TYPE_REMOVE_DEFAULT_APP);
-  SendSyncChange(sync_item, SyncChange::ACTION_ADD);
-}
-
-void AppListSyncableService::UntrackUninstalledDriveApp(
-    const std::string& drive_app_id) {
-  const std::string sync_id = GetDriveAppSyncId(drive_app_id);
-  SyncItem* sync_item = FindSyncItem(sync_id);
-  if (!sync_item)
-    return;
-
-  DCHECK_EQ(sync_item->item_type,
-            sync_pb::AppListSpecifics::TYPE_REMOVE_DEFAULT_APP);
-  DeleteSyncItem(drive_app_id);
-}
-
 const AppListSyncableService::SyncItem*
 AppListSyncableService::GetSyncItem(const std::string& id) const {
   auto iter = sync_items_.find(id);
@@ -506,19 +443,22 @@ AppListSyncableService::GetSyncItem(const std::string& id) const {
 
 void AppListSyncableService::SetOemFolderName(const std::string& name) {
   oem_folder_name_ = name;
-  AppListFolderItem* oem_folder = model_->FindFolderItem(kOemFolderId);
-  if (oem_folder)
-    model_->SetItemName(oem_folder, oem_folder_name_);
+  // Update OEM folder item if it was already created. If it is not created yet
+  // then on creation it will take right name.
+  ChromeAppListItem* oem_folder_item =
+      model_updater_->FindItem(ash::kOemFolderId);
+  if (oem_folder_item)
+    oem_folder_item->SetName(oem_folder_name_);
 }
 
-AppListModel* AppListSyncableService::GetModel() {
+AppListModelUpdater* AppListSyncableService::GetModelUpdater() {
   DCHECK(IsInitialized());
-  return model_.get();
+  return model_updater_.get();
 }
 
 void AppListSyncableService::HandleUpdateStarted() {
   // Don't observe the model while processing update changes.
-  model_observer_.reset();
+  model_updater_delegate_.reset();
 }
 
 void AppListSyncableService::HandleUpdateFinished() {
@@ -526,35 +466,38 @@ void AppListSyncableService::HandleUpdateFinished() {
   // Resolve them now.
   ResolveFolderPositions();
 
+  RemoveDriveAppItems();
+
   // Resume or start observing app list model changes.
-  model_observer_.reset(new ModelObserver(this));
+  model_updater_delegate_ = std::make_unique<ModelUpdaterDelegate>(this);
 
   NotifyObserversSyncUpdated();
 }
 
-void AppListSyncableService::AddItem(std::unique_ptr<AppListItem> app_item) {
+void AppListSyncableService::AddItem(
+    std::unique_ptr<ChromeAppListItem> app_item) {
   SyncItem* sync_item = FindOrAddSyncItem(app_item.get());
   if (!sync_item)
     return;  // Item is not valid.
 
-  std::string folder_id;
   if (AppIsOem(app_item->id())) {
-    folder_id = FindOrCreateOemFolder();
-    VLOG_IF(2, !folder_id.empty())
-        << this << ": AddItem to OEM folder: " << sync_item->ToString();
+    VLOG(2) << this << ": AddItem to OEM folder: " << sync_item->ToString();
+    model_updater_->AddItemToOemFolder(
+        std::move(app_item), FindSyncItem(ash::kOemFolderId), oem_folder_name_,
+        GetPreferredOemFolderPos());
   } else {
-    folder_id = sync_item->parent_id;
+    std::string folder_id = sync_item->parent_id;
+    VLOG(2) << this << ": AddItem: " << sync_item->ToString() << " Folder: '"
+            << folder_id << "'";
+    model_updater_->AddItemToFolder(std::move(app_item), folder_id);
   }
-  VLOG(2) << this << ": AddItem: " << sync_item->ToString()
-          << " Folder: '" << folder_id << "'";
-  model_->AddItemToFolder(std::move(app_item), folder_id);
 }
 
 AppListSyncableService::SyncItem* AppListSyncableService::FindOrAddSyncItem(
-    AppListItem* app_item) {
+    const ChromeAppListItem* app_item) {
   const std::string& item_id = app_item->id();
   if (item_id.empty()) {
-    LOG(ERROR) << "AppListItem item with empty ID";
+    LOG(ERROR) << "ChromeAppListItem item with empty ID";
     return NULL;
   }
   SyncItem* sync_item = FindSyncItem(item_id);
@@ -577,10 +520,10 @@ AppListSyncableService::SyncItem* AppListSyncableService::FindOrAddSyncItem(
 }
 
 AppListSyncableService::SyncItem*
-AppListSyncableService::CreateSyncItemFromAppItem(AppListItem* app_item) {
-  sync_pb::AppListSpecifics::AppListItemType type;
-  if (!GetAppListItemType(app_item, &type))
-    return NULL;
+AppListSyncableService::CreateSyncItemFromAppItem(
+    const ChromeAppListItem* app_item) {
+  sync_pb::AppListSpecifics::AppListItemType type =
+      GetAppListItemType(app_item);
   VLOG(2) << this << " CreateSyncItemFromAppItem:" << app_item->ToDebugString();
   SyncItem* sync_item = CreateSyncItem(app_item->id(), type);
   DCHECK(app_item->position().IsValid());
@@ -617,17 +560,22 @@ void AppListSyncableService::SetPinPosition(
   SendSyncChange(sync_item, sync_change_type);
 }
 
-void AppListSyncableService::AddOrUpdateFromSyncItem(AppListItem* app_item) {
+void AppListSyncableService::AddOrUpdateFromSyncItem(
+    const ChromeAppListItem* app_item) {
   // Do not create a sync item for the OEM folder here, do that in
   // ResolveFolderPositions once the position has been resolved.
-  if (app_item->id() == kOemFolderId)
+  if (app_item->id() == ash::kOemFolderId)
     return;
 
   DCHECK(app_item->position().IsValid());
 
   SyncItem* sync_item = FindSyncItem(app_item->id());
   if (sync_item) {
-    UpdateAppItemFromSyncItem(sync_item, app_item);
+    model_updater_->UpdateAppItemFromSyncItem(
+        sync_item,
+        sync_item->item_id !=
+            ash::kOemFolderId,  // Don't sync oem folder's name.
+        false);                 // Don't sync its folder here.
     if (!sync_item->item_ordinal.IsValid()) {
       UpdateSyncItem(app_item);
       VLOG(2) << "Flushing position to sync item " << sync_item;
@@ -637,7 +585,7 @@ void AppListSyncableService::AddOrUpdateFromSyncItem(AppListItem* app_item) {
   CreateSyncItemFromAppItem(app_item);
 }
 
-bool AppListSyncableService::RemoveDefaultApp(AppListItem* item,
+bool AppListSyncableService::RemoveDefaultApp(const ChromeAppListItem* item,
                                               SyncItem* sync_item) {
   CHECK_EQ(sync_item->item_type,
            sync_pb::AppListSpecifics::TYPE_REMOVE_DEFAULT_APP);
@@ -676,7 +624,7 @@ void AppListSyncableService::DeleteSyncItem(const std::string& item_id) {
   sync_items_.erase(item_id);
 }
 
-void AppListSyncableService::UpdateSyncItem(AppListItem* app_item) {
+void AppListSyncableService::UpdateSyncItem(const ChromeAppListItem* app_item) {
   SyncItem* sync_item = FindSyncItem(app_item->id());
   if (!sync_item) {
     LOG(ERROR) << "UpdateItem: no sync item: " << app_item->id();
@@ -693,23 +641,23 @@ void AppListSyncableService::UpdateSyncItem(AppListItem* app_item) {
 
 void AppListSyncableService::RemoveItem(const std::string& id) {
   RemoveSyncItem(id);
-  model_->DeleteItem(id);
+  model_updater_->RemoveItem(id);
   PruneEmptySyncFolders();
 }
 
 void AppListSyncableService::RemoveUninstalledItem(const std::string& id) {
   RemoveSyncItem(id);
-  model_->DeleteUninstalledItem(id);
+  model_updater_->RemoveUninstalledItem(id);
   PruneEmptySyncFolders();
 }
 
-void AppListSyncableService::UpdateItem(AppListItem* app_item) {
+void AppListSyncableService::UpdateItem(const ChromeAppListItem* app_item) {
   // Check to see if the item needs to be moved to/from the OEM folder.
   bool is_oem = AppIsOem(app_item->id());
-  if (!is_oem && app_item->folder_id() == kOemFolderId)
-    model_->MoveItemToFolder(app_item, "");
-  else if (is_oem && app_item->folder_id() != kOemFolderId)
-    model_->MoveItemToFolder(app_item, kOemFolderId);
+  if (!is_oem && app_item->folder_id() == ash::kOemFolderId)
+    model_updater_->MoveItemToFolder(app_item->id(), "");
+  else if (is_oem && app_item->folder_id() != ash::kOemFolderId)
+    model_updater_->MoveItemToFolder(app_item->id(), ash::kOemFolderId);
 }
 
 void AppListSyncableService::RemoveSyncItem(const std::string& id) {
@@ -750,19 +698,31 @@ void AppListSyncableService::ResolveFolderPositions() {
     SyncItem* sync_item = sync_pair.second.get();
     if (sync_item->item_type != sync_pb::AppListSpecifics::TYPE_FOLDER)
       continue;
-    AppListItem* app_item = model_->FindItem(sync_item->item_id);
-    if (!app_item)
-      continue;
-    UpdateAppItemFromSyncItem(sync_item, app_item);
+
+    model_updater_->UpdateAppItemFromSyncItem(
+        sync_item,
+        sync_item->item_id !=
+            ash::kOemFolderId,  // Don't sync oem folder's name.
+        false);                 // Don't sync its folder here.
   }
 
   // Move the OEM folder if one exists and we have not synced its position.
-  AppListFolderItem* oem_folder = model_->FindFolderItem(kOemFolderId);
-  if (oem_folder && !FindSyncItem(kOemFolderId)) {
-    model_->SetItemPosition(oem_folder, GetOemFolderPos());
-    VLOG(1) << "Creating new OEM folder sync item: "
-            << oem_folder->position().ToDebugString();
-    CreateSyncItemFromAppItem(oem_folder);
+  if (!FindSyncItem(ash::kOemFolderId)) {
+    model_updater_->ResolveOemFolderPosition(
+        GetPreferredOemFolderPos(),
+        base::BindOnce(
+            [](base::WeakPtr<AppListSyncableService> self,
+               ChromeAppListItem* oem_folder) {
+              if (!self)
+                return;
+
+              if (oem_folder) {
+                VLOG(1) << "Creating new OEM folder sync item: "
+                        << oem_folder->position().ToDebugString();
+                self->CreateSyncItemFromAppItem(oem_folder);
+              }
+            },
+            weak_ptr_factory_.GetWeakPtr()));
   }
 }
 
@@ -866,7 +826,8 @@ syncer::SyncMergeResult AppListSyncableService::MergeDataAndStartSyncing(
         sync_item->item_ordinal.IsValid()) {
       continue;
     }
-    const AppListItem* app_item = model_->FindItem(sync_item->item_id);
+    const ChromeAppListItem* app_item =
+        model_updater_->FindItem(sync_item->item_id);
     if (app_item) {
       if (UpdateSyncItemFromAppItem(app_item, sync_item)) {
         VLOG(1) << "Fixing sync item from existing app: " << sync_item;
@@ -974,7 +935,7 @@ bool AppListSyncableService::ProcessSyncItemSpecifics(
       LOG(ERROR) << "Synced item type: " << specifics.item_type()
                  << " != existing sync item type: " << sync_item->item_type
                  << " Deleting item from model!";
-      model_->DeleteItem(item_id);
+      model_updater_->RemoveItem(item_id);
     }
     VLOG(2) << this << " - ProcessSyncItem: Delete existing entry: "
             << sync_item->ToString();
@@ -1000,22 +961,19 @@ void AppListSyncableService::ProcessNewSyncItem(SyncItem* sync_item) {
     }
     case sync_pb::AppListSpecifics::TYPE_REMOVE_DEFAULT_APP: {
       VLOG(1) << this << ": Uninstall: " << sync_item->ToString();
-      if (IsDriveAppSyncId(sync_item->item_id)) {
-        if (drive_app_provider_) {
-          drive_app_provider_->AddUninstalledDriveAppFromSync(
-              GetDriveAppIdFromSyncId(sync_item->item_id));
-        }
-      } else {
+      if (!IsDriveAppSyncId(sync_item->item_id)) {
         UninstallExtension(extension_system_->extension_service(),
                            sync_item->item_id);
       }
       return;
     }
     case sync_pb::AppListSpecifics::TYPE_FOLDER: {
-      AppListItem* app_item = model_->FindItem(sync_item->item_id);
-      if (!app_item)
-        return;  // Don't create new folders here, the model will do that.
-      UpdateAppItemFromSyncItem(sync_item, app_item);
+      // We don't create new folders here, the model will do that.
+      model_updater_->UpdateAppItemFromSyncItem(
+          sync_item,
+          sync_item->item_id !=
+              ash::kOemFolderId,  // Don't sync oem folder's name.
+          false);                 // It's a folder itself.
       return;
     }
     case sync_pb::AppListSpecifics::TYPE_URL: {
@@ -1033,40 +991,11 @@ void AppListSyncableService::ProcessExistingSyncItem(SyncItem* sync_item) {
     return;
   }
   VLOG(2) << "ProcessExistingSyncItem: " << sync_item->ToString();
-  AppListItem* app_item = model_->FindItem(sync_item->item_id);
-  if (!app_item) {
-    // This is expected in case the user uses devices with different app set,
-    // for example, ARC enabled and ARC disabled devices. Another scenario is
-    // app pinned by default (YouTube, for instance) but which has not been yet
-    // installed on this device.
-    DVLOG(2) << "Skip updating missing item : " << sync_item->ToString();
-    return;
-  }
-  DVLOG(2) << " AppItem: " << app_item->ToDebugString();
-  // This is the only place where sync can cause an item to change folders.
-  if (app_item->folder_id() != sync_item->parent_id &&
-      !AppIsOem(app_item->id())) {
-    VLOG(2) << " Moving Item To Folder: " << sync_item->parent_id;
-    model_->MoveItemToFolder(app_item, sync_item->parent_id);
-  }
-  UpdateAppItemFromSyncItem(sync_item, app_item);
-}
 
-void AppListSyncableService::UpdateAppItemFromSyncItem(
-    const AppListSyncableService::SyncItem* sync_item,
-    AppListItem* app_item) {
-  VLOG(2) << this << " UpdateAppItemFromSyncItem: " << sync_item->ToString();
-  if (sync_item->item_ordinal.IsValid() &&
-      !app_item->position().Equals(sync_item->item_ordinal)) {
-    model_->SetItemPosition(app_item, sync_item->item_ordinal);
-  }
-  // Only update the item name if it is a Folder or the name is empty.
-  if (sync_item->item_name != app_item->name() &&
-      sync_item->item_id != kOemFolderId &&
-      (app_item->GetItemType() == AppListFolderItem::kItemType ||
-       app_item->name().empty())) {
-    model_->SetItemName(app_item, sync_item->item_name);
-  }
+  model_updater_->UpdateAppItemFromSyncItem(
+      sync_item,
+      sync_item->item_id != ash::kOemFolderId,  // Don't sync oem folder's name.
+      true);  // The only place where sync can change an item's folder.
 }
 
 bool AppListSyncableService::SyncStarted() {
@@ -1121,7 +1050,7 @@ AppListSyncableService::CreateSyncItem(
     const std::string& item_id,
     sync_pb::AppListSpecifics::AppListItemType item_type) {
   DCHECK(!base::ContainsKey(sync_items_, item_id));
-  sync_items_[item_id] = base::MakeUnique<SyncItem>(item_id, item_type);
+  sync_items_[item_id] = std::make_unique<SyncItem>(item_id, item_type);
   return sync_items_[item_id].get();
 }
 
@@ -1145,42 +1074,12 @@ void AppListSyncableService::DeleteSyncItemSpecifics(
   // Only delete apps from the model. Folders will be deleted when all
   // children have been deleted.
   if (item_type == sync_pb::AppListSpecifics::TYPE_APP) {
-    model_->DeleteItem(item_id);
-  } else if (item_type == sync_pb::AppListSpecifics::TYPE_REMOVE_DEFAULT_APP) {
-    if (IsDriveAppSyncId(item_id) && drive_app_provider_) {
-      drive_app_provider_->RemoveUninstalledDriveAppFromSync(
-          GetDriveAppIdFromSyncId(item_id));
-    }
+    model_updater_->RemoveItem(item_id);
   }
 }
 
-std::string AppListSyncableService::FindOrCreateOemFolder() {
-  AppListFolderItem* oem_folder = model_->FindFolderItem(kOemFolderId);
-  if (!oem_folder) {
-    std::unique_ptr<AppListFolderItem> new_folder(new AppListFolderItem(
-        kOemFolderId, AppListFolderItem::FOLDER_TYPE_OEM));
-    SyncItem* oem_sync_item = FindSyncItem(kOemFolderId);
-    syncer::StringOrdinal oem_position;
-    if (oem_sync_item) {
-      DCHECK(oem_sync_item->item_ordinal.IsValid());
-      VLOG(1) << "Creating OEM folder from existing sync item: "
-               << oem_sync_item->item_ordinal.ToDebugString();
-      oem_position = oem_sync_item->item_ordinal;
-    } else {
-      oem_position = GetOemFolderPos();
-      // Do not create a sync item for the OEM folder here, do it in
-      // ResolveFolderPositions() when the item position is finalized.
-    }
-    oem_folder =
-        static_cast<AppListFolderItem*>(model_->AddItem(std::move(new_folder)));
-    model_->SetItemPosition(oem_folder, oem_position);
-  }
-  model_->SetItemName(oem_folder, oem_folder_name_);
-  return oem_folder->id();
-}
-
-syncer::StringOrdinal AppListSyncableService::GetOemFolderPos() {
-  VLOG(1) << "GetOemFolderPos: " << first_app_list_sync_;
+syncer::StringOrdinal AppListSyncableService::GetPreferredOemFolderPos() {
+  VLOG(1) << "GetPreferredOemFolderPos: " << first_app_list_sync_;
   if (!first_app_list_sync_) {
     VLOG(1) << "Sync items exist, placing OEM folder at end.";
     syncer::StringOrdinal last;
@@ -1194,48 +1093,7 @@ syncer::StringOrdinal AppListSyncableService::GetOemFolderPos() {
     if (last.IsValid())
       return last.CreateAfter();
   }
-
-  // Place the OEM folder just after the web store, which should always be
-  // followed by a pre-installed app (e.g. Search), so the poosition should be
-  // stable. TODO(stevenjb): consider explicitly setting the OEM folder location
-  // along with the name in ServicesCustomizationDocument::SetOemFolderName().
-  AppListItemList* item_list = model_->top_level_item_list();
-  if (!item_list->item_count()) {
-    LOG(ERROR) << "No top level item was found. "
-               << "Placing OEM folder at the beginning.";
-    return syncer::StringOrdinal::CreateInitialOrdinal();
-  }
-
-  size_t web_store_app_index;
-  if (!item_list->FindItemIndex(extensions::kWebStoreAppId,
-                                &web_store_app_index)) {
-    LOG(ERROR) << "Web store position is not found it top items. "
-               << "Placing OEM folder at the end.";
-    return item_list->item_at(item_list->item_count() - 1)
-        ->position()
-        .CreateAfter();
-  }
-
-  // Skip items with the same position.
-  const AppListItem* web_store_app_item =
-      item_list->item_at(web_store_app_index);
-  for (size_t j = web_store_app_index + 1; j < item_list->item_count(); ++j) {
-    const AppListItem* next_item = item_list->item_at(j);
-    DCHECK(next_item->position().IsValid());
-    if (!next_item->position().Equals(web_store_app_item->position())) {
-      const syncer::StringOrdinal oem_ordinal =
-          web_store_app_item->position().CreateBetween(next_item->position());
-      VLOG(1) << "Placing OEM Folder at: " << j
-              << " position: " << oem_ordinal.ToDebugString();
-      return oem_ordinal;
-    }
-  }
-
-  const syncer::StringOrdinal oem_ordinal =
-      web_store_app_item->position().CreateAfter();
-  VLOG(1) << "Placing OEM Folder at: " << item_list->item_count()
-          << " position: " << oem_ordinal.ToDebugString();
-  return oem_ordinal;
+  return syncer::StringOrdinal();
 }
 
 bool AppListSyncableService::AppIsOem(const std::string& id) {
@@ -1287,6 +1145,17 @@ void AppListSyncableService::MaybeImportLegacyPlayStorePosition(
       SyncChange(FROM_HERE, SyncChange::ACTION_UPDATE,
                  GetSyncDataFromSyncItem(play_store_sync_item)));
   DVLOG(2) << "Play Store app list item was updated from the legacy entry";
+}
+
+void AppListSyncableService::RemoveDriveAppItems() {
+  std::set<std::string> drive_app_item_ids;
+  for (const auto& sync_pair : sync_items_) {
+    if (IsDriveAppSyncId(sync_pair.first))
+      drive_app_item_ids.insert(sync_pair.first);
+  }
+
+  for (const auto& item_id : drive_app_item_ids)
+    DeleteSyncItem(item_id);
 }
 
 }  // namespace app_list

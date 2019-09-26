@@ -4,9 +4,10 @@
 
 #include "chrome/browser/media/router/media_router_base.h"
 
+#include <memory>
+
 #include "base/bind.h"
 #include "base/guid.h"
-#include "base/memory/ptr_util.h"
 #include "base/stl_util.h"
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/profiles/profile.h"
@@ -61,7 +62,7 @@ MediaRouterBase::AddPresentationConnectionStateChangedCallback(
 
   auto& callbacks = presentation_connection_state_callbacks_[route_id];
   if (!callbacks) {
-    callbacks = base::MakeUnique<PresentationConnectionStateChangedCallbacks>();
+    callbacks = std::make_unique<PresentationConnectionStateChangedCallbacks>();
     callbacks->set_removal_callback(base::Bind(
         &MediaRouterBase::OnPresentationConnectionStateCallbackRemoved,
         base::Unretained(this), route_id));
@@ -81,6 +82,11 @@ IssueManager* MediaRouterBase::GetIssueManager() {
 
 std::vector<MediaRoute> MediaRouterBase::GetCurrentRoutes() const {
   return internal_routes_observer_->current_routes;
+}
+
+std::unique_ptr<content::MediaController> MediaRouterBase::GetMediaController(
+    const MediaRoute::Id& route_id) {
+  return nullptr;
 }
 
 #if !defined(OS_ANDROID)
@@ -168,7 +174,7 @@ void MediaRouterBase::DetachRouteController(const MediaRoute::Id& route_id,
 #endif  // !defined(OS_ANDROID)
 
 void MediaRouterBase::RegisterRemotingSource(
-    int32_t tab_id,
+    SessionID tab_id,
     CastRemotingConnector* remoting_source) {
   auto it = remoting_sources_.find(tab_id);
   if (it != remoting_sources_.end()) {
@@ -178,10 +184,15 @@ void MediaRouterBase::RegisterRemotingSource(
   remoting_sources_.emplace(tab_id, remoting_source);
 }
 
-void MediaRouterBase::UnregisterRemotingSource(int32_t tab_id) {
+void MediaRouterBase::UnregisterRemotingSource(SessionID tab_id) {
   auto it = remoting_sources_.find(tab_id);
   DCHECK(it != remoting_sources_.end());
   remoting_sources_.erase(it);
+}
+
+base::Value MediaRouterBase::GetState() const {
+  NOTREACHED() << "Should not invoke MediaRouterBase::GetState()";
+  return base::Value(base::Value::Type::DICTIONARY);
 }
 
 }  // namespace media_router

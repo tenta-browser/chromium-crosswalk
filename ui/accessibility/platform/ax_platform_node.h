@@ -9,7 +9,7 @@
 #include "base/lazy_instance.h"
 #include "base/observer_list.h"
 #include "build/build_config.h"
-#include "ui/accessibility/ax_enums.h"
+#include "ui/accessibility/ax_enums.mojom.h"
 #include "ui/accessibility/ax_export.h"
 #include "ui/accessibility/ax_mode_observer.h"
 #include "ui/gfx/native_widget_types.h"
@@ -33,7 +33,7 @@ class AX_EXPORT AXPlatformNode {
   static AXPlatformNode* Create(AXPlatformNodeDelegate* delegate);
 
   // Cast a gfx::NativeViewAccessible to an AXPlatformNode if it is one,
-  // or return NULL if it's not an instance of this class.
+  // or return nullptr if it's not an instance of this class.
   static AXPlatformNode* FromNativeViewAccessible(
       gfx::NativeViewAccessible accessible);
 
@@ -53,6 +53,10 @@ class AX_EXPORT AXPlatformNode {
   // the addition of an AXMode flag.
   static void NotifyAddAXModeFlags(AXMode mode_flags);
 
+  static void OnAutofillShown();
+  static void OnAutofillHidden();
+  static bool IsAutofillShown();
+
   // Call Destroy rather than deleting this, because the subclass may
   // use reference counting.
   virtual void Destroy();
@@ -64,10 +68,13 @@ class AX_EXPORT AXPlatformNode {
 
   // Fire a platform-specific notification that an event has occurred on
   // this object.
-  virtual void NotifyAccessibilityEvent(AXEvent event_type) = 0;
+  virtual void NotifyAccessibilityEvent(ax::mojom::Event event_type) = 0;
 
   // Return this object's delegate.
   virtual AXPlatformNodeDelegate* GetDelegate() const = 0;
+
+  // Return the unique ID
+  int32_t GetUniqueId() const;
 
  protected:
   AXPlatformNode();
@@ -80,6 +87,10 @@ class AX_EXPORT AXPlatformNode {
 
   static base::LazyInstance<NativeWindowHandlerCallback>::Leaky
       native_window_handler_;
+
+  static bool is_autofill_shown_;
+
+  DISALLOW_COPY_AND_ASSIGN(AXPlatformNode);
 };
 
 }  // namespace ui

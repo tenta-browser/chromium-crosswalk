@@ -17,6 +17,7 @@ import android.view.ViewGroup;
 import android.view.ViewStructure;
 import android.view.autofill.AutofillValue;
 
+import org.chromium.base.BuildInfo;
 import org.chromium.base.ThreadUtils;
 import org.chromium.components.autofill.AutofillProvider;
 import org.chromium.components.autofill.FormData;
@@ -236,7 +237,7 @@ public class AwAutofillProvider extends AutofillProvider {
 
     @Override
     public void autofill(final SparseArray<AutofillValue> values) {
-        if (mNativeAutofillProvider != 0 && mRequest.autofill((values))) {
+        if (mNativeAutofillProvider != 0 && mRequest != null && mRequest.autofill((values))) {
             autofill(mNativeAutofillProvider, mRequest.mFormData);
         }
     }
@@ -262,7 +263,9 @@ public class AwAutofillProvider extends AutofillProvider {
         // Check focusField inside short value?
         // Autofill Manager might have session that wasn't started by WebView,
         // we just always cancel existing session here.
-        mAutofillManager.cancel();
+        if (!BuildInfo.isAtLeastP()) {
+            mAutofillManager.cancel();
+        }
         Rect absBound = transformToWindowBounds(new RectF(x, y, x + width, y + height));
         mRequest = new AutofillRequest(formData, new FocusField((short) focus, absBound));
         int virtualId = mRequest.getVirtualId((short) focus);
@@ -270,14 +273,14 @@ public class AwAutofillProvider extends AutofillProvider {
     }
 
     @Override
-    public void onTextFieldDidChange(int index, float x, float y, float width, float height) {
+    public void onFormFieldDidChange(int index, float x, float y, float width, float height) {
         // Check index inside short value?
         if (mRequest == null) return;
 
         short sIndex = (short) index;
         FocusField focusField = mRequest.getFocusField();
         if (focusField == null || sIndex != focusField.fieldIndex) {
-            onFocusChanged(true, index, x, y, width, height);
+            onFocusChangedImpl(true, index, x, y, width, height, true /*causedByValueChange*/);
         } else {
             // Currently there is no api to notify both value and position
             // change, before the API is availabe, we still need to call
@@ -297,7 +300,7 @@ public class AwAutofillProvider extends AutofillProvider {
     public void onTextFieldDidScroll(int index, float x, float y, float width, float height) {
         // crbug.com/730764 - from P and above, Android framework listens to the onScrollChanged()
         // and repositions the autofill UI automatically.
-        if (Build.VERSION.SDK_INT > Build.VERSION_CODES.O_MR1) return;
+        if (BuildInfo.isAtLeastP()) return;
         if (mRequest == null) return;
 
         short sIndex = (short) index;
@@ -322,17 +325,23 @@ public class AwAutofillProvider extends AutofillProvider {
     }
 
     @Override
-    public void onWillSubmitForm() {
+    public void onFormSubmitted(int submissionSource) {
         // The changes could be missing, like those made by Javascript, we'd better to notify
         // AutofillManager current values. also see crbug.com/353001 and crbug.com/732856.
         notifyFormValues();
-        mAutofillManager.commit();
+        mAutofillManager.commit(submissionSource);
         mRequest = null;
     }
 
     @Override
     public void onFocusChanged(
             boolean focusOnForm, int focusField, float x, float y, float width, float height) {
+        onFocusChangedImpl(
+                focusOnForm, focusField, x, y, width, height, false /*causedByValueChange*/);
+    }
+
+    private void onFocusChangedImpl(boolean focusOnForm, int focusField, float x, float y,
+            float width, float height, boolean causedByValueChange) {
         // Check focusField inside short value?
         // FocusNoLongerOnForm is called after form submitted.
         if (mRequest == null) return;
@@ -353,7 +362,7 @@ public class AwAutofillProvider extends AutofillProvider {
                     mContainerView, mRequest.getVirtualId((short) focusField), absBound);
             // The focus field value might not sync with platform's
             // AutofillManager, just notify it value changed.
-            notifyVirtualValueChanged(focusField);
+            if (!causedByValueChange) notifyVirtualValueChanged(focusField);
             mRequest.setFocusField(new FocusField((short) focusField, absBound));
         } else {
             if (prev == null) return;
@@ -366,14 +375,14 @@ public class AwAutofillProvider extends AutofillProvider {
 
     @Override
     protected void reset() {
-        mAutofillManager.cancel();
-        mRequest = null;
+        // We don't need to reset anything here, it should be safe to cancel
+        // current autofill session when new one starts in
+        // startAutofillSession().
     }
 
     @Override
     protected void setNativeAutofillProvider(long nativeAutofillProvider) {
         if (nativeAutofillProvider == mNativeAutofillProvider) return;
-        mNativeAutofillProvider = nativeAutofillProvider;
         // Setting the mNativeAutofillProvider to 0 may occur as a
         // result of WebView.destroy, or because a WebView has been
         // gc'ed. In the former case we can go ahead and clean up the
@@ -383,10 +392,9 @@ public class AwAutofillProvider extends AutofillProvider {
         // possible to know which case we're in, so just catch and
         // ignore the exception.
         try {
-            reset();
-            if (nativeAutofillProvider == 0) {
-                mAutofillManager.destroy();
-            }
+            if (mNativeAutofillProvider != 0) mRequest = null;
+            mNativeAutofillProvider = nativeAutofillProvider;
+            if (nativeAutofillProvider == 0) mAutofillManager.destroy();
         } catch (IllegalStateException e) {
         }
     }
@@ -394,8 +402,8 @@ public class AwAutofillProvider extends AutofillProvider {
     @Override
     public void setWebContents(WebContents webContents) {
         if (webContents == mWebContents) return;
+        if (mWebContents != null) mRequest = null;
         mWebContents = webContents;
-        reset();
     }
 
     @Override

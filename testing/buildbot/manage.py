@@ -42,13 +42,8 @@ SKIP = {
   # OS dimensions go into the recipe, they're set in the json file, and
   # jelly bean devices are in the pool.  For now, just blacklist.
   'Jelly Bean Tester',
-  'KitKat Tablet Tester',
   'Lollipop Consumer Tester',
   'Lollipop Low-end Tester',
-  'Lollipop Phone Tester',
-  'Lollipop Tablet Tester',
-  'Marshmallow 64 bit Tester',
-  'Marshmallow Tablet Tester',
 
   # Android bots need custom dimension_sets entries for swarming, and capacity
   # is not there yet -- so don't let manage.py add swarming automatically there.
@@ -64,7 +59,7 @@ SKIP = {
   'WebKit Mac10.11',
   'WebKit Mac10.12',
   'WebKit Mac10.11 (dbg)',
-  'WebKit Mac10.11 (retina)',
+  'WebKit Mac10.12 (retina)',
   'Chromium Mac10.10 Tests',
   'Chromium Mac10.11 Tests',
 
@@ -79,6 +74,8 @@ SKIP = {
 SKIP_GN_ISOLATE_MAP_TARGETS = {
   # This target is magic and not present in gn_isolate_map.pyl.
   'all',
+  'remoting/client:client',
+  'remoting/host:host',
 
   # These targets are listed only in build-side recipes.
   'All_syzygy',
@@ -95,6 +92,8 @@ SKIP_GN_ISOLATE_MAP_TARGETS = {
 
   # iOS tests are listed in //ios/build/bots.
   'cronet_test',
+  'cronet_unittests_ios',
+  'ios_chrome_adaptive_toolbar_egtests',
   'ios_chrome_bookmarks_egtests',
   'ios_chrome_integration_egtests',
   'ios_chrome_payments_egtests',
@@ -106,12 +105,14 @@ SKIP_GN_ISOLATE_MAP_TARGETS = {
   'ios_chrome_web_egtests',
   'ios_components_unittests',
   'ios_net_unittests',
+  "ios_remoting_unittests",
   'ios_showcase_egtests',
   'ios_web_inttests',
   'ios_web_shell_egtests',
   'ios_web_unittests',
   'ios_web_view_inttests',
   'ios_web_view_unittests',
+  'ocmock_support_unittests',
 
   # These are listed in Builders that are skipped for other reasons.
   'chrome_junit_tests',
@@ -125,8 +126,8 @@ SKIP_GN_ISOLATE_MAP_TARGETS = {
   'content_junit_tests',
   'device_junit_tests',
   'junit_unit_tests',
+  'media_router_e2e_tests',
   'media_router_perf_tests',
-  'media_router_tests',
   'motopho_latency_test',
   'net_junit_tests',
   'net_junit_tests',

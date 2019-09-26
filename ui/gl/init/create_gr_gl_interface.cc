@@ -87,6 +87,7 @@ sk_sp<const GrGLInterface> CreateGrGLInterface(
   functions->fBindAttribLocation = gl->glBindAttribLocationFn;
   functions->fBindBuffer = gl->glBindBufferFn;
   functions->fBindFragDataLocation = gl->glBindFragDataLocationFn;
+  functions->fBindUniformLocation = gl->glBindUniformLocationCHROMIUMFn;
   functions->fBeginQuery = gl->glBeginQueryFn;
   functions->fBindTexture = gl->glBindTextureFn;
 
@@ -459,13 +460,8 @@ sk_sp<const GrGLInterface> CreateGrGLInterface(
 
   functions->fDebugMessageControl = gl->glDebugMessageControlFn;
   functions->fDebugMessageInsert = gl->glDebugMessageInsertFn;
-  // TODO(piman): Our GL headers are out-of-date and define GLDEBUGPROC
-  // incorrectly wrt const-ness.
-  functions->fDebugMessageCallback =
-      reinterpret_cast<GrGLDebugMessageCallbackProc>(
-          gl->glDebugMessageCallbackFn);
-  functions->fGetDebugMessageLog =
-      reinterpret_cast<GrGLGetDebugMessageLogProc>(gl->glGetDebugMessageLogFn);
+  functions->fDebugMessageCallback = gl->glDebugMessageCallbackFn;
+  functions->fGetDebugMessageLog = gl->glGetDebugMessageLogFn;
   functions->fPushDebugGroup = gl->glPushDebugGroupFn;
   functions->fPopDebugGroup = gl->glPopDebugGroupFn;
   functions->fObjectLabel = gl->glObjectLabelFn;
@@ -485,14 +481,6 @@ sk_sp<const GrGLInterface> CreateGrGLInterface(
   functions->fClientWaitSync = gl->glClientWaitSyncFn;
   functions->fWaitSync = gl->glWaitSyncFn;
   functions->fDeleteSync = gl->glDeleteSyncFn;
-
-  functions->fBindImageTexture = gl->glBindImageTextureEXTFn;
-  // TODO(piman): skia type is wrong.
-  functions->fMemoryBarrier =
-      reinterpret_cast<GrGLMemoryBarrierProc>(gl->glMemoryBarrierEXTFn);
-
-  // GL 4.5 or GL_ARB_ES3_1_compatibility or ES 3.1
-  // functions->fMemoryBarrierByRegion = gl->glMemoryBarrierByRegionFn;
 
   functions->fGetInternalformativ = gl->glGetInternalformativFn;
 

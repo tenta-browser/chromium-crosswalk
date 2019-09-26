@@ -201,17 +201,21 @@ class NativeDesktopMediaListTest : public views::ViewsTestBase {
   void AddAuraWindow() {
     webrtc::DesktopCapturer::Source window;
     window.title = "Test window";
+
     // Create a aura native widow through a widget.
     desktop_widgets_.push_back(CreateDesktopWidget());
+    aura::WindowTreeHost* const host =
+        desktop_widgets_.back()->GetNativeWindow()->GetHost();
+    aura::Window* const aura_window = host->window();
+
     // Get the native window's id.
-    aura::Window* aura_window = desktop_widgets_.back()->GetNativeWindow();
-    gfx::AcceleratedWidget widget =
-        aura_window->GetHost()->GetAcceleratedWidget();
+    gfx::AcceleratedWidget widget = host->GetAcceleratedWidget();
 #if defined(OS_WIN)
     window.id = reinterpret_cast<DesktopMediaID::Id>(widget);
 #else
     window.id = widget;
 #endif
+
     // Get the aura window's id.
     DesktopMediaID aura_id = DesktopMediaID::RegisterAuraWindow(
         DesktopMediaID::TYPE_WINDOW, aura_window);
@@ -249,7 +253,7 @@ class NativeDesktopMediaListTest : public views::ViewsTestBase {
 
   void AddWindowsAndVerify(bool has_view_dialog) {
     window_capturer_ = new FakeWindowCapturer();
-    model_ = base::MakeUnique<NativeDesktopMediaList>(
+    model_ = std::make_unique<NativeDesktopMediaList>(
         DesktopMediaID::TYPE_WINDOW, base::WrapUnique(window_capturer_));
 
     // Set update period to reduce the time it takes to run tests.
@@ -337,8 +341,8 @@ TEST_F(NativeDesktopMediaListTest, Windows) {
 }
 
 TEST_F(NativeDesktopMediaListTest, ScreenOnly) {
-  model_ = base::MakeUnique<NativeDesktopMediaList>(
-      DesktopMediaID::TYPE_SCREEN, base::MakeUnique<FakeScreenCapturer>());
+  model_ = std::make_unique<NativeDesktopMediaList>(
+      DesktopMediaID::TYPE_SCREEN, std::make_unique<FakeScreenCapturer>());
 
   // Set update period to reduce the time it takes to run tests.
   model_->SetUpdatePeriod(base::TimeDelta::FromMilliseconds(20));

@@ -15,10 +15,12 @@
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/resource_request_info.h"
 #include "extensions/browser/api/declarative_net_request/ruleset_matcher.h"
+#include "extensions/browser/api/web_request/web_request_info.h"
+#include "extensions/browser/api/web_request/web_request_permissions.h"
 #include "extensions/browser/info_map.h"
 #include "extensions/common/api/declarative_net_request/utils.h"
+#include "extensions/common/constants.h"
 #include "net/base/registry_controlled_domains/registry_controlled_domain.h"
-#include "net/url_request/url_request.h"
 
 namespace extensions {
 namespace declarative_net_request {
@@ -66,13 +68,12 @@ flat_rule::ElementType GetElementType(content::ResourceType type) {
 }
 
 // Returns the flat_rule::ElementType for the given |request|.
-flat_rule::ElementType GetElementType(const net::URLRequest& request) {
-  if (request.url().SchemeIsWSOrWSS())
+flat_rule::ElementType GetElementType(const WebRequestInfo& request) {
+  if (request.url.SchemeIsWSOrWSS())
     return flat_rule::ElementType_WEBSOCKET;
 
-  const auto* info = content::ResourceRequestInfo::ForRequest(&request);
-  return info ? GetElementType(info->GetResourceType())
-              : flat_rule::ElementType_OTHER;
+  return request.type.has_value() ? GetElementType(request.type.value())
+                                  : flat_rule::ElementType_OTHER;
 }
 
 // Returns whether the request to |url| is third party to its |document_origin|.
@@ -151,12 +152,11 @@ void RulesetManager::RemoveRuleset(const ExtensionId& extension_id) {
   ClearRendererCacheOnNavigation();
 }
 
-bool RulesetManager::ShouldBlockRequest(const net::URLRequest& request,
+bool RulesetManager::ShouldBlockRequest(const WebRequestInfo& request,
                                         bool is_incognito_context) const {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
-  // Return early if DNR is not enabled.
-  if (!IsAPIAvailable())
+  if (!ShouldEvaluateRequest(request))
     return false;
 
   if (test_observer_)
@@ -165,35 +165,33 @@ bool RulesetManager::ShouldBlockRequest(const net::URLRequest& request,
   SCOPED_UMA_HISTOGRAM_TIMER(
       "Extensions.DeclarativeNetRequest.ShouldBlockRequestTime.AllExtensions");
 
-  const GURL& url = request.url();
   const url::Origin first_party_origin =
-      request.initiator().value_or(url::Origin());
+      request.initiator.value_or(url::Origin());
   const flat_rule::ElementType element_type = GetElementType(request);
-  const bool is_third_party = IsThirdPartyRequest(url, first_party_origin);
+  const bool is_third_party =
+      IsThirdPartyRequest(request.url, first_party_origin);
 
   for (const auto& ruleset_data : rulesets_) {
-    const bool evaluate_ruleset =
-        !is_incognito_context ||
-        info_map_->IsIncognitoEnabled(ruleset_data.extension_id);
+    if (!ShouldEvaluateRulesetForRequest(ruleset_data, request,
+                                         is_incognito_context)) {
+      continue;
+    }
 
-    // TODO(crbug.com/777714): Check host permissions etc.
-    if (evaluate_ruleset &&
-        ruleset_data.matcher->ShouldBlockRequest(
-            url, first_party_origin, element_type, is_third_party)) {
+    if (ruleset_data.matcher->ShouldBlockRequest(
+            request.url, first_party_origin, element_type, is_third_party)) {
       return true;
     }
   }
   return false;
 }
 
-bool RulesetManager::ShouldRedirectRequest(const net::URLRequest& request,
+bool RulesetManager::ShouldRedirectRequest(const WebRequestInfo& request,
                                            bool is_incognito_context,
                                            GURL* redirect_url) const {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DCHECK(redirect_url);
 
-  // Return early if DNR is not enabled.
-  if (!IsAPIAvailable())
+  if (!ShouldEvaluateRequest(request))
     return false;
 
   // Redirecting WebSocket handshake request is prohibited.
@@ -205,23 +203,23 @@ bool RulesetManager::ShouldRedirectRequest(const net::URLRequest& request,
       "Extensions.DeclarativeNetRequest.ShouldRedirectRequestTime."
       "AllExtensions");
 
-  const GURL& url = request.url();
+  const GURL& url = request.url;
   const url::Origin first_party_origin =
-      request.initiator().value_or(url::Origin());
+      request.initiator.value_or(url::Origin());
   const bool is_third_party = IsThirdPartyRequest(url, first_party_origin);
 
   // This iterates in decreasing order of extension installation time. Hence
   // more recently installed extensions get higher priority in choosing the
   // redirect url.
   for (const auto& ruleset_data : rulesets_) {
-    const bool evaluate_ruleset =
-        (!is_incognito_context ||
-         info_map_->IsIncognitoEnabled(ruleset_data.extension_id));
+    if (!ShouldEvaluateRulesetForRequest(ruleset_data, request,
+                                         is_incognito_context)) {
+      continue;
+    }
 
-    // TODO(crbug.com/777714): Check host permissions etc.
-    if (evaluate_ruleset && ruleset_data.matcher->ShouldRedirectRequest(
-                                url, first_party_origin, element_type,
-                                is_third_party, redirect_url)) {
+    if (ruleset_data.matcher->ShouldRedirectRequest(
+            url, first_party_origin, element_type, is_third_party,
+            redirect_url)) {
       return true;
     }
   }
@@ -254,6 +252,58 @@ bool RulesetManager::ExtensionRulesetData::operator<(
   return (extension_install_time != other.extension_install_time)
              ? (extension_install_time > other.extension_install_time)
              : (extension_id < other.extension_id);
+}
+
+bool RulesetManager::ShouldEvaluateRequest(
+    const WebRequestInfo& request) const {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+
+  // Ensure clients filter out sensitive requests.
+  DCHECK(!WebRequestPermissions::HideRequest(info_map_, request));
+
+  if (!IsAPIAvailable()) {
+    DCHECK(rulesets_.empty());
+    return false;
+  }
+
+  // Prevent extensions from modifying any resources on the chrome-extension
+  // scheme. Practically, this has the effect of not allowing an extension to
+  // modify its own resources (The extension wouldn't have the permission to
+  // other extension origins anyway).
+  if (request.url.SchemeIs(kExtensionScheme))
+    return false;
+
+  return true;
+}
+
+bool RulesetManager::ShouldEvaluateRulesetForRequest(
+    const ExtensionRulesetData& ruleset,
+    const WebRequestInfo& request,
+    bool is_incognito_context) const {
+  // Only extensions enabled in incognito should have access to requests in an
+  // incognito context.
+  if (is_incognito_context &&
+      !info_map_->IsIncognitoEnabled(ruleset.extension_id)) {
+    return false;
+  }
+
+  const int tab_id = request.frame_data ? request.frame_data->tab_id
+                                        : extension_misc::kUnknownTabId;
+
+  // We have already checked that the extension has access to the request as far
+  // as the browser context is concerned. Since there is nothing special that we
+  // have to do for split mode incognito extensions, pass false for
+  // |crosses_incognito|.
+  const bool crosses_incognito = false;
+  PermissionsData::AccessType result =
+      WebRequestPermissions::CanExtensionAccessURL(
+          info_map_, ruleset.extension_id, request.url, tab_id,
+          crosses_incognito,
+          WebRequestPermissions::REQUIRE_HOST_PERMISSION_FOR_URL_AND_INITIATOR,
+          request.initiator);
+
+  // TODO(crbug.com/809680): Handle ACCESS_WITHHELD.
+  return result == PermissionsData::ACCESS_ALLOWED;
 }
 
 }  // namespace declarative_net_request

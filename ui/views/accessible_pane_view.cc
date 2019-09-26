@@ -4,7 +4,6 @@
 
 #include "ui/views/accessible_pane_view.h"
 
-#include "base/memory/ptr_util.h"
 #include "base/message_loop/message_loop.h"
 #include "ui/accessibility/ax_node_data.h"
 #include "ui/views/focus/focus_search.h"
@@ -205,7 +204,7 @@ void AccessiblePaneView::SetVisible(bool flag) {
 }
 
 void AccessiblePaneView::GetAccessibleNodeData(ui::AXNodeData* node_data) {
-  node_data->role = ui::AX_ROLE_PANE;
+  node_data->role = ax::mojom::Role::kPane;
 }
 
 void AccessiblePaneView::RequestFocus() {

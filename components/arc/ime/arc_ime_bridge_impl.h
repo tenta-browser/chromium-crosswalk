@@ -33,19 +33,21 @@ class ArcImeBridgeImpl : public ArcImeBridge, public mojom::ImeHost {
   void SendSetCompositionText(const ui::CompositionText& composition) override;
   void SendConfirmCompositionText() override;
   void SendInsertText(const base::string16& text) override;
-  void SendOnKeyboardBoundsChanging(const gfx::Rect& new_bounds) override;
   void SendExtendSelectionAndDelete(size_t before, size_t after) override;
+  void SendOnKeyboardAppearanceChanging(const gfx::Rect& new_bounds,
+                                        bool is_available) override;
 
   // mojom::ImeHost overrides:
   void OnTextInputTypeChanged(mojom::TextInputType type) override;
-  void OnCursorRectChanged(const gfx::Rect& rect) override;
+  void OnCursorRectChanged(const gfx::Rect& rect,
+                           bool screen_coordinates) override;
   void OnCancelComposition() override;
   void ShowImeIfNeeded() override;
-  void OnCursorRectChangedWithSurroundingText(
-      const gfx::Rect& rect,
-      const gfx::Range& text_range,
-      const std::string& text_in_range,
-      const gfx::Range& selection_range) override;
+  void OnCursorRectChangedWithSurroundingText(const gfx::Rect& rect,
+                                              const gfx::Range& text_range,
+                                              const std::string& text_in_range,
+                                              const gfx::Range& selection_range,
+                                              bool screen_coordinates) override;
 
  private:
   Delegate* const delegate_;

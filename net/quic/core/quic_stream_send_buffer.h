@@ -36,10 +36,19 @@ struct BufferedSlice {
   QuicMemSlice slice;
   // Location of this data slice in the stream.
   QuicStreamOffset offset;
-  // Length of payload which is outstanding and waiting for acks.
-  // TODO(fayang): remove this field when deprecating
-  // quic_reloadable_flag_quic_allow_multiple_acks_for_data2.
-  QuicByteCount outstanding_data_length;
+};
+
+struct StreamPendingRetransmission {
+  StreamPendingRetransmission(QuicStreamOffset offset, QuicByteCount length)
+      : offset(offset), length(length) {}
+
+  // Starting offset of this pending retransmission.
+  QuicStreamOffset offset;
+  // Length of this pending retransmission.
+  QuicByteCount length;
+
+  QUIC_EXPORT_PRIVATE bool operator==(
+      const StreamPendingRetransmission& other) const;
 };
 
 // QuicStreamSendBuffer contains a list of QuicStreamDataSlices. New data slices
@@ -48,8 +57,7 @@ struct BufferedSlice {
 // across slice boundaries.
 class QUIC_EXPORT_PRIVATE QuicStreamSendBuffer {
  public:
-  explicit QuicStreamSendBuffer(QuicBufferAllocator* allocator,
-                                bool allow_multiple_acks_for_data);
+  explicit QuicStreamSendBuffer(QuicBufferAllocator* allocator);
   QuicStreamSendBuffer(const QuicStreamSendBuffer& other) = delete;
   QuicStreamSendBuffer(QuicStreamSendBuffer&& other) = delete;
   ~QuicStreamSendBuffer();
@@ -78,6 +86,24 @@ class QUIC_EXPORT_PRIVATE QuicStreamSendBuffer {
                          QuicByteCount data_length,
                          QuicByteCount* newly_acked_length);
 
+  // Called when data [offset, offset + data_length) is considered as lost.
+  void OnStreamDataLost(QuicStreamOffset offset, QuicByteCount data_length);
+
+  // Called when data [offset, offset + length) was retransmitted.
+  void OnStreamDataRetransmitted(QuicStreamOffset offset,
+                                 QuicByteCount data_length);
+
+  // Returns true if there is pending retransmissions.
+  bool HasPendingRetransmission() const;
+
+  // Returns next pending retransmissions.
+  StreamPendingRetransmission NextPendingRetransmission() const;
+
+  // Returns true if data [offset, offset + data_length) is outstanding and
+  // waiting to be acked. Returns false otherwise.
+  bool IsStreamDataOutstanding(QuicStreamOffset offset,
+                               QuicByteCount data_length) const;
+
   // Number of data slices in send buffer.
   size_t size() const;
 
@@ -97,6 +123,14 @@ class QUIC_EXPORT_PRIVATE QuicStreamSendBuffer {
   friend class test::QuicStreamSendBufferPeer;
   friend class test::QuicStreamPeer;
 
+  // Called when data within offset [start, end) gets acked. Frees fully
+  // acked buffered slices if any. Returns false if the corresponding data does
+  // not exist or has been acked.
+  bool FreeMemSlices(QuicStreamOffset start, QuicStreamOffset end);
+
+  // Cleanup empty slices in order from buffered_slices_.
+  void CleanUpBufferedSlices();
+
   QuicDeque<BufferedSlice> buffered_slices_;
 
   // Offset of next inserted byte.
@@ -113,8 +147,19 @@ class QUIC_EXPORT_PRIVATE QuicStreamSendBuffer {
   // Offsets of data that has been acked.
   QuicIntervalSet<QuicStreamOffset> bytes_acked_;
 
-  // Latch value for quic_reloadable_flag_quic_allow_multiple_acks_for_data2.
-  const bool allow_multiple_acks_for_data_;
+  // Data considered as lost and needs to be retransmitted.
+  QuicIntervalSet<QuicStreamOffset> pending_retransmissions_;
+
+  // Index of slice which contains data waiting to be written for the first
+  // time. -1 if send buffer is empty or all data has been written.
+  int32_t write_index_;
+
+  // Latched value of quic_reloadable_flag_quic_free_mem_slice_out_of_order.
+  const bool free_mem_slice_out_of_order_;
+
+  // Latched value of quic_reloadable_flag_quic_free_mem_slice_out_of_order and
+  // quic_reloadable_flag_quic_fast_path_on_stream_data_acked.
+  const bool enable_fast_path_on_data_acked_;
 };
 
 }  // namespace net

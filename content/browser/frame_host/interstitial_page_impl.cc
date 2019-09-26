@@ -28,6 +28,7 @@
 #include "content/browser/frame_host/navigation_controller_impl.h"
 #include "content/browser/frame_host/navigation_entry_impl.h"
 #include "content/browser/frame_host/render_frame_host_impl.h"
+#include "content/browser/renderer_host/display_util.h"
 #include "content/browser/renderer_host/render_process_host_impl.h"
 #include "content/browser/renderer_host/render_view_host_delegate_view.h"
 #include "content/browser/renderer_host/render_view_host_factory.h"
@@ -37,7 +38,7 @@
 #include "content/browser/site_instance_impl.h"
 #include "content/browser/web_contents/web_contents_impl.h"
 #include "content/browser/web_contents/web_contents_view.h"
-#include "content/common/features.h"
+#include "content/common/buildflags.h"
 #include "content/common/frame_messages.h"
 #include "content/common/input_messages.h"
 #include "content/common/view_messages.h"
@@ -547,6 +548,10 @@ const std::string& InterstitialPageImpl::GetUserAgentOverride() const {
   return base::EmptyString();
 }
 
+bool InterstitialPageImpl::ShouldOverrideUserAgentInNewTabs() {
+  return false;
+}
+
 bool InterstitialPageImpl::ShowingInterstitialPage() const {
   // An interstitial page never shows a second interstitial.
   return false;
@@ -595,7 +600,7 @@ RenderViewHostImpl* InterstitialPageImpl::CreateRenderViewHost() {
           BrowserContext::GetStoragePartition(
               browser_context, site_instance.get())->GetDOMStorageContext());
   session_storage_namespace_ =
-      new SessionStorageNamespaceImpl(dom_storage_context);
+      SessionStorageNamespaceImpl::Create(dom_storage_context);
 
   // Use the RenderViewHost from our FrameTree.
   // TODO(avi): The view routing ID can be restored to MSG_ROUTING_NONE once
@@ -614,7 +619,7 @@ WebContentsView* InterstitialPageImpl::CreateWebContentsView() {
       static_cast<WebContentsImpl*>(web_contents())->GetView();
   RenderWidgetHostViewBase* view =
       wcv->CreateViewForWidget(render_view_host_->GetWidget(), false);
-  RenderWidgetHostImpl::From(render_view_host_->GetWidget())->SetView(view);
+  render_view_host_->GetWidget()->SetView(view);
   render_view_host_->GetMainFrame()->AllowBindings(
       BINDINGS_POLICY_DOM_AUTOMATION);
 
@@ -831,6 +836,12 @@ void InterstitialPageImpl::Shutdown() {
 }
 
 void InterstitialPageImpl::OnNavigatingAwayOrTabClosing() {
+  // Notify the RenderWidgetHostView so it can clean up interstitial resources
+  // before the WebContents is fully destroyed.
+  if (render_view_host_ && render_view_host_->GetWidget() &&
+      render_view_host_->GetWidget()->GetView()) {
+    render_view_host_->GetWidget()->GetView()->OnInterstitialPageGoingAway();
+  }
   if (action_taken_ == NO_ACTION) {
     // We are navigating away from the interstitial or closing a tab with an
     // interstitial.  Default to DontProceed(). We don't just call Hide as
@@ -994,17 +1005,6 @@ TextInputManager* InterstitialPageImpl::GetTextInputManager() {
                                         ->GetTextInputManager();
 }
 
-void InterstitialPageImpl::GetScreenInfo(ScreenInfo* screen_info) {
-  WebContentsImpl* web_contents_impl =
-      static_cast<WebContentsImpl*>(web_contents_);
-  if (!web_contents_impl) {
-    WebContentsView::GetDefaultScreenInfo(screen_info);
-    return;
-  }
-
-  web_contents_impl->GetView()->GetScreenInfo(screen_info);
-}
-
 RenderWidgetHostInputEventRouter* InterstitialPageImpl::GetInputEventRouter() {
   WebContentsImpl* web_contents_impl =
       static_cast<WebContentsImpl*>(web_contents_);
@@ -1012,6 +1012,26 @@ RenderWidgetHostInputEventRouter* InterstitialPageImpl::GetInputEventRouter() {
     return nullptr;
 
   return web_contents_impl->GetInputEventRouter();
+}
+
+BrowserAccessibilityManager*
+InterstitialPageImpl::GetRootBrowserAccessibilityManager() {
+  WebContentsImpl* web_contents_impl =
+      static_cast<WebContentsImpl*>(web_contents_);
+  if (!web_contents_impl)
+    return nullptr;
+
+  return web_contents_impl->GetRootBrowserAccessibilityManager();
+}
+
+BrowserAccessibilityManager*
+InterstitialPageImpl::GetOrCreateRootBrowserAccessibilityManager() {
+  WebContentsImpl* web_contents_impl =
+      static_cast<WebContentsImpl*>(web_contents_);
+  if (!web_contents_impl)
+    return nullptr;
+
+  return web_contents_impl->GetOrCreateRootBrowserAccessibilityManager();
 }
 
 }  // namespace content

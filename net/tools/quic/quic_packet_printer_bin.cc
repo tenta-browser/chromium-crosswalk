@@ -67,11 +67,10 @@ class QuicPacketPrinter : public QuicFramerVisitorInterface {
     std::cerr << "OnError: " << QuicErrorCodeToString(framer->error())
               << " detail: " << framer->detailed_error() << "\n";
   }
-  bool OnProtocolVersionMismatch(
-      QuicTransportVersion received_version) override {
+  bool OnProtocolVersionMismatch(ParsedQuicVersion received_version) override {
     framer_->set_version(received_version);
     std::cerr << "OnProtocolVersionMismatch: "
-              << QuicVersionToString(received_version) << "\n";
+              << ParsedQuicVersionToString(received_version) << "\n";
     return true;
   }
   void OnPacket() override { std::cerr << "OnPacket\n"; }
@@ -110,6 +109,18 @@ class QuicPacketPrinter : public QuicFramerVisitorInterface {
     std::cerr << "OnAckFrame: " << frame;
     return true;
   }
+  bool OnAckFrameStart(QuicPacketNumber largest_acked,
+                       QuicTime::Delta /*ack_delay_time*/) override {
+    std::cerr << "OnAckFrameStart, largest_acked: " << largest_acked;
+    return true;
+  }
+  bool OnAckRange(QuicPacketNumber start,
+                  QuicPacketNumber end,
+                  bool last_range) override {
+    std::cerr << "OnAckRange: [" << start << ", " << end
+              << "),  last_range: " << last_range;
+    return true;
+  }
   bool OnStopWaitingFrame(const QuicStopWaitingFrame& frame) override {
     std::cerr << "OnStopWaitingFrame: " << frame;
     return true;
@@ -143,6 +154,14 @@ class QuicPacketPrinter : public QuicFramerVisitorInterface {
     return true;
   }
   void OnPacketComplete() override { std::cerr << "OnPacketComplete\n"; }
+  bool IsValidStatelessResetToken(uint128 token) const override {
+    std::cerr << "IsValidStatelessResetToken\n";
+    return false;
+  }
+  void OnAuthenticatedIetfStatelessResetPacket(
+      const QuicIetfStatelessResetPacket& packet) override {
+    std::cerr << "OnAuthenticatedIetfStatelessResetPacket\n";
+  }
 
  private:
   QuicFramer* framer_;  // Unowned.
@@ -177,14 +196,14 @@ int main(int argc, char* argv[]) {
     return 1;
   }
   string hex = net::QuicTextUtils::HexDecode(argv[2]);
-  net::QuicTransportVersionVector versions =
-      net::AllSupportedTransportVersions();
+  net::ParsedQuicVersionVector versions = net::AllSupportedVersions();
   // Fake a time since we're not actually generating acks.
   net::QuicTime start(net::QuicTime::Zero());
   net::QuicFramer framer(versions, start, perspective);
   if (!FLAGS_quic_version.empty()) {
-    for (net::QuicTransportVersion version : versions) {
-      if (net::QuicVersionToString(version) == FLAGS_quic_version) {
+    for (net::ParsedQuicVersion version : versions) {
+      if (net::QuicVersionToString(version.transport_version) ==
+          FLAGS_quic_version) {
         framer.set_version(version);
       }
     }

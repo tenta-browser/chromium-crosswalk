@@ -97,8 +97,9 @@ class WizardController : public BaseScreenDelegate,
   // Advances to screen defined by |screen| and shows it.
   void AdvanceToScreen(OobeScreen screen);
 
-  // Advances to login screen. Should be used in for testing only.
+  // Advances to login/update screen. Should be used in for testing only.
   void SkipToLoginForTesting(const LoginScreenContext& context);
+  void SkipToUpdateForTesting();
 
   // Should be used for testing only.
   pairing_chromeos::SharkConnectionListener*
@@ -140,11 +141,13 @@ class WizardController : public BaseScreenDelegate,
   void ShowUserImageScreen();
   void ShowEulaScreen();
   void ShowEnrollmentScreen();
+  void ShowDemoModeSetupScreen();
   void ShowResetScreen();
   void ShowKioskAutolaunchScreen();
   void ShowEnableDebuggingScreen();
   void ShowKioskEnableScreen();
   void ShowTermsOfServiceScreen();
+  void ShowSyncConsentScreen();
   void ShowArcTermsOfServiceScreen();
   void ShowWrongHWIDScreen();
   void ShowAutoEnrollmentCheckScreen();
@@ -157,6 +160,7 @@ class WizardController : public BaseScreenDelegate,
   void ShowEncryptionMigrationScreen();
   void ShowVoiceInteractionValuePropScreen();
   void ShowWaitForContainerReadyScreen();
+  void ShowUpdateRequiredScreen();
 
   // Shows images login screen.
   void ShowLoginScreen(const LoginScreenContext& context);
@@ -185,6 +189,7 @@ class WizardController : public BaseScreenDelegate,
   void OnVoiceInteractionValuePropAccepted();
   void OnControllerPairingFinished();
   void OnAutoEnrollmentCheckCompleted();
+  void OnDemoSetupClosed();
   void OnWaitForContainerReadyFinished();
   void OnOobeFlowFinished();
 
@@ -293,9 +298,6 @@ class WizardController : public BaseScreenDelegate,
   // pairing remora OOBE from the beginning no matter an eligible controller is
   // detected or not.
   bool IsRemoraPairingOobe() const;
-
-  // Returns true if arc terms of service should be shown.
-  bool ShouldShowArcTerms() const;
 
   // Returns true if voice interaction value prop should be shown.
   bool ShouldShowVoiceInteractionValueProp() const;

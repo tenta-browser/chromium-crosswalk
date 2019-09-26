@@ -11,21 +11,18 @@
 
 namespace app_list {
 
-AppListFolderItem::AppListFolderItem(const std::string& id,
-                                     FolderType folder_type)
+AppListFolderItem::AppListFolderItem(const std::string& id)
     : AppListItem(id),
-      folder_type_(folder_type),
+      folder_type_(id == ash::kOemFolderId ? FOLDER_TYPE_OEM
+                                           : FOLDER_TYPE_NORMAL),
       item_list_(new AppListItemList),
       folder_image_(item_list_.get()) {
   folder_image_.AddObserver(this);
+  set_is_folder(true);
 }
 
 AppListFolderItem::~AppListFolderItem() {
   folder_image_.RemoveObserver(this);
-}
-
-const gfx::ImageSkia& AppListFolderItem::GetTopIcon(size_t item_index) {
-  return folder_image_.GetTopIcon(item_index);
 }
 
 gfx::Rect AppListFolderItem::GetTargetIconRectInFolderForItem(
@@ -35,20 +32,11 @@ gfx::Rect AppListFolderItem::GetTargetIconRectInFolderForItem(
                                                         folder_icon_bounds);
 }
 
-void AppListFolderItem::Activate(int event_flags) {
-  // Folder handling is implemented by the View, so do nothing.
-}
-
 // static
 const char AppListFolderItem::kItemType[] = "FolderItem";
 
 const char* AppListFolderItem::GetItemType() const {
   return AppListFolderItem::kItemType;
-}
-
-ui::MenuModel* AppListFolderItem::GetContextMenuModel() {
-  // TODO(stevenjb/jennyz): Implement.
-  return NULL;
 }
 
 AppListItem* AppListFolderItem::FindChildItem(const std::string& id) {

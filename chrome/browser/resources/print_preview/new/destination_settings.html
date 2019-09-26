@@ -1,8 +1,15 @@
 <link rel="import" href="chrome://resources/html/polymer.html">
 
+<link rel="import" href="chrome://resources/cr_elements/cr_lazy_render/cr_lazy_render.html">
 <link rel="import" href="chrome://resources/cr_elements/hidden_style_css.html">
-<link rel="import" href="button_css.html">
+<link rel="import" href="chrome://resources/html/event_tracker.html">
+<link rel="import" href="chrome://resources/html/i18n_behavior.html">
 <link rel="import" href="../data/destination.html">
+<link rel="import" href="../data/destination_store.html">
+<link rel="import" href="../data/invitation_store.html">
+<link rel="import" href="../data/user_info.html">
+<link rel="import" href="button_css.html">
+<link rel="import" href="destination_dialog.html">
 <link rel="import" href="print_preview_shared_css.html">
 <link rel="import" href="throbber_css.html">
 <link rel="import" href="settings_section.html">
@@ -23,6 +30,7 @@
         align-items: center;
         display: flex;
         min-height: 28px;
+        overflow: hidden;
       }
 
       .destination-icon {
@@ -36,6 +44,7 @@
         display: flex;
         flex: 1;
         flex-direction: column;
+        overflow: hidden;
         width: 100%;
       }
 
@@ -52,7 +61,8 @@
         font-size: 110%;
       }
 
-      .destination-location {
+      .destination-location,
+      :host([stale_]) .destination-info-wrapper {
         opacity: 0.4;
       }
     </style>
@@ -67,15 +77,33 @@
           <img class="destination-icon"
              src="[[destination.iconUrl]]" alt="">
           <div class="destination-info-wrapper">
-            <div class="destination-name">[[destination.id]]</div>
+            <div class="destination-name">[[destination.displayName]]</div>
             <div class="destination-location">[[destination.hint]]</div>
-            <div class="destination-offline-status">
-                [[destination.offlineStatusText]]</div>
+            <div class="destination-connection-status">
+              [[getStatusText_(destination.connectionStatusText,
+                  destination.shouldShowInvalidCertificateError)]]
+            </div>
           </div>
         </div>
-        <button>$i18n{changeDestination}</button>
+        <button
+          disabled$="[[shouldDisableButton_(destinationStore, disabled,
+                                            state)]]"
+          on-click="onChangeButtonClick_">
+          $i18n{changeDestination}
+        </button>
       </div>
     </print-preview-settings-section>
+    <cr-lazy-render id="destinationDialog">
+      <template>
+        <print-preview-destination-dialog
+            destination-store="[[destinationStore]]"
+            invitation-store="[[invitationStore]]"
+            recent-destinations="[[recentDestinations]]"
+            user-info="{{userInfo}}"
+            show-cloud-print-promo="{{showCloudPrintPromo_}}">
+        </print-preview-destination-dialog>
+      </template>
+    </cr-lazy-render>
   </template>
   <script src="destination_settings.js"></script>
 </dom-module>

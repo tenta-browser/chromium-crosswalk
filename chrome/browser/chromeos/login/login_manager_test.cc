@@ -6,11 +6,11 @@
 
 #include <string>
 
+#include "ash/public/cpp/ash_switches.h"
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/command_line.h"
 #include "base/files/file_path.h"
-#include "base/memory/ptr_util.h"
 #include "base/path_service.h"
 #include "base/run_loop.h"
 #include "chrome/browser/browser_process.h"
@@ -98,13 +98,12 @@ void LoginManagerTest::SetUp() {
 
 void LoginManagerTest::TearDownOnMainThread() {
   MixinBasedBrowserTest::TearDownOnMainThread();
-  if (LoginDisplayHost::default_host())
-    LoginDisplayHost::default_host()->Finalize(base::OnceClosure());
-  base::RunLoop().RunUntilIdle();
+
   EXPECT_TRUE(embedded_test_server()->ShutdownAndWaitUntilComplete());
 }
 
 void LoginManagerTest::SetUpCommandLine(base::CommandLine* command_line) {
+  command_line->AppendSwitch(ash::switches::kShowWebUiLogin);
   command_line->AppendSwitch(chromeos::switches::kLoginManager);
   command_line->AppendSwitch(chromeos::switches::kForceLoginManagerInTests);
 

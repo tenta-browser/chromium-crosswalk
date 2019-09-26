@@ -30,6 +30,10 @@
 #include "ui/base/ime/input_method_initializer.h"
 #endif
 
+#if defined(USE_AURA) && defined(TOOLKIT_VIEWS)
+#include "ui/views/test/widget_test_api.h"  // nogncheck
+#endif
+
 namespace content {
 
 ContentBrowserTest::ContentBrowserTest() {
@@ -81,6 +85,13 @@ void ContentBrowserTest::SetUp() {
                                  subprocess_path);
 #endif
 
+#if defined(USE_AURA) && defined(TOOLKIT_VIEWS)
+  // https://crbug.com/695054: Ignore window activation/deactivation to make
+  // the Chrome-internal focus unaffected by OS events caused by running tests
+  // in parallel.
+  views::DisableActivationChangeHandlingForTests();
+#endif
+
   // LinuxInputMethodContextFactory has to be initialized.
 #if !defined(OS_CHROMEOS) && defined(OS_LINUX)
   ui::InitializeInputMethodForTesting();
@@ -106,6 +117,7 @@ void ContentBrowserTest::PreRunTestOnMainThread() {
   if (!switches::IsRunLayoutTestSwitchPresent()) {
     CHECK_EQ(Shell::windows().size(), 1u);
     shell_ = Shell::windows()[0];
+    SetInitialWebContents(shell_->web_contents());
   }
 
 #if defined(OS_MACOSX)

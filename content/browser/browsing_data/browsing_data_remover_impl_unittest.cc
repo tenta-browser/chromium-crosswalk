@@ -42,6 +42,7 @@
 #include "content/public/test/test_browser_thread_bundle.h"
 #include "content/public/test/test_storage_partition.h"
 #include "content/public/test/test_utils.h"
+#include "net/cookies/canonical_cookie.h"
 #include "net/cookies/cookie_store.h"
 #include "net/http/http_network_session.h"
 #include "net/http/http_transaction_factory.h"
@@ -50,7 +51,7 @@
 #include "net/ssl/ssl_client_cert_type.h"
 #include "net/url_request/url_request_context.h"
 #include "net/url_request/url_request_context_getter.h"
-#include "ppapi/features/features.h"
+#include "ppapi/buildflags/buildflags.h"
 #include "storage/browser/test/mock_special_storage_policy.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -134,8 +135,7 @@ class StoragePartitionRemovalTestStoragePartition
 
   void ClearDataForOrigin(uint32_t remove_mask,
                           uint32_t quota_storage_remove_mask,
-                          const GURL& storage_origin,
-                          net::URLRequestContextGetter* rq_context) override {}
+                          const GURL& storage_origin) override {}
 
   void ClearData(uint32_t remove_mask,
                  uint32_t quota_storage_remove_mask,
@@ -268,9 +268,9 @@ class RemoveCookieTester {
         new MessageLoopRunner();
     quit_closure_ = message_loop_runner->QuitClosure();
     get_cookie_success_ = false;
-    cookie_store_->GetCookiesWithOptionsAsync(
+    cookie_store_->GetCookieListWithOptionsAsync(
         kOrigin1, net::CookieOptions(),
-        base::BindOnce(&RemoveCookieTester::GetCookieCallback,
+        base::BindOnce(&RemoveCookieTester::GetCookieListCallback,
                        base::Unretained(this)));
     message_loop_runner->Run();
     return get_cookie_success_;
@@ -293,11 +293,13 @@ class RemoveCookieTester {
   }
 
  private:
-  void GetCookieCallback(const std::string& cookies) {
-    if (cookies == "A=1") {
+  void GetCookieListCallback(const net::CookieList& cookie_list) {
+    std::string cookie_line =
+        net::CanonicalCookie::BuildCookieLine(cookie_list);
+    if (cookie_line == std::string("A=1")) {
       get_cookie_success_ = true;
     } else {
-      EXPECT_EQ("", cookies);
+      EXPECT_EQ("", cookie_line);
       get_cookie_success_ = false;
     }
     quit_closure_.Run();
@@ -659,7 +661,7 @@ TEST_F(BrowsingDataRemoverImplTest, ClearHttpAuthCache_RemoveCookies) {
           ->GetURLRequestContext()
           ->http_transaction_factory()
           ->GetSession();
-  DCHECK(http_session);
+  ASSERT_TRUE(http_session);
 
   net::HttpAuthCache* http_auth_cache = http_session->http_auth_cache();
   http_auth_cache->Add(kOrigin1, kTestRealm, net::HttpAuth::AUTH_SCHEME_BASIC,
@@ -667,14 +669,46 @@ TEST_F(BrowsingDataRemoverImplTest, ClearHttpAuthCache_RemoveCookies) {
                        net::AuthCredentials(base::ASCIIToUTF16("foo"),
                                             base::ASCIIToUTF16("bar")),
                        "/");
-  CHECK(http_auth_cache->Lookup(kOrigin1, kTestRealm,
-                                net::HttpAuth::AUTH_SCHEME_BASIC));
+  ASSERT_TRUE(http_auth_cache->Lookup(kOrigin1, kTestRealm,
+                                      net::HttpAuth::AUTH_SCHEME_BASIC));
 
   BlockUntilBrowsingDataRemoved(base::Time(), base::Time::Max(),
                                 BrowsingDataRemover::DATA_TYPE_COOKIES, false);
 
   EXPECT_EQ(nullptr, http_auth_cache->Lookup(kOrigin1, kTestRealm,
                                              net::HttpAuth::AUTH_SCHEME_BASIC));
+}
+
+// Test that removing cookies does not clear HTTP auth data if we're avoiding
+// closing connections.
+TEST_F(BrowsingDataRemoverImplTest,
+       ClearHttpAuthCache_AvoidClosingConnections) {
+  net::HttpNetworkSession* http_session =
+      BrowserContext::GetDefaultStoragePartition(GetBrowserContext())
+          ->GetURLRequestContext()
+          ->GetURLRequestContext()
+          ->http_transaction_factory()
+          ->GetSession();
+  ASSERT_TRUE(http_session);
+
+  net::HttpAuthCache* http_auth_cache = http_session->http_auth_cache();
+  net::HttpAuthCache::Entry* entry = http_auth_cache->Add(
+      kOrigin1, kTestRealm, net::HttpAuth::AUTH_SCHEME_BASIC, "test challenge",
+      net::AuthCredentials(base::ASCIIToUTF16("foo"),
+                           base::ASCIIToUTF16("bar")),
+      "/");
+  ASSERT_TRUE(http_auth_cache->Lookup(kOrigin1, kTestRealm,
+                                      net::HttpAuth::AUTH_SCHEME_BASIC));
+
+  BlockUntilBrowsingDataRemoved(
+      base::Time(), base::Time::Max(),
+      BrowsingDataRemover::DATA_TYPE_COOKIES |
+          BrowsingDataRemover::DATA_TYPE_AVOID_CLOSING_CONNECTIONS,
+      false);
+
+  // The entry stays unchanged.
+  EXPECT_EQ(entry, http_auth_cache->Lookup(kOrigin1, kTestRealm,
+                                           net::HttpAuth::AUTH_SCHEME_BASIC));
 }
 
 TEST_F(BrowsingDataRemoverImplTest, RemoveChannelIDForever) {
@@ -739,6 +773,29 @@ TEST_F(BrowsingDataRemoverImplTest, RemoveChannelIDsForServerIdentifiers) {
   net::ChannelIDStore::ChannelIDList channel_ids;
   tester.GetChannelIDList(&channel_ids);
   EXPECT_EQ(kTestRegisterableDomain3, channel_ids.front().server_identifier());
+}
+
+TEST_F(BrowsingDataRemoverImplTest, RemoveChannelIDsAvoidClosingConnections) {
+  RemoveChannelIDTester tester(GetBrowserContext());
+
+  tester.AddChannelID(kTestOrigin1);
+  EXPECT_EQ(0, tester.ssl_config_changed_count());
+  EXPECT_EQ(1, tester.ChannelIDCount());
+
+  int remove_mask = BrowsingDataRemover::DATA_TYPE_CHANNEL_IDS |
+                    BrowsingDataRemover::DATA_TYPE_AVOID_CLOSING_CONNECTIONS;
+
+  BlockUntilBrowsingDataRemoved(base::Time(), base::Time::Max(), remove_mask,
+                                false);
+
+  EXPECT_EQ(remove_mask, GetRemovalMask());
+  EXPECT_EQ(BrowsingDataRemover::ORIGIN_TYPE_UNPROTECTED_WEB,
+            GetOriginTypeMask());
+
+  // No deletion took place because the AVOID_CLOSING_CONNECTIONS flag
+  // was specified.
+  EXPECT_EQ(0, tester.ssl_config_changed_count());
+  EXPECT_EQ(1, tester.ChannelIDCount());
 }
 
 TEST_F(BrowsingDataRemoverImplTest, RemoveUnprotectedLocalStorageForever) {

@@ -9,6 +9,7 @@
 #include "base/strings/utf_string_conversions.h"
 #include "build/build_config.h"
 #include "components/url_formatter/url_formatter.h"
+#include "content/public/browser/browser_thread.h"
 #include "content/public/browser/web_contents.h"
 #include "content/shell/browser/shell_javascript_dialog.h"
 #include "content/shell/common/shell_switches.h"
@@ -16,14 +17,14 @@
 namespace content {
 
 ShellJavaScriptDialogManager::ShellJavaScriptDialogManager()
-    : should_proceed_on_beforeunload_(true) {}
+    : should_proceed_on_beforeunload_(true), beforeunload_success_(true) {}
 
 ShellJavaScriptDialogManager::~ShellJavaScriptDialogManager() {
 }
 
 void ShellJavaScriptDialogManager::RunJavaScriptDialog(
     WebContents* web_contents,
-    const GURL& alerting_frame_url,
+    RenderFrameHost* render_frame_host,
     JavaScriptDialogType dialog_type,
     const base::string16& message_text,
     const base::string16& default_prompt_text,
@@ -46,7 +47,7 @@ void ShellJavaScriptDialogManager::RunJavaScriptDialog(
   }
 
   base::string16 new_message_text =
-      url_formatter::FormatUrl(alerting_frame_url) +
+      url_formatter::FormatUrl(render_frame_host->GetLastCommittedURL()) +
       base::ASCIIToUTF16("\n\n") + message_text;
   gfx::NativeWindow parent_window = web_contents->GetTopLevelNativeWindow();
 
@@ -69,8 +70,9 @@ void ShellJavaScriptDialogManager::RunBeforeUnloadDialog(
   // the callback and return.
   if (!dialog_request_callback_.is_null()) {
     dialog_request_callback_.Run();
+
     if (should_proceed_on_beforeunload_)
-      std::move(callback).Run(true, base::string16());
+      std::move(callback).Run(beforeunload_success_, base::string16());
     else
       before_unload_callback_ = std::move(callback);
     dialog_request_callback_.Reset();

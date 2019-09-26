@@ -22,6 +22,7 @@ namespace net {
 
 class ReportingContext;
 struct ReportingPolicy;
+class URLRequest;
 class URLRequestContext;
 
 // The external interface to the Reporting system, used by the embedder of //net
@@ -52,7 +53,8 @@ class NET_EXPORT ReportingService {
   virtual void QueueReport(const GURL& url,
                            const std::string& group,
                            const std::string& type,
-                           std::unique_ptr<const base::Value> body) = 0;
+                           std::unique_ptr<const base::Value> body,
+                           int depth) = 0;
 
   // Processes a Report-To header. |url| is the URL that originated the header;
   // |header_value| is the normalized value of the Report-To header.
@@ -63,7 +65,13 @@ class NET_EXPORT ReportingService {
   // ReportingBrowsingDataRemover for more details.
   virtual void RemoveBrowsingData(
       int data_type_mask,
-      base::Callback<bool(const GURL&)> origin_filter) = 0;
+      const base::RepeatingCallback<bool(const GURL&)>& origin_filter) = 0;
+
+  // Checks how many uploads deep |request| is: 0 if it's not an upload, n+1 if
+  // it's an upload reporting on requests of at most depth n.
+  virtual int GetUploadDepth(const URLRequest& request) = 0;
+
+  virtual const ReportingPolicy& GetPolicy() const = 0;
 
  protected:
   ReportingService() {}

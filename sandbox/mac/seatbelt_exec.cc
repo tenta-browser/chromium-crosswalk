@@ -5,6 +5,7 @@
 #include "sandbox/mac/seatbelt_exec.h"
 
 #include <fcntl.h>
+#include <inttypes.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <sys/socket.h>
@@ -20,6 +21,54 @@
 
 namespace sandbox {
 
+namespace {
+
+struct ReadTraits {
+  using BufferType = uint8_t*;
+  static constexpr char kNameString[] = "read";
+  static ssize_t Operate(int fd, BufferType buffer, size_t size) {
+    return read(fd, buffer, size);
+  }
+};
+constexpr char ReadTraits::kNameString[];
+
+struct WriteTraits {
+  using BufferType = const uint8_t*;
+  static constexpr char kNameString[] = "write";
+  static ssize_t Operate(int fd, BufferType buffer, size_t size) {
+    return write(fd, buffer, size);
+  }
+};
+constexpr char WriteTraits::kNameString[];
+
+template <typename Traits>
+bool ReadOrWrite(int fd,
+                 const typename Traits::BufferType buffer,
+                 const size_t size) {
+  if (size > std::numeric_limits<ssize_t>::max()) {
+    logging::Error("request size is greater than ssize_t::max");
+    return false;
+  }
+
+  ssize_t bytes_to_transact = static_cast<ssize_t>(size);
+
+  while (bytes_to_transact > 0) {
+    ssize_t offset = size - bytes_to_transact;
+    ssize_t transacted_bytes =
+        HANDLE_EINTR(Traits::Operate(fd, buffer + offset, bytes_to_transact));
+    if (transacted_bytes < 0) {
+      logging::PError("%s failed", Traits::kNameString);
+      return false;
+    }
+
+    bytes_to_transact -= transacted_bytes;
+  }
+
+  return true;
+}
+
+}  // namespace
+
 SeatbeltExecClient::SeatbeltExecClient() {
   if (pipe(pipe_) != 0)
     logging::PFatal("SeatbeltExecClient: pipe failed");
@@ -33,11 +82,10 @@ SeatbeltExecClient::SeatbeltExecClient() {
 }
 
 SeatbeltExecClient::~SeatbeltExecClient() {
+  if (pipe_[0] != -1)
+    IGNORE_EINTR(close(pipe_[0]));
   if (pipe_[1] != -1)
     IGNORE_EINTR(close(pipe_[1]));
-  // If pipe() fails, PCHECK() will be hit in the constructor, so this file
-  // descriptor should always be closed if the proess is alive at this point.
-  IGNORE_EINTR(close(pipe_[0]));
 }
 
 bool SeatbeltExecClient::SetBooleanParameter(const std::string& key,
@@ -57,31 +105,47 @@ void SeatbeltExecClient::SetProfile(const std::string& policy) {
   policy_.set_profile(policy);
 }
 
-int SeatbeltExecClient::SendProfileAndGetFD() {
-  std::string serialized_protobuf;
-  if (!policy_.SerializeToString(&serialized_protobuf))
-    return -1;
+int SeatbeltExecClient::GetReadFD() {
+  return pipe_[0];
+}
 
-  if (!WriteString(&serialized_protobuf))
-    return -1;
+bool SeatbeltExecClient::SendProfile() {
+  IGNORE_EINTR(close(pipe_[0]));
+  pipe_[0] = -1;
+
+  std::string serialized_protobuf;
+  if (!policy_.SerializeToString(&serialized_protobuf)) {
+    logging::Error("SeatbeltExecClient: Serializing the profile failed.");
+    return false;
+  }
+
+  if (!WriteString(serialized_protobuf)) {
+    logging::Error(
+        "SeatbeltExecClient: Writing the serialized profile failed.");
+    return false;
+  }
 
   IGNORE_EINTR(close(pipe_[1]));
   pipe_[1] = -1;
 
-  return pipe_[0];
+  return true;
 }
 
-bool SeatbeltExecClient::WriteString(std::string* str) {
-  struct iovec iov[1];
-  iov[0].iov_base = &(*str)[0];
-  iov[0].iov_len = str->size();
-
-  ssize_t written = HANDLE_EINTR(writev(pipe_[1], iov, arraysize(iov)));
-  if (written < 0) {
-    logging::PError("SeatbeltExecClient: writev failed");
+bool SeatbeltExecClient::WriteString(const std::string& str) {
+  uint64_t str_len = static_cast<uint64_t>(str.size());
+  if (!ReadOrWrite<WriteTraits>(pipe_[1], reinterpret_cast<uint8_t*>(&str_len),
+                                sizeof(str_len))) {
+    logging::Error("SeatbeltExecClient: write buffer length failed.");
     return false;
   }
-  return static_cast<uint64_t>(written) == str->size();
+
+  if (!ReadOrWrite<WriteTraits>(
+          pipe_[1], reinterpret_cast<const uint8_t*>(&str[0]), str_len)) {
+    logging::Error("SeatbeltExecClient: write buffer failed.");
+    return false;
+  }
+
+  return true;
 }
 
 SeatbeltExecServer::SeatbeltExecServer(int fd) : fd_(fd), extra_params_() {}
@@ -130,19 +194,21 @@ bool SeatbeltExecServer::ApplySandboxProfile(const mac::SandboxPolicy& policy) {
 }
 
 bool SeatbeltExecServer::ReadString(std::string* str) {
-  // 4 pages of memory is enough to hold the sandbox profiles.
-  std::vector<char> buffer(4096 * 4, '\0');
-
-  struct iovec iov[1];
-  iov[0].iov_base = buffer.data();
-  iov[0].iov_len = buffer.size();
-
-  ssize_t read_length = HANDLE_EINTR(readv(fd_, iov, arraysize(iov)));
-  if (read_length < 0) {
-    logging::PError("SeatbeltExecServer: readv failed");
+  uint64_t buf_len = 0;
+  if (!ReadOrWrite<ReadTraits>(fd_, reinterpret_cast<uint8_t*>(&buf_len),
+                               sizeof(buf_len))) {
+    logging::Error("SeatbeltExecServer: failed to read buffer length.");
     return false;
   }
-  str->assign(buffer.data());
+
+  str->resize(buf_len);
+
+  if (!ReadOrWrite<ReadTraits>(fd_, reinterpret_cast<uint8_t*>(&(*str)[0]),
+                               buf_len)) {
+    logging::Error("SeatbeltExecServer: failed to read buffer.");
+    return false;
+  }
+
   return true;
 }
 

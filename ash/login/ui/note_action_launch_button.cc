@@ -44,7 +44,7 @@ constexpr int kLargeBubbleRadiusDp = 56;
 constexpr float kLargeBubbleOpacity = 0.46;
 
 // The note action background color.
-constexpr int kBubbleColor = SkColorSetARGBMacro(0x9E, 0x9E, 0x9E, 0xFF);
+constexpr int kBubbleColor = SkColorSetRGB(0x9E, 0x9E, 0x9E);
 
 // The note action icon size.
 constexpr int kIconSizeDp = 16;
@@ -270,9 +270,8 @@ class NoteActionLaunchButton::ActionButton : public views::ImageButton,
 
   // views::ButtonListener:
   void ButtonPressed(views::Button* sender, const ui::Event& event) override {
-    UserMetricsRecorder::RecordUserClick(
-        LoginMetricsRecorder::LockScreenUserClickTarget::
-            kLockScreenNoteActionButton);
+    UserMetricsRecorder::RecordUserClickOnTray(
+        LoginMetricsRecorder::TrayClickTarget::kTrayActionNoteButton);
     if (event.IsKeyEvent()) {
       Shell::Get()->tray_action()->RequestNewLockScreenNote(
           mojom::LockScreenNoteOrigin::kLockScreenButtonKeyboard);
@@ -343,7 +342,7 @@ const views::View* NoteActionLaunchButton::TestApi::BackgroundView() const {
 
 NoteActionLaunchButton::NoteActionLaunchButton(
     mojom::TrayActionState initial_note_action_state) {
-  SetLayoutManager(new views::FillLayout());
+  SetLayoutManager(std::make_unique<views::FillLayout>());
 
   background_ = new BackgroundView();
   AddChildView(background_);

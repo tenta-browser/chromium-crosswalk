@@ -5,20 +5,19 @@
 #include "content/browser/compositor/reflector_impl.h"
 
 #include "base/callback.h"
-#include "base/memory/ptr_util.h"
 #include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
 #include "build/build_config.h"
-#include "cc/test/test_context_provider.h"
-#include "cc/test/test_web_graphics_context_3d.h"
 #include "components/viz/common/frame_sinks/begin_frame_source.h"
 #include "components/viz/common/frame_sinks/delay_based_time_source.h"
 #include "components/viz/service/display/output_surface_frame.h"
 #include "components/viz/service/display_embedder/compositor_overlay_candidate_validator.h"
+#include "components/viz/test/test_context_provider.h"
+#include "components/viz/test/test_web_graphics_context_3d.h"
 #include "content/browser/compositor/browser_compositor_output_surface.h"
 #include "content/browser/compositor/reflector_texture.h"
-#include "content/browser/compositor/test/no_transport_image_transport_factory.h"
+#include "content/browser/compositor/test/test_image_transport_factory.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/compositor/compositor.h"
 #include "ui/compositor/layer.h"
@@ -118,6 +117,10 @@ class TestOutputSurface : public BrowserCompositorOutputSurface {
   void SetSurfaceSuspendedForRecycle(bool suspended) override {}
 #endif
 
+#if BUILDFLAG(ENABLE_VULKAN)
+  gpu::VulkanSurface* GetVulkanSurface() override { return nullptr; }
+#endif
+
  private:
   std::unique_ptr<ReflectorTexture> reflector_texture_;
 };
@@ -138,7 +141,7 @@ class ReflectorImplTest : public testing::Test {
     ui::InitializeContextFactoryForTests(enable_pixel_output, &context_factory,
                                          &context_factory_private);
     ImageTransportFactory::SetFactory(
-        std::make_unique<NoTransportImageTransportFactory>());
+        std::make_unique<TestImageTransportFactory>());
     task_runner_ = message_loop_->task_runner();
     compositor_task_runner_ = new FakeTaskRunner();
     begin_frame_source_ = std::make_unique<viz::DelayBasedBeginFrameSource>(
@@ -152,7 +155,7 @@ class ReflectorImplTest : public testing::Test {
         false /* enable_pixel_canvas */));
     compositor_->SetAcceleratedWidget(gfx::kNullAcceleratedWidget);
 
-    auto context_provider = cc::TestContextProvider::Create();
+    auto context_provider = viz::TestContextProvider::Create();
     context_provider->BindToCurrentThread();
     output_surface_ =
         std::make_unique<TestOutputSurface>(std::move(context_provider));
@@ -177,7 +180,8 @@ class ReflectorImplTest : public testing::Test {
       reflector_->RemoveMirroringLayer(mirroring_layer_.get());
     viz::TransferableResource resource;
     std::unique_ptr<viz::SingleReleaseCallback> release;
-    if (mirroring_layer_->PrepareTransferableResource(&resource, &release)) {
+    if (mirroring_layer_->PrepareTransferableResource(nullptr, &resource,
+                                                      &release)) {
       release->Run(gpu::SyncToken(), false);
     }
     compositor_.reset();

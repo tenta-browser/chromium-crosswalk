@@ -59,22 +59,32 @@ class GitCL(object):
             command += ['--auth-refresh-token-json', self._auth_refresh_token_json]
         return self._host.executive.run_command(command, cwd=self._cwd)
 
-    def trigger_try_jobs(self, builders, master=None):
-        # TODO(crbug.com/700552): Let "git cl try" get the master automatically.
-        # (It tries to do this, but its map is unreliable.)
-        if not master:
-            # Assume Blink try bots (all on tryserver.blink except Android).
-            if 'android_blink_rel' in builders:
-                self.trigger_try_jobs(['android_blink_rel'],
-                                      master='tryserver.chromium.android')
-                builders = set(builders) - {'android_blink_rel'}
-            self.trigger_try_jobs(builders, 'tryserver.blink')
-            return
+    def trigger_try_jobs(self, builders, bucket=None):
+        """Triggers try jobs on the given builders.
 
-        command = ['try', '-m', master]
-        for builder in sorted(builders):
-            command.extend(['-b', builder])
-        self.run(command)
+        Args:
+            builder: A list of builder names.
+            bucket: When specified, all jobs are triggered to be in this bucket
+                (instead of the configured or default buckets).
+        """
+        if bucket:
+            builders_by_bucket = {bucket: builders}
+        else:
+            builders_by_bucket = self._group_builders_by_bucket(builders)
+
+        # Sort both buckets and builders to ensure stable unit tests.
+        for bucket in sorted(builders_by_bucket):
+            command = ['try', '-B', bucket]
+            for builder in sorted(builders_by_bucket[bucket]):
+                command.extend(['-b', builder])
+            self.run(command)
+
+    def _group_builders_by_bucket(self, builders):
+        builders_by_bucket = collections.defaultdict(list)
+        for builder in builders:
+            bucket = self._host.builders.bucket_for_builder(builder)
+            builders_by_bucket[bucket].append(builder)
+        return builders_by_bucket
 
     def get_issue_number(self):
         return self.run(['issue']).split()[2]
@@ -82,7 +92,9 @@ class GitCL(object):
     def _get_cl_status(self):
         return self.run(['status', '--field=status']).strip()
 
-    def wait_for_try_jobs(self, poll_delay_seconds=10 * 60, timeout_seconds=120 * 60):
+    def wait_for_try_jobs(
+            self, poll_delay_seconds=10 * 60, timeout_seconds=120 * 60,
+            cq_only=False):
         """Waits until all try jobs are finished and returns results, or None.
 
         This function can also be interrupted if the corresponding CL is
@@ -95,7 +107,7 @@ class GitCL(object):
         def finished_try_job_results_or_none():
             cl_status = self._get_cl_status()
             _log.debug('Fetched CL status: %s', cl_status)
-            try_job_results = self.try_job_results()
+            try_job_results = self.latest_try_jobs(cq_only=cq_only)
             _log.debug('Fetched try results: %s', try_job_results)
             if (cl_status == 'closed' or
                     (try_job_results and self.all_finished(try_job_results))):
@@ -151,7 +163,7 @@ class GitCL(object):
         self._host.print_('Timed out waiting%s.' % message)
         return None
 
-    def latest_try_jobs(self, builder_names=None):
+    def latest_try_jobs(self, builder_names=None, cq_only=False, patchset=None):
         """Fetches a dict of Build to TryJobStatus for the latest try jobs.
 
         This includes jobs that are not yet finished and builds with infra
@@ -160,6 +172,8 @@ class GitCL(object):
 
         Args:
             builder_names: Optional list of builders used to filter results.
+            cq_only: If True, only include CQ jobs.
+            patchset: If given, use this patchset instead of the latest.
 
         Returns:
             A dict mapping Build objects to TryJobStatus objects, with
@@ -167,7 +181,9 @@ class GitCL(object):
         """
         # TODO(crbug.com/771438): Update filter_latest to handle Swarming tasks.
         return self.filter_latest(
-            self.try_job_results(builder_names, include_swarming_tasks=False))
+            self.try_job_results(
+                builder_names, include_swarming_tasks=False, cq_only=cq_only,
+                patchset=patchset))
 
     @staticmethod
     def filter_latest(try_results):
@@ -177,22 +193,26 @@ class GitCL(object):
         latest_builds = filter_latest_builds(try_results.keys())
         return {b: s for b, s in try_results.items() if b in latest_builds}
 
-    def try_job_results(self, builder_names=None, include_swarming_tasks=True):
+    def try_job_results(
+            self, builder_names=None, include_swarming_tasks=True,
+            cq_only=False, patchset=None):
         """Returns a dict mapping Build objects to TryJobStatus objects."""
-        raw_results = self.fetch_raw_try_job_results()
+        raw_results = self.fetch_raw_try_job_results(patchset=patchset)
         build_to_status = {}
         for result in raw_results:
             if builder_names and result['builder_name'] not in builder_names:
                 continue
-            is_swarming_task = result['url'] and (
-                '/task/' in result['url'] or
-                '//ci.chromium.org' in result['url'])
+            is_swarming_task = result['url'] and '/task/' in result['url']
             if is_swarming_task and not include_swarming_tasks:
+                continue
+            is_cq = 'user_agent:cq' in result.get('tags', [])
+            is_experimental = 'cq_experimental:true' in result.get('tags', [])
+            if cq_only and not (is_cq and not is_experimental):
                 continue
             build_to_status[self._build(result)] = self._try_job_status(result)
         return build_to_status
 
-    def fetch_raw_try_job_results(self):
+    def fetch_raw_try_job_results(self, patchset=None):
         """Requests results of try jobs for the current CL and the parsed JSON.
 
         The return value is expected to be a list of dicts, which each are
@@ -201,7 +221,10 @@ class GitCL(object):
         """
         with self._host.filesystem.mkdtemp() as temp_directory:
             results_path = self._host.filesystem.join(temp_directory, 'try-results.json')
-            self.run(['try-results', '--json', results_path])
+            command = ['try-results', '--json', results_path]
+            if patchset:
+                command.extend(['--patchset', str(patchset)])
+            self.run(command)
             contents = self._host.filesystem.read_text_file(results_path)
             _log.debug('Fetched try results to file "%s".', results_path)
             self._host.filesystem.remove(results_path)
@@ -214,7 +237,7 @@ class GitCL(object):
         url = result_dict['url']
         if url is None:
             return Build(builder_name, None)
-        match = re.match(r'.*/builds/(\d+)/?$', url)
+        match = re.match(r'.*/(\d+)/?$', url)
         if match:
             build_number = match.group(1)
             return Build(builder_name, int(build_number))

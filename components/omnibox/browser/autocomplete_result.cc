@@ -14,6 +14,7 @@
 #include "base/metrics/field_trial_params.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/trace_event/memory_usage_estimator.h"
 #include "components/omnibox/browser/autocomplete_input.h"
 #include "components/omnibox/browser/autocomplete_match.h"
 #include "components/omnibox/browser/autocomplete_provider.h"
@@ -98,11 +99,9 @@ void AutocompleteResult::CopyOldMatches(
 void AutocompleteResult::AppendMatches(const AutocompleteInput& input,
                                        const ACMatches& matches) {
   for (const auto& i : matches) {
-#ifndef NDEBUG
     DCHECK_EQ(AutocompleteMatch::SanitizeString(i.contents), i.contents);
     DCHECK_EQ(AutocompleteMatch::SanitizeString(i.description),
               i.description);
-#endif
     matches_.push_back(i);
     if (!AutocompleteMatch::IsSearchType(i.type)) {
       const OmniboxFieldTrial::EmphasizeTitlesCondition condition(
@@ -313,12 +312,12 @@ void AutocompleteResult::CopyFrom(const AutocompleteResult& rhs) {
   alternate_nav_url_ = rhs.alternate_nav_url_;
 }
 
-#ifndef NDEBUG
+#if DCHECK_IS_ON()
 void AutocompleteResult::Validate() const {
   for (const_iterator i(begin()); i != end(); ++i)
     i->Validate();
 }
-#endif
+#endif  // DCHECK_IS_ON()
 
 // static
 GURL AutocompleteResult::ComputeAlternateNavUrl(
@@ -380,6 +379,15 @@ void AutocompleteResult::InlineTailPrefixes() {
     for (auto& match : matches_)
       match.InlineTailPrefix(common_prefix);
   }
+}
+
+size_t AutocompleteResult::EstimateMemoryUsage() const {
+  size_t res = 0;
+
+  res += base::trace_event::EstimateMemoryUsage(matches_);
+  res += base::trace_event::EstimateMemoryUsage(alternate_nav_url_);
+
+  return res;
 }
 
 // static

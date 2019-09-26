@@ -4,12 +4,12 @@
 
 package org.chromium.chrome.browser.signin;
 
-import android.app.DialogFragment;
-import android.app.FragmentManager;
 import android.content.Context;
 import android.os.Handler;
 import android.support.annotation.IntDef;
 import android.support.annotation.Nullable;
+import android.support.v4.app.DialogFragment;
+import android.support.v4.app.FragmentManager;
 import android.text.TextUtils;
 
 import org.chromium.base.ThreadUtils;
@@ -99,7 +99,7 @@ public class ConfirmSyncDataStateMachine
         mContext = context;
         mCallback = callback;
 
-        mCurrentlyManaged = SigninManager.get(context).getManagementDomain() != null;
+        mCurrentlyManaged = SigninManager.get().getManagementDomain() != null;
 
         mDelegate = new ConfirmSyncDataStateMachineDelegate(mFragmentManager);
 
@@ -112,17 +112,18 @@ public class ConfirmSyncDataStateMachine
 
     /**
      * Cancels this state machine, dismissing any dialogs being shown.
-     * @param dismissDialogs whether all shown dialogs should dismissed. Should be false if
-     *         enclosing activity is being destroyed (all dialogs will be dismissed anyway).
+     * @param isBeingDestroyed whether state machine is being cancelled because enclosing UI object
+     *         is being destroyed. This state machine will not invoke callbacks or dismiss dialogs
+     *         if isBeingDestroyed is true.
      */
-    public void cancel(boolean dismissDialogs) {
+    public void cancel(boolean isBeingDestroyed) {
         ThreadUtils.assertOnUiThread();
 
         cancelTimeout();
         mState = DONE;
-        mCallback.onCancel();
 
-        if (!dismissDialogs) return;
+        if (isBeingDestroyed) return;
+        mCallback.onCancel();
         mDelegate.dismissAllDialogs();
         dismissDialog(ConfirmImportSyncDataDialog.CONFIRM_IMPORT_SYNC_DATA_DIALOG_TAG);
         dismissDialog(ConfirmManagedSyncDataDialog.CONFIRM_IMPORT_SYNC_DATA_DIALOG_TAG);
@@ -272,7 +273,7 @@ public class ConfirmSyncDataStateMachine
     // ConfirmImportSyncDataDialog.Listener & ConfirmManagedSyncDataDialog.Listener implementation.
     @Override
     public void onCancel() {
-        cancel(true);
+        cancel(false);
     }
 }
 

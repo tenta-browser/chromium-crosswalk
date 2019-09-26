@@ -8,7 +8,6 @@
 #include <utility>
 
 #include "base/json/json_writer.h"
-#include "base/memory/ptr_util.h"
 #include "base/message_loop/message_loop.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "base/values.h"
@@ -25,7 +24,7 @@ const char kAccountId[] = "account@gmail.com";
 
 std::string BuildResponse() {
   base::DictionaryValue dict;
-  auto permission_dict = base::MakeUnique<base::DictionaryValue>();
+  auto permission_dict = std::make_unique<base::DictionaryValue>();
   permission_dict->SetKey("id", base::Value("requestid"));
   dict.SetWithoutPathExpansion("permissionRequest", std::move(permission_dict));
   std::string result;

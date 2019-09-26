@@ -537,24 +537,28 @@ template("ios_app_bundle") {
       assert(defined(_variant.bundle_deps),
              "bundle_deps must be defined for all $target_name variants")
 
-      _variants += [ {
-            name = _variant.name
-            bundle_deps = _variant.bundle_deps
-            target_name = "${_target_name}_variants_${_variant.name}"
-            bundle_gen_dir = "$root_out_dir/variants/${_variant.name}"
-          } ]
+      _variants += [
+        {
+          name = _variant.name
+          bundle_deps = _variant.bundle_deps
+          target_name = "${_target_name}_variants_${_variant.name}"
+          bundle_gen_dir = "$root_out_dir/variants/${_variant.name}"
+        },
+      ]
     }
   } else {
     # If no variants are passed to the template, use a fake variant with
     # no name to avoid duplicating code. As no variant can have an empty
     # name except this fake variant, it is possible to know if a variant
     # is fake or not.
-    _variants = [ {
-          name = ""
-          bundle_deps = []
-          target_name = _target_name
-          bundle_gen_dir = root_out_dir
-        } ]
+    _variants = [
+      {
+        name = ""
+        bundle_deps = []
+        target_name = _target_name
+        bundle_gen_dir = root_out_dir
+      },
+    ]
   }
 
   _default_variant = _variants[0]
@@ -1270,7 +1274,9 @@ template("ios_framework_bundle") {
       deps = []
     }
     deps += [ ":$_arch_shared_library_source" ]
-
+    if (_has_public_headers) {
+      deps += [ ":$_framework_headers_target($default_toolchain)" ]
+    }
     if (!defined(ldflags)) {
       ldflags = []
     }
@@ -1384,19 +1390,35 @@ template("ios_framework_bundle") {
 
       _copy_public_headers_target = _target_name + "_copy_public_headers"
       copy(_copy_public_headers_target) {
+        forward_variables_from(invoker,
+                               [
+                                 "testonly",
+                                 "deps",
+                               ])
         visibility = [ ":$_framework_headers_target" ]
         sources = _public_headers
         outputs = [
           "$_framework_root/Headers/{{source_file_part}}",
         ]
+
+        # Do not use forward_variables_from for "public_deps" as
+        # we do not want to forward those dependencies.
+        if (defined(invoker.public_deps)) {
+          if (!defined(deps)) {
+            deps = []
+          }
+          deps += invoker.public_deps
+        }
       }
 
       group(_framework_headers_target) {
         forward_variables_from(invoker, [ "testonly" ])
         deps = [
           ":$_compile_headers_map_target",
-          ":$_copy_public_headers_target",
           ":$_create_module_map_target",
+        ]
+        public_deps = [
+          ":$_copy_public_headers_target",
         ]
       }
     }
@@ -1629,7 +1651,9 @@ template("ios_xctest_bundle") {
       if (ios_automatically_manage_certs) {
         # Use a fixed bundle identifier for EarlGrey tests when using Xcode to
         # manage the certificates as the number of free certs is limited.
-        extra_substitutions = [ "MODULE_BUNDLE_ID=gtest.${ios_generic_test_bundle_id_suffix}-module" ]
+        extra_substitutions = [
+          "MODULE_BUNDLE_ID=gtest.${ios_generic_test_bundle_id_suffix}-module",
+        ]
       } else {
         extra_substitutions = [ "MODULE_BUNDLE_ID=gtest.$_output_name" ]
       }

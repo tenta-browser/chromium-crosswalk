@@ -18,13 +18,11 @@
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/memory/ref_counted.h"
 #include "base/path_service.h"
 #include "base/run_loop.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/threading/sequenced_worker_pool.h"
 #include "base/values.h"
 #include "build/build_config.h"
 #include "chrome/browser/extensions/extension_service.h"
@@ -56,6 +54,10 @@
 #include "chrome/browser/chromeos/settings/cros_settings.h"
 #include "chrome/browser/chromeos/settings/device_settings_service.h"
 #endif
+
+namespace content {
+class SiteInstance;
+}
 
 using content::BrowserThread;
 using storage_monitor::StorageInfo;
@@ -202,9 +204,25 @@ class MockProfileSharedRenderProcessHostFactory
       content::BrowserContext* browser_context);
 
   content::RenderProcessHost* CreateRenderProcessHost(
-      content::BrowserContext* browser_context) const override;
+      content::BrowserContext* browser_context,
+      content::SiteInstance* site_instance) const override;
 
  private:
+  class SharedMockRenderProcessHost : public content::MockRenderProcessHost {
+   public:
+    explicit SharedMockRenderProcessHost(
+        content::BrowserContext* browser_context)
+        : content::MockRenderProcessHost(browser_context) {}
+
+    // This test class lies that the process has not been used to allow
+    // testing of process sharing/reuse inherent in the unit tests that depend
+    // on the MockProfileSharedRenderProcessHostFactory.
+    bool HostHasNotBeenUsed() override { return true; }
+
+   private:
+    DISALLOW_COPY_AND_ASSIGN(SharedMockRenderProcessHost);
+  };
+
   mutable std::map<content::BrowserContext*,
                    std::unique_ptr<content::MockRenderProcessHost>>
       rph_map_;
@@ -416,12 +434,13 @@ MockProfileSharedRenderProcessHostFactory::ReleaseRPH(
 
 content::RenderProcessHost*
 MockProfileSharedRenderProcessHostFactory::CreateRenderProcessHost(
-    content::BrowserContext* browser_context) const {
+    content::BrowserContext* browser_context,
+    content::SiteInstance* site_instance) const {
   auto existing = rph_map_.find(browser_context);
   if (existing != rph_map_.end())
     return existing->second.get();
   rph_map_[browser_context] =
-      base::MakeUnique<content::MockRenderProcessHost>(browser_context);
+      std::make_unique<SharedMockRenderProcessHost>(browser_context);
   return rph_map_[browser_context].get();
 }
 
@@ -605,7 +624,7 @@ int ProfileState::GetAndClearComparisonCount() {
 
 void MediaFileSystemRegistryTest::CreateProfileState(size_t profile_count) {
   for (size_t i = 0; i < profile_count; ++i) {
-    profile_states_.push_back(base::MakeUnique<ProfileState>(&rph_factory_));
+    profile_states_.push_back(std::make_unique<ProfileState>(&rph_factory_));
   }
 }
 

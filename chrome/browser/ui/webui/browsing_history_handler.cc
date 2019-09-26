@@ -13,7 +13,6 @@
 #include "base/i18n/rtl.h"
 #include "base/i18n/time_formatting.h"
 #include "base/logging.h"
-#include "base/memory/ptr_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/time/default_clock.h"
@@ -28,8 +27,8 @@
 #include "chrome/browser/ui/browser_finder.h"
 #include "chrome/browser/ui/chrome_pages.h"
 #include "chrome/browser/ui/webui/favicon_source.h"
+#include "chrome/common/buildflags.h"
 #include "chrome/common/chrome_features.h"
-#include "chrome/common/features.h"
 #include "chrome/common/pref_names.h"
 #include "components/bookmarks/browser/bookmark_model.h"
 #include "components/bookmarks/browser/bookmark_utils.h"
@@ -231,7 +230,8 @@ std::unique_ptr<base::DictionaryValue> HistoryEntryToValue(
 }  // namespace
 
 BrowsingHistoryHandler::BrowsingHistoryHandler()
-    : clock_(new base::DefaultClock()), browsing_history_service_(nullptr) {}
+    : clock_(base::DefaultClock::GetInstance()),
+      browsing_history_service_(nullptr) {}
 
 BrowsingHistoryHandler::~BrowsingHistoryHandler() {}
 
@@ -241,28 +241,33 @@ void BrowsingHistoryHandler::RegisterMessages() {
       profile, ServiceAccessType::EXPLICIT_ACCESS);
   SyncService* sync_service =
       ProfileSyncServiceFactory::GetSyncServiceForBrowserContext(profile);
-  browsing_history_service_ = base::MakeUnique<BrowsingHistoryService>(
+  browsing_history_service_ = std::make_unique<BrowsingHistoryService>(
       this, local_history, sync_service);
 
   // Create our favicon data source.
   content::URLDataSource::Add(profile, new FaviconSource(profile));
 
-  web_ui()->RegisterMessageCallback("queryHistory",
-      base::Bind(&BrowsingHistoryHandler::HandleQueryHistory,
-                 base::Unretained(this)));
+  web_ui()->RegisterMessageCallback(
+      "queryHistory",
+      base::BindRepeating(&BrowsingHistoryHandler::HandleQueryHistory,
+                          base::Unretained(this)));
   web_ui()->RegisterMessageCallback(
       "queryHistoryContinuation",
-      base::Bind(&BrowsingHistoryHandler::HandleQueryHistoryContinuation,
-                 base::Unretained(this)));
-  web_ui()->RegisterMessageCallback("removeVisits",
-      base::Bind(&BrowsingHistoryHandler::HandleRemoveVisits,
-                 base::Unretained(this)));
-  web_ui()->RegisterMessageCallback("clearBrowsingData",
-      base::Bind(&BrowsingHistoryHandler::HandleClearBrowsingData,
-                 base::Unretained(this)));
-  web_ui()->RegisterMessageCallback("removeBookmark",
-      base::Bind(&BrowsingHistoryHandler::HandleRemoveBookmark,
-                 base::Unretained(this)));
+      base::BindRepeating(
+          &BrowsingHistoryHandler::HandleQueryHistoryContinuation,
+          base::Unretained(this)));
+  web_ui()->RegisterMessageCallback(
+      "removeVisits",
+      base::BindRepeating(&BrowsingHistoryHandler::HandleRemoveVisits,
+                          base::Unretained(this)));
+  web_ui()->RegisterMessageCallback(
+      "clearBrowsingData",
+      base::BindRepeating(&BrowsingHistoryHandler::HandleClearBrowsingData,
+                          base::Unretained(this)));
+  web_ui()->RegisterMessageCallback(
+      "removeBookmark",
+      base::BindRepeating(&BrowsingHistoryHandler::HandleRemoveBookmark,
+                          base::Unretained(this)));
 }
 
 void BrowsingHistoryHandler::HandleQueryHistory(const base::ListValue* args) {
@@ -364,9 +369,8 @@ void BrowsingHistoryHandler::OnQueryComplete(
   // Convert the result vector into a ListValue.
   base::ListValue results_value;
   for (const BrowsingHistoryService::HistoryEntry& entry : results) {
-    std::unique_ptr<base::Value> value(
-        HistoryEntryToValue(entry, bookmark_model, supervised_user_service,
-                            sync_service, clock_.get()));
+    std::unique_ptr<base::Value> value(HistoryEntryToValue(
+        entry, bookmark_model, supervised_user_service, sync_service, clock_));
     results_value.Append(std::move(value));
   }
 

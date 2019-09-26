@@ -5,23 +5,21 @@
 #include "cc/blink/web_layer_impl_fixed_bounds.h"
 
 #include "cc/layers/layer.h"
-#include "third_party/WebKit/public/platform/WebFloatPoint.h"
-#include "third_party/WebKit/public/platform/WebSize.h"
+#include "third_party/blink/public/platform/web_float_point.h"
+#include "third_party/blink/public/platform/web_size.h"
 #include "third_party/skia/include/core/SkMatrix44.h"
 
 using cc::Layer;
 
 namespace cc_blink {
 
-WebLayerImplFixedBounds::WebLayerImplFixedBounds() {
-}
+WebLayerImplFixedBounds::WebLayerImplFixedBounds() = default;
 
 WebLayerImplFixedBounds::WebLayerImplFixedBounds(scoped_refptr<Layer> layer)
     : WebLayerImpl(layer) {
 }
 
-WebLayerImplFixedBounds::~WebLayerImplFixedBounds() {
-}
+WebLayerImplFixedBounds::~WebLayerImplFixedBounds() = default;
 
 void WebLayerImplFixedBounds::InvalidateRect(const blink::WebRect& rect) {
   // Partial invalidations seldom occur for such layers.

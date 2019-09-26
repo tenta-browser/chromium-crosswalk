@@ -11,6 +11,7 @@
 #include "chrome/browser/ssl/security_state_tab_helper.h"
 #include "chrome/browser/ui/browser_commands.h"
 #include "chrome/browser/ui/page_info/page_info.h"
+#include "chrome/browser/ui/page_info/page_info_dialog.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/browser/ui/test/test_browser_dialog.h"
 #include "chrome/browser/ui/view_ids.h"
@@ -18,6 +19,7 @@
 #include "chrome/browser/ui/views/location_bar/location_bar_view.h"
 #include "chrome/browser/ui/views/location_bar/location_icon_view.h"
 #include "chrome/browser/ui/views/toolbar/toolbar_view.h"
+#include "chrome/browser/ui/views_mode_controller.h"
 #include "chrome/common/chrome_features.h"
 #include "chrome/common/url_constants.h"
 #include "chrome/test/base/in_process_browser_test.h"
@@ -25,6 +27,7 @@
 #include "components/content_settings/core/browser/content_settings_registry.h"
 #include "components/content_settings/core/common/content_settings_types.h"
 #include "components/safe_browsing/features.h"
+#include "content/public/browser/navigation_handle.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/test/browser_test_utils.h"
@@ -47,12 +50,21 @@ class ClickEvent : public ui::Event {
 
 void PerformMouseClickOnView(views::View* view) {
   ui::AXActionData data;
-  data.action = ui::AX_ACTION_DO_DEFAULT;
+  data.action = ax::mojom::Action::kDoDefault;
   view->HandleAccessibleAction(data);
 }
 
 // Clicks the location icon to open the page info bubble.
 void OpenPageInfoBubble(Browser* browser) {
+#if BUILDFLAG(MAC_VIEWS_BROWSER)
+  if (views_mode_controller::IsViewsBrowserCocoa()) {
+    content::WebContents* contents =
+        browser->tab_strip_model()->GetActiveWebContents();
+    ShowPageInfoDialog(contents);
+    return;
+  }
+#endif
+
   BrowserView* browser_view = BrowserView::GetBrowserViewForBrowser(browser);
   LocationIconView* location_icon_view =
       browser_view->toolbar()->location_bar()->location_icon_view();
@@ -112,7 +124,7 @@ class PageInfoBubbleViewBrowserTest : public DialogBrowserTest {
   PageInfoBubbleViewBrowserTest() {}
 
   // DialogBrowserTest:
-  void ShowDialog(const std::string& name) override {
+  void ShowUi(const std::string& name) override {
     // All the possible test names.
     constexpr char kInsecure[] = "Insecure";
     constexpr char kInternal[] = "Internal";
@@ -216,8 +228,19 @@ class PageInfoBubbleViewBrowserTest : public DialogBrowserTest {
       }
 
       ChosenObjectInfoList chosen_object_list;
-      static_cast<PageInfoBubbleView*>(PageInfoBubbleView::GetPageInfoBubble())
-          ->SetPermissionInfo(permissions_list, std::move(chosen_object_list));
+
+      PageInfoBubbleView* page_info_bubble_view =
+          static_cast<PageInfoBubbleView*>(
+              PageInfoBubbleView::GetPageInfoBubble());
+      // Normally |PageInfoBubbleView| doesn't update the permissions already
+      // shown if they change while it's still open. For this test, manually
+      // force an update by clearing the existing permission views here.
+      page_info_bubble_view->GetFocusManager()->SetFocusedView(nullptr);
+      page_info_bubble_view->selector_rows_.clear();
+      page_info_bubble_view->permissions_view_->RemoveAllChildViews(true);
+
+      page_info_bubble_view->SetPermissionInfo(permissions_list,
+                                               std::move(chosen_object_list));
     }
 
     if (name != kInsecure && name.find(kInternal) == std::string::npos) {
@@ -226,6 +249,19 @@ class PageInfoBubbleViewBrowserTest : public DialogBrowserTest {
       static_cast<PageInfoBubbleView*>(PageInfoBubbleView::GetPageInfoBubble())
           ->SetIdentityInfo(identity);
     }
+  }
+
+ protected:
+  GURL GetSimplePageUrl() const {
+    return ui_test_utils::GetTestUrl(
+        base::FilePath(base::FilePath::kCurrentDirectory),
+        base::FilePath(FILE_PATH_LITERAL("simple.html")));
+  }
+
+  GURL GetIframePageUrl() const {
+    return ui_test_utils::GetTestUrl(
+        base::FilePath(base::FilePath::kCurrentDirectory),
+        base::FilePath(FILE_PATH_LITERAL("iframe_blank.html")));
   }
 
  private:
@@ -382,88 +418,129 @@ IN_PROC_BROWSER_TEST_F(PageInfoBubbleViewBrowserTest,
 }
 
 // Shows the Page Info bubble for a HTTP page (specifically, about:blank).
-IN_PROC_BROWSER_TEST_F(PageInfoBubbleViewBrowserTest, InvokeDialog_Insecure) {
-  RunDialog();
+IN_PROC_BROWSER_TEST_F(PageInfoBubbleViewBrowserTest, InvokeUi_Insecure) {
+  ShowAndVerifyUi();
 }
 
 // Shows the Page Info bubble for a HTTPS page.
-IN_PROC_BROWSER_TEST_F(PageInfoBubbleViewBrowserTest, InvokeDialog_Secure) {
-  RunDialog();
+IN_PROC_BROWSER_TEST_F(PageInfoBubbleViewBrowserTest, InvokeUi_Secure) {
+  ShowAndVerifyUi();
 }
 
 // Shows the Page Info bubble for an internal page, e.g. chrome://settings.
-IN_PROC_BROWSER_TEST_F(PageInfoBubbleViewBrowserTest, InvokeDialog_Internal) {
-  RunDialog();
+IN_PROC_BROWSER_TEST_F(PageInfoBubbleViewBrowserTest, InvokeUi_Internal) {
+  ShowAndVerifyUi();
 }
 
 // Shows the Page Info bubble for an extensions page.
 IN_PROC_BROWSER_TEST_F(PageInfoBubbleViewBrowserTest,
-                       InvokeDialog_InternalExtension) {
-  RunDialog();
+                       InvokeUi_InternalExtension) {
+  ShowAndVerifyUi();
 }
 
 // Shows the Page Info bubble for a chrome page that displays the source HTML.
 IN_PROC_BROWSER_TEST_F(PageInfoBubbleViewBrowserTest,
-                       InvokeDialog_InternalViewSource) {
-  RunDialog();
+                       InvokeUi_InternalViewSource) {
+  ShowAndVerifyUi();
 }
 
 // Shows the Page Info bubble for a site flagged for malware by Safe Browsing.
-IN_PROC_BROWSER_TEST_F(PageInfoBubbleViewBrowserTest, InvokeDialog_Malware) {
-  RunDialog();
+IN_PROC_BROWSER_TEST_F(PageInfoBubbleViewBrowserTest, InvokeUi_Malware) {
+  ShowAndVerifyUi();
 }
 
 // Shows the Page Info bubble for a site flagged for social engineering by Safe
 // Browsing.
-IN_PROC_BROWSER_TEST_F(PageInfoBubbleViewBrowserTest, InvokeDialog_Deceptive) {
-  RunDialog();
+IN_PROC_BROWSER_TEST_F(PageInfoBubbleViewBrowserTest, InvokeUi_Deceptive) {
+  ShowAndVerifyUi();
 }
 
 // Shows the Page Info bubble for a site flagged for distributing unwanted
 // software by Safe Browsing.
 IN_PROC_BROWSER_TEST_F(PageInfoBubbleViewBrowserTest,
-                       InvokeDialog_UnwantedSoftware) {
-  RunDialog();
+                       InvokeUi_UnwantedSoftware) {
+  ShowAndVerifyUi();
 }
 
 // Shows the Page Info bubble Safe Browsing soft warning after detecting the
 // user has re-used an existing password on a site, e.g. due to phishing.
 IN_PROC_BROWSER_TEST_F(PageInfoBubbleViewBrowserTest,
-                       InvokeDialog_PasswordReuseSoft) {
-  RunDialog();
+                       InvokeUi_PasswordReuseSoft) {
+  ShowAndVerifyUi();
 }
 
 // Shows the Page Info bubble Safe Browsing warning after detecting the user has
 // re-used an existing password on a site, e.g. due to phishing.
-IN_PROC_BROWSER_TEST_F(PageInfoBubbleViewBrowserTest,
-                       InvokeDialog_PasswordReuse) {
-  RunDialog();
+IN_PROC_BROWSER_TEST_F(PageInfoBubbleViewBrowserTest, InvokeUi_PasswordReuse) {
+  ShowAndVerifyUi();
 }
 
 // Shows the Page Info bubble for an admin-provided cert when the page is
 // secure, but has a form that submits to an insecure url.
 IN_PROC_BROWSER_TEST_F(PageInfoBubbleViewBrowserTest,
-                       InvokeDialog_MixedContentForm) {
-  RunDialog();
+                       InvokeUi_MixedContentForm) {
+  ShowAndVerifyUi();
 }
 
 // Shows the Page Info bubble for an admin-provided cert when the page is
 // secure, but it uses insecure resources (e.g. images).
-IN_PROC_BROWSER_TEST_F(PageInfoBubbleViewBrowserTest,
-                       InvokeDialog_MixedContent) {
-  RunDialog();
+IN_PROC_BROWSER_TEST_F(PageInfoBubbleViewBrowserTest, InvokeUi_MixedContent) {
+  ShowAndVerifyUi();
 }
 
 // Shows the Page Info bubble with all the permissions displayed with 'Allow'
 // set. All permissions will show regardless of its factory default value.
 IN_PROC_BROWSER_TEST_F(PageInfoBubbleViewBrowserTest,
-                       InvokeDialog_AllowAllPermissions) {
-  RunDialog();
+                       InvokeUi_AllowAllPermissions) {
+  ShowAndVerifyUi();
 }
 
 // Shows the Page Info bubble with all the permissions displayed with 'Block'
 // set. All permissions will show regardless of its factory default value.
 IN_PROC_BROWSER_TEST_F(PageInfoBubbleViewBrowserTest,
-                       InvokeDialog_BlockAllPermissions) {
-  RunDialog();
+                       InvokeUi_BlockAllPermissions) {
+  ShowAndVerifyUi();
+}
+
+IN_PROC_BROWSER_TEST_F(PageInfoBubbleViewBrowserTest,
+                       ClosesOnUserNavigateToSamePage) {
+  ui_test_utils::NavigateToURL(browser(), GetSimplePageUrl());
+  EXPECT_EQ(PageInfoBubbleView::BUBBLE_NONE,
+            PageInfoBubbleView::GetShownBubbleType());
+  OpenPageInfoBubble(browser());
+  EXPECT_EQ(PageInfoBubbleView::BUBBLE_PAGE_INFO,
+            PageInfoBubbleView::GetShownBubbleType());
+  ui_test_utils::NavigateToURL(browser(), GetSimplePageUrl());
+  EXPECT_EQ(PageInfoBubbleView::BUBBLE_NONE,
+            PageInfoBubbleView::GetShownBubbleType());
+}
+
+IN_PROC_BROWSER_TEST_F(PageInfoBubbleViewBrowserTest,
+                       ClosesOnUserNavigateToDifferentPage) {
+  ui_test_utils::NavigateToURL(browser(), GetSimplePageUrl());
+  EXPECT_EQ(PageInfoBubbleView::BUBBLE_NONE,
+            PageInfoBubbleView::GetShownBubbleType());
+  OpenPageInfoBubble(browser());
+  EXPECT_EQ(PageInfoBubbleView::BUBBLE_PAGE_INFO,
+            PageInfoBubbleView::GetShownBubbleType());
+  ui_test_utils::NavigateToURL(browser(), GetIframePageUrl());
+  EXPECT_EQ(PageInfoBubbleView::BUBBLE_NONE,
+            PageInfoBubbleView::GetShownBubbleType());
+}
+
+IN_PROC_BROWSER_TEST_F(PageInfoBubbleViewBrowserTest,
+                       DoesntCloseOnSubframeNavigate) {
+  ui_test_utils::NavigateToURL(browser(), GetIframePageUrl());
+  EXPECT_EQ(PageInfoBubbleView::BUBBLE_NONE,
+            PageInfoBubbleView::GetShownBubbleType());
+  OpenPageInfoBubble(browser());
+  EXPECT_EQ(PageInfoBubbleView::BUBBLE_PAGE_INFO,
+            PageInfoBubbleView::GetShownBubbleType());
+  content::NavigateIframeToURL(
+      browser()->tab_strip_model()->GetActiveWebContents(), "test",
+      GetSimplePageUrl());
+  // Expect that the bubble is still open even after a subframe navigation has
+  // happened.
+  EXPECT_EQ(PageInfoBubbleView::BUBBLE_PAGE_INFO,
+            PageInfoBubbleView::GetShownBubbleType());
 }

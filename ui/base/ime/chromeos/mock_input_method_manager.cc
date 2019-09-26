@@ -28,6 +28,12 @@ void MockInputMethodManager::State::ChangeInputMethod(
     const std::string& input_method_id,
     bool show_message) {}
 
+void MockInputMethodManager::State::ChangeInputMethodToJpKeyboard() {}
+
+void MockInputMethodManager::State::ChangeInputMethodToJpIme() {}
+
+void MockInputMethodManager::State::ToggleInputMethodForJpIme() {}
+
 bool MockInputMethodManager::State::EnableInputMethod(
     const std::string& new_active_input_method_id) {
   return true;
@@ -95,6 +101,14 @@ bool MockInputMethodManager::State::SetAllowedInputMethods(
 const std::vector<std::string>&
 MockInputMethodManager::State::GetAllowedInputMethods() {
   return allowed_input_method_ids_;
+}
+
+void MockInputMethodManager::State::EnableInputView() {}
+
+void MockInputMethodManager::State::DisableInputView() {}
+
+const GURL& MockInputMethodManager::State::GetInputViewUrl() const {
+  return GURL::EmptyGURL();
 }
 
 MockInputMethodManager::State::~State() {}
@@ -184,8 +198,7 @@ void MockInputMethodManager::NotifyImeMenuItemsChanged(
 
 void MockInputMethodManager::MaybeNotifyImeMenuActivationChanged() {}
 
-void MockInputMethodManager::OverrideKeyboardUrlRef(const std::string& keyset) {
-}
+void MockInputMethodManager::OverrideKeyboardKeyset(mojom::ImeKeyset keyset) {}
 
 void MockInputMethodManager::SetImeMenuFeatureEnabled(ImeMenuFeature feature,
                                                       bool enabled) {

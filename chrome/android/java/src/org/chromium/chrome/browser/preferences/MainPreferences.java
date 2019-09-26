@@ -10,18 +10,22 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.preference.Preference;
 import android.preference.PreferenceFragment;
+import android.provider.Settings;
 
-import org.chromium.base.BuildInfo;
+import org.chromium.base.ContextUtils;
 import org.chromium.base.VisibleForTesting;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.ChromeFeatureList;
 import org.chromium.chrome.browser.autofill.PersonalDataManager;
+import org.chromium.chrome.browser.contextual_suggestions.EnabledStateMonitor;
 import org.chromium.chrome.browser.net.spdyproxy.DataReductionProxySettings;
 import org.chromium.chrome.browser.partnercustomizations.HomepageManager;
 import org.chromium.chrome.browser.preferences.datareduction.DataReductionPreferences;
 import org.chromium.chrome.browser.search_engines.TemplateUrlService;
 import org.chromium.chrome.browser.search_engines.TemplateUrlService.TemplateUrl;
 import org.chromium.chrome.browser.signin.SigninManager;
+import org.chromium.chrome.browser.util.FeatureUtilities;
+import org.chromium.ui.base.DeviceFormFactor;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -35,10 +39,12 @@ public class MainPreferences extends PreferenceFragment
     public static final String PREF_AUTOFILL_SETTINGS = "autofill_settings";
     public static final String PREF_SEARCH_ENGINE = "search_engine";
     public static final String PREF_SAVED_PASSWORDS = "saved_passwords";
+    public static final String PREF_CONTEXTUAL_SUGGESTIONS = "contextual_suggestions";
     public static final String PREF_HOMEPAGE = "homepage";
     public static final String PREF_DATA_REDUCTION = "data_reduction";
     public static final String PREF_NOTIFICATIONS = "notifications";
     public static final String PREF_LANGUAGES = "languages";
+    public static final String PREF_DOWNLOADS = "downloads";
 
     private final ManagedPreferenceDelegate mManagedPreferenceDelegate;
     private final Map<String, Preference> mAllPreferences = new HashMap<>();
@@ -64,8 +70,8 @@ public class MainPreferences extends PreferenceFragment
     @Override
     public void onStart() {
         super.onStart();
-        if (SigninManager.get(getActivity()).isSigninSupported()) {
-            SigninManager.get(getActivity()).addSignInStateObserver(this);
+        if (SigninManager.get().isSigninSupported()) {
+            SigninManager.get().addSignInStateObserver(this);
             mSignInPreference.registerForUpdates();
         }
     }
@@ -73,8 +79,8 @@ public class MainPreferences extends PreferenceFragment
     @Override
     public void onStop() {
         super.onStop();
-        if (SigninManager.get(getActivity()).isSigninSupported()) {
-            SigninManager.get(getActivity()).removeSignInStateObserver(this);
+        if (SigninManager.get().isSigninSupported()) {
+            SigninManager.get().removeSignInStateObserver(this);
             mSignInPreference.unregisterForUpdates();
         }
     }
@@ -99,10 +105,10 @@ public class MainPreferences extends PreferenceFragment
             // Settings notifications page, not to Chrome's notifications settings page.
             Preference notifications = findPreference(PREF_NOTIFICATIONS);
             notifications.setOnPreferenceClickListener(preference -> {
-                // TODO(crbug.com/707804): Use Android O constants.
                 Intent intent = new Intent();
-                intent.setAction("android.settings.APP_NOTIFICATION_SETTINGS");
-                intent.putExtra("android.provider.extra.APP_PACKAGE", BuildInfo.getPackageName());
+                intent.setAction(Settings.ACTION_APP_NOTIFICATION_SETTINGS);
+                intent.putExtra(Settings.EXTRA_APP_PACKAGE,
+                        ContextUtils.getApplicationContext().getPackageName());
                 startActivity(intent);
                 // We handle the click so the default action (opening NotificationsPreference)
                 // isn't triggered.
@@ -131,6 +137,11 @@ public class MainPreferences extends PreferenceFragment
             TemplateUrlService.getInstance().registerLoadListener(this);
             TemplateUrlService.getInstance().load();
         }
+
+        // This checks whether the flag for Downloads Preferences is enabled.
+        if (!ChromeFeatureList.isEnabled(ChromeFeatureList.DOWNLOADS_LOCATION_CHANGE)) {
+            getPreferenceScreen().removePreference(findPreference(PREF_DOWNLOADS));
+        }
     }
 
     /**
@@ -152,7 +163,7 @@ public class MainPreferences extends PreferenceFragment
     }
 
     private void updatePreferences() {
-        if (SigninManager.get(getActivity()).isSigninSupported()) {
+        if (SigninManager.get().isSigninSupported()) {
             addPreferenceIfAbsent(PREF_SIGN_IN);
         } else {
             removePreferenceIfPresent(PREF_SIGN_IN);
@@ -165,6 +176,15 @@ public class MainPreferences extends PreferenceFragment
             setOnOffSummary(homepagePref, HomepageManager.getInstance().getPrefHomepageEnabled());
         } else {
             removePreferenceIfPresent(PREF_HOMEPAGE);
+        }
+
+        boolean isTablet = DeviceFormFactor.isNonMultiDisplayContextOnTablet(getActivity());
+        if (FeatureUtilities.isContextualSuggestionsBottomSheetEnabled(isTablet)
+                && EnabledStateMonitor.shouldShowSettings()) {
+            Preference contextualSuggesitons = addPreferenceIfAbsent(PREF_CONTEXTUAL_SUGGESTIONS);
+            setOnOffSummary(contextualSuggesitons, EnabledStateMonitor.getEnabledState());
+        } else {
+            removePreferenceIfPresent(PREF_CONTEXTUAL_SUGGESTIONS);
         }
 
         ChromeBasePreference dataReduction =

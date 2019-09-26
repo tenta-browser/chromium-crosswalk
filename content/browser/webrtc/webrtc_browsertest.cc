@@ -113,7 +113,7 @@ IN_PROC_BROWSER_TEST_F(MAYBE_WebRtcBrowserTest,
 
 IN_PROC_BROWSER_TEST_F(MAYBE_WebRtcBrowserTest,
                        MAYBE_CanSetupCallAndSendDtmf) {
-  MakeTypicalPeerConnectionCall("callAndSendDtmf(\'123,abc\');");
+  MakeTypicalPeerConnectionCall("callAndSendDtmf(\'123,ABC\');");
 }
 
 IN_PROC_BROWSER_TEST_F(MAYBE_WebRtcBrowserTest,
@@ -240,5 +240,14 @@ IN_PROC_BROWSER_TEST_F(MAYBE_WebRtcBrowserTest,
   MakeTypicalPeerConnectionCall(
       "testGetSettingsWhenRemoteDimensionsUnknown();");
 }
+
+#if defined(OS_ANDROID)
+// This test is to make sure HW H264 work normally on supported devices, since
+// there is no SW H264 fallback available on Android.
+IN_PROC_BROWSER_TEST_F(MAYBE_WebRtcBrowserTest,
+                       CanSetupH264VideoCallOnSupportedDevice) {
+  MakeTypicalPeerConnectionCall("CanSetupH264VideoCallOnSupportedDevice();");
+}
+#endif
 
 }  // namespace content

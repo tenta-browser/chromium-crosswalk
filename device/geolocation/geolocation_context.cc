@@ -18,7 +18,7 @@ GeolocationContext::~GeolocationContext() = default;
 
 // static
 void GeolocationContext::Create(mojom::GeolocationContextRequest request) {
-  mojo::MakeStrongBinding(base::MakeUnique<GeolocationContext>(),
+  mojo::MakeStrongBinding(std::make_unique<GeolocationContext>(),
                           std::move(request));
 }
 
@@ -48,6 +48,7 @@ void GeolocationContext::SetOverride(mojom::GeopositionPtr geoposition) {
 }
 
 void GeolocationContext::ClearOverride() {
+  geoposition_override_.reset();
   for (auto& impl : impls_) {
     impl->ClearOverride();
   }

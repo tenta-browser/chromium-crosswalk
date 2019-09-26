@@ -24,14 +24,19 @@ class WebTestRenderProcessCrashObserver : public GlobalWebStateObserver {
   }
 };
 
-WebTest::WebTest()
-    : web_client_(base::WrapUnique(new TestWebClient)),
-      crash_observer_(base::MakeUnique<WebTestRenderProcessCrashObserver>()) {}
+WebTest::WebTest(TestWebThreadBundle::Options options)
+    : WebTest(base::WrapUnique(new TestWebClient), options) {}
+
+WebTest::WebTest(std::unique_ptr<web::WebClient> web_client,
+                 TestWebThreadBundle::Options options)
+    : web_client_(std::move(web_client)),
+      thread_bundle_(options),
+      crash_observer_(std::make_unique<WebTestRenderProcessCrashObserver>()) {}
 
 WebTest::~WebTest() {}
 
-TestWebClient* WebTest::GetWebClient() {
-  return static_cast<TestWebClient*>(web_client_.Get());
+web::WebClient* WebTest::GetWebClient() {
+  return web_client_.Get();
 }
 
 BrowserState* WebTest::GetBrowserState() {
@@ -42,7 +47,7 @@ void WebTest::SetIgnoreRenderProcessCrashesDuringTesting(bool allow) {
   if (allow) {
     crash_observer_ = nullptr;
   } else {
-    crash_observer_ = base::MakeUnique<WebTestRenderProcessCrashObserver>();
+    crash_observer_ = std::make_unique<WebTestRenderProcessCrashObserver>();
   }
 }
 

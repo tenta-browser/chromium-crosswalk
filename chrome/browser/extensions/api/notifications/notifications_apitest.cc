@@ -2,6 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <memory>
+
 #include "base/containers/circular_deque.h"
 #include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
@@ -36,8 +38,8 @@
 #include "extensions/common/features/feature.h"
 #include "extensions/test/extension_test_message_listener.h"
 #include "extensions/test/result_catcher.h"
-#include "ui/message_center/notification.h"
-#include "ui/message_center/notifier_id.h"
+#include "ui/message_center/public/cpp/notification.h"
+#include "ui/message_center/public/cpp/notifier_id.h"
 
 #if defined(OS_MACOSX)
 #include "base/mac/mac_util.h"
@@ -175,7 +177,7 @@ class NotificationsApiTest : public ExtensionApiTest {
 
     DCHECK(profile());
     display_service_tester_ =
-        base::MakeUnique<NotificationDisplayServiceTester>(profile());
+        std::make_unique<NotificationDisplayServiceTester>(profile());
   }
 
   void TearDownOnMainThread() override {
@@ -309,7 +311,8 @@ IN_PROC_BROWSER_TEST_F(NotificationsApiTest, TestGetPermissionLevel) {
     notification_function->set_has_callback(true);
 
     std::unique_ptr<base::Value> result(utils::RunFunctionAndReturnSingleResult(
-        notification_function.get(), "[]", browser(), utils::NONE));
+        notification_function.get(), "[]", browser(),
+        extensions::api_test_utils::NONE));
 
     EXPECT_EQ(base::Value::Type::STRING, result->type());
     std::string permission_level;
@@ -332,7 +335,8 @@ IN_PROC_BROWSER_TEST_F(NotificationsApiTest, TestGetPermissionLevel) {
     GetNotifierStateTracker()->SetNotifierEnabled(notifier_id, false);
 
     std::unique_ptr<base::Value> result(utils::RunFunctionAndReturnSingleResult(
-        notification_function.get(), "[]", browser(), utils::NONE));
+        notification_function.get(), "[]", browser(),
+        extensions::api_test_utils::NONE));
 
     EXPECT_EQ(base::Value::Type::STRING, result->type());
     std::string permission_level;
@@ -384,11 +388,23 @@ IN_PROC_BROWSER_TEST_F(NotificationsApiTest, TestUserGesture) {
 
   {
     UserGestureCatcher catcher;
-    notification->ButtonClick(0);
+
+    // Action button event.
+    display_service_tester_->SimulateClick(
+        NotificationHandler::Type::EXTENSION, notification->id(),
+        0 /* action_index */, base::nullopt /* reply */);
     EXPECT_TRUE(catcher.GetNextResult());
-    notification->Click();
+
+    // Click event.
+    display_service_tester_->SimulateClick(
+        NotificationHandler::Type::EXTENSION, notification->id(),
+        base::nullopt /* action_index */, base::nullopt /* reply */);
     EXPECT_TRUE(catcher.GetNextResult());
-    notification->Close(true /* by_user */);
+
+    // Close event.
+    display_service_tester_->RemoveNotification(
+        NotificationHandler::Type::EXTENSION, notification->id(),
+        true /* by_user */, false /* silent */);
     EXPECT_TRUE(catcher.GetNextResult());
 
     // Note that |notification| no longer points to valid memory.

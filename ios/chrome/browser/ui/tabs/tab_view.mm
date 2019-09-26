@@ -6,7 +6,6 @@
 #import "ios/chrome/browser/ui/tabs/tab_view.h"
 
 #include "base/i18n/rtl.h"
-#include "base/ios/ios_util.h"
 #include "base/logging.h"
 
 #include "base/strings/sys_string_conversions.h"
@@ -15,8 +14,7 @@
 #include "ios/chrome/browser/drag_and_drop/drop_and_navigate_interaction.h"
 #include "ios/chrome/browser/experimental_flags.h"
 #import "ios/chrome/browser/ui/colors/MDCPalette+CrAdditions.h"
-#import "ios/chrome/browser/ui/commands/generic_chrome_command.h"
-#import "ios/chrome/browser/ui/image_util.h"
+#import "ios/chrome/browser/ui/image_util/image_util.h"
 #include "ios/chrome/browser/ui/rtl_geometry.h"
 #include "ios/chrome/browser/ui/ui_util.h"
 #import "ios/chrome/browser/ui/util/constraints_ui_util.h"

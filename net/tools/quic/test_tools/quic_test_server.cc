@@ -97,7 +97,7 @@ class QuicTestDispatcher : public QuicSimpleDispatcher {
     QuicConnection* connection = new QuicConnection(
         id, client, helper(), alarm_factory(), CreatePerConnectionWriter(),
         /* owns_writer= */ true, Perspective::IS_SERVER,
-        GetSupportedTransportVersions());
+        GetSupportedVersions());
 
     QuicServerSessionBase* session = nullptr;
     if (stream_factory_ != nullptr || crypto_stream_factory_ != nullptr) {
@@ -150,7 +150,7 @@ QuicTestServer::QuicTestServer(std::unique_ptr<ProofSource> proof_source,
 QuicTestServer::QuicTestServer(
     std::unique_ptr<ProofSource> proof_source,
     const QuicConfig& config,
-    const QuicTransportVersionVector& supported_versions,
+    const ParsedQuicVersionVector& supported_versions,
     QuicHttpResponseCache* response_cache)
     : QuicServer(std::move(proof_source),
                  config,
@@ -161,13 +161,11 @@ QuicTestServer::QuicTestServer(
 QuicDispatcher* QuicTestServer::CreateQuicDispatcher() {
   return new QuicTestDispatcher(
       config(), &crypto_config(), version_manager(),
-      std::unique_ptr<QuicEpollConnectionHelper>(new QuicEpollConnectionHelper(
-          epoll_server(), QuicAllocator::BUFFER_POOL)),
+      QuicMakeUnique<QuicEpollConnectionHelper>(epoll_server(),
+                                                QuicAllocator::BUFFER_POOL),
       std::unique_ptr<QuicCryptoServerStream::Helper>(
           new QuicSimpleCryptoServerStreamHelper(QuicRandom::GetInstance())),
-      std::unique_ptr<QuicEpollAlarmFactory>(
-          new QuicEpollAlarmFactory(epoll_server())),
-      response_cache());
+      QuicMakeUnique<QuicEpollAlarmFactory>(epoll_server()), response_cache());
 }
 
 void QuicTestServer::SetSessionFactory(SessionFactory* factory) {

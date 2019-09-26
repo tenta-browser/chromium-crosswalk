@@ -38,7 +38,6 @@
 #include "base/strings/utf_string_conversions.h"
 #include "base/timer/timer.h"
 #include "chromeos/dbus/dbus_thread_manager.h"
-#include "chromeos/login/login_state.h"
 #include "chromeos/network/device_state.h"
 #include "chromeos/network/managed_network_configuration_handler.h"
 #include "chromeos/network/network_state.h"
@@ -67,7 +66,6 @@
 
 #include "ui/views/view.h"
 
-using chromeos::LoginState;
 using chromeos::NetworkHandler;
 using chromeos::NetworkStateHandler;
 using chromeos::ManagedNetworkConfigurationHandler;
@@ -84,7 +82,7 @@ const int kPowerStatusPaddingRight = 10;
 bool IsProhibitedByPolicy(const chromeos::NetworkState* network) {
   if (!NetworkTypePattern::WiFi().MatchesType(network->type()))
     return false;
-  if (!LoginState::IsInitialized() || !LoginState::Get()->IsUserLoggedIn())
+  if (!Shell::Get()->session_controller()->IsActiveUserSessionStarted())
     return false;
   ManagedNetworkConfigurationHandler* managed_configuration_handler =
       NetworkHandler::Get()->managed_network_configuration_handler();
@@ -142,16 +140,6 @@ class NetworkListView::SectionHeaderRowView : public views::View,
 
   void SetSubtitle(int subtitle_id) {
     network_row_title_view_->SetSubtitle(subtitle_id);
-
-    // The left padding of the toggle is different depending on whether the
-    // subtitle is displayed.
-    const int toggle_left_padding = subtitle_id == 0
-                                        ? kToggleLeftPaddingWithoutSubtitle
-                                        : kToggleLeftPaddingWithSubtitle;
-    const gfx::Insets previous_insets = toggle_->border()->GetInsets();
-    toggle_->SetBorder(views::CreateEmptyBorder(
-        gfx::Insets(previous_insets.top(), toggle_left_padding,
-                    previous_insets.bottom(), previous_insets.right())));
   }
 
   virtual void SetToggleState(bool toggle_enabled, bool is_on) {
@@ -190,12 +178,9 @@ class NetworkListView::SectionHeaderRowView : public views::View,
   }
 
  private:
-  static const int kToggleLeftPaddingWithoutSubtitle = 18;
-  static const int kToggleLeftPaddingWithSubtitle = 8;
-
   void InitializeLayout() {
     TrayPopupUtils::ConfigureAsStickyHeader(this);
-    SetLayoutManager(new views::FillLayout);
+    SetLayoutManager(std::make_unique<views::FillLayout>());
     container_ = TrayPopupUtils::CreateSubHeaderRowView(false);
     AddChildView(container_);
 
@@ -235,7 +220,7 @@ namespace {
 class MobileHeaderRowView : public NetworkListView::SectionHeaderRowView,
                             public chromeos::NetworkStateHandlerObserver {
  public:
-  MobileHeaderRowView(NetworkStateHandler* network_state_handler)
+  explicit MobileHeaderRowView(NetworkStateHandler* network_state_handler)
       : SectionHeaderRowView(IDS_ASH_STATUS_TRAY_NETWORK_MOBILE),
         network_state_handler_(network_state_handler),
         weak_ptr_factory_(this) {
@@ -298,11 +283,18 @@ class MobileHeaderRowView : public NetworkListView::SectionHeaderRowView,
   }
 
   // chromeos::NetworkStateHandlerObserver
-  // Update state if the Cellular or Tether device state may have changed, or if
-  // the list of Cellular or Tether networks may have changed.
+
+  // Called when the available devices changes.
   void DeviceListChanged() override { UpdateState(); }
+
+  // Called when the state of a device changes (e.g. the enabled state).
+  void DevicePropertiesUpdated(const chromeos::DeviceState* device) override {
+    UpdateState();
+  }
+
   void NetworkListChanged() override { UpdateState(); }
 
+ private:
   void UpdateState() {
     NetworkStateHandler::TechnologyState cellular_state =
         network_state_handler_->GetTechnologyState(
@@ -400,7 +392,6 @@ class MobileHeaderRowView : public NetworkListView::SectionHeaderRowView,
     SetSubtitle(subtitle);
   }
 
- private:
   // When Tether is disabled because Bluetooth is off, then enabling Bluetooth
   // will enable Tether. If enabling Bluetooth takes longer than some timeout
   // period, it is assumed that there was an error. In that case, Tether will
@@ -469,8 +460,7 @@ class WifiHeaderRowView : public NetworkListView::SectionHeaderRowView {
     gfx::ImageSkia disabled_image = network_icon::GetImageForNewWifiNetwork(
         SkColorSetA(prominent_color, kDisabledJoinIconAlpha),
         SkColorSetA(prominent_color, kDisabledJoinBadgeAlpha));
-    join_ = new SystemMenuButton(this, TrayPopupInkDropStyle::HOST_CENTERED,
-                                 normal_image, disabled_image,
+    join_ = new SystemMenuButton(this, normal_image, disabled_image,
                                  IDS_ASH_STATUS_TRAY_OTHER_WIFI);
     join_->SetInkDropColor(prominent_color);
     join_->SetEnabled(enabled);
@@ -564,7 +554,7 @@ void NetworkListView::UpdateNetworks(
     if (!NetworkTypePattern::NonVirtual().MatchesType(network->type()))
       continue;
     // If cellular is disabled, skip the default cellular service.
-    if (network->Matches(NetworkTypePattern::Cellular()) && !cellular_enabled)
+    if (network->IsDefaultCellular() && !cellular_enabled)
       continue;
     network_list_.push_back(std::make_unique<NetworkInfo>(network->guid()));
   }
@@ -696,14 +686,17 @@ NetworkListView::UpdateNetworkListEntries() {
       &wifi_header_view_, &wifi_separator_view_);
 
   // "Wifi Enabled / Disabled".
-  int wifi_message_id = 0;
-  if (!handler->IsTechnologyEnabled(NetworkTypePattern::WiFi()))
-    wifi_message_id = IDS_ASH_STATUS_TRAY_NETWORK_WIFI_DISABLED;
-  else if (!handler->FirstNetworkByType(NetworkTypePattern::WiFi()))
-    wifi_message_id = IDS_ASH_STATUS_TRAY_NETWORK_WIFI_ENABLED;
-  UpdateInfoLabel(wifi_message_id, index, &no_wifi_networks_view_);
-  if (wifi_message_id)
+  if (!handler->IsTechnologyEnabled(NetworkTypePattern::WiFi())) {
+    UpdateInfoLabel(IDS_ASH_STATUS_TRAY_NETWORK_WIFI_DISABLED, index,
+                    &no_wifi_networks_view_);
+    return new_guids;
+  }
+
+  if (!handler->FirstNetworkByType(NetworkTypePattern::WiFi())) {
+    UpdateInfoLabel(IDS_ASH_STATUS_TRAY_NETWORK_WIFI_ENABLED, index,
+                    &no_wifi_networks_view_);
     ++index;
+  }
 
   // Add Wi-Fi networks.
   std::unique_ptr<std::set<std::string>> new_wifi_guids =
@@ -868,8 +861,10 @@ void NetworkListView::PlaceViewAtIndex(views::View* view, int index) {
     scroll_content()->AddChildViewAt(view, index);
   } else {
     // No re-order and re-layout is necessary if |view| is already at |index|.
-    if (scroll_content()->child_at(index) == view)
+    if (index < scroll_content()->child_count() &&
+        scroll_content()->child_at(index) == view) {
       return;
+    }
     scroll_content()->ReorderChildView(view, index);
   }
   needs_relayout_ = true;

@@ -9,7 +9,6 @@
 
 namespace blink {
 class WebGestureCurve;
-struct WebActiveWheelFlingParameters;
 struct WebFloatPoint;
 struct WebSize;
 }
@@ -22,15 +21,9 @@ class InputHandlerProxyClient {
   // Called just before the InputHandlerProxy shuts down.
   virtual void WillShutdown() = 0;
 
-  // Transfers an active wheel fling animation initiated by a previously
-  // handled input event out to the client.
-  virtual void TransferActiveWheelFlingAnimation(
-      const blink::WebActiveWheelFlingParameters& params) = 0;
-
   // Dispatch a non blocking event to the main thread. This is used when a
   // gesture fling from a touchpad is processed and the target only has
-  // passive event listeners. If the target has blocking event listeners
-  // |TransferActiveWheelFlingAnimation| will be used instead.
+  // passive event listeners.
   virtual void DispatchNonBlockingEventToMainThread(
       WebScopedInputEvent event,
       const ui::LatencyInfo& latency_info) = 0;
@@ -55,6 +48,8 @@ class InputHandlerProxyClient {
   virtual void DidStopFlinging() = 0;
 
   virtual void DidAnimateForInput() = 0;
+
+  virtual void DidStartScrollingViewport() = 0;
 
   // Used to send a GSB to the main thread when the wheel scroll latching is
   // enabled and the scrolling should switch to the main thread.

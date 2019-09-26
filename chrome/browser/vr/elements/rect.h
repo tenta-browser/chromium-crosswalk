@@ -7,6 +7,7 @@
 
 #include "chrome/browser/vr/elements/ui_element.h"
 #include "third_party/skia/include/core/SkColor.h"
+#include "ui/gfx/geometry/point_f.h"
 
 namespace vr {
 
@@ -32,14 +33,25 @@ class Rect : public UiElement {
 
   void NotifyClientColorAnimated(SkColor color,
                                  int target_property_id,
-                                 cc::Animation* animation) override;
+                                 cc::KeyframeModel* keyframe_model) override;
 
   void Render(UiElementRenderer* renderer,
               const CameraModel& model) const override;
 
+  void SetLocalOpacity(float opacity);
+
+  void NotifyClientFloatAnimated(float value,
+                                 int target_property_id,
+                                 cc::KeyframeModel* keyframe_model) override;
+
+  float ComputedAndLocalOpacityForTest() const override;
+
  private:
   SkColor center_color_ = SK_ColorWHITE;
   SkColor edge_color_ = SK_ColorWHITE;
+
+  // This value is not inherited by descendants.
+  float local_opacity_ = 1.0f;
 
   DISALLOW_COPY_AND_ASSIGN(Rect);
 };

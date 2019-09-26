@@ -18,6 +18,7 @@
 #include "net/quic/core/quic_spdy_session.h"
 #include "net/quic/core/quic_write_blocked_list.h"
 #include "net/quic/core/spdy_utils.h"
+#include "net/spdy/chromium/spdy_log_util.h"
 
 namespace net {
 namespace {
@@ -336,12 +337,6 @@ void QuicChromiumClientStream::Handle::OnPromiseHeaderList(
   stream_->OnPromiseHeaderList(promised_id, frame_len, header_list);
 }
 
-SpdyPriority QuicChromiumClientStream::Handle::priority() const {
-  if (!stream_)
-    return priority_;
-  return stream_->priority();
-}
-
 bool QuicChromiumClientStream::Handle::can_migrate() {
   if (!stream_)
     return false;
@@ -364,7 +359,6 @@ void QuicChromiumClientStream::Handle::SaveState() {
   is_first_stream_ = stream_->IsFirstStream();
   stream_bytes_read_ = stream_->stream_bytes_read();
   stream_bytes_written_ = stream_->stream_bytes_written();
-  priority_ = stream_->priority();
 }
 
 void QuicChromiumClientStream::Handle::SetCallback(
@@ -401,7 +395,8 @@ int QuicChromiumClientStream::Handle::HandleIOComplete(int rv) {
 QuicChromiumClientStream::QuicChromiumClientStream(
     QuicStreamId id,
     QuicSpdyClientSessionBase* session,
-    const NetLogWithSource& net_log)
+    const NetLogWithSource& net_log,
+    const NetworkTrafficAnnotationTag& traffic_annotation)
     : QuicSpdyStream(id, session),
       net_log_(net_log),
       handle_(nullptr),
@@ -520,17 +515,11 @@ size_t QuicChromiumClientStream::WriteHeaders(
   }
   net_log_.AddEvent(
       NetLogEventType::QUIC_CHROMIUM_CLIENT_STREAM_SEND_REQUEST_HEADERS,
-      base::Bind(&QuicRequestNetLogCallback, id(), &header_block,
-                 QuicSpdyStream::priority()));
+      base::Bind(&QuicRequestNetLogCallback, id(), &header_block, priority()));
   size_t len = QuicSpdyStream::WriteHeaders(std::move(header_block), fin,
                                             std::move(ack_listener));
   initial_headers_sent_ = true;
   return len;
-}
-
-SpdyPriority QuicChromiumClientStream::priority() const {
-  return initial_headers_sent_ ? QuicSpdyStream::priority()
-                               : kV3HighestPriority;
 }
 
 bool QuicChromiumClientStream::WriteStreamData(QuicStringPiece data, bool fin) {
@@ -548,17 +537,11 @@ bool QuicChromiumClientStream::WritevStreamData(
   // Must not be called when data is buffered.
   DCHECK(!HasBufferedData());
   // Writes the data, or buffers it.
-  if (session_->can_use_slices()) {
-    WriteMemSlices(QuicMemSliceSpan(QuicMemSliceSpanImpl(
-                       buffers.data(), lengths.data(), buffers.size())),
-                   fin);
-  } else {
     for (size_t i = 0; i < buffers.size(); ++i) {
       bool is_fin = fin && (i == buffers.size() - 1);
       QuicStringPiece string_data(buffers[i]->data(), lengths[i]);
       WriteOrBufferData(string_data, is_fin, nullptr);
     }
-  }
   return !HasBufferedData();  // Was all data written?
 }
 

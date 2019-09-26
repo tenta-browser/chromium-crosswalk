@@ -34,7 +34,7 @@
 #include "mojo/public/cpp/bindings/associated_binding_set.h"
 #include "mojo/public/cpp/bindings/binding_set.h"
 #include "services/service_manager/public/cpp/service_context_ref.h"
-#include "services/service_manager/public/interfaces/service_factory.mojom.h"
+#include "services/service_manager/public/mojom/service_factory.mojom.h"
 #include "services/viz/privileged/interfaces/viz_main.mojom.h"
 #include "ui/gfx/native_widget_types.h"
 
@@ -77,6 +77,8 @@ class GpuChildThread : public ChildThreadImpl,
   // viz::VizMainImpl::Delegate:
   void OnInitializationFailed() override;
   void OnGpuServiceConnection(viz::GpuServiceImpl* gpu_service) override;
+  void PostCompositorThreadCreated(
+      base::SingleThreadTaskRunner* task_runner) override;
 
   void BindServiceFactoryRequest(
       service_manager::mojom::ServiceFactoryRequest request);
@@ -84,7 +86,6 @@ class GpuChildThread : public ChildThreadImpl,
 #if defined(OS_ANDROID)
   static std::unique_ptr<media::AndroidOverlay> CreateAndroidOverlay(
       scoped_refptr<base::SingleThreadTaskRunner> main_task_runner,
-      std::unique_ptr<service_manager::ServiceContextRef> context_ref,
       const base::UnguessableToken& routing_token,
       media::AndroidOverlayConfig);
 #endif

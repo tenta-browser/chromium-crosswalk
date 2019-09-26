@@ -20,8 +20,8 @@
 #include "testing/platform_test.h"
 
 #if defined(OS_LINUX) || defined(OS_ANDROID)
-#include "net/proxy/proxy_config.h"
-#include "net/proxy/proxy_config_service_fixed.h"
+#include "net/proxy_resolution/proxy_config.h"
+#include "net/proxy_resolution/proxy_config_service_fixed.h"
 #endif  // defined(OS_LINUX) || defined(OS_ANDROID)
 
 namespace net {
@@ -60,8 +60,8 @@ class URLRequestContextBuilderTest : public PlatformTest {
     test_server_.AddDefaultHandlers(
         base::FilePath(FILE_PATH_LITERAL("net/data/url_request_unittest")));
 #if defined(OS_LINUX) || defined(OS_ANDROID)
-    builder_.set_proxy_config_service(
-        std::make_unique<ProxyConfigServiceFixed>(ProxyConfig::CreateDirect()));
+    builder_.set_proxy_config_service(std::make_unique<ProxyConfigServiceFixed>(
+        ProxyConfigWithAnnotation::CreateDirect()));
 #endif  // defined(OS_LINUX) || defined(OS_ANDROID)
   }
 

@@ -12,17 +12,16 @@
 
 #include "base/bind.h"
 #include "base/command_line.h"
-#include "base/memory/ptr_util.h"
+#include "base/metrics/histogram_functions.h"
 #include "base/metrics/histogram_macros.h"
-#include "base/metrics/sparse_histogram.h"
 #include "build/build_config.h"
 #include "components/viz/common/gl_helper.h"
 #include "content/browser/renderer_host/media/media_stream_manager.h"
 #include "content/browser/renderer_host/media/video_capture_manager.h"
-#include "content/common/video_capture.mojom.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/common/content_switches.h"
 #include "media/base/video_frame.h"
+#include "media/capture/mojom/video_capture_types.mojom.h"
 #include "media/capture/video/video_capture_buffer_pool.h"
 #include "media/capture/video/video_capture_buffer_tracker_factory_impl.h"
 #include "media/capture/video/video_capture_device_client.h"
@@ -46,7 +45,7 @@ static int g_device_start_id = 0;
 static const int kInfiniteRatio = 99999;
 
 #define UMA_HISTOGRAM_ASPECT_RATIO(name, width, height) \
-  UMA_HISTOGRAM_SPARSE_SLOWLY(                          \
+  base::UmaHistogramSparse(                             \
       name, (height) ? ((width)*100) / (height) : kInfiniteRatio);
 
 void CallOnError(VideoCaptureControllerEventHandler* client,
@@ -160,7 +159,14 @@ void VideoCaptureController::BufferContext::DecreaseConsumerCount() {
 
 mojo::ScopedSharedBufferHandle
 VideoCaptureController::BufferContext::CloneHandle() {
-  return buffer_handle_->Clone();
+  // Special behavior here: If the handle was already read-only, the Clone()
+  // call here will maintain that read-only permission. If it was read-write,
+  // the cloned handle will have read-write permission.
+  //
+  // TODO(crbug.com/797470): We should be able to demote read-write to read-only
+  // permissions when Clone()'ing handles. Currently, this causes a crash.
+  return buffer_handle_->Clone(
+      mojo::SharedBufferHandle::AccessMode::READ_WRITE);
 }
 
 VideoCaptureController::VideoCaptureController(
@@ -207,7 +213,7 @@ void VideoCaptureController::AddClient(
   if (!params.IsValid() ||
       !(params.requested_format.pixel_format == media::PIXEL_FORMAT_I420 ||
         params.requested_format.pixel_format == media::PIXEL_FORMAT_Y16) ||
-      params.requested_format.pixel_storage != media::PIXEL_STORAGE_CPU) {
+      params.requested_format.pixel_storage != media::VideoPixelStorage::CPU) {
     // Crash in debug builds since the renderer should not have asked for
     // invalid or unsupported parameters.
     LOG(DFATAL) << "Invalid or unsupported video capture parameters requested: "
@@ -451,7 +457,7 @@ void VideoCaptureController::OnFrameReadyInBuffer(
     double frame_rate = 0.0f;
     if (video_capture_format_) {
       media::VideoFrameMetadata metadata;
-      metadata.MergeInternalValuesFrom(*frame_info->metadata);
+      metadata.MergeInternalValuesFrom(frame_info->metadata);
       if (!metadata.GetDouble(VideoFrameMetadata::FRAME_RATE, &frame_rate)) {
         frame_rate = video_capture_format_->frame_rate;
       }

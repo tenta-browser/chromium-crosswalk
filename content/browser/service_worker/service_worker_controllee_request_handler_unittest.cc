@@ -11,8 +11,7 @@
 #include "base/files/scoped_temp_dir.h"
 #include "base/logging.h"
 #include "base/run_loop.h"
-#include "components/offline_pages/features/features.h"
-#include "content/browser/browser_thread_impl.h"
+#include "components/offline_pages/buildflags/buildflags.h"
 #include "content/browser/service_worker/embedded_worker_test_helper.h"
 #include "content/browser/service_worker/service_worker_context_core.h"
 #include "content/browser/service_worker/service_worker_provider_host.h"
@@ -23,27 +22,23 @@
 #include "content/common/service_worker/service_worker_types.h"
 #include "content/common/service_worker/service_worker_utils.h"
 #include "content/public/browser/resource_context.h"
-#include "content/public/common/request_context_frame_type.h"
 #include "content/public/common/request_context_type.h"
-#include "content/public/common/resource_request_body.h"
 #include "content/public/common/resource_type.h"
-#include "content/public/common/service_worker_modes.h"
 #include "content/public/test/mock_resource_context.h"
 #include "content/public/test/test_browser_thread_bundle.h"
 #include "content/test/test_content_browser_client.h"
 #include "net/traffic_annotation/network_traffic_annotation_test_helper.h"
 #include "net/url_request/url_request_context.h"
 #include "net/url_request/url_request_test_util.h"
+#include "services/network/public/cpp/resource_request_body.h"
+#include "services/network/public/mojom/request_context_frame_type.mojom.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/WebKit/public/platform/modules/serviceworker/service_worker_registration.mojom.h"
+#include "third_party/blink/public/mojom/service_worker/service_worker_registration.mojom.h"
 
 namespace content {
-
-namespace {
+namespace service_worker_controllee_request_handler_unittest {
 
 int kMockProviderId = 1;
-
-}
 
 class ServiceWorkerControlleeRequestHandlerTest : public testing::Test {
  public:
@@ -67,13 +62,13 @@ class ServiceWorkerControlleeRequestHandlerTest : public testing::Test {
               base::WeakPtr<storage::BlobStorageContext>(),
               fetch_type,
               network::mojom::FetchCredentialsMode::kOmit,
-              FetchRedirectMode::FOLLOW_MODE,
+              network::mojom::FetchRedirectMode::kFollow,
               std::string() /* integrity */,
               false /* keepalive */,
               type,
               REQUEST_CONTEXT_TYPE_HYPERLINK,
-              REQUEST_CONTEXT_FRAME_TYPE_TOP_LEVEL,
-              scoped_refptr<ResourceRequestBody>())),
+              network::mojom::RequestContextFrameType::kTopLevel,
+              scoped_refptr<network::ResourceRequestBody>())),
           job_(nullptr) {}
 
     ServiceWorkerURLRequestJob* MaybeCreateJob() {
@@ -106,14 +101,14 @@ class ServiceWorkerControlleeRequestHandlerTest : public testing::Test {
     // A new unstored registration/version.
     scope_ = GURL("https://host/scope/");
     script_url_ = GURL("https://host/script.js");
-    registration_ = new ServiceWorkerRegistration(
-        blink::mojom::ServiceWorkerRegistrationOptions(scope_), 1L,
-        context()->AsWeakPtr());
+    blink::mojom::ServiceWorkerRegistrationOptions options;
+    options.scope = scope_;
+    registration_ =
+        new ServiceWorkerRegistration(options, 1L, context()->AsWeakPtr());
     version_ = new ServiceWorkerVersion(
         registration_.get(), script_url_, 1L, context()->AsWeakPtr());
 
-    context()->storage()->LazyInitializeForTest(
-        base::BindOnce(&base::DoNothing));
+    context()->storage()->LazyInitializeForTest(base::DoNothing());
     base::RunLoop().RunUntilIdle();
 
     std::vector<ServiceWorkerDatabase::ResourceRecord> records;
@@ -180,10 +175,8 @@ TEST_F(ServiceWorkerControlleeRequestHandlerTest, DisallowServiceWorker) {
       ServiceWorkerVersion::FetchHandlerExistence::EXISTS);
   version_->SetStatus(ServiceWorkerVersion::ACTIVATED);
   registration_->SetActiveVersion(version_);
-  context()->storage()->StoreRegistration(
-      registration_.get(),
-      version_.get(),
-      base::Bind(&ServiceWorkerUtils::NoOpStatusCallback));
+  context()->storage()->StoreRegistration(registration_.get(), version_.get(),
+                                          base::DoNothing());
   base::RunLoop().RunUntilIdle();
 
   // Conduct a main resource load.
@@ -210,10 +203,8 @@ TEST_F(ServiceWorkerControlleeRequestHandlerTest, ActivateWaitingVersion) {
       ServiceWorkerVersion::FetchHandlerExistence::EXISTS);
   version_->SetStatus(ServiceWorkerVersion::INSTALLED);
   registration_->SetWaitingVersion(version_);
-  context()->storage()->StoreRegistration(
-      registration_.get(),
-      version_.get(),
-      base::Bind(&ServiceWorkerUtils::NoOpStatusCallback));
+  context()->storage()->StoreRegistration(registration_.get(), version_.get(),
+                                          base::DoNothing());
   base::RunLoop().RunUntilIdle();
 
   // Conduct a main resource load.
@@ -272,10 +263,8 @@ TEST_F(ServiceWorkerControlleeRequestHandlerTest, DeletedProviderHost) {
       ServiceWorkerVersion::FetchHandlerExistence::EXISTS);
   version_->SetStatus(ServiceWorkerVersion::ACTIVATED);
   registration_->SetActiveVersion(version_);
-  context()->storage()->StoreRegistration(
-      registration_.get(),
-      version_.get(),
-      base::Bind(&ServiceWorkerUtils::NoOpStatusCallback));
+  context()->storage()->StoreRegistration(registration_.get(), version_.get(),
+                                          base::DoNothing());
   base::RunLoop().RunUntilIdle();
   version_ = nullptr;
   registration_ = nullptr;
@@ -307,9 +296,8 @@ TEST_F(ServiceWorkerControlleeRequestHandlerTest, LostActiveVersion) {
       ServiceWorkerVersion::FetchHandlerExistence::EXISTS);
   version_->SetStatus(ServiceWorkerVersion::ACTIVATED);
   registration_->SetActiveVersion(version_);
-  context()->storage()->StoreRegistration(
-      registration_.get(), version_.get(),
-      base::Bind(&ServiceWorkerUtils::NoOpStatusCallback));
+  context()->storage()->StoreRegistration(registration_.get(), version_.get(),
+                                          base::DoNothing());
   base::RunLoop().RunUntilIdle();
 
   // Conduct a main resource load to set the controller.
@@ -344,9 +332,8 @@ TEST_F(ServiceWorkerControlleeRequestHandlerTest, FallbackWithNoFetchHandler) {
       ServiceWorkerVersion::FetchHandlerExistence::DOES_NOT_EXIST);
   version_->SetStatus(ServiceWorkerVersion::ACTIVATED);
   registration_->SetActiveVersion(version_);
-  context()->storage()->StoreRegistration(
-      registration_.get(), version_.get(),
-      base::Bind(&ServiceWorkerUtils::NoOpStatusCallback));
+  context()->storage()->StoreRegistration(registration_.get(), version_.get(),
+                                          base::DoNothing());
   base::RunLoop().RunUntilIdle();
 
   ServiceWorkerRequestTestResources main_test_resources(
@@ -395,9 +382,8 @@ TEST_F(ServiceWorkerControlleeRequestHandlerTest, FallbackWithOfflineHeader) {
       ServiceWorkerVersion::FetchHandlerExistence::EXISTS);
   version_->SetStatus(ServiceWorkerVersion::ACTIVATED);
   registration_->SetActiveVersion(version_);
-  context()->storage()->StoreRegistration(
-      registration_.get(), version_.get(),
-      base::Bind(&ServiceWorkerUtils::NoOpStatusCallback));
+  context()->storage()->StoreRegistration(registration_.get(), version_.get(),
+                                          base::DoNothing());
   base::RunLoop().RunUntilIdle();
   version_ = NULL;
   registration_ = NULL;
@@ -417,9 +403,8 @@ TEST_F(ServiceWorkerControlleeRequestHandlerTest, FallbackWithNoOfflineHeader) {
       ServiceWorkerVersion::FetchHandlerExistence::EXISTS);
   version_->SetStatus(ServiceWorkerVersion::ACTIVATED);
   registration_->SetActiveVersion(version_);
-  context()->storage()->StoreRegistration(
-      registration_.get(), version_.get(),
-      base::Bind(&ServiceWorkerUtils::NoOpStatusCallback));
+  context()->storage()->StoreRegistration(registration_.get(), version_.get(),
+                                          base::DoNothing());
   base::RunLoop().RunUntilIdle();
   version_ = NULL;
   registration_ = NULL;
@@ -435,4 +420,5 @@ TEST_F(ServiceWorkerControlleeRequestHandlerTest, FallbackWithNoOfflineHeader) {
 }
 #endif  // BUILDFLAG(ENABLE_OFFLINE_PAGE
 
+}  // namespace service_worker_controllee_request_handler_unittest
 }  // namespace content

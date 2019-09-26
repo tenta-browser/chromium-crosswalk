@@ -53,9 +53,6 @@ struct TestResult {
   HistoryEntry::EntryType type;
 };
 
-// Used to bind a callback.
-void DoNothing(bool ignored) {}
-
 class TestSyncService : public syncer::FakeSyncService {
  public:
   int GetObserverCount() { return observer_count_; }
@@ -124,13 +121,11 @@ class TestBrowsingHistoryDriver : public BrowsingHistoryDriver {
 class TestWebHistoryService : public FakeWebHistoryService {
  public:
   TestWebHistoryService()
-      : FakeWebHistoryService(nullptr,
-                              nullptr,
-                              scoped_refptr<net::URLRequestContextGetter>()) {}
+      : FakeWebHistoryService(scoped_refptr<net::URLRequestContextGetter>()) {}
 
   void TriggerOnWebHistoryDeleted() {
     TestRequest request;
-    ExpireHistoryCompletionCallback(base::Bind(&DoNothing), &request, true);
+    ExpireHistoryCompletionCallback(base::DoNothing(), &request, true);
   }
 
  protected:

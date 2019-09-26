@@ -40,8 +40,7 @@ import java.util.concurrent.ExecutionException;
  * groups.
  */
 @RunWith(ChromeJUnit4ClassRunner.class)
-@CommandLineFlags.Add({ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE,
-        ChromeActivityTestRule.DISABLE_NETWORK_PREDICTION_FLAG})
+@CommandLineFlags.Add({ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE})
 public class TabularContextMenuUiTest {
     @Rule
     public ChromeActivityTestRule<ChromeActivity> mActivityTestRule =
@@ -174,7 +173,7 @@ public class TabularContextMenuUiTest {
         });
 
         Assert.assertEquals(view.findViewById(R.id.context_header_text).getVisibility(), View.GONE);
-        Assert.assertEquals(view.findViewById(R.id.context_divider).getVisibility(), View.GONE);
+        Assert.assertEquals(view.findViewById(R.id.context_divider).getVisibility(), View.VISIBLE);
     }
 
     @Test

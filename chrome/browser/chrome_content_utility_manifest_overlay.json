@@ -6,14 +6,9 @@
         "browser": [
           "chrome::mojom::DialDeviceDescriptionParser",
           "chrome::mojom::ProfileImport",
-          "chrome::mojom::ResourceUsageReporter",
           "chrome::mojom::ShellHandler",
-          "extensions::mojom::ExtensionUnpacker",
-          "extensions::mojom::ManifestParser",
-          "extensions::mojom::MediaParser",
-          "extensions::mojom::RemovableStorageWriter",
           "payments::mojom::PaymentManifestParser",
-          "profiling::mojom::ProfilingClient",
+          "heap_profiling::mojom::ProfilingClient",
           "proxy_resolver::mojom::ProxyResolverFactory",
           "safe_json::mojom::SafeJsonParser"
         ]

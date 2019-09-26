@@ -193,20 +193,20 @@ class WriteHelper {
   DISALLOW_COPY_AND_ASSIGN(WriteHelper);
 };
 
-void DidGetUsageAndQuota(const storage::StatusCallback& callback,
+void DidGetUsageAndQuota(storage::StatusCallback callback,
                          int64_t* usage_out,
                          int64_t* quota_out,
-                         storage::QuotaStatusCode status,
+                         blink::mojom::QuotaStatusCode status,
                          int64_t usage,
                          int64_t quota) {
   *usage_out = usage;
   *quota_out = quota;
-  callback.Run(status);
+  std::move(callback).Run(status);
 }
 
 void EnsureLastTaskRuns(base::SingleThreadTaskRunner* runner) {
   base::RunLoop run_loop;
-  runner->PostTaskAndReply(FROM_HERE, base::BindOnce(&base::DoNothing),
+  runner->PostTaskAndReply(FROM_HERE, base::DoNothing(),
                            run_loop.QuitClosure());
   run_loop.Run();
 }
@@ -464,10 +464,10 @@ File::Error CannedSyncableFileSystem::DeleteFileSystem() {
                      origin_, type_));
 }
 
-storage::QuotaStatusCode CannedSyncableFileSystem::GetUsageAndQuota(
+blink::mojom::QuotaStatusCode CannedSyncableFileSystem::GetUsageAndQuota(
     int64_t* usage,
     int64_t* quota) {
-  return RunOnThread<storage::QuotaStatusCode>(
+  return RunOnThread<blink::mojom::QuotaStatusCode>(
       io_task_runner_.get(), FROM_HERE,
       base::BindOnce(&CannedSyncableFileSystem::DoGetUsageAndQuota,
                      base::Unretained(this), usage, quota));
@@ -668,7 +668,7 @@ void CannedSyncableFileSystem::DoWriteString(
 void CannedSyncableFileSystem::DoGetUsageAndQuota(
     int64_t* usage,
     int64_t* quota,
-    const storage::StatusCallback& callback) {
+    storage::StatusCallback callback) {
   // crbug.com/349708
   TRACE_EVENT0("io", "CannedSyncableFileSystem::DoGetUsageAndQuota");
 
@@ -677,7 +677,7 @@ void CannedSyncableFileSystem::DoGetUsageAndQuota(
   DCHECK(quota_manager_.get());
   quota_manager_->GetUsageAndQuota(
       origin_, storage_type(),
-      base::Bind(&DidGetUsageAndQuota, callback, usage, quota));
+      base::BindOnce(&DidGetUsageAndQuota, std::move(callback), usage, quota));
 }
 
 void CannedSyncableFileSystem::DidOpenFileSystem(

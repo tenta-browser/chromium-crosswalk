@@ -8,16 +8,18 @@
 
 #include "base/bind.h"
 #include "base/guid.h"
-#include "base/memory/ptr_util.h"
 #include "base/task_runner.h"
 #include "base/task_scheduler/post_task.h"
 #include "base/threading/thread_task_runner_handle.h"
+#include "components/offline_pages/core/client_namespace_constants.h"
 #include "components/offline_pages/core/offline_event_logger.h"
+#include "components/offline_pages/core/offline_page_feature.h"
 #include "components/offline_pages/core/offline_page_model.h"
 #include "components/offline_pages/core/prefetch/add_unique_urls_task.h"
 #include "components/offline_pages/core/prefetch/download_archives_task.h"
 #include "components/offline_pages/core/prefetch/download_cleanup_task.h"
 #include "components/offline_pages/core/prefetch/download_completed_task.h"
+#include "components/offline_pages/core/prefetch/finalize_dismissed_url_suggestion_task.h"
 #include "components/offline_pages/core/prefetch/generate_page_bundle_reconcile_task.h"
 #include "components/offline_pages/core/prefetch/generate_page_bundle_task.h"
 #include "components/offline_pages/core/prefetch/get_operation_task.h"
@@ -40,6 +42,7 @@
 #include "components/offline_pages/core/prefetch/sent_get_operation_cleanup_task.h"
 #include "components/offline_pages/core/prefetch/stale_entry_finalizer_task.h"
 #include "components/offline_pages/core/prefetch/suggested_articles_observer.h"
+#include "components/offline_pages/core/prefetch/thumbnail_fetcher.h"
 #include "components/offline_pages/core/task.h"
 #include "url/gurl.h"
 
@@ -49,6 +52,23 @@ namespace {
 void DeleteBackgroundTaskHelper(std::unique_ptr<PrefetchBackgroundTask> task) {
   task.reset();
 }
+
+void FetchComplete(OfflinePageModel* offline_model,
+                   int64_t offline_id,
+                   const std::string& image_data) {
+  if (image_data.empty())
+    return;
+  // Thumbnails are marked to expire after this delta. Expired thumbnails are
+  // eventually deleted if their offline_id does not correspond to an offline
+  // item. Two days gives us plenty of time so that the prefetched item can be
+  // imported into the offline item database.
+  const base::TimeDelta kThumbnailExpirationDelta =
+      base::TimeDelta::FromDays(2);
+
+  offline_model->StoreThumbnail(OfflinePageThumbnail(
+      offline_id, base::Time::Now() + kThumbnailExpirationDelta, image_data));
+}
+
 }  // namespace
 
 PrefetchDispatcherImpl::PrefetchDispatcherImpl()
@@ -93,14 +113,14 @@ void PrefetchDispatcherImpl::AddCandidatePrefetchURLs(
   // example, if the user is never on WiFi with enough battery charge).
   // First, detect stale entries and move them to FINISHED.
   task_queue_.AddTask(
-      base::MakeUnique<StaleEntryFinalizerTask>(this, prefetch_store));
+      std::make_unique<StaleEntryFinalizerTask>(this, prefetch_store));
 
   // Second, move FINISHED to ZOMBIE.
   task_queue_.AddTask(
-      base::MakeUnique<MetricsFinalizationTask>(prefetch_store));
+      std::make_unique<MetricsFinalizationTask>(prefetch_store));
 
   // Third, add new unique URLs and remove unneeded ZOMBIEs.
-  std::unique_ptr<Task> add_task = base::MakeUnique<AddUniqueUrlsTask>(
+  std::unique_ptr<Task> add_task = std::make_unique<AddUniqueUrlsTask>(
       this, prefetch_store, name_space, prefetch_urls);
   task_queue_.AddTask(std::move(add_task));
 
@@ -120,8 +140,9 @@ void PrefetchDispatcherImpl::RemovePrefetchURLsByClientId(
     const ClientId& client_id) {
   if (!service_->GetPrefetchConfiguration()->IsPrefetchingEnabled())
     return;
-
-  NOTIMPLEMENTED();
+  PrefetchStore* prefetch_store = service_->GetPrefetchStore();
+  task_queue_.AddTask(std::make_unique<FinalizeDismissedUrlSuggestionTask>(
+      prefetch_store, client_id));
 }
 
 void PrefetchDispatcherImpl::BeginBackgroundTask(
@@ -151,14 +172,14 @@ void PrefetchDispatcherImpl::QueueReconcileTasks() {
   // other reconciler tasks that deal with external systems so that entries
   // finalized by it will promptly effect any external processing they relate
   // to.
-  task_queue_.AddTask(base::MakeUnique<StaleEntryFinalizerTask>(
+  task_queue_.AddTask(std::make_unique<StaleEntryFinalizerTask>(
       this, service_->GetPrefetchStore()));
 
-  task_queue_.AddTask(base::MakeUnique<GeneratePageBundleReconcileTask>(
+  task_queue_.AddTask(std::make_unique<GeneratePageBundleReconcileTask>(
       service_->GetPrefetchStore(),
       service_->GetPrefetchNetworkRequestFactory()));
 
-  task_queue_.AddTask(base::MakeUnique<SentGetOperationCleanupTask>(
+  task_queue_.AddTask(std::make_unique<SentGetOperationCleanupTask>(
       service_->GetPrefetchStore(),
       service_->GetPrefetchNetworkRequestFactory()));
 
@@ -168,7 +189,7 @@ void PrefetchDispatcherImpl::QueueReconcileTasks() {
   // should only kick in when both services are ready.
   service_->GetPrefetchDownloader()->CleanupDownloadsWhenReady();
 
-  task_queue_.AddTask(base::MakeUnique<ImportCleanupTask>(
+  task_queue_.AddTask(std::make_unique<ImportCleanupTask>(
       service_->GetPrefetchStore(), service_->GetPrefetchImporter()));
 
   // This task should be last, because it is least important for correct
@@ -176,7 +197,7 @@ void PrefetchDispatcherImpl::QueueReconcileTasks() {
   // generate more entries in the FINISHED state that the finalization task
   // could pick up.
   task_queue_.AddTask(
-      base::MakeUnique<MetricsFinalizationTask>(service_->GetPrefetchStore()));
+      std::make_unique<MetricsFinalizationTask>(service_->GetPrefetchStore()));
 }
 
 void PrefetchDispatcherImpl::QueueActionTasks() {
@@ -185,12 +206,12 @@ void PrefetchDispatcherImpl::QueueActionTasks() {
   // Import should be run first to minimize time to import after download
   // finishes, during the download background task.
   std::unique_ptr<Task> import_archives_task =
-      base::MakeUnique<ImportArchivesTask>(service_->GetPrefetchStore(),
+      std::make_unique<ImportArchivesTask>(service_->GetPrefetchStore(),
                                            service_->GetPrefetchImporter());
   task_queue_.AddTask(std::move(import_archives_task));
 
   std::unique_ptr<Task> download_archives_task =
-      base::MakeUnique<DownloadArchivesTask>(service_->GetPrefetchStore(),
+      std::make_unique<DownloadArchivesTask>(service_->GetPrefetchStore(),
                                              service_->GetPrefetchDownloader());
   task_queue_.AddTask(std::move(download_archives_task));
 
@@ -199,7 +220,7 @@ void PrefetchDispatcherImpl::QueueActionTasks() {
   if (!background_task_)
     return;
 
-  std::unique_ptr<Task> get_operation_task = base::MakeUnique<GetOperationTask>(
+  std::unique_ptr<Task> get_operation_task = std::make_unique<GetOperationTask>(
       service_->GetPrefetchStore(),
       service_->GetPrefetchNetworkRequestFactory(),
       base::Bind(
@@ -208,14 +229,13 @@ void PrefetchDispatcherImpl::QueueActionTasks() {
   task_queue_.AddTask(std::move(get_operation_task));
 
   std::unique_ptr<Task> generate_page_bundle_task =
-      base::MakeUnique<GeneratePageBundleTask>(
+      std::make_unique<GeneratePageBundleTask>(
           service_->GetPrefetchStore(), service_->GetPrefetchGCMHandler(),
           service_->GetPrefetchNetworkRequestFactory(),
           base::Bind(
               &PrefetchDispatcherImpl::DidGenerateBundleOrGetOperationRequest,
               weak_factory_.GetWeakPtr(), "GeneratePageBundleRequest"));
   task_queue_.AddTask(std::move(generate_page_bundle_task));
-
 }
 
 void PrefetchDispatcherImpl::StopBackgroundTask() {
@@ -246,8 +266,8 @@ void PrefetchDispatcherImpl::DisposeTask() {
 
   // Delay the deletion till the caller finishes.
   base::ThreadTaskRunnerHandle::Get()->PostTask(
-      FROM_HERE, base::Bind(&DeleteBackgroundTaskHelper,
-                            base::Passed(std::move(background_task_))));
+      FROM_HERE,
+      base::BindOnce(&DeleteBackgroundTaskHelper, std::move(background_task_)));
 }
 
 void PrefetchDispatcherImpl::GCMOperationCompletedMessageReceived(
@@ -258,7 +278,7 @@ void PrefetchDispatcherImpl::GCMOperationCompletedMessageReceived(
   service_->GetLogger()->RecordActivity("Dispatcher: Received GCM message.");
 
   PrefetchStore* prefetch_store = service_->GetPrefetchStore();
-  task_queue_.AddTask(base::MakeUnique<MarkOperationDoneTask>(
+  task_queue_.AddTask(std::make_unique<MarkOperationDoneTask>(
       this, prefetch_store, operation_name));
 }
 
@@ -274,7 +294,7 @@ void PrefetchDispatcherImpl::DidGenerateBundleOrGetOperationRequest(
   // the empty task queue and no outstanding request in order to decide whether
   // to dispose th background task upon the completion of a task.
   PrefetchStore* prefetch_store = service_->GetPrefetchStore();
-  task_queue_.AddTask(base::MakeUnique<PageBundleUpdateTask>(
+  task_queue_.AddTask(std::make_unique<PageBundleUpdateTask>(
       prefetch_store, this, operation_name, pages));
 
   if (background_task_ && status != PrefetchRequestStatus::SUCCESS) {
@@ -307,7 +327,7 @@ void PrefetchDispatcherImpl::CleanupDownloads(
     const std::set<std::string>& outstanding_download_ids,
     const std::map<std::string, std::pair<base::FilePath, int64_t>>&
         success_downloads) {
-  task_queue_.AddTask(base::MakeUnique<DownloadCleanupTask>(
+  task_queue_.AddTask(std::make_unique<DownloadCleanupTask>(
       this, service_->GetPrefetchStore(), outstanding_download_ids,
       success_downloads));
 }
@@ -325,10 +345,20 @@ void PrefetchDispatcherImpl::DownloadCompleted(
         "Download size: " + std::to_string(download_result.file_size));
   }
 
-  task_queue_.AddTask(base::MakeUnique<DownloadCompletedTask>(
+  task_queue_.AddTask(std::make_unique<DownloadCompletedTask>(
       this, service_->GetPrefetchStore(), download_result));
-  task_queue_.AddTask(base::MakeUnique<ImportArchivesTask>(
+  task_queue_.AddTask(std::make_unique<ImportArchivesTask>(
       service_->GetPrefetchStore(), service_->GetPrefetchImporter()));
+}
+
+void PrefetchDispatcherImpl::ItemDownloaded(int64_t offline_id,
+                                            const ClientId& client_id) {
+  DCHECK(client_id.name_space == kSuggestedArticlesNamespace);
+  auto complete_callback = base::BindOnce(
+      &FetchComplete, base::Unretained(service_->GetOfflinePageModel()),
+      offline_id);
+  service_->GetThumbnailFetcher()->FetchSuggestionImageData(
+      client_id, std::move(complete_callback));
 }
 
 void PrefetchDispatcherImpl::ArchiveImported(int64_t offline_id, bool success) {
@@ -344,7 +374,7 @@ void PrefetchDispatcherImpl::ArchiveImported(int64_t offline_id, bool success) {
   if (success)
     service_->GetOfflineMetricsCollector()->OnSuccessfulPagePrefetch();
 
-  task_queue_.AddTask(base::MakeUnique<ImportCompletedTask>(
+  task_queue_.AddTask(std::make_unique<ImportCompletedTask>(
       this, service_->GetPrefetchStore(), service_->GetPrefetchImporter(),
       offline_id, success));
 }

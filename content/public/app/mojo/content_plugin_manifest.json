@@ -9,6 +9,7 @@
           "content::mojom::ChildControl",
           "content::mojom::ChildHistogramFetcher",
           "content::mojom::ChildHistogramFetcherFactory",
+          "content::mojom::ResourceUsageReporter",
           "IPC::mojom::ChannelBootstrap"
         ],
         "service_manager:service_factory": [
@@ -18,6 +19,8 @@
       "requires": {
         "*": [ "app" ],
         "content_browser": [
+          "dwrite_font_proxy",
+          "field_trials",
           "font_cache",
           "plugin"
         ],

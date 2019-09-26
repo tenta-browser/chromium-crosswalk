@@ -12,16 +12,17 @@
 #include "base/test/scoped_task_environment.h"
 #include "base/time/time.h"
 #include "content/child/child_process.h"
-#include "content/renderer/media/mock_media_stream_registry.h"
+#include "content/renderer/media/stream/mock_media_stream_registry.h"
 #include "content/renderer/media_recorder/media_recorder_handler.h"
 #include "media/audio/simple_sources.h"
 #include "media/base/audio_bus.h"
 #include "media/base/video_frame.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/WebKit/public/platform/WebMediaRecorderHandlerClient.h"
-#include "third_party/WebKit/public/platform/WebString.h"
-#include "third_party/WebKit/public/web/WebHeap.h"
+#include "third_party/blink/public/platform/scheduler/test/renderer_scheduler_test_support.h"
+#include "third_party/blink/public/platform/web_media_recorder_handler_client.h"
+#include "third_party/blink/public/platform/web_string.h"
+#include "third_party/blink/public/web/web_heap.h"
 
 using ::testing::_;
 using ::testing::AtLeast;
@@ -78,7 +79,8 @@ class MediaRecorderHandlerTest : public TestWithParam<MediaRecorderTestParams>,
   MediaRecorderHandlerTest()
       : scoped_task_environment_(
             base::test::ScopedTaskEnvironment::MainThreadType::UI),
-        media_recorder_handler_(new MediaRecorderHandler()),
+        media_recorder_handler_(new MediaRecorderHandler(
+            blink::scheduler::GetSingleThreadTaskRunnerForTesting())),
         audio_source_(kTestAudioChannels,
                       440 /* freq */,
                       kTestAudioSampleRate) {
@@ -256,7 +258,7 @@ TEST_P(MediaRecorderHandlerTest, EncodeVideoFrames) {
         .Times(AtLeast(1));
     EXPECT_CALL(*this, WriteData(_, Gt(kEncodedSizeThreshold), _, _))
         .Times(1)
-        .WillOnce(RunClosure(quit_closure));
+        .WillOnce(RunClosure(std::move(quit_closure)));
 
     OnVideoFrameForTesting(video_frame);
     run_loop.Run();
@@ -273,7 +275,7 @@ TEST_P(MediaRecorderHandlerTest, EncodeVideoFrames) {
         .Times(AtLeast(1));
     EXPECT_CALL(*this, WriteData(_, Gt(kEncodedSizeThreshold), _, _))
         .Times(1)
-        .WillOnce(RunClosure(quit_closure));
+        .WillOnce(RunClosure(std::move(quit_closure)));
 
     OnVideoFrameForTesting(video_frame);
     run_loop.Run();
@@ -299,7 +301,7 @@ TEST_P(MediaRecorderHandlerTest, EncodeVideoFrames) {
           .Times(AtLeast(1));
       EXPECT_CALL(*this, WriteData(_, Gt(kEncodedSizeThreshold), _, _))
           .Times(1)
-          .WillOnce(RunClosure(quit_closure));
+          .WillOnce(RunClosure(std::move(quit_closure)));
     }
 
     OnVideoFrameForTesting(alpha_frame);
@@ -352,7 +354,7 @@ TEST_P(MediaRecorderHandlerTest, OpusEncodeAudioFrames) {
         .Times(AtLeast(1));
     EXPECT_CALL(*this, WriteData(_, Gt(kEncodedSizeThreshold), _, _))
         .Times(1)
-        .WillOnce(RunClosure(quit_closure));
+        .WillOnce(RunClosure(std::move(quit_closure)));
 
     for (int i = 0; i < kRatioOpusToTestAudioBuffers; ++i)
       OnAudioBusForTesting(*audio_bus1);
@@ -369,7 +371,7 @@ TEST_P(MediaRecorderHandlerTest, OpusEncodeAudioFrames) {
         .Times(AtLeast(1));
     EXPECT_CALL(*this, WriteData(_, Gt(kEncodedSizeThreshold), _, _))
         .Times(1)
-        .WillOnce(RunClosure(quit_closure));
+        .WillOnce(RunClosure(std::move(quit_closure)));
 
     for (int i = 0; i < kRatioOpusToTestAudioBuffers; ++i)
       OnAudioBusForTesting(*audio_bus2);
@@ -408,7 +410,7 @@ TEST_P(MediaRecorderHandlerTest, WebmMuxerErrorWhileEncoding) {
     EXPECT_CALL(*this, WriteData(_, _, _, _)).Times(AtLeast(1));
     EXPECT_CALL(*this, WriteData(_, Gt(kEncodedSizeThreshold), _, _))
         .Times(1)
-        .WillOnce(RunClosure(quit_closure));
+        .WillOnce(RunClosure(std::move(quit_closure)));
 
     OnVideoFrameForTesting(video_frame);
     run_loop.Run();
@@ -420,7 +422,9 @@ TEST_P(MediaRecorderHandlerTest, WebmMuxerErrorWhileEncoding) {
     base::RunLoop run_loop;
     base::Closure quit_closure = run_loop.QuitClosure();
     EXPECT_CALL(*this, WriteData(_, _, _, _)).Times(0);
-    EXPECT_CALL(*this, OnError(_)).Times(1).WillOnce(RunClosure(quit_closure));
+    EXPECT_CALL(*this, OnError(_))
+        .Times(1)
+        .WillOnce(RunClosure(std::move(quit_closure)));
 
     OnVideoFrameForTesting(video_frame);
     run_loop.Run();

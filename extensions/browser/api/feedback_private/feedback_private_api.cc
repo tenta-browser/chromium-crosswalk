@@ -11,7 +11,6 @@
 #include "base/lazy_instance.h"
 #include "base/logging.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/metrics/histogram_base.h"
 #include "base/metrics/statistics_recorder.h"
 #include "base/metrics/user_metrics.h"
@@ -19,6 +18,7 @@
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/sys_info.h"
 #include "base/values.h"
 #include "build/build_config.h"
 #include "components/feedback/system_logs/system_logs_fetcher.h"
@@ -38,20 +38,6 @@
 using extensions::api::feedback_private::SystemInformation;
 using feedback::FeedbackData;
 
-namespace {
-
-// Getting the filename of a blob prepends a "C:\fakepath" to the filename.
-// This is undesirable, strip it if it exists.
-std::string StripFakepath(const std::string& path) {
-  const char kFakePathStr[] = "C:\\fakepath\\";
-  if (base::StartsWith(path, kFakePathStr,
-                       base::CompareCase::INSENSITIVE_ASCII))
-    return path.substr(arraysize(kFakePathStr) - 1);
-  return path;
-}
-
-}  // namespace
-
 namespace extensions {
 
 namespace feedback_private = api::feedback_private;
@@ -66,6 +52,40 @@ using SystemInformationList =
 
 static base::LazyInstance<BrowserContextKeyedAPIFactory<FeedbackPrivateAPI>>::
     DestructorAtExit g_factory = LAZY_INSTANCE_INITIALIZER;
+
+namespace {
+
+// Getting the filename of a blob prepends a "C:\fakepath" to the filename.
+// This is undesirable, strip it if it exists.
+std::string StripFakepath(const std::string& path) {
+  constexpr char kFakePathStr[] = "C:\\fakepath\\";
+  if (base::StartsWith(path, kFakePathStr,
+                       base::CompareCase::INSENSITIVE_ASCII))
+    return path.substr(arraysize(kFakePathStr) - 1);
+  return path;
+}
+
+// Returns the type of the landing page which is shown to the user when the
+// report is successfully sent.
+feedback_private::LandingPageType GetLandingPageType(const std::string& email) {
+#if defined(OS_CHROMEOS)
+  const std::string board =
+      base::ToLowerASCII(base::SysInfo::GetLsbReleaseBoard());
+  if (board.find("eve") == std::string::npos)
+    return feedback_private::LANDING_PAGE_TYPE_NORMAL;
+
+  if (!base::EndsWith(email, "@google.com",
+                      base::CompareCase::INSENSITIVE_ASCII)) {
+    return feedback_private::LANDING_PAGE_TYPE_NORMAL;
+  }
+
+  return feedback_private::LANDING_PAGE_TYPE_TECHSTOP;
+#else
+  return feedback_private::LANDING_PAGE_TYPE_NORMAL;
+#endif  // defined(OS_CHROMEOS)
+}
+
+}  // namespace
 
 // static
 BrowserContextKeyedAPIFactory<FeedbackPrivateAPI>*
@@ -97,6 +117,7 @@ LogSourceAccessManager* FeedbackPrivateAPI::GetLogSourceAccessManager() const {
 
 void FeedbackPrivateAPI::RequestFeedbackForFlow(
     const std::string& description_template,
+    const std::string& description_placeholder_text,
     const std::string& category_tag,
     const std::string& extra_diagnostics,
     const GURL& page_url,
@@ -104,6 +125,8 @@ void FeedbackPrivateAPI::RequestFeedbackForFlow(
   if (browser_context_ && EventRouter::Get(browser_context_)) {
     FeedbackInfo info;
     info.description = description_template;
+    info.description_placeholder =
+        std::make_unique<std::string>(description_placeholder_text);
     info.category_tag = std::make_unique<std::string>(category_tag);
     info.page_url = std::make_unique<std::string>(page_url.spec());
     info.system_information = std::make_unique<SystemInformationList>();
@@ -232,9 +255,9 @@ ExtensionFunction::ResponseAction FeedbackPrivateReadLogSourceFunction::Run() {
 
 #if defined(OS_CHROMEOS)
 void FeedbackPrivateReadLogSourceFunction::OnCompleted(
-    const feedback_private::ReadLogSourceResult& result) {
+    std::unique_ptr<feedback_private::ReadLogSourceResult> result) {
   Respond(
-      ArgumentList(feedback_private::ReadLogSource::Results::Create(result)));
+      ArgumentList(feedback_private::ReadLogSource::Results::Create(*result)));
 }
 #endif  // defined(OS_CHROMEOS)
 
@@ -303,15 +326,20 @@ ExtensionFunction::ResponseAction FeedbackPrivateSendFeedbackFunction::Run() {
 
   service->SendFeedback(
       feedback_data,
-      base::Bind(&FeedbackPrivateSendFeedbackFunction::OnCompleted, this));
+      base::Bind(&FeedbackPrivateSendFeedbackFunction::OnCompleted, this,
+                 GetLandingPageType(feedback_data->user_email())));
 
   return RespondLater();
 }
 
-void FeedbackPrivateSendFeedbackFunction::OnCompleted(bool success) {
-  Respond(OneArgument(std::make_unique<base::Value>(
-      feedback_private::ToString(success ? feedback_private::STATUS_SUCCESS
-                                         : feedback_private::STATUS_DELAYED))));
+void FeedbackPrivateSendFeedbackFunction::OnCompleted(
+    api::feedback_private::LandingPageType type,
+    bool success) {
+  Respond(TwoArguments(
+      std::make_unique<base::Value>(feedback_private::ToString(
+          success ? feedback_private::STATUS_SUCCESS
+                  : feedback_private::STATUS_DELAYED)),
+      std::make_unique<base::Value>(feedback_private::ToString(type))));
   if (!success) {
     ExtensionsAPIClient::Get()
         ->GetFeedbackPrivateDelegate()
@@ -319,7 +347,7 @@ void FeedbackPrivateSendFeedbackFunction::OnCompleted(bool success) {
   }
 }
 
-AsyncExtensionFunction::ResponseAction
+ExtensionFunction::ResponseAction
 FeedbackPrivateLogSrtPromptResultFunction::Run() {
   std::unique_ptr<feedback_private::LogSrtPromptResult::Params> params(
       feedback_private::LogSrtPromptResult::Params::Create(*args_));

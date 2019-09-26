@@ -11,7 +11,7 @@
 
 namespace ash {
 
-ImeController::ImeController() : binding_(this) {}
+ImeController::ImeController() = default;
 
 ImeController::~ImeController() = default;
 
@@ -24,7 +24,7 @@ void ImeController::RemoveObserver(Observer* observer) {
 }
 
 void ImeController::BindRequest(mojom::ImeControllerRequest request) {
-  binding_.Bind(std::move(request));
+  bindings_.AddBinding(this, std::move(request));
 }
 
 void ImeController::SetClient(mojom::ImeControllerClientPtr client) {
@@ -129,11 +129,19 @@ void ImeController::ShowImeMenuOnShelf(bool show) {
   Shell::Get()->system_tray_notifier()->NotifyRefreshIMEMenu(show);
 }
 
-void ImeController::SetCapsLockState(bool caps_enabled) {
+void ImeController::UpdateCapsLockState(bool caps_enabled) {
   is_caps_lock_enabled_ = caps_enabled;
 
   for (ImeController::Observer& observer : observers_)
     observer.OnCapsLockChanged(caps_enabled);
+}
+
+void ImeController::OnKeyboardLayoutNameChanged(
+    const std::string& layout_name) {
+  keyboard_layout_name_ = layout_name;
+
+  for (ImeController::Observer& observer : observers_)
+    observer.OnKeyboardLayoutNameChanged(layout_name);
 }
 
 void ImeController::SetExtraInputOptionsEnabledState(
@@ -147,9 +155,23 @@ void ImeController::SetExtraInputOptionsEnabledState(
   is_voice_enabled_ = is_voice_enabled;
 }
 
-void ImeController::SetCapsLockFromTray(bool caps_enabled) {
+void ImeController::SetCapsLockEnabled(bool caps_enabled) {
+  is_caps_lock_enabled_ = caps_enabled;
+
   if (client_)
-    client_->SetCapsLockFromTray(caps_enabled);
+    client_->SetCapsLockEnabled(caps_enabled);
+}
+
+void ImeController::OverrideKeyboardKeyset(
+    chromeos::input_method::mojom::ImeKeyset keyset) {
+  OverrideKeyboardKeyset(keyset, base::DoNothing());
+}
+
+void ImeController::OverrideKeyboardKeyset(
+    chromeos::input_method::mojom::ImeKeyset keyset,
+    mojom::ImeControllerClient::OverrideKeyboardKeysetCallback callback) {
+  if (client_)
+    client_->OverrideKeyboardKeyset(keyset, std::move(callback));
 }
 
 void ImeController::FlushMojoForTesting() {

@@ -8,7 +8,7 @@
 #include "base/macros.h"
 #include "ui/base/models/simple_menu_model.h"
 #include "ui/message_center/message_center_export.h"
-#include "ui/message_center/notification.h"
+#include "ui/message_center/public/cpp/notification.h"
 
 namespace message_center {
 
@@ -26,7 +26,7 @@ class MESSAGE_CENTER_EXPORT NotificationMenuModel
   void ExecuteCommand(int command_id, int event_flags) override;
 
  private:
-  Notification notification_;
+  const std::string notification_id_;
   DISALLOW_COPY_AND_ASSIGN(NotificationMenuModel);
 };
 

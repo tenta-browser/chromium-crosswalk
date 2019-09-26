@@ -20,7 +20,7 @@
 #include "chrome/browser/ssl/mitm_software_blocking_page.h"
 #include "chrome/browser/ssl/ssl_blocking_page.h"
 #include "chrome/browser/supervised_user/supervised_user_interstitial.h"
-#include "chrome/common/features.h"
+#include "chrome/common/buildflags.h"
 #include "chrome/common/url_constants.h"
 #include "components/grit/components_resources.h"
 #include "components/safe_browsing/db/database_manager.h"
@@ -162,6 +162,8 @@ SSLBlockingPage* CreateSSLBlockingPage(content::WebContents* web_contents,
   if (net::GetValueForKeyInQuery(web_contents->GetURL(), "type", &type_param)) {
     if (type_param == "hpkp_failure") {
       cert_error = net::ERR_SSL_PINNED_KEY_NOT_IN_CERT_CHAIN;
+    } else if (type_param == "ct_failure") {
+      cert_error = net::ERR_CERTIFICATE_TRANSPARENCY_REQUIRED;
     }
   }
   net::SSLInfo ssl_info;
@@ -174,7 +176,7 @@ SSLBlockingPage* CreateSSLBlockingPage(content::WebContents* web_contents,
     options_mask |= security_interstitials::SSLErrorUI::STRICT_ENFORCEMENT;
   return SSLBlockingPage::Create(
       web_contents, cert_error, ssl_info, request_url, options_mask,
-      time_triggered_, nullptr, is_superfish,
+      time_triggered_, GURL(), nullptr, is_superfish,
       base::Callback<void(content::CertificateRequestResultType)>());
 }
 
@@ -419,7 +421,7 @@ std::string InterstitialHTMLSource::GetSource() const {
 
 std::string InterstitialHTMLSource::GetContentSecurityPolicyScriptSrc() const {
   // 'unsafe-inline' is added to script-src.
-  return "script-src chrome://resources 'self' 'unsafe-eval' 'unsafe-inline';";
+  return "script-src chrome://resources 'self' 'unsafe-inline';";
 }
 
 std::string InterstitialHTMLSource::GetContentSecurityPolicyStyleSrc() const {

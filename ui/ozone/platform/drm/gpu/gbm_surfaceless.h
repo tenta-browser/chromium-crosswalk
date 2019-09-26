@@ -41,9 +41,11 @@ class GbmSurfaceless : public gl::SurfacelessEGL {
                             gfx::OverlayTransform transform,
                             gl::GLImage* image,
                             const gfx::Rect& bounds_rect,
-                            const gfx::RectF& crop_rect) override;
+                            const gfx::RectF& crop_rect,
+                            bool enable_blend) override;
   bool IsOffscreen() override;
   gfx::VSyncProvider* GetVSyncProvider() override;
+  bool SupportsPresentationCallback() override;
   bool SupportsAsyncSwap() override;
   bool SupportsPostSubBuffer() override;
   gfx::SwapResult PostSubBuffer(int x,
@@ -80,7 +82,10 @@ class GbmSurfaceless : public gl::SurfacelessEGL {
 
     bool ready = false;
     std::vector<gl::GLSurfaceOverlay> overlays;
-    SwapCompletionCallback callback;
+    using SwapCompletionAndPresentationCallback =
+        base::OnceCallback<void(gfx::SwapResult,
+                                const gfx::PresentationFeedback&)>;
+    SwapCompletionAndPresentationCallback callback;
   };
 
   void SubmitFrame();
@@ -88,8 +93,10 @@ class GbmSurfaceless : public gl::SurfacelessEGL {
   EGLSyncKHR InsertFence(bool implicit);
   void FenceRetired(PendingFrame* frame);
 
-  void SwapCompleted(const SwapCompletionCallback& callback,
-                     gfx::SwapResult result);
+  void SwapCompleted(const SwapCompletionCallback& completion_callback,
+                     const PresentationCallback& presentation_callback,
+                     gfx::SwapResult result,
+                     const gfx::PresentationFeedback& feedback);
 
   GbmSurfaceFactory* surface_factory_;
   std::unique_ptr<DrmWindowProxy> window_;

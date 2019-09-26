@@ -41,8 +41,18 @@ class SearchBoxDataProvider implements ToolbarDataProvider {
     }
 
     @Override
-    public String getText() {
+    public String getDisplayText() {
         return null;
+    }
+
+    @Override
+    public String getEditingText() {
+        return null;
+    }
+
+    @Override
+    public String getTitle() {
+        return "";
     }
 
     @Override
@@ -81,7 +91,7 @@ class SearchBoxDataProvider implements ToolbarDataProvider {
     }
 
     @Override
-    public boolean shouldShowSecurityIcon() {
+    public boolean isShowingUntrustedOfflinePage() {
         return false;
     }
 
@@ -96,7 +106,12 @@ class SearchBoxDataProvider implements ToolbarDataProvider {
     }
 
     @Override
-    public int getSecurityIconResource() {
+    public int getSecurityIconResource(boolean isTablet) {
         return 0;
+    }
+
+    @Override
+    public boolean shouldDisplaySearchTerms() {
+        return false;
     }
 }

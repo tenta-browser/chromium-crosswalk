@@ -6,7 +6,6 @@
 
 #include "ash/public/interfaces/constants.mojom.h"
 #include "base/logging.h"
-#include "base/memory/ptr_util.h"
 #include "base/time/default_tick_clock.h"
 #include "base/time/tick_clock.h"
 #include "chrome/browser/browser_process.h"
@@ -25,6 +24,7 @@
 #include "chrome/browser/chromeos/system/system_clock.h"
 #include "chrome/browser/chromeos/system/timezone_resolver_manager.h"
 #include "chrome/browser/chromeos/system/timezone_util.h"
+#include "chrome/browser/component_updater/cros_component_installer.h"
 #include "chrome/browser/ui/ash/ash_util.h"
 #include "chrome/common/chrome_features.h"
 #include "chrome/common/chrome_switches.h"
@@ -35,7 +35,7 @@
 #include "components/session_manager/core/session_manager.h"
 #include "components/user_manager/user_manager.h"
 #include "content/public/common/service_manager_connection.h"
-#include "services/preferences/public/interfaces/preferences.mojom.h"
+#include "services/preferences/public/mojom/preferences.mojom.h"
 #include "services/service_manager/public/cpp/binder_registry.h"
 #include "services/service_manager/public/cpp/interface_provider.h"
 #include "services/service_manager/public/cpp/service.h"
@@ -55,7 +55,7 @@ void BrowserProcessPlatformPart::InitializeAutomaticRebootManager() {
   DCHECK(!automatic_reboot_manager_);
 
   automatic_reboot_manager_.reset(new chromeos::system::AutomaticRebootManager(
-      std::unique_ptr<base::TickClock>(new base::DefaultTickClock)));
+      base::DefaultTickClock::GetInstance()));
 }
 
 void BrowserProcessPlatformPart::ShutdownAutomaticRebootManager() {
@@ -93,11 +93,24 @@ void BrowserProcessPlatformPart::ShutdownDeviceDisablingManager() {
 
 void BrowserProcessPlatformPart::InitializeSessionManager() {
   DCHECK(!session_manager_);
-  session_manager_ = base::MakeUnique<chromeos::ChromeSessionManager>();
+  session_manager_ = std::make_unique<chromeos::ChromeSessionManager>();
 }
 
 void BrowserProcessPlatformPart::ShutdownSessionManager() {
   session_manager_.reset();
+}
+
+void BrowserProcessPlatformPart::InitializeCrosComponentManager() {
+  DCHECK(!cros_component_manager_);
+  cros_component_manager_ =
+      std::make_unique<component_updater::CrOSComponentManager>();
+
+  // Register all installed components for regular update.
+  cros_component_manager_->RegisterInstalled();
+}
+
+void BrowserProcessPlatformPart::ShutdownCrosComponentManager() {
+  cros_component_manager_.reset();
 }
 
 void BrowserProcessPlatformPart::RegisterKeepAlive() {
@@ -155,9 +168,9 @@ void BrowserProcessPlatformPart::StartTearDown() {
   profile_helper_.reset();
 }
 
-std::unique_ptr<policy::BrowserPolicyConnector>
+std::unique_ptr<policy::ChromeBrowserPolicyConnector>
 BrowserProcessPlatformPart::CreateBrowserPolicyConnector() {
-  return std::unique_ptr<policy::BrowserPolicyConnector>(
+  return std::unique_ptr<policy::ChromeBrowserPolicyConnector>(
       new policy::BrowserPolicyConnectorChromeOS());
 }
 
@@ -167,7 +180,7 @@ void BrowserProcessPlatformPart::RegisterInProcessServices(
     service_manager::EmbeddedServiceInfo info;
     info.factory = base::Bind([] {
       return std::unique_ptr<service_manager::Service>(
-          base::MakeUnique<AshPrefConnector>());
+          std::make_unique<AshPrefConnector>());
     });
     info.task_runner = base::ThreadTaskRunnerHandle::Get();
     services->insert(
@@ -193,16 +206,6 @@ void BrowserProcessPlatformPart::DestroySystemClock() {
   system_clock_.reset();
 }
 
-void BrowserProcessPlatformPart::AddCompatibleCrOSComponent(
-    const std::string& name) {
-  compatible_cros_components_.insert(name);
-}
-
-bool BrowserProcessPlatformPart::IsCompatibleCrOSComponent(
-    const std::string& name) {
-  return compatible_cros_components_.count(name) > 0;
-}
-
 ui::InputDeviceControllerClient*
 BrowserProcessPlatformPart::GetInputDeviceControllerClient() {
   if (!input_device_controller_client_) {
@@ -211,7 +214,7 @@ BrowserProcessPlatformPart::GetInputDeviceControllerClient() {
             ? chromeos::kChromeServiceName
             : ui::mojom::kServiceName;
     input_device_controller_client_ =
-        base::MakeUnique<ui::InputDeviceControllerClient>(
+        std::make_unique<ui::InputDeviceControllerClient>(
             content::ServiceManagerConnection::GetForProcess()->GetConnector(),
             service_name);
   }

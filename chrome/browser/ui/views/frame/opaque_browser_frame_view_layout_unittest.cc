@@ -49,6 +49,7 @@ class TestLayoutDelegate : public OpaqueBrowserFrameViewLayoutDelegate {
   void set_maximized(bool maximized) { maximized_ = maximized; }
 
   // OpaqueBrowserFrameViewLayoutDelegate:
+  bool IsIncognito() const override { return false; }
   bool ShouldShowWindowIcon() const override { return !window_title_.empty(); }
   bool ShouldShowWindowTitle() const override { return !window_title_.empty(); }
   base::string16 GetWindowTitle() const override { return window_title_; }
@@ -75,6 +76,7 @@ class TestLayoutDelegate : public OpaqueBrowserFrameViewLayoutDelegate {
     return IsTabStripVisible() ? gfx::Size(78, 29) : gfx::Size();
   }
   int GetTopAreaHeight() const override { return 0; }
+  bool UseCustomFrame() const override { return true; }
 
  private:
   base::string16 window_title_;
@@ -95,15 +97,15 @@ class OpaqueBrowserFrameViewLayoutTest : public views::ViewsTestBase {
     views::ViewsTestBase::SetUp();
 
     delegate_.reset(new TestLayoutDelegate);
-    layout_manager_ = new OBFVL();
-    layout_manager_->set_delegate(delegate_.get());
-    layout_manager_->set_extra_caption_y(0);
-    layout_manager_->set_forced_window_caption_spacing_for_test(0);
+    auto layout = std::make_unique<OBFVL>();
+    layout->set_delegate(delegate_.get());
+    layout->set_extra_caption_y(0);
+    layout->set_forced_window_caption_spacing_for_test(0);
     widget_ = new views::Widget;
     widget_->Init(CreateParams(views::Widget::InitParams::TYPE_POPUP));
     root_view_ = widget_->GetRootView();
     root_view_->SetSize(gfx::Size(kWindowWidth, kWindowWidth));
-    root_view_->SetLayoutManager(layout_manager_);
+    layout_manager_ = root_view_->SetLayoutManager(std::move(layout));
 
     // Add the caption buttons. We use fake images because we're modeling the
     // Windows assets here, while the linux version uses differently sized
@@ -236,9 +238,10 @@ class OpaqueBrowserFrameViewLayoutTest : public views::ViewsTestBase {
       caption_buttons_width +=
           avatar_button_->GetPreferredSize().width() +
           (maximized ? OBFVL::kCaptionSpacing
-                     : -GetLayoutSize(NEW_TAB_BUTTON).width());
+                     : -GetLayoutSize(NEW_TAB_BUTTON, delegate_->IsIncognito())
+                            .width());
     }
-    int tabstrip_x = OpaqueBrowserFrameView::kAvatarIconPadding;
+    int tabstrip_x = OpaqueBrowserFrameView::GetAvatarIconPadding();
     if (show_caption_buttons && caption_buttons_on_left) {
       int right_of_close =
           maximized ? kMaximizedExtraCloseWidth : OBFVL::kFrameBorderThickness;

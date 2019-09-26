@@ -4,6 +4,8 @@
 
 #import "ios/chrome/browser/passwords/credential_manager.h"
 
+#include <memory>
+
 #include "base/mac/foundation_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "components/password_manager/core/browser/password_manager.h"
@@ -63,9 +65,10 @@ class MockPasswordManagerClient
       : last_committed_url_(kHttpsWebOrigin), password_manager_(this) {
     store_ = base::MakeRefCounted<TestPasswordStore>();
     store_->Init(syncer::SyncableService::StartSyncFlare(), nullptr);
-    prefs_.registry()->RegisterBooleanPref(
+    prefs_ = std::make_unique<TestingPrefServiceSimple>();
+    prefs_->registry()->RegisterBooleanPref(
         password_manager::prefs::kCredentialsEnableAutosignin, true);
-    prefs_.registry()->RegisterBooleanPref(
+    prefs_->registry()->RegisterBooleanPref(
         password_manager::prefs::kWasAutoSignInFirstRunExperienceShown, true);
   }
 
@@ -93,7 +96,7 @@ class MockPasswordManagerClient
 
  private:
   // PasswordManagerClient:
-  PrefService* GetPrefs() override { return &prefs_; }
+  PrefService* GetPrefs() const override { return prefs_.get(); }
   PasswordStore* GetPasswordStore() const override { return store_.get(); }
   const PasswordManager* GetPasswordManager() const override {
     return &password_manager_;
@@ -114,7 +117,7 @@ class MockPasswordManagerClient
       const GURL& origin,
       const CredentialsCallback& callback) override;
 
-  TestingPrefServiceSimple prefs_;
+  std::unique_ptr<TestingPrefServiceSimple> prefs_;
   GURL last_committed_url_;
   PasswordManager password_manager_;
   std::unique_ptr<PasswordFormManager> manager_;
@@ -179,7 +182,6 @@ class CredentialManagerBaseTest
     ssl.security_style = security_style;
     ssl.certificate = cert;
     ssl.cert_status = cert_status;
-    ssl.connection_status = net::SSL_CONNECTION_VERSION_SSL3;
     ssl.content_status = content_status;
     ssl.cert_status_host = kHostName;
   }
@@ -201,8 +203,8 @@ class CredentialManagerTest : public CredentialManagerBaseTest {
   void SetUp() override {
     CredentialManagerBaseTest::SetUp();
 
-    client_ = base::MakeUnique<MockPasswordManagerClient>();
-    manager_ = base::MakeUnique<CredentialManager>(client_.get(), web_state());
+    client_ = std::make_unique<MockPasswordManagerClient>();
+    manager_ = std::make_unique<CredentialManager>(client_.get(), web_state());
 
     // Inject JavaScript and set up secure context.
     LoadHtml(@"<html></html>", GURL(kHttpsWebOrigin));

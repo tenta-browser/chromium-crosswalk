@@ -30,7 +30,6 @@ const char kChromeUIGpuHost[] = "gpu";
 const char kChromeUIHistogramHost[] = "histograms";
 const char kChromeUIMediaInternalsHost[] = "media-internals";
 const char kChromeUIMemoryExhaustHost[] = "memory-exhaust";
-const char kChromeUINetworkViewCacheHost[] = "view-http-cache";
 const char kChromeUINetworkErrorHost[] = "network-error";
 const char kChromeUINetworkErrorsListingHost[] = "network-errors";
 const char kChromeUIResourcesHost[] = "resources";
@@ -58,15 +57,19 @@ const char kChromeUIPpapiFlashHangURL[] = "chrome://ppapiflashhang/";
 #if defined(OS_ANDROID)
 const char kChromeUIGpuJavaCrashURL[] = "chrome://gpu-java-crash/";
 #endif
-#if defined(ADDRESS_SANITIZER) || defined(SYZYASAN)
+#if defined(ADDRESS_SANITIZER)
 const char kChromeUICrashHeapOverflowURL[] = "chrome://crash/heap-overflow";
 const char kChromeUICrashHeapUnderflowURL[] = "chrome://crash/heap-underflow";
 const char kChromeUICrashUseAfterFreeURL[] = "chrome://crash/use-after-free";
-#endif
-#if defined(SYZYASAN)
+
+#if defined(OS_WIN)
 const char kChromeUICrashCorruptHeapBlockURL[] =
     "chrome://crash/corrupt-heap-block";
 const char kChromeUICrashCorruptHeapURL[] = "chrome://crash/corrupt-heap";
+#endif  // OS_WIN
+#endif  // ADDRESS_SANITIZER
+
+#if DCHECK_IS_ON()
 const char kChromeUICrashDcheckURL[] = "chrome://crash/dcheck";
 #endif
 
@@ -74,7 +77,6 @@ const char kChromeUICrashDcheckURL[] = "chrome://crash/dcheck";
 // have a chrome:// scheme that might let it be confused with a WebUI page.
 const char kUnreachableWebDataURL[] = "chrome-error://chromewebdata/";
 
-const char kChromeUINetworkViewCacheURL[] = "chrome://view-http-cache/";
 const char kChromeUIResourcesURL[] = "chrome://resources/";
 const char kChromeUIShorthangURL[] = "chrome://shorthang/";
 

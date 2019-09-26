@@ -4,7 +4,7 @@
 
 #include "ui/events/mojo/event_struct_traits.h"
 
-#include "mojo/common/time_struct_traits.h"
+#include "mojo/public/cpp/base/time_mojom_traits.h"
 #include "ui/events/event.h"
 #include "ui/events/gesture_event_details.h"
 #include "ui/events/keycodes/dom/keycode_converter.h"
@@ -43,6 +43,15 @@ ui::mojom::EventType UIEventTypeToMojo(ui::EventType type) {
     case ui::ET_GESTURE_TAP:
       return ui::mojom::EventType::GESTURE_TAP;
 
+    case ui::ET_SCROLL:
+      return ui::mojom::EventType::SCROLL;
+
+    case ui::ET_SCROLL_FLING_START:
+      return ui::mojom::EventType::SCROLL_FLING_START;
+
+    case ui::ET_SCROLL_FLING_CANCEL:
+      return ui::mojom::EventType::SCROLL_FLING_CANCEL;
+
     default:
       NOTREACHED() << "This unsupported event type will close the connection";
       break;
@@ -70,6 +79,15 @@ ui::EventType MojoPointerEventTypeToUIEvent(ui::mojom::EventType action) {
     case ui::mojom::EventType::POINTER_WHEEL_CHANGED:
       return ui::ET_POINTER_WHEEL_CHANGED;
 
+    case ui::mojom::EventType::SCROLL:
+      return ui::ET_SCROLL;
+
+    case ui::mojom::EventType::SCROLL_FLING_START:
+      return ui::ET_SCROLL_FLING_START;
+
+    case ui::mojom::EventType::SCROLL_FLING_CANCEL:
+      return ui::ET_SCROLL_FLING_CANCEL;
+
     default:
       NOTREACHED();
   }
@@ -77,7 +95,7 @@ ui::EventType MojoPointerEventTypeToUIEvent(ui::mojom::EventType action) {
   return ui::ET_UNKNOWN;
 }
 
-ui::mojom::LocationDataPtr GetLocationData(ui::LocatedEvent* event) {
+ui::mojom::LocationDataPtr GetLocationData(const ui::LocatedEvent* event) {
   ui::mojom::LocationDataPtr location_data(ui::mojom::LocationData::New());
   location_data->x = event->location_f().x();
   location_data->y = event->location_f().y();
@@ -124,8 +142,8 @@ bool ReadPointerDetails(ui::mojom::EventType event_type,
       *out = ui::PointerDetails(
           PointerTypeFromPointerKind(pointer_data.kind),
           pointer_data.pointer_id, brush_data.width, brush_data.height,
-          brush_data.pressure, brush_data.tilt_x, brush_data.tilt_y,
-          brush_data.tangential_pressure, brush_data.twist);
+          brush_data.pressure, brush_data.twist, brush_data.tilt_x,
+          brush_data.tilt_y, brush_data.tangential_pressure);
       return true;
     }
     case ui::mojom::PointerKind::ERASER:
@@ -267,7 +285,6 @@ StructTraits<ui::mojom::EventDataView, EventUniquePtr>::pointer_data(
   // TODO(rjk): this is in the wrong coordinate system
   brush_data->width = pointer_details->radius_x;
   brush_data->height = pointer_details->radius_y;
-  // TODO(rjk): update for touch_event->rotation_angle();
   brush_data->pressure = pointer_details->force;
   // In theory only pen events should have tilt, tangential_pressure and twist.
   // In practive a JavaScript PointerEvent could have type touch and still have
@@ -318,6 +335,24 @@ StructTraits<ui::mojom::EventDataView, EventUniquePtr>::gesture_data(
   ui::mojom::GestureDataPtr gesture_data(ui::mojom::GestureData::New());
   gesture_data->location = GetLocationData(event->AsLocatedEvent());
   return gesture_data;
+}
+
+ui::mojom::ScrollDataPtr
+StructTraits<ui::mojom::EventDataView, EventUniquePtr>::scroll_data(
+    const EventUniquePtr& event) {
+  if (!event->IsScrollEvent())
+    return nullptr;
+
+  ui::mojom::ScrollDataPtr scroll_data(ui::mojom::ScrollData::New());
+  scroll_data->location = GetLocationData(event->AsLocatedEvent());
+  const ui::ScrollEvent* scroll_event = event->AsScrollEvent();
+  scroll_data->x_offset = scroll_event->x_offset();
+  scroll_data->y_offset = scroll_event->y_offset();
+  scroll_data->x_offset_ordinal = scroll_event->x_offset_ordinal();
+  scroll_data->y_offset_ordinal = scroll_event->y_offset_ordinal();
+  scroll_data->finger_count = scroll_event->finger_count();
+  scroll_data->momentum_phase = scroll_event->momentum_phase();
+  return scroll_data;
 }
 
 bool StructTraits<ui::mojom::EventDataView, EventUniquePtr>::Read(
@@ -385,6 +420,22 @@ bool StructTraits<ui::mojom::EventDataView, EventUniquePtr>::Read(
       *out = std::make_unique<ui::GestureEvent>(
           gesture_data->location->x, gesture_data->location->y, event.flags(),
           time_stamp, ui::GestureEventDetails(ui::ET_GESTURE_TAP));
+      break;
+    }
+    case ui::mojom::EventType::SCROLL:
+    case ui::mojom::EventType::SCROLL_FLING_START:
+    case ui::mojom::EventType::SCROLL_FLING_CANCEL: {
+      ui::mojom::ScrollDataPtr scroll_data;
+      if (!event.ReadScrollData<ui::mojom::ScrollDataPtr>(&scroll_data))
+        return false;
+
+      *out = std::make_unique<ui::ScrollEvent>(
+          MojoPointerEventTypeToUIEvent(event.action()),
+          gfx::Point(scroll_data->location->x, scroll_data->location->y),
+          time_stamp, event.flags(), scroll_data->x_offset,
+          scroll_data->y_offset, scroll_data->x_offset_ordinal,
+          scroll_data->y_offset_ordinal, scroll_data->finger_count,
+          scroll_data->momentum_phase);
       break;
     }
     case ui::mojom::EventType::UNKNOWN:

@@ -2,10 +2,14 @@
   "layers": [
     {
       "name": "LayoutView #document",
-      "position": [-216, 0],
-      "bounds": [1016, 585],
+      "bounds": [800, 600],
       "contentsOpaque": true,
       "backgroundColor": "#FFFFFF"
+    },
+    {
+      "name": "HorizontalScrollbar",
+      "position": [0, 585],
+      "bounds": [800, 15]
     },
     {
       "name": "LayoutBlockFlow HTML",
@@ -24,11 +28,6 @@
           "reason": "style change"
         }
       ]
-    },
-    {
-      "name": "LayoutView #document",
-      "position": [0, 585],
-      "bounds": [800, 15]
     }
   ],
   "objectPaintInvalidations": [

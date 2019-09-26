@@ -14,10 +14,10 @@
 #include "content/public/common/content_switches.h"
 #include "content/shell/test_runner/test_runner_export.h"
 #include "content/shell/test_runner/web_frame_test_client.h"
-#include "third_party/WebKit/public/platform/WebEffectiveConnectionType.h"
-#include "third_party/WebKit/public/platform/WebString.h"
-#include "third_party/WebKit/public/web/WebFrameClient.h"
-#include "third_party/WebKit/public/web/WebLocalFrame.h"
+#include "third_party/blink/public/platform/web_effective_connection_type.h"
+#include "third_party/blink/public/platform/web_string.h"
+#include "third_party/blink/public/web/web_frame_client.h"
+#include "third_party/blink/public/web/web_local_frame.h"
 
 namespace test_runner {
 
@@ -67,10 +67,6 @@ class WebFrameTestProxy : public Base, public WebFrameTestProxyBase {
     return Base::CreatePlugin(params);
   }
 
-  blink::WebScreenOrientationClient* GetWebScreenOrientationClient() override {
-    return test_client()->GetWebScreenOrientationClient();
-  }
-
   void DidAddMessageToConsole(const blink::WebConsoleMessage& message,
                               const blink::WebString& source_name,
                               unsigned source_line,
@@ -87,10 +83,9 @@ class WebFrameTestProxy : public Base, public WebFrameTestProxyBase {
     return mime_type.Utf8().find(suffix) != std::string::npos;
   }
 
-  void DownloadURL(const blink::WebURLRequest& request,
-                   const blink::WebString& suggested_name) override {
-    test_client()->DownloadURL(request, suggested_name);
-    Base::DownloadURL(request, suggested_name);
+  void DownloadURL(const blink::WebURLRequest& request) override {
+    test_client()->DownloadURL(request);
+    Base::DownloadURL(request);
   }
 
 
@@ -118,9 +113,19 @@ class WebFrameTestProxy : public Base, public WebFrameTestProxyBase {
 
   void DidCommitProvisionalLoad(
       const blink::WebHistoryItem& item,
-      blink::WebHistoryCommitType commit_type) override {
-    test_client()->DidCommitProvisionalLoad(item, commit_type);
-    Base::DidCommitProvisionalLoad(item, commit_type);
+      blink::WebHistoryCommitType commit_type,
+      blink::WebGlobalObjectReusePolicy global_object_reuse_policy) override {
+    test_client()->DidCommitProvisionalLoad(item, commit_type,
+                                            global_object_reuse_policy);
+    Base::DidCommitProvisionalLoad(item, commit_type,
+                                   global_object_reuse_policy);
+  }
+
+  void DidNavigateWithinPage(const blink::WebHistoryItem& item,
+                             blink::WebHistoryCommitType commit_type,
+                             bool content_initiated) {
+    test_client()->DidNavigateWithinPage(item, commit_type, content_initiated);
+    Base::DidNavigateWithinPage(item, commit_type, content_initiated);
   }
 
   void DidReceiveTitle(const blink::WebString& title,
@@ -165,12 +170,9 @@ class WebFrameTestProxy : public Base, public WebFrameTestProxyBase {
     Base::DidChangeSelection(is_selection_empty);
   }
 
-  blink::WebColorChooser* CreateColorChooser(
-      blink::WebColorChooserClient* client,
-      const blink::WebColor& initial_color,
-      const blink::WebVector<blink::WebColorSuggestion>& suggestions) override {
-    return test_client()->CreateColorChooser(client, initial_color,
-                                             suggestions);
+  void DidChangeContents() override {
+    test_client()->DidChangeContents();
+    Base::DidChangeContents();
   }
 
   blink::WebEffectiveConnectionType GetEffectiveConnectionType() override {
@@ -253,6 +255,10 @@ class WebFrameTestProxy : public Base, public WebFrameTestProxyBase {
       blink::WebSetSinkIdCallbacks* web_callbacks) override {
     test_client()->CheckIfAudioSinkExistsAndIsAuthorized(
         sink_id, security_origin, web_callbacks);
+  }
+
+  blink::WebSpeechRecognizer* SpeechRecognizer() override {
+    return test_client()->SpeechRecognizer();
   }
 
   void DidClearWindowObject() override {

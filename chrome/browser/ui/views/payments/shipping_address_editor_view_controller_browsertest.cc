@@ -4,7 +4,6 @@
 
 #include <algorithm>
 
-#include "base/memory/ptr_util.h"
 #include "base/run_loop.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/time/time.h"
@@ -213,7 +212,9 @@ IN_PROC_BROWSER_TEST_F(PaymentRequestShippingAddressEditorTest, SyncData) {
   // We also need to set the state when no region data is provided.
   SetFieldTestValue(autofill::ADDRESS_HOME_STATE);
 
-  ResetEventWaiter(DialogEvent::BACK_TO_PAYMENT_SHEET_NAVIGATION);
+  ResetEventWaiterForSequence({DialogEvent::PROCESSING_SPINNER_SHOWN,
+                               DialogEvent::BACK_TO_PAYMENT_SHEET_NAVIGATION,
+                               DialogEvent::PROCESSING_SPINNER_HIDDEN});
 
   // Verifying the data is in the DB.
   autofill::PersonalDataManager* personal_data_manager = GetDataManager();
@@ -237,8 +238,9 @@ IN_PROC_BROWSER_TEST_F(PaymentRequestShippingAddressEditorTest, SyncData) {
                                /*accept_empty_phone_number=*/false);
 }
 
+// Disabled for flakyness: crbug.com/799028
 IN_PROC_BROWSER_TEST_F(PaymentRequestShippingAddressEditorTest,
-                       EnterAcceleratorSyncData) {
+                       DISABLED_EnterAcceleratorSyncData) {
   NavigateTo("/payment_request_dynamic_shipping_test.html");
   InvokePaymentRequestUI();
   SetRegionDataLoader(&test_region_data_loader_);
@@ -257,7 +259,9 @@ IN_PROC_BROWSER_TEST_F(PaymentRequestShippingAddressEditorTest,
   // We also need to set the state when no region data is provided.
   SetFieldTestValue(autofill::ADDRESS_HOME_STATE);
 
-  ResetEventWaiter(DialogEvent::BACK_TO_PAYMENT_SHEET_NAVIGATION);
+  ResetEventWaiterForSequence({DialogEvent::PROCESSING_SPINNER_SHOWN,
+                               DialogEvent::BACK_TO_PAYMENT_SHEET_NAVIGATION,
+                               DialogEvent::PROCESSING_SPINNER_HIDDEN});
 
   // Verifying the data is in the DB.
   autofill::PersonalDataManager* personal_data_manager = GetDataManager();
@@ -303,7 +307,9 @@ IN_PROC_BROWSER_TEST_F(PaymentRequestShippingAddressEditorTest, AsyncData) {
 
   std::string country_code(GetSelectedCountryCode());
 
-  ResetEventWaiter(DialogEvent::BACK_TO_PAYMENT_SHEET_NAVIGATION);
+  ResetEventWaiterForSequence({DialogEvent::PROCESSING_SPINNER_SHOWN,
+                               DialogEvent::BACK_TO_PAYMENT_SHEET_NAVIGATION,
+                               DialogEvent::PROCESSING_SPINNER_HIDDEN});
 
   // Verifying the data is in the DB.
   autofill::PersonalDataManager* personal_data_manager = GetDataManager();
@@ -457,7 +463,9 @@ IN_PROC_BROWSER_TEST_F(PaymentRequestShippingAddressEditorTest,
   // value can be set as the state.
   SetFieldTestValue(autofill::ADDRESS_HOME_STATE);
   SetCommonFields();
-  ResetEventWaiter(DialogEvent::BACK_TO_PAYMENT_SHEET_NAVIGATION);
+  ResetEventWaiterForSequence({DialogEvent::PROCESSING_SPINNER_SHOWN,
+                               DialogEvent::BACK_TO_PAYMENT_SHEET_NAVIGATION,
+                               DialogEvent::PROCESSING_SPINNER_HIDDEN});
 
   // Verifying the data is in the DB.
   autofill::PersonalDataManager* personal_data_manager = GetDataManager();
@@ -498,7 +506,9 @@ IN_PROC_BROWSER_TEST_F(PaymentRequestShippingAddressEditorTest,
   // Now any textual value can be set for the ADDRESS_HOME_STATE.
   SetFieldTestValue(autofill::ADDRESS_HOME_STATE);
   SetCommonFields();
-  ResetEventWaiter(DialogEvent::BACK_TO_PAYMENT_SHEET_NAVIGATION);
+  ResetEventWaiterForSequence({DialogEvent::PROCESSING_SPINNER_SHOWN,
+                               DialogEvent::BACK_TO_PAYMENT_SHEET_NAVIGATION,
+                               DialogEvent::PROCESSING_SPINNER_HIDDEN});
 
   // Verifying the data is in the DB.
   autofill::PersonalDataManager* personal_data_manager = GetDataManager();
@@ -564,7 +574,9 @@ IN_PROC_BROWSER_TEST_F(PaymentRequestShippingAddressEditorTest,
   autofill::PersonalDataManager* personal_data_manager = GetDataManager();
   personal_data_manager->AddObserver(&personal_data_observer_);
 
-  ResetEventWaiter(DialogEvent::BACK_TO_PAYMENT_SHEET_NAVIGATION);
+  ResetEventWaiterForSequence({DialogEvent::PROCESSING_SPINNER_SHOWN,
+                               DialogEvent::BACK_TO_PAYMENT_SHEET_NAVIGATION,
+                               DialogEvent::PROCESSING_SPINNER_HIDDEN});
 
   // Wait until the web database has been updated and the notification sent.
   base::RunLoop data_loop;
@@ -664,21 +676,41 @@ IN_PROC_BROWSER_TEST_F(PaymentRequestShippingAddressEditorTest,
   SetEditorTextfieldValue(base::UTF8ToUTF16("+61 2 9374 4000"),
                           autofill::PHONE_HOME_WHOLE_NUMBER);
 
-  ResetEventWaiter(DialogEvent::BACK_TO_PAYMENT_SHEET_NAVIGATION);
+  ResetEventWaiterForSequence({DialogEvent::PROCESSING_SPINNER_SHOWN,
+                               DialogEvent::BACK_TO_PAYMENT_SHEET_NAVIGATION});
   ClickOnDialogViewAndWait(DialogViewID::SAVE_ADDRESS_BUTTON);
 }
 
-// Tests that the editor doesn't accept a local phone from another country.
+// Tests that the editor accepts a phone number looks like a possible number
+// but is actually invalid.
 IN_PROC_BROWSER_TEST_F(PaymentRequestShippingAddressEditorTest,
-                       AddLocalPhoneNumberFromOtherCountry) {
+                       AddPossiblePhoneNumber) {
   NavigateTo("/payment_request_dynamic_shipping_test.html");
   InvokePaymentRequestUI();
   OpenShippingAddressEditorScreen();
 
   SetCommonFields();
 
-  // Set an Australian phone number in international format.
+  // Set an Australian phone number in local format. This is an invalid
+  // US number as there is no area code 029, but it can be considered and parsed
+  // as a US number.
   SetEditorTextfieldValue(base::UTF8ToUTF16("02 9374 4000"),
+                          autofill::PHONE_HOME_WHOLE_NUMBER);
+
+  EXPECT_FALSE(IsEditorTextfieldInvalid(autofill::PHONE_HOME_WHOLE_NUMBER));
+}
+
+// Tests that the editor does not accept a impossible phone number.
+IN_PROC_BROWSER_TEST_F(PaymentRequestShippingAddressEditorTest,
+                       AddImpossiblePhoneNumber) {
+  NavigateTo("/payment_request_dynamic_shipping_test.html");
+  InvokePaymentRequestUI();
+  OpenShippingAddressEditorScreen();
+
+  SetCommonFields();
+
+  // Trying to set an impossible number, note it has 11 digits.
+  SetEditorTextfieldValue(base::UTF8ToUTF16("02 9374 40001"),
                           autofill::PHONE_HOME_WHOLE_NUMBER);
 
   EXPECT_TRUE(IsEditorTextfieldInvalid(autofill::PHONE_HOME_WHOLE_NUMBER));
@@ -720,7 +752,9 @@ IN_PROC_BROWSER_TEST_F(PaymentRequestShippingAddressEditorTest,
   SetEditorTextfieldValue(base::ASCIIToUTF16(kCountryWithoutStatesPhoneNumber),
                           autofill::PHONE_HOME_WHOLE_NUMBER);
 
-  ResetEventWaiter(DialogEvent::BACK_TO_PAYMENT_SHEET_NAVIGATION);
+  ResetEventWaiterForSequence({DialogEvent::PROCESSING_SPINNER_SHOWN,
+                               DialogEvent::BACK_TO_PAYMENT_SHEET_NAVIGATION,
+                               DialogEvent::PROCESSING_SPINNER_HIDDEN});
 
   // Verifying the data is in the DB.
   autofill::PersonalDataManager* personal_data_manager = GetDataManager();
@@ -770,15 +804,38 @@ IN_PROC_BROWSER_TEST_F(
                          static_cast<int>(DialogViewID::PROFILE_LABEL_ERROR)));
 }
 
-// Tests that there is an error label for an local phone from another country.
+// Tests that there is no error label for an phone number that can be
+// technically parsed as a US number even if it is actually invalid.
 IN_PROC_BROWSER_TEST_F(PaymentRequestShippingAddressEditorTest,
-                       ErrorLabelForLocalPhoneNumberFromOtherCountry) {
+                       NoErrorLabelForPossibleButInvalidPhoneNumber) {
   NavigateTo("/payment_request_dynamic_shipping_test.html");
   // Create a profile in the US and add a valid AU phone number in local format.
   autofill::AutofillProfile california = autofill::test::GetFullProfile();
   california.set_use_count(50U);
   california.SetRawInfo(autofill::PHONE_HOME_WHOLE_NUMBER,
                         base::UTF8ToUTF16("02 9374 4000"));
+  AddAutofillProfile(california);
+
+  InvokePaymentRequestUI();
+  OpenShippingAddressSectionScreen();
+
+  // There should not be an error label for the phone number.
+  views::View* sheet = dialog_view()->GetViewByID(
+      static_cast<int>(DialogViewID::SHIPPING_ADDRESS_SHEET_LIST_VIEW));
+  ASSERT_EQ(1, sheet->child_count());
+  EXPECT_EQ(nullptr, sheet->child_at(0)->GetViewByID(
+                         static_cast<int>(DialogViewID::PROFILE_LABEL_ERROR)));
+}
+
+// Tests that there is error label for an impossible phone number.
+IN_PROC_BROWSER_TEST_F(PaymentRequestShippingAddressEditorTest,
+                       ErrorLabelForImpossiblePhoneNumber) {
+  NavigateTo("/payment_request_dynamic_shipping_test.html");
+  // Create a profile in the US and add a impossible number.
+  autofill::AutofillProfile california = autofill::test::GetFullProfile();
+  california.set_use_count(50U);
+  california.SetRawInfo(autofill::PHONE_HOME_WHOLE_NUMBER,
+                        base::UTF8ToUTF16("02 9374 40001"));
   AddAutofillProfile(california);
 
   InvokePaymentRequestUI();
@@ -1156,6 +1213,54 @@ IN_PROC_BROWSER_TEST_F(PaymentRequestShippingAddressEditorTest,
   EXPECT_EQ(base::ASCIIToUTF16(""),
             request->state()->shipping_profiles()[0]->GetInfo(
                 autofill::ADDRESS_HOME_COUNTRY, kLocale));
+}
+
+IN_PROC_BROWSER_TEST_F(PaymentRequestShippingAddressEditorTest,
+                       SyncDataInIncognito) {
+  SetIncognito();
+  NavigateTo("/payment_request_dynamic_shipping_test.html");
+  InvokePaymentRequestUI();
+  SetRegionDataLoader(&test_region_data_loader_);
+
+  // No shipping profiles are available.
+  PaymentRequest* request = GetPaymentRequests(GetActiveWebContents()).front();
+  EXPECT_EQ(0U, request->state()->shipping_profiles().size());
+  EXPECT_EQ(nullptr, request->state()->selected_shipping_profile());
+
+  test_region_data_loader_.set_synchronous_callback(true);
+  OpenShippingAddressEditorScreen();
+
+  std::string country_code(GetSelectedCountryCode());
+
+  SetCommonFields();
+  // We also need to set the state when no region data is provided.
+  SetFieldTestValue(autofill::ADDRESS_HOME_STATE);
+
+  ResetEventWaiterForSequence({DialogEvent::PROCESSING_SPINNER_SHOWN,
+                               DialogEvent::BACK_TO_PAYMENT_SHEET_NAVIGATION,
+                               DialogEvent::PROCESSING_SPINNER_HIDDEN});
+
+  // Verifying the data is in the DB.
+  autofill::PersonalDataManager* personal_data_manager = GetDataManager();
+  personal_data_manager->AddObserver(&personal_data_observer_);
+
+  EXPECT_CALL(personal_data_observer_, OnPersonalDataChanged()).Times(0);
+  ClickOnDialogViewAndWait(DialogViewID::SAVE_ADDRESS_BUTTON);
+
+  // In incognito, the profile should be available in shipping_profiles but it
+  // shouldn't be saved to the PersonalDataManager.
+  ASSERT_EQ(0UL, personal_data_manager->GetProfiles().size());
+
+  ASSERT_EQ(1UL, request->state()->shipping_profiles().size());
+  autofill::AutofillProfile* profile =
+      request->state()->shipping_profiles().back();
+  DCHECK(profile);
+  EXPECT_EQ(base::ASCIIToUTF16(country_code),
+            profile->GetRawInfo(autofill::ADDRESS_HOME_COUNTRY));
+  EXPECT_EQ(base::ASCIIToUTF16(kAnyState),
+            profile->GetRawInfo(autofill::ADDRESS_HOME_STATE));
+  ExpectExistingRequiredFields(/*unset_types=*/nullptr,
+                               /*accept_empty_phone_number=*/false);
 }
 
 }  // namespace payments

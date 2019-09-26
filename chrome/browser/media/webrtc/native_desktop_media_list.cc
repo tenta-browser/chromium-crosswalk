@@ -16,16 +16,10 @@
 #include "third_party/webrtc/modules/desktop_capture/desktop_capturer.h"
 #include "third_party/webrtc/modules/desktop_capture/desktop_frame.h"
 #include "ui/aura/window.h"
+#include "ui/aura/window_tree_host.h"
 #include "ui/base/l10n/l10n_util.h"
+#include "ui/gfx/native_widget_types.h"
 #include "ui/snapshot/snapshot.h"
-
-#if defined(OS_WIN)
-#include "ui/views/widget/desktop_aura/desktop_window_tree_host_win.h"
-#endif  // defined(OS_WIN)
-
-#if defined(USE_X11)
-#include "ui/views/widget/desktop_aura/desktop_window_tree_host_x11.h"
-#endif  // defined(USE_X11)
 
 #if defined(USE_AURA)
 #include "ui/snapshot/snapshot_aura.h"
@@ -37,7 +31,7 @@ using content::DesktopMediaID;
 namespace {
 
 // Update the list every second.
-const int kDefaultUpdatePeriod = 1000;
+const int kDefaultNativeDesktopMediaListUpdatePeriod = 1000;
 
 // Returns a hash of a DesktopFrame content to detect when image for a desktop
 // media source has changed.
@@ -214,8 +208,8 @@ void NativeDesktopMediaList::Worker::OnCaptureResult(
 NativeDesktopMediaList::NativeDesktopMediaList(
     DesktopMediaID::Type type,
     std::unique_ptr<webrtc::DesktopCapturer> capturer)
-    : DesktopMediaListBase(
-          base::TimeDelta::FromMilliseconds(kDefaultUpdatePeriod)),
+    : DesktopMediaListBase(base::TimeDelta::FromMilliseconds(
+          kDefaultNativeDesktopMediaListUpdatePeriod)),
       weak_factory_(this) {
   type_ = type;
   capture_task_runner_ = base::CreateSequencedTaskRunnerWithTraits(
@@ -250,14 +244,10 @@ void NativeDesktopMediaList::RefreshForAuraWindows(
     if (source.id.type != DesktopMediaID::TYPE_WINDOW)
       continue;
 
-    aura::Window* aura_window = NULL;
-#if defined(OS_WIN)
-    aura_window = views::DesktopWindowTreeHostWin::GetContentWindowForHWND(
-        reinterpret_cast<HWND>(source.id.id));
-#elif defined(USE_X11)
-    aura_window =
-        views::DesktopWindowTreeHostX11::GetContentWindowForXID(source.id.id);
-#endif  // defined(USE_X11)
+    aura::WindowTreeHost* const host =
+        aura::WindowTreeHost::GetForAcceleratedWidget(
+            *reinterpret_cast<gfx::AcceleratedWidget*>(&source.id.id));
+    aura::Window* const aura_window = host ? host->window() : nullptr;
     if (aura_window) {
       DesktopMediaID aura_id = DesktopMediaID::RegisterAuraWindow(
           DesktopMediaID::TYPE_WINDOW, aura_window);

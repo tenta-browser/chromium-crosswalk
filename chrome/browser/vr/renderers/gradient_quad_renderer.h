@@ -8,6 +8,7 @@
 #include "base/macros.h"
 #include "chrome/browser/vr/renderers/base_renderer.h"
 #include "third_party/skia/include/core/SkColor.h"
+#include "ui/gfx/geometry/point_f.h"
 
 namespace gfx {
 class SizeF;
@@ -15,6 +16,8 @@ class Transform;
 }  // namespace gfx
 
 namespace vr {
+
+struct CornerRadii;
 
 class GradientQuadRenderer : public BaseRenderer {
  public:
@@ -26,16 +29,20 @@ class GradientQuadRenderer : public BaseRenderer {
             SkColor center_color,
             float opacity,
             const gfx::SizeF& element_size,
-            float corner_radius);
+            const CornerRadii& radii);
 
  private:
   GLuint model_view_proj_matrix_handle_;
-  GLuint corner_offset_handle_;
+  GLuint ul_corner_offset_handle_;
+  GLuint ur_corner_offset_handle_;
+  GLuint lr_corner_offset_handle_;
+  GLuint ll_corner_offset_handle_;
   GLuint corner_position_handle_;
   GLuint offset_scale_handle_;
   GLuint opacity_handle_;
   GLuint center_color_handle_;
   GLuint edge_color_handle_;
+  GLuint aspect_ratio_handle_;
 
   DISALLOW_COPY_AND_ASSIGN(GradientQuadRenderer);
 };

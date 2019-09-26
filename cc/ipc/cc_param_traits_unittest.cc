@@ -12,6 +12,7 @@
 #include "cc/ipc/cc_param_traits.h"
 #include "cc/resources/resource_provider.h"
 #include "components/viz/common/quads/compositor_frame.h"
+#include "components/viz/common/quads/frame_deadline.h"
 #include "components/viz/common/quads/picture_draw_quad.h"
 #include "components/viz/common/quads/render_pass_draw_quad.h"
 #include "ipc/ipc_message.h"
@@ -29,6 +30,7 @@ using cc::ResourceProvider;
 using gfx::Transform;
 using viz::DebugBorderDrawQuad;
 using viz::DrawQuad;
+using viz::FrameDeadline;
 using viz::PictureDrawQuad;
 using viz::RenderPass;
 using viz::RenderPassDrawQuad;
@@ -403,10 +405,10 @@ TEST_F(CCParamTraitsTest, AllQuads) {
   pass_cmp->CopyFromAndAppendDrawQuad(texture_in);
 
   TileDrawQuad* tile_in = pass_in->CreateAndAppendDrawQuad<TileDrawQuad>();
-  tile_in->SetAll(shared_state3_in, arbitrary_rect2,
-                  arbitrary_rect1_inside_rect2, arbitrary_bool1,
-                  arbitrary_resourceid3, arbitrary_rectf1, arbitrary_size1,
-                  arbitrary_bool2, arbitrary_bool3, arbitrary_bool4);
+  tile_in->SetAll(
+      shared_state3_in, arbitrary_rect2, arbitrary_rect1_inside_rect2,
+      arbitrary_bool1, arbitrary_resourceid3, arbitrary_rectf1, arbitrary_size1,
+      arbitrary_bool2, arbitrary_bool3, arbitrary_bool4, arbitrary_bool5);
   pass_cmp->CopyFromAndAppendDrawQuad(tile_in);
 
   YUVVideoDrawQuad* yuvvideo_in =
@@ -452,12 +454,18 @@ TEST_F(CCParamTraitsTest, AllQuads) {
   frame_in.render_pass_list.push_back(std::move(pass_in));
   frame_in.metadata.begin_frame_ack.sequence_number =
       viz::BeginFrameArgs::kStartingFrameNumber;
+  const base::TimeTicks now = base::TimeTicks::Now();
+  frame_in.metadata.deadline =
+      FrameDeadline(now, 4u, base::TimeDelta::FromMilliseconds(16), true);
 
   IPC::ParamTraits<CompositorFrame>::Write(&msg, frame_in);
 
   CompositorFrame frame_out;
   base::PickleIterator iter(msg);
   EXPECT_TRUE(IPC::ParamTraits<CompositorFrame>::Read(&msg, &iter, &frame_out));
+
+  EXPECT_EQ(FrameDeadline(now, 4u, base::TimeDelta::FromMilliseconds(16), true),
+            frame_out.metadata.deadline);
 
   // Make sure the out and cmp RenderPasses match.
   std::unique_ptr<RenderPass> child_pass_out =
@@ -569,11 +577,11 @@ TEST_F(CCParamTraitsTest, UnusedSharedQuadStates) {
 
 TEST_F(CCParamTraitsTest, Resources) {
   IPC::Message msg(1, 2, IPC::Message::PRIORITY_NORMAL);
-  gpu::SyncToken arbitrary_token1(gpu::CommandBufferNamespace::GPU_IO, 0,
+  gpu::SyncToken arbitrary_token1(gpu::CommandBufferNamespace::GPU_IO,
                                   gpu::CommandBufferId::FromUnsafeValue(0x123),
                                   71234838);
   arbitrary_token1.SetVerifyFlush();
-  gpu::SyncToken arbitrary_token2(gpu::CommandBufferNamespace::GPU_IO, 0,
+  gpu::SyncToken arbitrary_token2(gpu::CommandBufferNamespace::GPU_IO,
                                   gpu::CommandBufferId::FromUnsafeValue(0x123),
                                   53589793);
   arbitrary_token2.SetVerifyFlush();
@@ -613,7 +621,8 @@ TEST_F(CCParamTraitsTest, Resources) {
 #endif
 
   std::unique_ptr<RenderPass> renderpass_in = RenderPass::Create();
-  renderpass_in->SetNew(1u, gfx::Rect(), gfx::Rect(), gfx::Transform());
+  renderpass_in->SetNew(1u, gfx::Rect(0, 0, 5, 5), gfx::Rect(),
+                        gfx::Transform());
 
   CompositorFrame frame_in;
   frame_in.resource_list.push_back(arbitrary_resource1);

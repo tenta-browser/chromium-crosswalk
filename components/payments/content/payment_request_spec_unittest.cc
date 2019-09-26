@@ -4,13 +4,14 @@
 
 #include "components/payments/content/payment_request_spec.h"
 
+#include <memory>
 #include <utility>
 
 #include "base/memory/weak_ptr.h"
 #include "base/strings/utf_string_conversions.h"
 #include "components/strings/grit/components_strings.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/WebKit/public/platform/modules/payments/payment_request.mojom.h"
+#include "third_party/blink/public/platform/modules/payments/payment_request.mojom.h"
 #include "ui/base/l10n/l10n_util.h"
 
 namespace payments {
@@ -24,14 +25,14 @@ class PaymentRequestSpecTest : public testing::Test,
 
   void RecreateSpecWithMethodData(
       std::vector<mojom::PaymentMethodDataPtr> method_data) {
-    spec_ = base::MakeUnique<PaymentRequestSpec>(
+    spec_ = std::make_unique<PaymentRequestSpec>(
         mojom::PaymentOptions::New(), mojom::PaymentDetails::New(),
         std::move(method_data), this, "en-US");
   }
 
   void RecreateSpecWithOptionsAndDetails(mojom::PaymentOptionsPtr options,
                                          mojom::PaymentDetailsPtr details) {
-    spec_ = base::MakeUnique<PaymentRequestSpec>(
+    spec_ = std::make_unique<PaymentRequestSpec>(
         std::move(options), std::move(details),
         std::vector<mojom::PaymentMethodDataPtr>(), this, "en-US");
   }

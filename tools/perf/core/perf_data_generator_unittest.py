@@ -7,7 +7,6 @@ from core import perf_data_generator
 from core.perf_data_generator import BenchmarkMetadata
 
 from telemetry import benchmark
-from telemetry import story
 
 import mock
 
@@ -36,7 +35,7 @@ class PerfDataGeneratorTest(unittest.TestCase):
     }
     benchmarks = {
         'benchmark_name_1': BenchmarkMetadata('foo@bar.com', None, False),
-        'benchmark_name_2': BenchmarkMetadata(None, None, False),
+        'benchmark_name_2': BenchmarkMetadata('darth@deathstar', None, False),
         'benchmark_name_3': BenchmarkMetadata('neo@matrix.org', None, False)
     }
 
@@ -91,7 +90,7 @@ class PerfDataGeneratorTest(unittest.TestCase):
           'hard_timeout': 10800,
           'can_use_on_swarming_builders': True,
           'expiration': 36000,
-          'io_timeout': 600,
+          'io_timeout': 1200,
           'upload_test_results': True,
         },
         'name': 'speedometer',
@@ -115,7 +114,7 @@ class PerfDataGeneratorTest(unittest.TestCase):
           'hard_timeout': 10800,
           'can_use_on_swarming_builders': True,
           'expiration': 36000,
-          'io_timeout': 600,
+          'io_timeout': 1200,
           'upload_test_results': True,
         },
         'name': 'speedometer.reference',
@@ -235,33 +234,6 @@ class PerfDataGeneratorTest(unittest.TestCase):
                 'build2-b1': ['other_test', 'test'],
             }))
 
-  def testExtraTestsAreLoadedFromFile(self):
-    tests = {
-        'Linux Perf': {}
-    }
-
-    mock_extras_json = '''
-        {
-            "comment": [ "This is comment and therefore should be skipped." ],
-            "Mojo Linux Perf": {}
-        }
-    '''
-
-    mock_waterfall_name = 'hello'
-
-    def mockIsFile(path):
-      return path.endswith('%s.extras.json' % mock_waterfall_name)
-
-    with mock.patch('os.path.isfile', side_effect=mockIsFile):
-      with mock.patch('__builtin__.open',
-                      mock.mock_open(read_data=mock_extras_json)):
-        perf_data_generator.append_extra_tests({'name': mock_waterfall_name},
-                                               tests)
-
-    self.assertTrue('Linux Perf' in tests)
-    self.assertTrue('Mojo Linux Perf' in tests)
-    self.assertFalse('comment' in tests)
-
   def testShouldBenchmarksBeScheduledBadOS(self):
     class RegularBenchmark(benchmark.Benchmark):
       @classmethod
@@ -277,24 +249,6 @@ class PerfDataGeneratorTest(unittest.TestCase):
       @classmethod
       def Name(cls):
         return 'regular'
-    valid_os_list = ['mac', 'android', 'windows', 'linux']
-    for os in valid_os_list:
-      self.assertTrue(
-          perf_data_generator.ShouldBenchmarksBeScheduled(
-              RegularBenchmark, 'bot_name', os, None))
-
-  def testShouldBenchmarksBeScheduledDisabledButScheduled(self):
-    class RegularBenchmark(benchmark.Benchmark):
-      @classmethod
-      def Name(cls):
-        return 'regular'
-
-      def GetExpectations(self):
-        class Expectations(story.expectations.StoryExpectations):
-          def SetExpectations(self):
-            self.DisableBenchmark([story.expectations.ALL], 'reason')
-        return Expectations()
-
     valid_os_list = ['mac', 'android', 'windows', 'linux']
     for os in valid_os_list:
       self.assertTrue(

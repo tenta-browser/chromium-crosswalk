@@ -10,6 +10,7 @@
 #include "base/threading/thread_task_runner_handle.h"
 #include "components/offline_pages/core/client_policy_controller.h"
 #include "components/offline_pages/core/offline_page_model.h"
+#include "components/offline_pages/core/thumbnail_decoder.h"
 
 namespace offline_pages {
 
@@ -33,9 +34,10 @@ RecentTabsUIAdapterDelegate::GetOrCreateRecentTabsUIAdapter(
 
   if (!recent_tabs_ui_adapter) {
     auto delegate =
-        base::MakeUnique<RecentTabsUIAdapterDelegate>(offline_page_model);
-    recent_tabs_ui_adapter = new DownloadUIAdapter(
-        nullptr, offline_page_model, request_coordinator, std::move(delegate));
+        std::make_unique<RecentTabsUIAdapterDelegate>(offline_page_model);
+    recent_tabs_ui_adapter =
+        new DownloadUIAdapter(nullptr, offline_page_model, request_coordinator,
+                              nullptr, std::move(delegate));
     offline_page_model->SetUserData(kRecentTabsUIAdapterKey,
                                     base::WrapUnique(recent_tabs_ui_adapter));
   }

@@ -8,12 +8,12 @@
 #include <stdint.h>
 
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/time/time.h"
 #include "base/trace_event/trace_event.h"
 #include "third_party/skia/include/core/SkBitmap.h"
 #include "third_party/skia/include/core/SkCanvas.h"
 #include "third_party/skia/include/core/SkSurface.h"
+#include "ui/gfx/presentation_feedback.h"
 #include "ui/ozone/common/gpu/ozone_gpu_message_params.h"
 #include "ui/ozone/platform/drm/common/drm_util.h"
 #include "ui/ozone/platform/drm/gpu/crtc_controller.h"
@@ -130,14 +130,16 @@ bool DrmWindow::SchedulePageFlip(const std::vector<OverlayPlane>& planes,
 
   if (force_buffer_reallocation_) {
     force_buffer_reallocation_ = false;
-    std::move(callback).Run(gfx::SwapResult::SWAP_NAK_RECREATE_BUFFERS);
+    std::move(callback).Run(gfx::SwapResult::SWAP_NAK_RECREATE_BUFFERS,
+                            gfx::PresentationFeedback());
     return true;
   }
 
   last_submitted_planes_ = planes;
 
   if (!controller_) {
-    std::move(callback).Run(gfx::SwapResult::SWAP_ACK);
+    std::move(callback).Run(gfx::SwapResult::SWAP_ACK,
+                            gfx::PresentationFeedback());
     return true;
   }
 

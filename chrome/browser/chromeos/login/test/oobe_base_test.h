@@ -13,7 +13,7 @@
 #include "chrome/browser/chromeos/login/test/https_forwarder.h"
 #include "chrome/browser/chromeos/login/test/js_checker.h"
 #include "chrome/browser/chromeos/login/ui/login_display_host_webui.h"
-#include "chrome/browser/chromeos/login/ui/webui_login_display.h"
+#include "chrome/browser/chromeos/login/ui/login_display_webui.h"
 #include "chrome/browser/extensions/extension_apitest.h"
 #include "chrome/test/base/in_process_browser_test.h"
 #include "content/public/test/test_utils.h"
@@ -88,10 +88,13 @@ class OobeBaseTest : public ExtensionApiTest {
   content::WebUI* GetLoginUI();
 
   // Returns login display.
-  WebUILoginDisplay* GetLoginDisplay();
+  LoginDisplayWebUI* GetLoginDisplay();
 
   void WaitForGaiaPageLoad();
+  void WaitForGaiaPageLoadAndPropertyUpdate();
   void WaitForGaiaPageReload();
+  void WaitForGaiaPageBackButtonUpdate();
+  void WaitForGaiaPageEvent(const std::string& event);
   void WaitForSigninScreen();
   void ExecuteJsInSigninFrame(const std::string& js);
   void SetSignFormField(const std::string& field_id,

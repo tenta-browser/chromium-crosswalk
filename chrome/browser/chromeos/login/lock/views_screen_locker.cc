@@ -4,11 +4,16 @@
 
 #include "chrome/browser/chromeos/login/lock/views_screen_locker.h"
 
+#include <memory>
+#include <string>
 #include <utility>
 
+#include "base/bind.h"
 #include "base/i18n/time_formatting.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/threading/thread_task_runner_handle.h"
+#include "base/time/time.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/chromeos/lock_screen_apps/state_controller.h"
 #include "chrome/browser/chromeos/login/lock_screen_utils.h"
@@ -16,13 +21,13 @@
 #include "chrome/browser/chromeos/login/quick_unlock/quick_unlock_storage.h"
 #include "chrome/browser/chromeos/login/screens/chrome_user_selection_screen.h"
 #include "chrome/browser/chromeos/login/user_selection_screen_proxy.h"
-#include "chrome/browser/chromeos/login/users/wallpaper/wallpaper_manager.h"
 #include "chrome/browser/chromeos/system/system_clock.h"
 #include "chrome/browser/ui/ash/session_controller_client.h"
+#include "chrome/browser/ui/ash/wallpaper_controller_client.h"
 #include "chrome/common/channel_info.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/grit/generated_resources.h"
-#include "components/proximity_auth/screenlock_bridge.h"
+#include "chromeos/components/proximity_auth/screenlock_bridge.h"
 #include "components/user_manager/known_user.h"
 #include "components/user_manager/user_manager.h"
 #include "components/version_info/version_info.h"
@@ -41,9 +46,9 @@ ViewsScreenLocker::ViewsScreenLocker(ScreenLocker* screen_locker)
       version_info_updater_(this),
       weak_factory_(this) {
   LoginScreenClient::Get()->SetDelegate(this);
-  user_selection_screen_proxy_ = base::MakeUnique<UserSelectionScreenProxy>();
+  user_selection_screen_proxy_ = std::make_unique<UserSelectionScreenProxy>();
   user_selection_screen_ =
-      base::MakeUnique<ChromeUserSelectionScreen>(kLockDisplay);
+      std::make_unique<ChromeUserSelectionScreen>(kLockDisplay);
   user_selection_screen_->SetView(user_selection_screen_proxy_.get());
 
   allowed_input_methods_subscription_ =
@@ -62,7 +67,7 @@ ViewsScreenLocker::~ViewsScreenLocker() {
 void ViewsScreenLocker::Init() {
   lock_time_ = base::TimeTicks::Now();
   user_selection_screen_->Init(screen_locker_->users());
-  LoginScreenClient::Get()->LoadUsers(
+  LoginScreenClient::Get()->login_screen()->LoadUsers(
       user_selection_screen_->UpdateAndReturnUserListForMojo(),
       false /* show_guests */);
   if (!ime_state_.get())
@@ -114,13 +119,13 @@ void ViewsScreenLocker::ShowErrorMessage(
     int error_msg_id,
     HelpAppLauncher::HelpTopic help_topic_id) {
   // TODO(xiaoyinh): Complete the implementation here.
-  LoginScreenClient::Get()->ShowErrorMessage(0 /* login_attempts */,
-                                             std::string(), std::string(),
-                                             static_cast<int>(help_topic_id));
+  LoginScreenClient::Get()->login_screen()->ShowErrorMessage(
+      0 /* login_attempts */, std::string(), std::string(),
+      static_cast<int>(help_topic_id));
 }
 
 void ViewsScreenLocker::ClearErrors() {
-  LoginScreenClient::Get()->ClearErrors();
+  LoginScreenClient::Get()->login_screen()->ClearErrors();
 }
 
 void ViewsScreenLocker::AnimateAuthenticationSuccess() {
@@ -140,7 +145,7 @@ void ViewsScreenLocker::OnHeaderBarVisible() {
 }
 
 void ViewsScreenLocker::OnAshLockAnimationFinished() {
-  NOTIMPLEMENTED();
+  SessionControllerClient::Get()->NotifyChromeLockAnimationsComplete();
 }
 
 void ViewsScreenLocker::SetFingerprintState(
@@ -156,6 +161,7 @@ content::WebContents* ViewsScreenLocker::GetWebContents() {
 void ViewsScreenLocker::HandleAuthenticateUser(
     const AccountId& account_id,
     const std::string& hashed_password,
+    const password_manager::SyncPasswordData& sync_password_data,
     bool authenticated_by_pin,
     AuthenticateUserCallback callback) {
   DCHECK_EQ(account_id.GetUserEmail(),
@@ -173,6 +179,7 @@ void ViewsScreenLocker::HandleAuthenticateUser(
                            : chromeos::Key::KEY_TYPE_SALTED_SHA256_TOP_HALF;
   user_context.SetKey(Key(key_type, std::string(), hashed_password));
   user_context.SetIsUsingPin(authenticated_by_pin);
+  user_context.SetSyncPasswordData(sync_password_data);
   if (account_id.GetAccountType() == AccountType::ACTIVE_DIRECTORY)
     user_context.SetUserType(user_manager::USER_TYPE_ACTIVE_DIRECTORY);
   ScreenLocker::default_screen_locker()->Authenticate(user_context,
@@ -209,7 +216,7 @@ void ViewsScreenLocker::HandleOnFocusPod(const AccountId& account_id) {
     lock_screen_utils::SetUserInputMethod(account_id.GetUserEmail(),
                                           ime_state_.get());
     lock_screen_utils::SetKeyboardSettings(account_id);
-    WallpaperManager::Get()->ShowUserWallpaper(account_id);
+    WallpaperControllerClient::Get()->ShowUserWallpaper(account_id);
 
     bool use_24hour_clock = false;
     if (user_manager::known_user::GetBooleanPref(
@@ -235,6 +242,17 @@ bool ViewsScreenLocker::HandleFocusLockScreenApps(bool reverse) {
   return true;
 }
 
+void ViewsScreenLocker::HandleLoginAsGuest() {
+  NOTREACHED();
+}
+
+void ViewsScreenLocker::HandleLaunchPublicSession(
+    const AccountId& account_id,
+    const std::string& locale,
+    const std::string& input_method) {
+  NOTREACHED();
+}
+
 void ViewsScreenLocker::SuspendDone(const base::TimeDelta& sleep_duration) {
   for (user_manager::User* user :
        user_manager::UserManager::Get()->GetUnlockUsers()) {
@@ -252,7 +270,8 @@ void ViewsScreenLocker::UnregisterLockScreenAppFocusHandler() {
 }
 
 void ViewsScreenLocker::HandleLockScreenAppFocusOut(bool reverse) {
-  LoginScreenClient::Get()->HandleFocusLeavingLockScreenApps(reverse);
+  LoginScreenClient::Get()->login_screen()->HandleFocusLeavingLockScreenApps(
+      reverse);
 }
 
 void ViewsScreenLocker::OnOSVersionLabelTextUpdated(
@@ -282,7 +301,8 @@ void ViewsScreenLocker::UpdatePinKeyboardState(const AccountId& account_id) {
     return;
 
   bool is_enabled = quick_unlock_storage->IsPinAuthenticationAvailable();
-  LoginScreenClient::Get()->SetPinEnabledForUser(account_id, is_enabled);
+  LoginScreenClient::Get()->login_screen()->SetPinEnabledForUser(account_id,
+                                                                 is_enabled);
 }
 
 void ViewsScreenLocker::OnAllowedInputMethodsChanged() {
@@ -299,7 +319,7 @@ void ViewsScreenLocker::OnAllowedInputMethodsChanged() {
 }
 
 void ViewsScreenLocker::OnDevChannelInfoUpdated() {
-  LoginScreenClient::Get()->SetDevChannelInfo(
+  LoginScreenClient::Get()->login_screen()->SetDevChannelInfo(
       os_version_label_text_, enterprise_info_text_, bluetooth_name_);
 }
 

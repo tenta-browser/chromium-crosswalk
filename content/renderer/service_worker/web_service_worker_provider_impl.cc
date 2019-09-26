@@ -9,18 +9,16 @@
 
 #include "base/strings/utf_string_conversions.h"
 #include "base/trace_event/trace_event.h"
-#include "content/child/thread_safe_sender.h"
 #include "content/common/service_worker/service_worker_utils.h"
 #include "content/renderer/service_worker/service_worker_dispatcher.h"
-#include "content/renderer/service_worker/service_worker_handle_reference.h"
 #include "content/renderer/service_worker/service_worker_provider_context.h"
 #include "content/renderer/service_worker/web_service_worker_impl.h"
 #include "content/renderer/service_worker/web_service_worker_registration_impl.h"
-#include "third_party/WebKit/common/message_port/message_port_channel.h"
-#include "third_party/WebKit/common/service_worker/service_worker_provider_type.mojom.h"
-#include "third_party/WebKit/public/platform/WebURL.h"
-#include "third_party/WebKit/public/platform/modules/serviceworker/WebServiceWorkerProviderClient.h"
-#include "third_party/WebKit/public/platform/modules/serviceworker/service_worker_registration.mojom.h"
+#include "third_party/blink/public/common/message_port/message_port_channel.h"
+#include "third_party/blink/public/mojom/service_worker/service_worker_provider_type.mojom.h"
+#include "third_party/blink/public/mojom/service_worker/service_worker_registration.mojom.h"
+#include "third_party/blink/public/platform/modules/serviceworker/web_service_worker_provider_client.h"
+#include "third_party/blink/public/platform/web_url.h"
 
 using blink::WebURL;
 
@@ -34,12 +32,8 @@ const char kLostConnectionErrorMessage[] =
 }  // anonymous namespace
 
 WebServiceWorkerProviderImpl::WebServiceWorkerProviderImpl(
-    ThreadSafeSender* thread_safe_sender,
     ServiceWorkerProviderContext* context)
-    : thread_safe_sender_(thread_safe_sender),
-      context_(context),
-      provider_client_(nullptr),
-      weak_factory_(this) {
+    : context_(context), provider_client_(nullptr), weak_factory_(this) {
   DCHECK(context_);
   switch (context_->provider_type()) {
     case blink::mojom::ServiceWorkerProviderType::kForWindow:
@@ -64,10 +58,13 @@ void WebServiceWorkerProviderImpl::SetClient(
   if (!provider_client_)
     return;
 
-  std::unique_ptr<ServiceWorkerHandleReference> controller =
+  blink::mojom::ServiceWorkerObjectInfoPtr controller =
       context_->TakeController();
   if (!controller)
     return;
+  DCHECK_NE(blink::mojom::kInvalidServiceWorkerHandleId, controller->handle_id);
+  DCHECK_NE(blink::mojom::kInvalidServiceWorkerVersionId,
+            controller->version_id);
   SetController(std::move(controller), context_->used_features(),
                 false /* notify_controllerchange */);
 }
@@ -75,6 +72,7 @@ void WebServiceWorkerProviderImpl::SetClient(
 void WebServiceWorkerProviderImpl::RegisterServiceWorker(
     const WebURL& web_pattern,
     const WebURL& web_script_url,
+    blink::mojom::ServiceWorkerUpdateViaCache update_via_cache,
     std::unique_ptr<WebServiceWorkerRegistrationCallbacks> callbacks) {
   DCHECK(callbacks);
 
@@ -102,7 +100,8 @@ void WebServiceWorkerProviderImpl::RegisterServiceWorker(
   TRACE_EVENT_ASYNC_BEGIN2(
       "ServiceWorker", "WebServiceWorkerProviderImpl::RegisterServiceWorker",
       this, "Scope", pattern.spec(), "Script URL", script_url.spec());
-  auto options = blink::mojom::ServiceWorkerRegistrationOptions::New(pattern);
+  auto options = blink::mojom::ServiceWorkerRegistrationOptions::New(
+      pattern, update_via_cache);
   context_->container_host()->Register(
       script_url, std::move(options),
       base::BindOnce(&WebServiceWorkerProviderImpl::OnRegistered,
@@ -188,7 +187,7 @@ bool WebServiceWorkerProviderImpl::ValidateScopeAndScriptURL(
 }
 
 void WebServiceWorkerProviderImpl::SetController(
-    std::unique_ptr<ServiceWorkerHandleReference> controller,
+    blink::mojom::ServiceWorkerObjectInfoPtr controller,
     const std::set<blink::mojom::WebFeature>& features,
     bool should_notify_controller_change) {
   if (!provider_client_)
@@ -204,20 +203,15 @@ void WebServiceWorkerProviderImpl::SetController(
 
 void WebServiceWorkerProviderImpl::PostMessageToClient(
     blink::mojom::ServiceWorkerObjectInfoPtr source,
-    const base::string16& message,
-    std::vector<mojo::ScopedMessagePipeHandle> message_pipes) {
+    blink::TransferableMessage message) {
   if (!provider_client_)
     return;
 
-  scoped_refptr<WebServiceWorkerImpl> worker =
-      GetDispatcher()->GetOrCreateServiceWorker(
-          ServiceWorkerHandleReference::Create(std::move(source),
-                                               thread_safe_sender_.get()));
-  auto message_ports =
-      blink::MessagePortChannel::CreateFromHandles(std::move(message_pipes));
+  scoped_refptr<WebServiceWorkerImpl> source_worker =
+      GetDispatcher()->GetOrCreateServiceWorker(std::move(source));
   provider_client_->DispatchMessageEvent(
-      WebServiceWorkerImpl::CreateHandle(std::move(worker)),
-      blink::WebString::FromUTF16(message), std::move(message_ports));
+      WebServiceWorkerImpl::CreateHandle(std::move(source_worker)),
+      std::move(message));
 }
 
 void WebServiceWorkerProviderImpl::CountFeature(

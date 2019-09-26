@@ -15,6 +15,11 @@ class QuicStreamSendBufferPeer {
  public:
   static void SetStreamOffset(QuicStreamSendBuffer* send_buffer,
                               QuicStreamOffset stream_offset);
+
+  static const BufferedSlice* CurrentWriteSlice(
+      QuicStreamSendBuffer* send_buffer);
+
+  static QuicByteCount TotalLength(QuicStreamSendBuffer* send_buffer);
 };
 
 }  // namespace test

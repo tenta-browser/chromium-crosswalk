@@ -14,22 +14,24 @@ import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.robolectric.annotation.Config;
 
+import org.chromium.base.test.BaseRobolectricTestRunner;
 import org.chromium.base.test.util.Feature;
 import org.chromium.chrome.browser.notifications.channels.ChannelDefinitions;
 import org.chromium.chrome.browser.notifications.channels.SiteChannelsManager;
-import org.chromium.testing.local.LocalRobolectricTestRunner;
 
 import java.util.Arrays;
 
 /**
  * Unit tests for NotificationPlatformBridge.
  */
-@RunWith(LocalRobolectricTestRunner.class)
+@RunWith(BaseRobolectricTestRunner.class)
 @Config(manifest = Config.NONE)
 public class NotificationPlatformBridgeUnitTest {
     /**
      * Verifies that the getOriginFromTag method returns the origin for valid input, and null for
      * invalid input.
+     *
+     * This is defined in functions in notification_id_generator.cc.
      */
     @Test
     @Feature({"Browser", "Notifications"})
@@ -37,26 +39,23 @@ public class NotificationPlatformBridgeUnitTest {
         // The common case.
         assertEquals("https://example.com",
                 NotificationPlatformBridge.getOriginFromNotificationTag(
-                        "NotificationPlatformBridge;https://example.com;42"));
-
-        // An tag that includes the separator. Probably a bit unusual, but valid.
-        assertEquals("https://example.com",
-                NotificationPlatformBridge.getOriginFromNotificationTag(
-                        "NotificationPlatformBridge;https://example.com;this;tag;contains;the;separator"));
+                        "p#https://example.com#42"));
 
         // Some invalid input.
+        assertNull(NotificationPlatformBridge.getOriginFromNotificationTag(
+                "InvalidPrefix#https://example.com#this#tag#contains#the#separator"));
         assertNull(
                 NotificationPlatformBridge.getOriginFromNotificationTag("SystemDownloadNotifier"));
         assertNull(NotificationPlatformBridge.getOriginFromNotificationTag(null));
         assertNull(NotificationPlatformBridge.getOriginFromNotificationTag(""));
-        assertNull(NotificationPlatformBridge.getOriginFromNotificationTag(";"));
-        assertNull(NotificationPlatformBridge.getOriginFromNotificationTag(";;;;;;;"));
+        assertNull(NotificationPlatformBridge.getOriginFromNotificationTag("#"));
+        assertNull(NotificationPlatformBridge.getOriginFromNotificationTag("#######"));
         assertNull(NotificationPlatformBridge.getOriginFromNotificationTag(
-                "SystemDownloadNotifier;NotificationPlatformBridge;42"));
+                "SystemDownloadNotifier#NotificationPlatformBridge#42"));
         assertNull(NotificationPlatformBridge.getOriginFromNotificationTag(
-                "SystemDownloadNotifier;https://example.com;42"));
+                "SystemDownloadNotifier#https://example.com#42"));
         assertNull(NotificationPlatformBridge.getOriginFromNotificationTag(
-                "NotificationPlatformBridge;SystemDownloadNotifier;42"));
+                "NotificationPlatformBridge#SystemDownloadNotifier#42"));
     }
 
     /**

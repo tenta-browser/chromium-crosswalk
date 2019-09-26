@@ -10,21 +10,11 @@
 #include "ash/app_list/model/app_list_folder_item.h"
 #include "ash/app_list/model/app_list_item.h"
 #include "ash/app_list/model/app_list_model_observer.h"
-#include "ash/app_list/model/search_box_model.h"
 
 namespace app_list {
 
 AppListModel::AppListModel()
-    : top_level_item_list_(new AppListItemList),
-      search_box_(new SearchBoxModel),
-      results_(new SearchResults),
-      status_(STATUS_NORMAL),
-      state_(INVALID_STATE),
-      state_fullscreen_(AppListViewState::CLOSED),
-      folders_enabled_(false),
-      custom_launcher_page_enabled_(true),
-      search_engine_is_google_(false),
-      is_tablet_mode_(false) {
+    : top_level_item_list_(std::make_unique<AppListItemList>()) {
   top_level_item_list_->AddObserver(this);
 }
 
@@ -40,7 +30,7 @@ void AppListModel::RemoveObserver(AppListModelObserver* observer) {
   observers_.RemoveObserver(observer);
 }
 
-void AppListModel::SetStatus(Status status) {
+void AppListModel::SetStatus(ash::AppListModelStatus status) {
   if (status_ == status)
     return;
 
@@ -49,25 +39,12 @@ void AppListModel::SetStatus(Status status) {
     observer.OnAppListModelStatusChanged();
 }
 
-void AppListModel::SetState(State state) {
-  if (state_ == state)
-    return;
-
-  State old_state = state_;
-
+void AppListModel::SetState(ash::AppListState state) {
   state_ = state;
-
-  for (auto& observer : observers_)
-    observer.OnAppListModelStateChanged(old_state, state_);
 }
 
 void AppListModel::SetStateFullscreen(AppListViewState state) {
   state_fullscreen_ = state;
-}
-
-void AppListModel::SetTabletMode(bool started) {
-  is_tablet_mode_ = started;
-  search_box_->SetTabletMode(started);
 }
 
 AppListItem* AppListModel::FindItem(const std::string& id) {
@@ -114,10 +91,6 @@ AppListItem* AppListModel::AddItemToFolder(std::unique_ptr<AppListItem> item,
 
 const std::string AppListModel::MergeItems(const std::string& target_item_id,
                                            const std::string& source_item_id) {
-  if (!folders_enabled()) {
-    LOG(ERROR) << "MergeItems called with folders disabled.";
-    return "";
-  }
   DVLOG(2) << "MergeItems: " << source_item_id << " -> " << target_item_id;
 
   if (target_item_id == source_item_id) {
@@ -168,8 +141,8 @@ const std::string AppListModel::MergeItems(const std::string& target_item_id,
   // Create a new folder in the same location as the target item.
   std::string new_folder_id = AppListFolderItem::GenerateId();
   DVLOG(2) << "Creating folder for merge: " << new_folder_id;
-  std::unique_ptr<AppListItem> new_folder_ptr(new AppListFolderItem(
-      new_folder_id, AppListFolderItem::FOLDER_TYPE_NORMAL));
+  std::unique_ptr<AppListItem> new_folder_ptr =
+      std::make_unique<app_list::AppListFolderItem>(new_folder_id);
   new_folder_ptr->set_position(target_item_ptr->position());
   AppListFolderItem* new_folder = static_cast<AppListFolderItem*>(
       AddItemToItemListAndNotify(std::move(new_folder_ptr)));
@@ -273,7 +246,7 @@ void AppListModel::DeleteItem(const std::string& id) {
       observer.OnAppListItemWillBeDeleted(item);
     top_level_item_list_->DeleteItem(id);
     for (auto& observer : observers_)
-      observer.OnAppListItemDeleted();
+      observer.OnAppListItemDeleted(id);
     return;
   }
   AppListFolderItem* folder = FindFolderItem(item->folder_id());
@@ -284,7 +257,7 @@ void AppListModel::DeleteItem(const std::string& id) {
     observer.OnAppListItemWillBeDeleted(item);
   child_item.reset();  // Deletes item.
   for (auto& observer : observers_)
-    observer.OnAppListItemDeleted();
+    observer.OnAppListItemDeleted(id);
 }
 
 void AppListModel::DeleteUninstalledItem(const std::string& id) {
@@ -303,71 +276,8 @@ void AppListModel::DeleteUninstalledItem(const std::string& id) {
   }
 }
 
-void AppListModel::SetFoldersEnabled(bool folders_enabled) {
-  folders_enabled_ = folders_enabled;
-  if (folders_enabled)
-    return;
-  // Remove child items from folders.
-  std::vector<std::string> folder_ids;
-  for (size_t i = 0; i < top_level_item_list_->item_count(); ++i) {
-    AppListItem* item = top_level_item_list_->item_at(i);
-    if (item->GetItemType() != AppListFolderItem::kItemType)
-      continue;
-    AppListFolderItem* folder = static_cast<AppListFolderItem*>(item);
-    if (folder->folder_type() == AppListFolderItem::FOLDER_TYPE_OEM)
-      continue;  // Do not remove OEM folders.
-    while (folder->item_list()->item_count()) {
-      std::unique_ptr<AppListItem> child = folder->item_list()->RemoveItemAt(0);
-      child->set_folder_id("");
-      AddItemToItemListAndNotifyUpdate(std::move(child));
-    }
-    folder_ids.push_back(folder->id());
-  }
-  // Delete folders.
-  for (size_t i = 0; i < folder_ids.size(); ++i)
-    DeleteItem(folder_ids[i]);
-}
-
-void AppListModel::SetCustomLauncherPageEnabled(bool enabled) {
-  custom_launcher_page_enabled_ = enabled;
-  for (auto& observer : observers_)
-    observer.OnCustomLauncherPageEnabledStateChanged(enabled);
-}
-
-std::vector<SearchResult*> AppListModel::FilterSearchResultsByDisplayType(
-    SearchResults* results,
-    SearchResult::DisplayType display_type,
-    size_t max_results) {
-  std::vector<SearchResult*> matches;
-  for (size_t i = 0; i < results->item_count(); ++i) {
-    SearchResult* item = results->GetItemAt(i);
-    if (item->display_type() == display_type) {
-      matches.push_back(item);
-      if (matches.size() == max_results)
-        break;
-    }
-  }
-  return matches;
-}
-
-void AppListModel::PushCustomLauncherPageSubpage() {
-  custom_launcher_page_subpage_depth_++;
-}
-
-bool AppListModel::PopCustomLauncherPageSubpage() {
-  if (custom_launcher_page_subpage_depth_ == 0)
-    return false;
-
-  --custom_launcher_page_subpage_depth_;
-  return true;
-}
-
-void AppListModel::ClearCustomLauncherPageSubpages() {
-  custom_launcher_page_subpage_depth_ = 0;
-}
-
-void AppListModel::SetSearchEngineIsGoogle(bool is_google) {
-  search_engine_is_google_ = is_google;
+void AppListModel::DeleteAllItems() {
+  top_level_item_list_->DeleteAllItems();
 }
 
 // Private methods
@@ -388,14 +298,9 @@ AppListFolderItem* AppListModel::FindOrCreateFolderItem(
   if (dest_folder)
     return dest_folder;
 
-  if (!folders_enabled()) {
-    LOG(ERROR) << "Attempt to create folder item when disabled: " << folder_id;
-    return NULL;
-  }
-
   DVLOG(2) << "Creating new folder: " << folder_id;
-  std::unique_ptr<AppListFolderItem> new_folder(
-      new AppListFolderItem(folder_id, AppListFolderItem::FOLDER_TYPE_NORMAL));
+  std::unique_ptr<AppListFolderItem> new_folder =
+      std::make_unique<app_list::AppListFolderItem>(folder_id);
   new_folder->set_position(
       top_level_item_list_->CreatePositionBefore(syncer::StringOrdinal()));
   AppListItem* new_folder_item =

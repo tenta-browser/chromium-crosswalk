@@ -25,7 +25,7 @@
 #include "base/time/time.h"
 #include "build/build_config.h"
 #include "chrome/browser/android/android_theme_resources.h"
-#include "chrome/browser/infobars/infobar_service.h"
+#include "chrome/browser/infobars/mock_infobar_service.h"
 #include "chrome/browser/net/spdyproxy/data_reduction_proxy_chrome_settings.h"
 #include "chrome/browser/net/spdyproxy/data_reduction_proxy_chrome_settings_factory.h"
 #include "chrome/browser/page_load_metrics/observers/page_load_metrics_observer_test_harness.h"
@@ -130,7 +130,8 @@ class TestPreviewsLogger : public previews::PreviewsLogger {
   void LogMessage(const std::string& event_type,
                   const std::string& event_description,
                   const GURL& url,
-                  base::Time time) override {
+                  base::Time time,
+                  uint64_t page_id) override {
     event_type_ = event_type;
     event_description_ = event_description;
   }
@@ -159,7 +160,7 @@ class PreviewsInfoBarDelegateUnitTest
 
   void SetUp() override {
     PageLoadMetricsObserverTestHarness::SetUp();
-    InfoBarService::CreateForWebContents(web_contents());
+    MockInfoBarService::CreateForWebContents(web_contents());
     PreviewsInfoBarTabHelper::CreateForWebContents(web_contents());
     TestPreviewsWebContentsObserver::CreateForWebContents(web_contents());
 
@@ -191,12 +192,12 @@ class PreviewsInfoBarDelegateUnitTest
     network_time::NetworkTimeTracker::RegisterPrefs(registry);
 
     std::unique_ptr<TestPreviewsLogger> previews_logger =
-        base::MakeUnique<TestPreviewsLogger>();
+        std::make_unique<TestPreviewsLogger>();
     previews_logger_ = previews_logger.get();
-    previews_io_data_ = base::MakeUnique<previews::PreviewsIOData>(
+    previews_io_data_ = std::make_unique<previews::PreviewsIOData>(
         base::MessageLoop::current()->task_runner(),
         base::MessageLoop::current()->task_runner());
-    previews_ui_service_ = base::MakeUnique<previews::PreviewsUIService>(
+    previews_ui_service_ = std::make_unique<previews::PreviewsUIService>(
         previews_io_data_.get(), base::MessageLoop::current()->task_runner(),
         nullptr /* previews_opt_out_store */, nullptr /* previews_opt_guide */,
         base::Bind(&IsPreviewsEnabled), std::move(previews_logger));
@@ -219,12 +220,10 @@ class PreviewsInfoBarDelegateUnitTest
                    base::Unretained(this)),
         previews_ui_service_.get());
 
-    InfoBarService* infobar_service =
-        InfoBarService::FromWebContents(web_contents());
-    EXPECT_EQ(1U, infobar_service->infobar_count());
+    EXPECT_EQ(1U, infobar_service()->infobar_count());
 
     return static_cast<PreviewsInfoBarDelegate*>(
-        infobar_service->infobar_at(0)->delegate());
+        infobar_service()->infobar_at(0)->delegate());
   }
 
   void EnableStalePreviewsTimestamp(
@@ -260,7 +259,7 @@ class PreviewsInfoBarDelegateUnitTest
     tester_->ExpectBucketCount(kUMAPreviewsInfoBarTimestamp, expected_bucket,
                                1);
     // Dismiss the infobar.
-    InfoBarService::FromWebContents(web_contents())->RemoveAllInfoBars(false);
+    infobar_service()->RemoveAllInfoBars(false);
     PreviewsInfoBarTabHelper::FromWebContents(web_contents())
         ->set_displayed_preview_infobar(false);
   }
@@ -277,7 +276,7 @@ class PreviewsInfoBarDelegateUnitTest
   TestPreviewsLogger* previews_logger() const { return previews_logger_; }
 
   void RegisterObservers(page_load_metrics::PageLoadTracker* tracker) override {
-    tracker->AddObserver(base::MakeUnique<TestOptOutObserver>(base::Bind(
+    tracker->AddObserver(std::make_unique<TestOptOutObserver>(base::Bind(
         &PreviewsInfoBarDelegateUnitTest::OptOut, base::Unretained(this))));
   }
 

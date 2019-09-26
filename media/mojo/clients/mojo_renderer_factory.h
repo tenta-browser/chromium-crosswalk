@@ -9,19 +9,14 @@
 
 #include "base/macros.h"
 #include "media/base/renderer_factory.h"
+#include "media/mojo/interfaces/interface_factory.mojom.h"
 #include "media/mojo/interfaces/renderer.mojom.h"
 
 namespace service_manager {
-namespace mojom {
 class InterfaceProvider;
-}
 }
 
 namespace media {
-
-namespace mojom {
-class InterfaceFactory;
-}
 
 class GpuVideoAcceleratorFactories;
 
@@ -30,11 +25,9 @@ class MojoRendererFactory : public RendererFactory {
  public:
   using GetGpuFactoriesCB = base::Callback<GpuVideoAcceleratorFactories*()>;
 
-  MojoRendererFactory(const GetGpuFactoriesCB& get_gpu_factories_cb,
+  MojoRendererFactory(mojom::HostedRendererType type,
+                      const GetGpuFactoriesCB& get_gpu_factories_cb,
                       media::mojom::InterfaceFactory* interface_factory);
-  MojoRendererFactory(
-      const GetGpuFactoriesCB& get_gpu_factories_cb,
-      service_manager::mojom::InterfaceProvider* interface_provider);
 
   ~MojoRendererFactory() final;
 
@@ -54,7 +47,9 @@ class MojoRendererFactory : public RendererFactory {
   // InterfaceFactory or InterfaceProvider used to create or connect to remote
   // renderer.
   media::mojom::InterfaceFactory* interface_factory_ = nullptr;
-  service_manager::mojom::InterfaceProvider* interface_provider_ = nullptr;
+
+  // Underlying renderer type that will be hosted by the MojoRenderer.
+  mojom::HostedRendererType hosted_renderer_type_;
 
   DISALLOW_COPY_AND_ASSIGN(MojoRendererFactory);
 };

@@ -75,9 +75,6 @@ class ContentSettingBubbleModelTest : public ChromeRenderViewHostTestHarness {
     PrefService* prefs = profile()->GetPrefs();
     return prefs->GetString(prefs::kDefaultVideoCaptureDevice);
   }
-
- private:
-  base::test::ScopedFeatureList feature_list;
 };
 
 TEST_F(ContentSettingBubbleModelTest, ImageRadios) {
@@ -941,13 +938,42 @@ TEST_F(ContentSettingBubbleModelTest, RPHAllow) {
   registry.Shutdown();
 }
 
+TEST_F(ContentSettingBubbleModelTest, RPHDefaultDone) {
+  ProtocolHandlerRegistry registry(profile(), new FakeDelegate());
+  registry.InitProtocolSettings();
+
+  const GURL page_url("http://toplevel.example/");
+  NavigateAndCommit(page_url);
+  TabSpecificContentSettings* content_settings =
+      TabSpecificContentSettings::FromWebContents(web_contents());
+  ProtocolHandler test_handler = ProtocolHandler::CreateProtocolHandler(
+      "mailto", GURL("http://www.toplevel.example/"));
+  content_settings->set_pending_protocol_handler(test_handler);
+
+  ContentSettingRPHBubbleModel content_setting_bubble_model(
+      NULL, web_contents(), profile(), &registry);
+
+  // If nothing is selected, the default action "Ignore" should be performed.
+  content_setting_bubble_model.OnDoneClicked();
+  {
+    ProtocolHandler handler = registry.GetHandlerFor("mailto");
+    EXPECT_TRUE(handler.IsEmpty());
+    EXPECT_EQ(CONTENT_SETTING_DEFAULT,
+              content_settings->pending_protocol_handler_setting());
+    EXPECT_TRUE(registry.IsIgnored(test_handler));
+  }
+
+  registry.Shutdown();
+}
+
 TEST_F(ContentSettingBubbleModelTest, SubresourceFilter) {
   std::unique_ptr<ContentSettingBubbleModel> content_setting_bubble_model(
       new ContentSettingSubresourceFilterBubbleModel(nullptr, web_contents(),
                                                      profile()));
   const ContentSettingBubbleModel::BubbleContent& bubble_content =
       content_setting_bubble_model->bubble_content();
-  EXPECT_TRUE(bubble_content.title.empty());
+  EXPECT_EQ(bubble_content.title,
+            l10n_util::GetStringUTF16(IDS_BLOCKED_ADS_PROMPT_TITLE));
   EXPECT_EQ(bubble_content.message,
             l10n_util::GetStringUTF16(IDS_BLOCKED_ADS_PROMPT_EXPLANATION));
   EXPECT_EQ(0U, bubble_content.radio_group.radio_items.size());
@@ -956,7 +982,7 @@ TEST_F(ContentSettingBubbleModelTest, SubresourceFilter) {
   EXPECT_TRUE(bubble_content.custom_link.empty());
   EXPECT_FALSE(bubble_content.custom_link_enabled);
   EXPECT_EQ(bubble_content.manage_text,
-            l10n_util::GetStringUTF16(IDS_ALLOW_ADS));
+            l10n_util::GetStringUTF16(IDS_ALWAYS_ALLOW_ADS));
   EXPECT_EQ(0U, bubble_content.media_menus.size());
 }
 

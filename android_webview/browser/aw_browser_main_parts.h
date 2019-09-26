@@ -16,6 +16,10 @@ namespace base {
 class MessageLoop;
 }
 
+namespace heap_profiling {
+class Controller;
+}
+
 namespace android_webview {
 
 class AwContentBrowserClient;
@@ -26,14 +30,18 @@ class AwBrowserMainParts : public content::BrowserMainParts {
   ~AwBrowserMainParts() override;
 
   // Overriding methods from content::BrowserMainParts.
-  void PreEarlyInitialization() override;
+  int PreEarlyInitialization() override;
   int PreCreateThreads() override;
   void PreMainMessageLoopRun() override;
   bool MainMessageLoopRun(int* result_code) override;
+  void ServiceManagerConnectionStarted(
+      content::ServiceManagerConnection* connection) override;
 
  private:
   // Android specific UI MessageLoop.
   std::unique_ptr<base::MessageLoop> main_message_loop_;
+
+  std::unique_ptr<heap_profiling::Controller> heap_profiling_controller_;
 
   AwContentBrowserClient* browser_client_;
 

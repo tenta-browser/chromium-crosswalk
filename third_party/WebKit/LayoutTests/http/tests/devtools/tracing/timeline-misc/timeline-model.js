@@ -13,7 +13,9 @@
 
   var commonMetadata = [
     {
-      'args': {'sessionId': sessionId},
+      'args': {'data': {'sessionId': sessionId, 'frames': [
+        {'frame': 'frame1', 'url': 'frameurl', 'name': 'frame-name'}
+      ]}},
       'cat': 'disabled-by-default-devtools.timeline',
       'name': 'TracingStartedInPage',
       'ph': 'I',
@@ -22,7 +24,7 @@
       'ts': 100,
     },
     {
-      'args': {'layerTreeId': 17, 'sessionId': sessionId},
+      'args': {'data': {'layerTreeId': 17, 'frame': 'frame1'}},
       'cat': 'disabled-by-default-devtools.timeline',
       'name': 'SetLayerTreeId',
       'ph': 'I',
@@ -193,7 +195,7 @@
   ];
 
   var tracingTimelineModel = PerformanceTestRunner.createPerformanceModelWithEvents(commonMetadata.concat(traceEvents));
-  PerformanceTestRunner.forAllEvents(tracingTimelineModel.timelineModel().mainThreadEvents(), (event, stack) => {
+  PerformanceTestRunner.forAllEvents(PerformanceTestRunner.mainTrackEvents(), (event, stack) => {
     const prefix = Array(stack.length + 1).join('----') + (stack.length ? '> ' : '');
     const details = Timeline.TimelineUIUtils.buildDetailsTextForTraceEvent(event, null) || '';
     TestRunner.addResult(`${prefix}${event.name}: ${details}`);

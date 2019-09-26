@@ -215,7 +215,7 @@ public class AwContentsClientShouldInterceptRequestTest {
         final String pageToPostToUrl = addAboutPageToTestServer(mWebServer);
         final String pageWithFormUrl = addPageToTestServer(mWebServer, "/page_with_form.html",
                 CommonResources.makeHtmlPageWithSimplePostFormTo(pageToPostToUrl));
-        mActivityTestRule.enableJavaScriptOnUiThread(mAwContents);
+        AwActivityTestRule.enableJavaScriptOnUiThread(mAwContents);
 
         int callCount = mShouldInterceptRequestHelper.getCallCount();
         mActivityTestRule.loadUrlAsync(mAwContents, pageWithFormUrl);
@@ -238,7 +238,7 @@ public class AwContentsClientShouldInterceptRequestTest {
         final String aboutPageUrl = addAboutPageToTestServer(mWebServer);
         final String pageWithLinkUrl = addPageToTestServer(mWebServer, "/page_with_link.html",
                 CommonResources.makeHtmlPageWithSimpleLinkTo(aboutPageUrl));
-        mActivityTestRule.enableJavaScriptOnUiThread(mAwContents);
+        AwActivityTestRule.enableJavaScriptOnUiThread(mAwContents);
 
         int callCount = mShouldInterceptRequestHelper.getCallCount();
         mActivityTestRule.loadUrlAsync(mAwContents, pageWithLinkUrl);
@@ -298,7 +298,7 @@ public class AwContentsClientShouldInterceptRequestTest {
                 + "  xhr.setRequestHeader('" + headerName + "', '" + headerValue + "'); "
                 + "  xhr.send(null);"
                 + "</script>"));
-        mActivityTestRule.enableJavaScriptOnUiThread(mAwContents);
+        AwActivityTestRule.enableJavaScriptOnUiThread(mAwContents);
 
         int callCount = mShouldInterceptRequestHelper.getCallCount();
         mActivityTestRule.loadUrlAsync(mAwContents, mainPageUrl);
@@ -512,7 +512,7 @@ public class AwContentsClientShouldInterceptRequestTest {
                 + "  console.info('xhr.statusText = ' + xhr.statusText);"
                 + "  return '[' + xhr.status + '][' + xhr.statusText + ']';"
                 + "})();";
-        mActivityTestRule.enableJavaScriptOnUiThread(mAwContents);
+        AwActivityTestRule.enableJavaScriptOnUiThread(mAwContents);
 
         final String aboutPageUrl = addAboutPageToTestServer(mWebServer);
         mActivityTestRule.loadUrlSync(
@@ -567,7 +567,7 @@ public class AwContentsClientShouldInterceptRequestTest {
         final String clientResponseHeaderName = "Client-Via";
         final String clientResponseHeaderValue = "shouldInterceptRequest";
         final String syncGetUrl = mWebServer.getResponseUrl("/intercept_me");
-        mActivityTestRule.enableJavaScriptOnUiThread(mAwContents);
+        AwActivityTestRule.enableJavaScriptOnUiThread(mAwContents);
 
         final String aboutPageUrl = addAboutPageToTestServer(mWebServer);
         mActivityTestRule.loadUrlSync(
@@ -594,7 +594,7 @@ public class AwContentsClientShouldInterceptRequestTest {
         final String syncGetUrl = mWebServer.getResponseUrl("/intercept_me");
         final Map<String, String> headers = new HashMap<String, String>();
         headers.put(clientResponseHeaderName, clientResponseHeaderValue);
-        mActivityTestRule.enableJavaScriptOnUiThread(mAwContents);
+        AwActivityTestRule.enableJavaScriptOnUiThread(mAwContents);
 
         final String aboutPageUrl = addAboutPageToTestServer(mWebServer);
         mActivityTestRule.loadUrlSync(
@@ -611,7 +611,7 @@ public class AwContentsClientShouldInterceptRequestTest {
     @Feature({"AndroidWebView"})
     public void testNullHttpResponseHeaders() throws Throwable {
         final String syncGetUrl = mWebServer.getResponseUrl("/intercept_me");
-        mActivityTestRule.enableJavaScriptOnUiThread(mAwContents);
+        AwActivityTestRule.enableJavaScriptOnUiThread(mAwContents);
 
         final String aboutPageUrl = addAboutPageToTestServer(mWebServer);
         mActivityTestRule.loadUrlSync(
@@ -874,13 +874,14 @@ public class AwContentsClientShouldInterceptRequestTest {
                 mAwContents, pageHtml, "text/html", false, baseUrl, null);
         mShouldInterceptRequestHelper.waitForCallback(callCount, 1);
         Assert.assertEquals(1, mShouldInterceptRequestHelper.getUrls().size());
-        if (!mShouldInterceptRequestHelper.getUrls().get(0).equals(imageUrl)) {
-            // With PlzNavigate, data URLs are intercepted so wait for the next request.
-            // See https://codereview.chromium.org/2235303002/.
-            callCount = mShouldInterceptRequestHelper.getCallCount();
-            mShouldInterceptRequestHelper.waitForCallback(callCount, 1);
-            Assert.assertEquals(imageUrl, mShouldInterceptRequestHelper.getUrls().get(1));
-        }
+
+        // With PlzNavigate, data URLs are intercepted. See
+        // https://codereview.chromium.org/2235303002/.
+        // TODO(boliu): Not checking the URL yet. It's the empty data URL which should be fixed in
+        // crbug.com/669885.
+        Assert.assertNotEquals(imageUrl, mShouldInterceptRequestHelper.getUrls().get(0));
+        mShouldInterceptRequestHelper.waitForCallback(callCount + 1);
+        Assert.assertEquals(imageUrl, mShouldInterceptRequestHelper.getUrls().get(1));
 
         Map<String, String> headers =
                 mShouldInterceptRequestHelper.getRequestsForUrl(imageUrl).requestHeaders;
@@ -970,7 +971,7 @@ public class AwContentsClientShouldInterceptRequestTest {
     @Test
     @SmallTest
     @Feature({"AndroidWebView"})
-    public void testLoadDataWithBaseUrlShouldNotTriggerShouldInterceptRequest() throws Throwable {
+    public void testLoadDataWithBaseUrlTriggersShouldInterceptRequest() throws Throwable {
         String data = "foo";
         String mimeType = "text/plain";
         boolean isBase64Encoded = false;
@@ -981,7 +982,9 @@ public class AwContentsClientShouldInterceptRequestTest {
         mActivityTestRule.loadDataWithBaseUrlSync(mAwContents,
                 mContentsClient.getOnPageFinishedHelper(), data, mimeType, isBase64Encoded, baseUrl,
                 historyUrl);
-        Assert.assertEquals(callCount, mShouldInterceptRequestHelper.getCallCount());
+        Assert.assertEquals(callCount + 1, mShouldInterceptRequestHelper.getCallCount());
+        // TODO(boliu): Not checking the URL yet. It's the empty data URL which should be fixed in
+        // crbug.com/669885.
     }
 
     @Test

@@ -50,8 +50,6 @@ int HeadlessPermissionManager::RequestPermissions(
   return kNoPendingOperation;
 }
 
-void HeadlessPermissionManager::CancelPermissionRequest(int request_id) {}
-
 void HeadlessPermissionManager::ResetPermission(
     content::PermissionType permission,
     const GURL& requesting_origin,
@@ -61,6 +59,14 @@ blink::mojom::PermissionStatus HeadlessPermissionManager::GetPermissionStatus(
     content::PermissionType permission,
     const GURL& requesting_origin,
     const GURL& embedding_origin) {
+  return blink::mojom::PermissionStatus::ASK;
+}
+
+blink::mojom::PermissionStatus
+HeadlessPermissionManager::GetPermissionStatusForFrame(
+    content::PermissionType permission,
+    content::RenderFrameHost* render_frame_host,
+    const GURL& requesting_origin) {
   return blink::mojom::PermissionStatus::ASK;
 }
 

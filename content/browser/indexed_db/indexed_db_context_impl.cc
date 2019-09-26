@@ -12,7 +12,6 @@
 #include "base/files/file_enumerator.h"
 #include "base/files/file_util.h"
 #include "base/logging.h"
-#include "base/memory/ptr_util.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/sequenced_task_runner.h"
 #include "base/strings/string_util.h"
@@ -36,6 +35,7 @@
 #include "content/public/common/content_switches.h"
 #include "storage/browser/database/database_util.h"
 #include "storage/common/database/database_identifier.h"
+#include "third_party/blink/public/mojom/quota/quota_types.mojom.h"
 #include "ui/base/text/bytes_formatting.h"
 #include "url/origin.h"
 
@@ -75,8 +75,7 @@ void GetAllOriginsAndPaths(const base::FilePath& indexeddb_path,
         file_path.RemoveExtension().Extension() == kIndexedDBExtension) {
       std::string origin_id = file_path.BaseName().RemoveExtension()
           .RemoveExtension().MaybeAsASCII();
-      origins->push_back(
-          Origin::Create(storage::GetOriginFromIdentifier(origin_id)));
+      origins->push_back(storage::GetOriginFromIdentifier(origin_id));
       if (file_paths)
         file_paths->push_back(file_path);
     }
@@ -259,9 +258,9 @@ base::ListValue* IndexedDBContextImpl::GetAllOriginsDetails() {
           std::unique_ptr<base::ListValue> scope(
               std::make_unique<base::ListValue>());
           for (const auto& id : transaction->scope()) {
-            const auto& it = db->metadata().object_stores.find(id);
-            if (it != db->metadata().object_stores.end())
-              scope->AppendString(it->second.name);
+            const auto& stores_it = db->metadata().object_stores.find(id);
+            if (stores_it != db->metadata().object_stores.end())
+              scope->AppendString(stores_it->second.name);
           }
 
           transaction_info->Set("scope", std::move(scope));
@@ -289,11 +288,6 @@ int IndexedDBContextImpl::GetOriginBlobFileCount(const Origin& origin) {
     count++;
   }
   return count;
-}
-
-// TODO(jsbell): Update callers to use url::Origin overload and remove.
-int64_t IndexedDBContextImpl::GetOriginDiskUsage(const GURL& origin_url) {
-  return GetOriginDiskUsage(Origin::Create(origin_url));
 }
 
 int64_t IndexedDBContextImpl::GetOriginDiskUsage(const Origin& origin) {
@@ -443,8 +437,8 @@ void IndexedDBContextImpl::ConnectionOpened(const Origin& origin,
                                             IndexedDBConnection* connection) {
   DCHECK(TaskRunner()->RunsTasksInCurrentSequence());
   quota_manager_proxy()->NotifyStorageAccessed(
-      storage::QuotaClient::kIndexedDatabase, origin.GetURL(),
-      storage::kStorageTypeTemporary);
+      storage::QuotaClient::kIndexedDatabase, origin,
+      blink::mojom::StorageType::kTemporary);
   if (AddToOriginSet(origin)) {
     // A newly created db, notify the quota system.
     QueryDiskAndUpdateQuotaUsage(origin);
@@ -457,8 +451,8 @@ void IndexedDBContextImpl::ConnectionClosed(const Origin& origin,
                                             IndexedDBConnection* connection) {
   DCHECK(TaskRunner()->RunsTasksInCurrentSequence());
   quota_manager_proxy()->NotifyStorageAccessed(
-      storage::QuotaClient::kIndexedDatabase, origin.GetURL(),
-      storage::kStorageTypeTemporary);
+      storage::QuotaClient::kIndexedDatabase, origin,
+      blink::mojom::StorageType::kTemporary);
   if (factory_.get() && factory_->GetConnectionCount(origin) == 0)
     QueryDiskAndUpdateQuotaUsage(origin);
 }
@@ -507,7 +501,7 @@ IndexedDBContextImpl::~IndexedDBContextImpl() {
   if (factory_.get()) {
     TaskRunner()->PostTask(FROM_HERE,
                            base::BindOnce(&IndexedDBFactory::ContextDestroyed,
-                                          base::Passed(&factory_)));
+                                          std::move(factory_)));
   }
 
   if (data_path_.empty())
@@ -532,7 +526,7 @@ IndexedDBContextImpl::~IndexedDBContextImpl() {
 // static
 base::FilePath IndexedDBContextImpl::GetBlobStoreFileName(
     const Origin& origin) {
-  std::string origin_id = storage::GetIdentifierFromOrigin(origin.GetURL());
+  std::string origin_id = storage::GetIdentifierFromOrigin(origin);
   return base::FilePath()
       .AppendASCII(origin_id)
       .AddExtension(kIndexedDBExtension)
@@ -541,7 +535,7 @@ base::FilePath IndexedDBContextImpl::GetBlobStoreFileName(
 
 // static
 base::FilePath IndexedDBContextImpl::GetLevelDBFileName(const Origin& origin) {
-  std::string origin_id = storage::GetIdentifierFromOrigin(origin.GetURL());
+  std::string origin_id = storage::GetIdentifierFromOrigin(origin);
   return base::FilePath()
       .AppendASCII(origin_id)
       .AddExtension(kIndexedDBExtension)
@@ -582,8 +576,8 @@ void IndexedDBContextImpl::QueryDiskAndUpdateQuotaUsage(const Origin& origin) {
   if (difference) {
     origin_size_map_[origin] = current_disk_usage;
     quota_manager_proxy()->NotifyStorageModified(
-        storage::QuotaClient::kIndexedDatabase, origin.GetURL(),
-        storage::kStorageTypeTemporary, difference);
+        storage::QuotaClient::kIndexedDatabase, origin,
+        blink::mojom::StorageType::kTemporary, difference);
     NotifyIndexedDBListChanged(origin);
   }
 }

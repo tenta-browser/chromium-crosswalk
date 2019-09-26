@@ -29,37 +29,12 @@ bool AlmostEqual(const double x, const double y) {
 
 namespace predictors {
 
-using Prediction = ResourcePrefetchPredictor::Prediction;
-
 MockResourcePrefetchPredictor::MockResourcePrefetchPredictor(
     const LoadingPredictorConfig& config,
     Profile* profile)
     : ResourcePrefetchPredictor(config, profile) {}
 
 MockResourcePrefetchPredictor::~MockResourcePrefetchPredictor() = default;
-
-void InitializeResourceData(ResourceData* resource,
-                            const std::string& resource_url,
-                            content::ResourceType resource_type,
-                            int number_of_hits,
-                            int number_of_misses,
-                            int consecutive_misses,
-                            double average_position,
-                            net::RequestPriority priority,
-                            bool has_validators,
-                            bool always_revalidate) {
-  resource->set_resource_url(resource_url);
-  resource->set_resource_type(
-      static_cast<ResourceData::ResourceType>(resource_type));
-  resource->set_number_of_hits(number_of_hits);
-  resource->set_number_of_misses(number_of_misses);
-  resource->set_consecutive_misses(consecutive_misses);
-  resource->set_average_position(average_position);
-  resource->set_priority(static_cast<ResourceData::Priority>(priority));
-  resource->set_before_first_contentful_paint(true);
-  resource->set_has_validators(has_validators);
-  resource->set_always_revalidate(always_revalidate);
-}
 
 void InitializeRedirectStat(RedirectStat* redirect,
                             const std::string& url,
@@ -89,14 +64,6 @@ void InitializeOriginStat(OriginStat* origin_stat,
   origin_stat->set_accessed_network(accessed_network);
 }
 
-PrefetchData CreatePrefetchData(const std::string& primary_key,
-                                uint64_t last_visit_time) {
-  PrefetchData data;
-  data.set_primary_key(primary_key);
-  data.set_last_visit_time(last_visit_time);
-  return data;
-}
-
 RedirectData CreateRedirectData(const std::string& primary_key,
                                 uint64_t last_visit_time) {
   RedirectData data;
@@ -112,7 +79,7 @@ OriginData CreateOriginData(const std::string& host, uint64_t last_visit_time) {
   return data;
 }
 
-NavigationID CreateNavigationID(SessionID::id_type tab_id,
+NavigationID CreateNavigationID(SessionID tab_id,
                                 const std::string& main_frame_url) {
   NavigationID navigation_id;
   navigation_id.tab_id = tab_id;
@@ -128,36 +95,26 @@ PageRequestSummary CreatePageRequestSummary(
   GURL main_frame_gurl(main_frame_url);
   PageRequestSummary summary(main_frame_gurl);
   summary.initial_url = GURL(initial_url);
-  summary.subresource_requests = subresource_requests;
-  summary.UpdateOrAddToOrigins(CreateURLRequestSummary(1, main_frame_url));
+  summary.UpdateOrAddToOrigins(CreateURLRequestSummary(
+      SessionID::FromSerializedValue(1), main_frame_url));
   for (auto& request_summary : subresource_requests)
     summary.UpdateOrAddToOrigins(request_summary);
   return summary;
 }
 
-URLRequestSummary CreateURLRequestSummary(SessionID::id_type tab_id,
+URLRequestSummary CreateURLRequestSummary(SessionID tab_id,
                                           const std::string& main_frame_url,
-                                          const std::string& resource_url,
+                                          const std::string& request_url,
                                           content::ResourceType resource_type,
-                                          net::RequestPriority priority,
-                                          const std::string& mime_type,
-                                          bool was_cached,
                                           const std::string& redirect_url,
-                                          bool has_validators,
                                           bool always_revalidate) {
   URLRequestSummary summary;
   summary.navigation_id = CreateNavigationID(tab_id, main_frame_url);
-  summary.resource_url =
-      resource_url.empty() ? GURL(main_frame_url) : GURL(resource_url);
-  summary.request_url = summary.resource_url;
-  summary.resource_type = resource_type;
-  summary.priority = priority;
-  summary.before_first_contentful_paint = true;
-  summary.mime_type = mime_type;
-  summary.was_cached = was_cached;
+  summary.request_url =
+      request_url.empty() ? GURL(main_frame_url) : GURL(request_url);
   if (!redirect_url.empty())
     summary.redirect_url = GURL(redirect_url);
-  summary.has_validators = has_validators;
+  summary.resource_type = resource_type;
   summary.always_revalidate = always_revalidate;
   summary.is_no_store = false;
   summary.network_accessed = true;
@@ -165,24 +122,13 @@ URLRequestSummary CreateURLRequestSummary(SessionID::id_type tab_id,
 }
 
 URLRequestSummary CreateRedirectRequestSummary(
-    SessionID::id_type session_id,
+    SessionID session_id,
     const std::string& main_frame_url,
     const std::string& redirect_url) {
   URLRequestSummary summary =
       CreateURLRequestSummary(session_id, main_frame_url);
   summary.redirect_url = GURL(redirect_url);
   return summary;
-}
-
-ResourcePrefetchPredictor::Prediction CreatePrediction(
-    const std::string& main_frame_key,
-    std::vector<GURL> subresource_urls) {
-  Prediction prediction;
-  prediction.main_frame_key = main_frame_key;
-  prediction.subresource_urls = subresource_urls;
-  prediction.is_host = true;
-  prediction.is_redirected = false;
-  return prediction;
 }
 
 PreconnectPrediction CreatePreconnectPrediction(
@@ -198,19 +144,14 @@ PreconnectPrediction CreatePreconnectPrediction(
 
 void PopulateTestConfig(LoadingPredictorConfig* config, bool small_db) {
   if (small_db) {
-    config->max_urls_to_track = 3;
     config->max_hosts_to_track = 2;
-    config->min_url_visit_count = 2;
-    config->max_resources_per_entry = 4;
     config->max_origins_per_entry = 5;
     config->max_consecutive_misses = 2;
     config->max_redirect_consecutive_misses = 2;
-    config->min_resource_confidence_to_trigger_prefetch = 0.5;
   }
-  config->is_host_learning_enabled = true;
-  config->is_url_learning_enabled = true;
   config->is_origin_learning_enabled = true;
   config->mode = LoadingPredictorConfig::LEARNING;
+  config->flush_data_to_disk_delay_seconds = 0;
 }
 
 scoped_refptr<net::HttpResponseHeaders> MakeResponseHeaders(
@@ -301,25 +242,6 @@ std::unique_ptr<net::URLRequest> CreateURLRequest(
   return request;
 }
 
-std::ostream& operator<<(std::ostream& os, const PrefetchData& data) {
-  os << "[" << data.primary_key() << "," << data.last_visit_time() << "]"
-     << std::endl;
-  for (const ResourceData& resource : data.resources())
-    os << "\t\t" << resource << std::endl;
-  return os;
-}
-
-std::ostream& operator<<(std::ostream& os, const ResourceData& resource) {
-  return os << "[" << resource.resource_url() << "," << resource.resource_type()
-            << "," << resource.number_of_hits() << ","
-            << resource.number_of_misses() << ","
-            << resource.consecutive_misses() << ","
-            << resource.average_position() << "," << resource.priority() << ","
-            << resource.before_first_contentful_paint() << ","
-            << resource.has_validators() << "," << resource.always_revalidate()
-            << "]";
-}
-
 std::ostream& operator<<(std::ostream& os, const RedirectData& data) {
   os << "[" << data.primary_key() << "," << data.last_visit_time() << "]"
      << std::endl;
@@ -359,20 +281,16 @@ std::ostream& operator<<(std::ostream& os,
 std::ostream& operator<<(std::ostream& os, const PageRequestSummary& summary) {
   os << "[" << summary.main_frame_url << "," << summary.initial_url << "]"
      << std::endl;
-  for (const auto& request : summary.subresource_requests)
-    os << "\t\t" << request << std::endl;
   for (const auto& pair : summary.origins)
     os << "\t\t" << pair.first << ":" << pair.second << std::endl;
   return os;
 }
 
 std::ostream& operator<<(std::ostream& os, const URLRequestSummary& summary) {
-  return os << "[" << summary.navigation_id << "," << summary.resource_url
-            << "," << summary.resource_type << "," << summary.priority << ","
-            << summary.before_first_contentful_paint << "," << summary.mime_type
-            << "," << summary.was_cached << "," << summary.redirect_url << ","
-            << summary.has_validators << "," << summary.always_revalidate
-            << "]";
+  return os << "[" << summary.navigation_id << "," << summary.request_url << ","
+            << summary.redirect_url << "," << summary.resource_type << ","
+            << summary.always_revalidate << "," << summary.is_no_store << ","
+            << summary.network_accessed << "]";
 }
 
 std::ostream& operator<<(std::ostream& os, const NavigationID& navigation_id) {
@@ -393,33 +311,6 @@ std::ostream& operator<<(std::ostream& os,
     os << "\t\t" << request << std::endl;
 
   return os;
-}
-
-bool operator==(const PrefetchData& lhs, const PrefetchData& rhs) {
-  bool equal = lhs.primary_key() == rhs.primary_key() &&
-               lhs.resources_size() == rhs.resources_size();
-
-  if (!equal)
-    return false;
-
-  for (int i = 0; i < lhs.resources_size(); ++i)
-    equal = equal && lhs.resources(i) == rhs.resources(i);
-
-  return equal;
-}
-
-bool operator==(const ResourceData& lhs, const ResourceData& rhs) {
-  return lhs.resource_url() == rhs.resource_url() &&
-         lhs.resource_type() == rhs.resource_type() &&
-         lhs.number_of_hits() == rhs.number_of_hits() &&
-         lhs.number_of_misses() == rhs.number_of_misses() &&
-         lhs.consecutive_misses() == rhs.consecutive_misses() &&
-         AlmostEqual(lhs.average_position(), rhs.average_position()) &&
-         lhs.priority() == rhs.priority() &&
-         lhs.before_first_contentful_paint() ==
-             rhs.before_first_contentful_paint() &&
-         lhs.has_validators() == rhs.has_validators() &&
-         lhs.always_revalidate() == rhs.always_revalidate();
 }
 
 bool operator==(const RedirectData& lhs, const RedirectData& rhs) {
@@ -445,21 +336,17 @@ bool operator==(const RedirectStat& lhs, const RedirectStat& rhs) {
 bool operator==(const PageRequestSummary& lhs, const PageRequestSummary& rhs) {
   return lhs.main_frame_url == rhs.main_frame_url &&
          lhs.initial_url == rhs.initial_url &&
-         lhs.subresource_requests == rhs.subresource_requests &&
          lhs.origins == rhs.origins;
 }
 
 bool operator==(const URLRequestSummary& lhs, const URLRequestSummary& rhs) {
   return lhs.navigation_id == rhs.navigation_id &&
-         lhs.resource_url == rhs.resource_url &&
-         lhs.resource_type == rhs.resource_type &&
-         lhs.priority == rhs.priority && lhs.mime_type == rhs.mime_type &&
-         lhs.before_first_contentful_paint ==
-             rhs.before_first_contentful_paint &&
-         lhs.was_cached == rhs.was_cached &&
+         lhs.request_url == rhs.request_url &&
          lhs.redirect_url == rhs.redirect_url &&
-         lhs.has_validators == rhs.has_validators &&
-         lhs.always_revalidate == rhs.always_revalidate;
+         lhs.resource_type == rhs.resource_type &&
+         lhs.always_revalidate == rhs.always_revalidate &&
+         lhs.is_no_store == rhs.is_no_store &&
+         lhs.network_accessed == rhs.network_accessed;
 }
 
 bool operator==(const OriginRequestSummary& lhs,

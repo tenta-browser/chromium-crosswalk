@@ -9,7 +9,6 @@
 #include <string>
 
 #include "base/command_line.h"
-#include "base/memory/ptr_util.h"
 #include "base/metrics/field_trial.h"
 #include "base/test/mock_entropy_provider.h"
 #include "base/test/scoped_feature_list.h"
@@ -33,7 +32,7 @@ class NetworkSessionConfiguratorTest : public testing::Test {
   NetworkSessionConfiguratorTest()
       : quic_user_agent_id_("Chrome/52.0.2709.0 Linux x86_64") {
     field_trial_list_.reset(new base::FieldTrialList(
-        base::MakeUnique<base::MockEntropyProvider>()));
+        std::make_unique<base::MockEntropyProvider>()));
     variations::testing::ClearAllVariationParams();
   }
 
@@ -65,6 +64,7 @@ TEST_F(NetworkSessionConfiguratorTest, Defaults) {
 
   EXPECT_TRUE(params_.enable_http2);
   EXPECT_TRUE(params_.http2_settings.empty());
+  EXPECT_FALSE(params_.enable_websocket_over_http2);
 
   EXPECT_FALSE(params_.enable_quic);
   EXPECT_EQ("Chrome/52.0.2709.0 Linux x86_64", params_.quic_user_agent_id);
@@ -86,7 +86,7 @@ TEST_F(NetworkSessionConfiguratorTest, EnableQuicFromFieldTrialGroup) {
 
   EXPECT_TRUE(params_.enable_quic);
   EXPECT_FALSE(params_.mark_quic_broken_when_network_blackholes);
-  EXPECT_FALSE(params_.retry_without_alt_svc_on_quic_errors);
+  EXPECT_TRUE(params_.retry_without_alt_svc_on_quic_errors);
   EXPECT_FALSE(params_.support_ietf_format_quic_altsvc);
   EXPECT_EQ(1350u, params_.quic_max_packet_length);
   EXPECT_EQ(net::QuicTagVector(), params_.quic_connection_options);
@@ -148,15 +148,15 @@ TEST_F(NetworkSessionConfiguratorTest,
   EXPECT_TRUE(params_.mark_quic_broken_when_network_blackholes);
 }
 
-TEST_F(NetworkSessionConfiguratorTest, RetryWithoutAltSvcOnQuicErrors) {
+TEST_F(NetworkSessionConfiguratorTest, DisableRetryWithoutAltSvcOnQuicErrors) {
   std::map<std::string, std::string> field_trial_params;
-  field_trial_params["retry_without_alt_svc_on_quic_errors"] = "true";
+  field_trial_params["retry_without_alt_svc_on_quic_errors"] = "false";
   variations::AssociateVariationParams("QUIC", "Enabled", field_trial_params);
   base::FieldTrialList::CreateFieldTrial("QUIC", "Enabled");
 
   ParseFieldTrials();
 
-  EXPECT_TRUE(params_.retry_without_alt_svc_on_quic_errors);
+  EXPECT_FALSE(params_.retry_without_alt_svc_on_quic_errors);
 }
 
 TEST_F(NetworkSessionConfiguratorTest, SupportIetfFormatQuicAltSvc) {
@@ -360,6 +360,33 @@ TEST_F(NetworkSessionConfiguratorTest,
 }
 
 TEST_F(NetworkSessionConfiguratorTest,
+       QuicMaxTimeOnNonDefaultNetworkFromFieldTrialParams) {
+  std::map<std::string, std::string> field_trial_params;
+  field_trial_params["max_time_on_non_default_network_seconds"] = "10";
+  variations::AssociateVariationParams("QUIC", "Enabled", field_trial_params);
+  base::FieldTrialList::CreateFieldTrial("QUIC", "Enabled");
+
+  ParseFieldTrials();
+
+  EXPECT_EQ(base::TimeDelta::FromSeconds(10),
+            params_.quic_max_time_on_non_default_network);
+}
+
+TEST_F(NetworkSessionConfiguratorTest,
+       QuicMaxNumMigrationsToNonDefaultNetworkFromFieldTrialParams) {
+  std::map<std::string, std::string> field_trial_params;
+  field_trial_params
+      ["max_migrations_to_non_default_network_on_path_degrading"] = "4";
+  variations::AssociateVariationParams("QUIC", "Enabled", field_trial_params);
+  base::FieldTrialList::CreateFieldTrial("QUIC", "Enabled");
+
+  ParseFieldTrials();
+
+  EXPECT_EQ(
+      4, params_.quic_max_migrations_to_non_default_network_on_path_degrading);
+}
+
+TEST_F(NetworkSessionConfiguratorTest,
        QuicAllowServerMigrationFromFieldTrialParams) {
   std::map<std::string, std::string> field_trial_params;
   field_trial_params["allow_server_migration"] = "true";
@@ -500,8 +527,8 @@ TEST_F(NetworkSessionConfiguratorTest, Http2SettingsFromFieldTrialParams) {
   ParseFieldTrials();
 
   net::SettingsMap expected_settings;
-  expected_settings[static_cast<net::SpdySettingsIds>(7)] = 1234;
-  expected_settings[static_cast<net::SpdySettingsIds>(25)] = 5678;
+  expected_settings[static_cast<net::SpdyKnownSettingsId>(7)] = 1234;
+  expected_settings[static_cast<net::SpdyKnownSettingsId>(25)] = 5678;
   EXPECT_EQ(expected_settings, params_.http2_settings);
 }
 
@@ -734,6 +761,39 @@ TEST_F(NetworkSessionConfiguratorTest, SimpleCacheTrialDisable) {
   EXPECT_EQ(net::URLRequestContextBuilder::HttpCacheParams::DISK_SIMPLE,
             ChooseCacheType(command_line));
 #endif
+}
+
+TEST_F(NetworkSessionConfiguratorTest, QuicHeadersIncludeH2StreamDependency) {
+  std::map<std::string, std::string> field_trial_params;
+  field_trial_params["headers_include_h2_stream_dependency"] = "true";
+  variations::AssociateVariationParams("QUIC", "Enabled", field_trial_params);
+  base::FieldTrialList::CreateFieldTrial("QUIC", "Enabled");
+
+  ParseFieldTrials();
+
+  EXPECT_TRUE(params_.quic_headers_include_h2_stream_dependency);
+}
+
+TEST_F(NetworkSessionConfiguratorTest,
+       WebsocketOverHttp2EnabledFromCommandLine) {
+  base::CommandLine command_line(base::CommandLine::NO_PROGRAM);
+  command_line.AppendSwitch(switches::kEnableWebsocketOverHttp2);
+
+  ParseCommandLineAndFieldTrials(command_line);
+
+  EXPECT_TRUE(params_.enable_websocket_over_http2);
+}
+
+TEST_F(NetworkSessionConfiguratorTest,
+       WebsocketOverHttp2EnabledFromFieldTrial) {
+  std::map<std::string, std::string> field_trial_params;
+  field_trial_params["websocket_over_http2"] = "true";
+  variations::AssociateVariationParams("HTTP2", "Enabled", field_trial_params);
+  base::FieldTrialList::CreateFieldTrial("HTTP2", "Enabled");
+
+  ParseFieldTrials();
+
+  EXPECT_TRUE(params_.enable_websocket_over_http2);
 }
 
 }  // namespace network_session_configurator

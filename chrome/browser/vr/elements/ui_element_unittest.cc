@@ -8,8 +8,7 @@
 
 #include "base/bind.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
-#include "cc/animation/animation.h"
+#include "cc/animation/keyframe_model.h"
 #include "cc/animation/keyframed_animation_curve.h"
 #include "cc/test/geometry_test_utils.h"
 #include "chrome/browser/vr/test/animation_utils.h"
@@ -20,12 +19,11 @@
 namespace vr {
 
 TEST(UiElement, BoundsContainChildren) {
-  const float epsilon = 1e-3f;
-  auto parent = base::MakeUnique<UiElement>();
+  auto parent = std::make_unique<UiElement>();
   parent->set_bounds_contain_children(true);
   parent->set_padding(0.1, 0.2);
 
-  auto c1 = base::MakeUnique<UiElement>();
+  auto c1 = std::make_unique<UiElement>();
   c1->SetSize(3.0f, 3.0f);
   c1->SetTranslate(2.5f, 2.5f, 0.0f);
   auto* c1_ptr = c1.get();
@@ -33,28 +31,31 @@ TEST(UiElement, BoundsContainChildren) {
 
   parent->DoLayOutChildren();
   EXPECT_RECT_NEAR(gfx::RectF(2.5f, 2.5f, 3.2f, 3.4f),
-                   gfx::RectF(parent->local_origin(), parent->size()), epsilon);
+                   gfx::RectF(parent->local_origin(), parent->size()),
+                   kEpsilon);
   EXPECT_EQ(parent->GetCenter().ToString(), c1_ptr->GetCenter().ToString());
 
-  auto c2 = base::MakeUnique<UiElement>();
+  auto c2 = std::make_unique<UiElement>();
   c2->SetSize(4.0f, 4.0f);
   c2->SetTranslate(-3.0f, 0.0f, 0.0f);
   parent->AddChild(std::move(c2));
 
   parent->DoLayOutChildren();
   EXPECT_RECT_NEAR(gfx::RectF(-0.5f, 1.0f, 9.2f, 6.4f),
-                   gfx::RectF(parent->local_origin(), parent->size()), epsilon);
+                   gfx::RectF(parent->local_origin(), parent->size()),
+                   kEpsilon);
 
-  auto c3 = base::MakeUnique<UiElement>();
+  auto c3 = std::make_unique<UiElement>();
   c3->SetSize(2.0f, 2.0f);
   c3->SetTranslate(0.0f, -2.0f, 0.0f);
   parent->AddChild(std::move(c3));
 
   parent->DoLayOutChildren();
   EXPECT_RECT_NEAR(gfx::RectF(-0.5f, 0.5f, 9.2f, 7.4f),
-                   gfx::RectF(parent->local_origin(), parent->size()), epsilon);
+                   gfx::RectF(parent->local_origin(), parent->size()),
+                   kEpsilon);
 
-  auto c4 = base::MakeUnique<UiElement>();
+  auto c4 = std::make_unique<UiElement>();
   c4->SetSize(2.0f, 2.0f);
   c4->SetTranslate(20.0f, 20.0f, 0.0f);
   c4->SetVisible(false);
@@ -63,39 +64,183 @@ TEST(UiElement, BoundsContainChildren) {
   // We expect no change due to an invisible child.
   parent->DoLayOutChildren();
   EXPECT_RECT_NEAR(gfx::RectF(-0.5f, 0.5f, 9.2f, 7.4f),
-                   gfx::RectF(parent->local_origin(), parent->size()), epsilon);
+                   gfx::RectF(parent->local_origin(), parent->size()),
+                   kEpsilon);
 
-  auto grand_parent = base::MakeUnique<UiElement>();
+  auto grand_parent = std::make_unique<UiElement>();
   grand_parent->set_bounds_contain_children(true);
   grand_parent->set_padding(0.1, 0.2);
   grand_parent->AddChild(std::move(parent));
 
+  auto anchored = std::make_unique<UiElement>();
+  anchored->set_y_anchoring(BOTTOM);
+  anchored->set_contributes_to_parent_bounds(false);
+
+  auto* anchored_ptr = anchored.get();
+  grand_parent->AddChild(std::move(anchored));
+
   grand_parent->DoLayOutChildren();
   EXPECT_RECT_NEAR(
       gfx::RectF(-0.5f, 0.5f, 9.4f, 7.8f),
-      gfx::RectF(grand_parent->local_origin(), grand_parent->size()), epsilon);
+      gfx::RectF(grand_parent->local_origin(), grand_parent->size()), kEpsilon);
+
+  gfx::Point3F p;
+  anchored_ptr->LocalTransform().TransformPoint(&p);
+  EXPECT_FLOAT_EQ(-3.9, p.y());
 }
 
-TEST(UiElements, AnimateSize) {
+TEST(UiElement, IgnoringAsymmetricPadding) {
+  // This test ensures that when we ignore asymmetric padding that we don't
+  // accidentally shift the location of the parent; it should stay put.
+  auto a = std::make_unique<UiElement>();
+  a->set_bounds_contain_children(true);
+
+  auto b = std::make_unique<UiElement>();
+  b->set_bounds_contain_children(true);
+  b->set_bounds_contain_padding(false);
+  b->set_padding(0.0f, 5.0f, 0.0f, 0.0f);
+
+  auto c = std::make_unique<UiElement>();
+  c->set_bounds_contain_children(true);
+  c->set_bounds_contain_padding(false);
+  c->set_padding(0.0f, 2.0f, 0.0f, 0.0f);
+
+  auto d = std::make_unique<UiElement>();
+  d->SetSize(0.5f, 0.5f);
+
+  c->AddChild(std::move(d));
+  c->DoLayOutChildren();
+  b->AddChild(std::move(c));
+  b->DoLayOutChildren();
+  a->AddChild(std::move(b));
+  a->DoLayOutChildren();
+
+  a->UpdateWorldSpaceTransform(false);
+
+  gfx::Point3F p;
+  a->world_space_transform().TransformPoint(&p);
+
+  EXPECT_VECTOR3DF_EQ(gfx::Point3F(), p);
+}
+
+TEST(UiElement, BoundsContainPaddingWithAnchoring) {
+  // If an element's bounds do not contain padding, then padding should be
+  // discounted when doing anchoring.
+  auto parent = std::make_unique<UiElement>();
+  parent->SetSize(1.0, 1.0);
+
+  auto child = std::make_unique<UiElement>();
+  child->SetSize(0.5, 0.5);
+  child->set_padding(2.0, 2.0);
+  child->set_bounds_contain_padding(false);
+
+  auto* child_ptr = child.get();
+
+  parent->AddChild(std::move(child));
+
+  struct {
+    LayoutAlignment x_anchoring;
+    LayoutAlignment y_anchoring;
+    gfx::Point3F expected_position;
+  } test_cases[] = {
+      {LEFT, NONE, {-0.5, 0, 0}},
+      {RIGHT, NONE, {0.5, 0, 0}},
+      {NONE, TOP, {0, 0.5, 0}},
+      {NONE, BOTTOM, {0, -0.5, 0}},
+  };
+
+  for (auto test_case : test_cases) {
+    child_ptr->set_x_anchoring(test_case.x_anchoring);
+    child_ptr->set_y_anchoring(test_case.y_anchoring);
+    parent->DoLayOutChildren();
+    gfx::Point3F p;
+    child_ptr->LocalTransform().TransformPoint(&p);
+    EXPECT_VECTOR3DF_EQ(test_case.expected_position, p);
+  }
+}
+
+TEST(UiElement, BoundsContainPaddingWithCentering) {
+  // If an element's bounds do not contain padding, then padding should be
+  // discounted when doing centering.
+  auto parent = std::make_unique<UiElement>();
+  parent->SetSize(1.0, 1.0);
+
+  auto child = std::make_unique<UiElement>();
+  child->set_padding(2.0, 2.0);
+  child->set_bounds_contain_padding(false);
+  child->set_bounds_contain_children(true);
+
+  auto grandchild = std::make_unique<UiElement>();
+  grandchild->SetSize(0.5, 0.5);
+
+  child->AddChild(std::move(grandchild));
+
+  auto* child_ptr = child.get();
+
+  parent->AddChild(std::move(child));
+
+  struct {
+    LayoutAlignment x_centering;
+    LayoutAlignment y_centering;
+    gfx::Point3F expected_position;
+  } test_cases[] = {
+      {LEFT, NONE, {0.25, 0, 0}},
+      {RIGHT, NONE, {-0.25, 0, 0}},
+      {NONE, TOP, {0, -0.25, 0}},
+      {NONE, BOTTOM, {0, 0.25, 0}},
+  };
+
+  for (auto test_case : test_cases) {
+    child_ptr->set_x_centering(test_case.x_centering);
+    child_ptr->set_y_centering(test_case.y_centering);
+    child_ptr->DoLayOutChildren();
+    parent->DoLayOutChildren();
+    gfx::Point3F p;
+    child_ptr->LocalTransform().TransformPoint(&p);
+    EXPECT_VECTOR3DF_EQ(test_case.expected_position, p);
+  }
+}
+
+TEST(UiElement, BoundsContainScaledChildren) {
+  auto a = std::make_unique<UiElement>();
+  a->SetSize(0.4, 0.3);
+
+  auto b = std::make_unique<UiElement>();
+  b->SetSize(0.2, 0.2);
+  b->SetTranslate(0.6, 0.0, 0.0);
+  b->SetScale(2.0, 3.0, 1.0);
+
+  auto c = std::make_unique<UiElement>();
+  c->set_bounds_contain_children(true);
+  c->set_padding(0.05, 0.05);
+  c->AddChild(std::move(a));
+  c->AddChild(std::move(b));
+
+  c->DoLayOutChildren();
+  EXPECT_RECT_NEAR(gfx::RectF(0.3f, 0.0f, 1.1f, 0.7f),
+                   gfx::RectF(c->local_origin(), c->size()), kEpsilon);
+}
+
+TEST(UiElement, AnimateSize) {
   UiScene scene;
-  auto rect = base::MakeUnique<UiElement>();
+  auto rect = std::make_unique<UiElement>();
   rect->SetSize(10, 100);
-  rect->AddAnimation(CreateBoundsAnimation(1, 1, gfx::SizeF(10, 100),
-                                           gfx::SizeF(20, 200),
-                                           MicrosecondsToDelta(10000)));
+  rect->AddKeyframeModel(CreateBoundsAnimation(1, 1, gfx::SizeF(10, 100),
+                                               gfx::SizeF(20, 200),
+                                               MicrosecondsToDelta(10000)));
   UiElement* rect_ptr = rect.get();
   scene.AddUiElement(kRoot, std::move(rect));
   base::TimeTicks start_time = MicrosecondsToTicks(1);
-  EXPECT_TRUE(scene.OnBeginFrame(start_time, kForwardVector));
+  EXPECT_TRUE(scene.OnBeginFrame(start_time, kStartHeadPose));
   EXPECT_FLOAT_SIZE_EQ(gfx::SizeF(10, 100), rect_ptr->size());
   EXPECT_TRUE(scene.OnBeginFrame(start_time + MicrosecondsToDelta(10000),
-                                 kForwardVector));
+                                 kStartHeadPose));
   EXPECT_FLOAT_SIZE_EQ(gfx::SizeF(20, 200), rect_ptr->size());
 }
 
-TEST(UiElements, AnimationAffectsInheritableTransform) {
+TEST(UiElement, AnimationAffectsInheritableTransform) {
   UiScene scene;
-  auto rect = base::MakeUnique<UiElement>();
+  auto rect = std::make_unique<UiElement>();
   UiElement* rect_ptr = rect.get();
   scene.AddUiElement(kRoot, std::move(rect));
 
@@ -103,22 +248,22 @@ TEST(UiElements, AnimationAffectsInheritableTransform) {
   from_operations.AppendTranslate(10, 100, 1000);
   cc::TransformOperations to_operations;
   to_operations.AppendTranslate(20, 200, 2000);
-  rect_ptr->AddAnimation(CreateTransformAnimation(
+  rect_ptr->AddKeyframeModel(CreateTransformAnimation(
       2, 2, from_operations, to_operations, MicrosecondsToDelta(10000)));
 
   base::TimeTicks start_time = MicrosecondsToTicks(1);
-  EXPECT_TRUE(scene.OnBeginFrame(start_time, kForwardVector));
+  EXPECT_TRUE(scene.OnBeginFrame(start_time, kStartHeadPose));
   gfx::Point3F p;
   rect_ptr->LocalTransform().TransformPoint(&p);
   EXPECT_VECTOR3DF_EQ(gfx::Vector3dF(10, 100, 1000), p);
   p = gfx::Point3F();
   EXPECT_TRUE(scene.OnBeginFrame(start_time + MicrosecondsToDelta(10000),
-                                 kForwardVector));
+                                 kStartHeadPose));
   rect_ptr->LocalTransform().TransformPoint(&p);
   EXPECT_VECTOR3DF_EQ(gfx::Vector3dF(20, 200, 2000), p);
 }
 
-TEST(UiElements, HitTest) {
+TEST(UiElement, HitTest) {
   UiElement rect;
   rect.SetSize(1.0, 1.0);
 
@@ -184,16 +329,16 @@ class ElementEventHandlers {
   explicit ElementEventHandlers(UiElement* element) {
     DCHECK(element);
     EventHandlers event_handlers;
-    event_handlers.hover_enter = base::Bind(
+    event_handlers.hover_enter = base::BindRepeating(
         &ElementEventHandlers::HandleHoverEnter, base::Unretained(this));
-    event_handlers.hover_move = base::Bind(
+    event_handlers.hover_move = base::BindRepeating(
         &ElementEventHandlers::HandleHoverMove, base::Unretained(this));
-    event_handlers.hover_leave = base::Bind(
+    event_handlers.hover_leave = base::BindRepeating(
         &ElementEventHandlers::HandleHoverLeave, base::Unretained(this));
-    event_handlers.button_down = base::Bind(
+    event_handlers.button_down = base::BindRepeating(
         &ElementEventHandlers::HandleButtonDown, base::Unretained(this));
-    event_handlers.button_up = base::Bind(&ElementEventHandlers::HandleButtonUp,
-                                          base::Unretained(this));
+    event_handlers.button_up = base::BindRepeating(
+        &ElementEventHandlers::HandleButtonUp, base::Unretained(this));
     element->set_event_handlers(event_handlers);
   }
   void HandleHoverEnter() { hover_enter_ = true; }
@@ -230,9 +375,9 @@ class ElementEventHandlers {
 };
 
 TEST(UiElement, EventBubbling) {
-  auto element = base::MakeUnique<UiElement>();
-  auto child = base::MakeUnique<UiElement>();
-  auto grand_child = base::MakeUnique<UiElement>();
+  auto element = std::make_unique<UiElement>();
+  auto child = std::make_unique<UiElement>();
+  auto grand_child = std::make_unique<UiElement>();
   auto* child_ptr = child.get();
   auto* grand_child_ptr = grand_child.get();
   child->AddChild(std::move(grand_child));

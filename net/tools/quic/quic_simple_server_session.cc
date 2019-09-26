@@ -6,7 +6,6 @@
 
 #include <utility>
 
-#include "net/quic/core/proto/cached_network_parameters.pb.h"
 #include "net/quic/core/quic_connection.h"
 #include "net/quic/platform/api/quic_flags.h"
 #include "net/quic/platform/api/quic_logging.h"
@@ -44,7 +43,7 @@ QuicSimpleServerSession::CreateQuicCryptoServerStream(
     QuicCompressedCertsCache* compressed_certs_cache) {
   return new QuicCryptoServerStream(
       crypto_config, compressed_certs_cache,
-      FLAGS_quic_reloadable_flag_enable_quic_stateless_reject_support, this,
+      GetQuicReloadableFlag(enable_quic_stateless_reject_support), this,
       stream_helper());
 }
 
@@ -142,7 +141,9 @@ void QuicSimpleServerSession::HandleRstOnValidNonexistentStream(
     size_t index = (frame.stream_id - next_outgoing_stream_id()) / 2;
     DCHECK(index <= promised_streams_.size());
     promised_streams_[index].is_cancelled = true;
-    connection()->SendRstStream(frame.stream_id, QUIC_RST_ACKNOWLEDGEMENT, 0);
+    control_frame_manager().WriteOrBufferRstStream(frame.stream_id,
+                                                   QUIC_RST_ACKNOWLEDGEMENT, 0);
+    connection()->OnStreamReset(frame.stream_id, QUIC_RST_ACKNOWLEDGEMENT);
   }
 }
 

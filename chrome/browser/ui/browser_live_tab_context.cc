@@ -4,6 +4,8 @@
 
 #include "chrome/browser/ui/browser_live_tab_context.h"
 
+#include <memory>
+
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_commands.h"
 #include "chrome/browser/ui/browser_finder.h"
@@ -27,7 +29,7 @@ void BrowserLiveTabContext::ShowBrowserWindow() {
   browser_->window()->Show();
 }
 
-const SessionID& BrowserLiveTabContext::GetSessionID() const {
+SessionID BrowserLiveTabContext::GetSessionID() const {
   return browser_->session_id();
 }
 
@@ -147,12 +149,12 @@ sessions::LiveTabContext* BrowserLiveTabContext::Create(
     const std::string& workspace) {
   std::unique_ptr<Browser::CreateParams> create_params;
   if (app_name.empty()) {
-    create_params = base::MakeUnique<Browser::CreateParams>(
+    create_params = std::make_unique<Browser::CreateParams>(
         Browser::CreateParams(profile, true));
     create_params->initial_bounds = bounds;
   } else {
     // Only trusted app popup windows should ever be restored.
-    create_params = base::MakeUnique<Browser::CreateParams>(
+    create_params = std::make_unique<Browser::CreateParams>(
         Browser::CreateParams::CreateForApp(app_name, true /* trusted_source */,
                                             bounds, profile,
                                             true /* user_gesture */));
@@ -172,7 +174,7 @@ sessions::LiveTabContext* BrowserLiveTabContext::FindContextForWebContents(
 
 // static
 sessions::LiveTabContext* BrowserLiveTabContext::FindContextWithID(
-    SessionID::id_type desired_id) {
+    SessionID desired_id) {
   Browser* browser = chrome::FindBrowserWithID(desired_id);
   return browser ? browser->live_tab_context() : nullptr;
 }

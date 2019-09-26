@@ -7,11 +7,11 @@
 
 #include <stddef.h>
 
-#import "base/mac/scoped_nsobject.h"
 #include "ios/web/public/browser_url_rewriter.h"
 #include "ios/web/public/navigation_item_list.h"
 #include "ios/web/public/referrer.h"
 #include "ios/web/public/reload_type.h"
+#include "ios/web/public/user_agent.h"
 #include "ui/base/page_transition_types.h"
 
 @class NSDictionary;
@@ -51,6 +51,9 @@ class NavigationManager {
     // The URL to load. Must be set.
     GURL url;
 
+    // The URL to display in Omnibox. If empty, |url| will be displayed.
+    GURL virtual_url;
+
     // The referrer for the load. May be empty.
     Referrer referrer;
 
@@ -65,11 +68,11 @@ class NavigationManager {
     bool is_renderer_initiated;
 
     // Any extra HTTP headers to add to the load.
-    base::scoped_nsobject<NSDictionary> extra_headers;
+    NSDictionary* extra_headers;
 
     // Any post data to send with the load. When setting this, you should
     // generally set a Content-Type header as well.
-    base::scoped_nsobject<NSData> post_data;
+    NSData* post_data;
 
     // Create a new WebLoadParams with the given URL and defaults for all other
     // parameters.
@@ -174,6 +177,10 @@ class NavigationManager {
   // initiates a new navigation to its URL.
   // TODO(crbug.com/700958): implement the logic for |check_for_repost|.
   virtual void Reload(ReloadType reload_type, bool check_for_repost) = 0;
+
+  // Reloads the visible item under the specified UserAgentType.
+  // TODO(crbug.com/738020): combine both Reload() implementations.
+  virtual void ReloadWithUserAgentType(UserAgentType user_agent_type) = 0;
 
   // Returns a list of all non-redirected NavigationItems whose index precedes
   // or follows the current index.

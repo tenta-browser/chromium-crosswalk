@@ -33,8 +33,8 @@
         Workspace.Workspace.Events.UISourceCodeAdded, Workspace.workspace,
         uiSourceCode => uiSourceCode.url().startsWith('http'));
     if (!networkUISourceCode) {
-      testRunner.addResult('ERROR: No uiSourceCode');
-      testRunner.completeTest();
+      TestRunner.addResult('ERROR: No uiSourceCode');
+      TestRunner.completeTest();
       return;
     }
     TestRunner.addResult('Found network UISourceCode: ' + networkUISourceCode.url());
@@ -57,8 +57,6 @@
   async function createFileSystem() {
     var {isolatedFileSystem, project} = await BindingsTestRunner.createOverrideProject(fileSystemPath);
     BindingsTestRunner.setOverridesEnabled(true);
-    Persistence.networkPersistenceManager.addFileSystemOverridesProject(
-        Persistence.NetworkPersistenceManager.inspectedPageDomain(), project);
     return {isolatedFileSystem, project};
   }
 })();

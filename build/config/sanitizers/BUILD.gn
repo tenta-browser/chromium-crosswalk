@@ -170,7 +170,7 @@ config("default_sanitizer_ldflags") {
     ":deps",
   ]
 
-  if (is_posix) {
+  if (is_posix || is_fuchsia) {
     ldflags = []
     if (is_asan) {
       ldflags += [ "-fsanitize=address" ]
@@ -255,16 +255,18 @@ config("common_sanitizer_flags") {
     assert(is_clang, "sanitizers only supported with clang")
     assert(!is_official_build, "sanitizers not supported in official builds")
 
-    if (!sanitizer_keep_symbols) {
-      cflags += [ "-gline-tables-only" ]
-    }
+    if (!sanitizer_no_symbols) {
+      if (!sanitizer_keep_symbols) {
+        cflags += [ "-gline-tables-only" ]
+      }
 
-    cflags += [
-      # Column info in debug data confuses Visual Studio's debugger, so don't
-      # use this by default.  However, clusterfuzz needs it for good attribution
-      # of reports to CLs, so turn it on there.
-      "-gcolumn-info",
-    ]
+      cflags += [
+        # Column info in debug data confuses Visual Studio's debugger, so don't
+        # use this by default.  However, clusterfuzz needs it for good
+        # attribution of reports to CLs, so turn it on there.
+        "-gcolumn-info",
+      ]
+    }
 
     # Frame pointers are controlled in //build/config/compiler:default_stack_frames
   }
@@ -397,7 +399,6 @@ config("cfi_icall_generalize_pointers") {
 
 config("coverage_flags") {
   cflags = []
-
   if (use_sanitizer_coverage) {
     cflags += [
       "-fsanitize-coverage=$sanitizer_coverage_flags",

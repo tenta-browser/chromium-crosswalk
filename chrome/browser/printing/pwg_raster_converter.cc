@@ -16,13 +16,12 @@
 #include "base/location.h"
 #include "base/logging.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/sequenced_task_runner.h"
 #include "base/task_scheduler/post_task.h"
 #include "base/threading/thread_restrictions.h"
 #include "base/threading/thread_task_runner_handle.h"
-#include "chrome/common/chrome_utility_printing_messages.h"
-#include "chrome/common/printing/pdf_to_pwg_raster_converter.mojom.h"
+#include "chrome/services/printing/public/mojom/constants.mojom.h"
+#include "chrome/services/printing/public/mojom/pdf_to_pwg_raster_converter.mojom.h"
 #include "components/cloud_devices/common/cloud_device_description.h"
 #include "components/cloud_devices/common/printer_description.h"
 #include "content/public/browser/browser_thread.h"
@@ -111,19 +110,19 @@ bool FileHandlers::IsValid() {
 //    This step posts |FileHandlers| to be destroyed on |blocking_task_runner_|.
 // All these steps work sequentially, so no data should be accessed
 // simultaneously by several threads.
-class PWGRasterConverterHelper
-    : public base::RefCountedThreadSafe<PWGRasterConverterHelper> {
+class PwgRasterConverterHelper
+    : public base::RefCountedThreadSafe<PwgRasterConverterHelper> {
  public:
-  PWGRasterConverterHelper(const PdfRenderSettings& settings,
+  PwgRasterConverterHelper(const PdfRenderSettings& settings,
                            const PwgRasterSettings& bitmap_settings);
 
   void Convert(base::RefCountedMemory* data,
-               PWGRasterConverter::ResultCallback callback);
+               PwgRasterConverter::ResultCallback callback);
 
  private:
-  friend class base::RefCountedThreadSafe<PWGRasterConverterHelper>;
+  friend class base::RefCountedThreadSafe<PwgRasterConverterHelper>;
 
-  ~PWGRasterConverterHelper();
+  ~PwgRasterConverterHelper();
 
   void RunCallback(bool success);
 
@@ -131,16 +130,16 @@ class PWGRasterConverterHelper
 
   PdfRenderSettings settings_;
   PwgRasterSettings bitmap_settings_;
-  mojo::InterfacePtr<printing::mojom::PDFToPWGRasterConverter>
+  mojo::InterfacePtr<printing::mojom::PdfToPwgRasterConverter>
       pdf_to_pwg_raster_converter_ptr_;
-  PWGRasterConverter::ResultCallback callback_;
+  PwgRasterConverter::ResultCallback callback_;
   const scoped_refptr<base::SequencedTaskRunner> blocking_task_runner_;
   std::unique_ptr<FileHandlers, base::OnTaskRunnerDeleter> files_;
 
-  DISALLOW_COPY_AND_ASSIGN(PWGRasterConverterHelper);
+  DISALLOW_COPY_AND_ASSIGN(PwgRasterConverterHelper);
 };
 
-PWGRasterConverterHelper::PWGRasterConverterHelper(
+PwgRasterConverterHelper::PwgRasterConverterHelper(
     const PdfRenderSettings& settings,
     const PwgRasterSettings& bitmap_settings)
     : settings_(settings),
@@ -150,11 +149,11 @@ PWGRasterConverterHelper::PWGRasterConverterHelper(
            base::TaskShutdownBehavior::BLOCK_SHUTDOWN})),
       files_(nullptr, base::OnTaskRunnerDeleter(blocking_task_runner_)) {}
 
-PWGRasterConverterHelper::~PWGRasterConverterHelper() {}
+PwgRasterConverterHelper::~PwgRasterConverterHelper() {}
 
-void PWGRasterConverterHelper::Convert(
+void PwgRasterConverterHelper::Convert(
     base::RefCountedMemory* data,
-    PWGRasterConverter::ResultCallback callback) {
+    PwgRasterConverter::ResultCallback callback) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
 
   callback_ = std::move(callback);
@@ -165,10 +164,10 @@ void PWGRasterConverterHelper::Convert(
       FROM_HERE,
       base::BindOnce(&FileHandlers::Init, base::Unretained(files_.get()),
                      base::RetainedRef(data)),
-      base::BindOnce(&PWGRasterConverterHelper::OnFilesReadyOnUIThread, this));
+      base::BindOnce(&PwgRasterConverterHelper::OnFilesReadyOnUIThread, this));
 }
 
-void PWGRasterConverterHelper::OnFilesReadyOnUIThread() {
+void PwgRasterConverterHelper::OnFilesReadyOnUIThread() {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
 
   if (!files_->IsValid()) {
@@ -178,28 +177,29 @@ void PWGRasterConverterHelper::OnFilesReadyOnUIThread() {
 
   content::ServiceManagerConnection::GetForProcess()
       ->GetConnector()
-      ->BindInterface(printing::mojom::kPdfToPwgRasterConverterServiceName,
+      ->BindInterface(printing::mojom::kChromePrintingServiceName,
                       &pdf_to_pwg_raster_converter_ptr_);
 
   pdf_to_pwg_raster_converter_ptr_.set_connection_error_handler(
-      base::Bind(&PWGRasterConverterHelper::RunCallback, this, false));
+      base::Bind(&PwgRasterConverterHelper::RunCallback, this, false));
 
   pdf_to_pwg_raster_converter_ptr_->Convert(
       mojo::WrapPlatformFile(files_->GetPdfForProcess()), settings_,
       bitmap_settings_, mojo::WrapPlatformFile(files_->GetPwgForProcess()),
-      base::Bind(&PWGRasterConverterHelper::RunCallback, this));
+      base::Bind(&PwgRasterConverterHelper::RunCallback, this));
 }
 
-void PWGRasterConverterHelper::RunCallback(bool success) {
+void PwgRasterConverterHelper::RunCallback(bool success) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   if (callback_)
     std::move(callback_).Run(success, files_->GetPwgPath());
+  pdf_to_pwg_raster_converter_ptr_.reset();
 }
 
-class PWGRasterConverterImpl : public PWGRasterConverter {
+class PwgRasterConverterImpl : public PwgRasterConverter {
  public:
-  PWGRasterConverterImpl();
-  ~PWGRasterConverterImpl() override;
+  PwgRasterConverterImpl();
+  ~PwgRasterConverterImpl() override;
 
   void Start(base::RefCountedMemory* data,
              const PdfRenderSettings& conversion_settings,
@@ -207,69 +207,70 @@ class PWGRasterConverterImpl : public PWGRasterConverter {
              ResultCallback callback) override;
 
  private:
-  // TODO (rbpotter): Once CancelableOnceCallback is added, remove this and
-  // change callback_ to a CancelableOnceCallback.
-  void RunCallback(bool success, const base::FilePath& temp_file);
+  scoped_refptr<PwgRasterConverterHelper> utility_client_;
 
-  scoped_refptr<PWGRasterConverterHelper> utility_client_;
-  ResultCallback callback_;
-  base::WeakPtrFactory<PWGRasterConverterImpl> weak_ptr_factory_;
+  // Cancelable version of ResultCallback.
+  base::CancelableOnceCallback<void(bool, const base::FilePath&)> callback_;
 
-  DISALLOW_COPY_AND_ASSIGN(PWGRasterConverterImpl);
+  DISALLOW_COPY_AND_ASSIGN(PwgRasterConverterImpl);
 };
 
-PWGRasterConverterImpl::PWGRasterConverterImpl() : weak_ptr_factory_(this) {}
+PwgRasterConverterImpl::PwgRasterConverterImpl() = default;
 
-PWGRasterConverterImpl::~PWGRasterConverterImpl() {
-}
+PwgRasterConverterImpl::~PwgRasterConverterImpl() = default;
 
-void PWGRasterConverterImpl::Start(base::RefCountedMemory* data,
+void PwgRasterConverterImpl::Start(base::RefCountedMemory* data,
                                    const PdfRenderSettings& conversion_settings,
                                    const PwgRasterSettings& bitmap_settings,
                                    ResultCallback callback) {
-  // Bind callback here and pass a wrapper to the utility client to avoid
-  // calling callback if PWGRasterConverterImpl is destroyed.
-  callback_ = std::move(callback);
-  utility_client_ = base::MakeRefCounted<PWGRasterConverterHelper>(
+  callback_.Reset(std::move(callback));
+  utility_client_ = base::MakeRefCounted<PwgRasterConverterHelper>(
       conversion_settings, bitmap_settings);
-  utility_client_->Convert(data,
-                           base::BindOnce(&PWGRasterConverterImpl::RunCallback,
-                                          weak_ptr_factory_.GetWeakPtr()));
-}
-
-void PWGRasterConverterImpl::RunCallback(bool success,
-                                         const base::FilePath& temp_file) {
-  std::move(callback_).Run(success, temp_file);
+  utility_client_->Convert(data, callback_.callback());
 }
 
 }  // namespace
 
 // static
-std::unique_ptr<PWGRasterConverter> PWGRasterConverter::CreateDefault() {
-  return base::MakeUnique<PWGRasterConverterImpl>();
+std::unique_ptr<PwgRasterConverter> PwgRasterConverter::CreateDefault() {
+  return std::make_unique<PwgRasterConverterImpl>();
 }
 
 // static
-PdfRenderSettings PWGRasterConverter::GetConversionSettings(
+PdfRenderSettings PwgRasterConverter::GetConversionSettings(
     const cloud_devices::CloudDeviceDescription& printer_capabilities,
-    const gfx::Size& page_size) {
-  int dpi = kDefaultPdfDpi;
+    const gfx::Size& page_size,
+    bool use_color) {
+  gfx::Size dpi = gfx::Size(kDefaultPdfDpi, kDefaultPdfDpi);
   cloud_devices::printer::DpiCapability dpis;
   if (dpis.LoadFrom(printer_capabilities))
-    dpi = std::max(dpis.GetDefault().horizontal, dpis.GetDefault().vertical);
+    dpi = gfx::Size(dpis.GetDefault().horizontal, dpis.GetDefault().vertical);
 
-  const double scale = static_cast<double>(dpi) / kPointsPerInch;
+  bool page_is_landscape =
+      static_cast<double>(page_size.width()) / dpi.width() >
+      static_cast<double>(page_size.height()) / dpi.height();
+
+  // Pdfium assumes that page width is given in dpi.width(), and height in
+  // dpi.height(). If we rotate the page, we need to also swap the DPIs.
+  gfx::Size final_page_size = page_size;
+  if (page_is_landscape) {
+    final_page_size = gfx::Size(page_size.height(), page_size.width());
+    dpi = gfx::Size(dpi.height(), dpi.width());
+  }
+  double scale_x = static_cast<double>(dpi.width()) / kPointsPerInch;
+  double scale_y = static_cast<double>(dpi.height()) / kPointsPerInch;
 
   // Make vertical rectangle to optimize streaming to printer. Fix orientation
   // by autorotate.
-  gfx::Rect area(std::min(page_size.width(), page_size.height()) * scale,
-                 std::max(page_size.width(), page_size.height()) * scale);
-  return PdfRenderSettings(area, gfx::Point(0, 0), dpi, /*autorotate=*/true,
+  gfx::Rect area(final_page_size.width() * scale_x,
+                 final_page_size.height() * scale_y);
+  return PdfRenderSettings(area, gfx::Point(0, 0), dpi,
+                           /*autorotate=*/true, use_color,
                            PdfRenderSettings::Mode::NORMAL);
 }
 
 // static
-PwgRasterSettings PWGRasterConverter::GetBitmapSettings(
+PwgRasterSettings PwgRasterConverter::GetBitmapSettings(
     const cloud_devices::CloudDeviceDescription& printer_capabilities,
     const cloud_devices::CloudDeviceDescription& ticket) {
   cloud_devices::printer::DuplexTicketItem duplex_item;
@@ -277,6 +278,36 @@ PwgRasterSettings PWGRasterConverter::GetBitmapSettings(
       cloud_devices::printer::NO_DUPLEX;
   if (duplex_item.LoadFrom(ticket))
     duplex_value = duplex_item.value();
+
+  // This assumes |ticket| contains a color ticket item. In case it does not, or
+  // the color is invalid, |color_value| will default to AUTO_COLOR, which works
+  // just fine. With AUTO_COLOR, it may be possible to better determine the
+  // value for |use_color| based on |printer_capabilities|, rather than just
+  // defaulting to the safe value of true. Parsing |printer_capabilities|
+  // requires work, which this method is avoiding on purpose.
+  cloud_devices::printer::Color color_value;
+  cloud_devices::printer::ColorTicketItem color_item;
+  if (color_item.LoadFrom(ticket) && color_item.IsValid())
+    color_value = color_item.value();
+  DCHECK(color_value.IsValid());
+  bool use_color;
+  switch (color_value.type) {
+    case cloud_devices::printer::STANDARD_MONOCHROME:
+    case cloud_devices::printer::CUSTOM_MONOCHROME:
+      use_color = false;
+      break;
+
+    case cloud_devices::printer::STANDARD_COLOR:
+    case cloud_devices::printer::CUSTOM_COLOR:
+    case cloud_devices::printer::AUTO_COLOR:
+      use_color = true;
+      break;
+
+    default:
+      NOTREACHED();
+      use_color = true;  // Still need to initialize |color| or MSVC will warn.
+      break;
+  }
 
   cloud_devices::printer::PwgRasterConfigCapability raster_capability;
   // If the raster capability fails to load, |raster_capability| will contain
@@ -306,6 +337,14 @@ PwgRasterSettings PWGRasterConverter::GetBitmapSettings(
 
   result.rotate_all_pages = raster_capability.value().rotate_all_pages;
   result.reverse_page_order = raster_capability.value().reverse_order_streaming;
+
+  // No need to check for SRGB_8 support in |types|. CDD spec says:
+  // "any printer that doesn't support SGRAY_8 must be able to perform
+  // conversion from RGB to grayscale... "
+  const auto& types = raster_capability.value().document_types_supported;
+  result.use_color =
+      use_color || !base::ContainsValue(types, cloud_devices::printer::SGRAY_8);
+
   return result;
 }
 

@@ -9,7 +9,6 @@
 #include "gpu/config/gpu_info.h"
 #include "gpu/ipc/common/dx_diag_node_struct_traits.h"
 #include "gpu/ipc/common/gpu_info.mojom.h"
-#include "mojo/common/common_custom_types_struct_traits.h"
 #include "ui/gfx/geometry/mojo/geometry_struct_traits.h"
 
 namespace mojo {
@@ -40,15 +39,6 @@ struct StructTraits<gpu::mojom::GpuDeviceDataView, gpu::GPUInfo::GPUDevice> {
       const gpu::GPUInfo::GPUDevice& input) {
     return input.device_string;
   }
-};
-
-template <>
-struct EnumTraits<gpu::mojom::CollectInfoResult, gpu::CollectInfoResult> {
-  static gpu::mojom::CollectInfoResult ToMojom(
-      gpu::CollectInfoResult collect_info_result);
-
-  static bool FromMojom(gpu::mojom::CollectInfoResult input,
-                        gpu::CollectInfoResult* out);
 };
 
 template <>
@@ -228,16 +218,16 @@ struct StructTraits<gpu::mojom::GpuInfoDataView, gpu::GPUInfo> {
 
   static bool sandboxed(const gpu::GPUInfo& input) { return input.sandboxed; }
 
-  static int process_crash_count(const gpu::GPUInfo& input) {
-    return input.process_crash_count;
-  }
-
   static bool in_process_gpu(const gpu::GPUInfo& input) {
     return input.in_process_gpu;
   }
 
   static bool passthrough_cmd_decoder(const gpu::GPUInfo& input) {
     return input.passthrough_cmd_decoder;
+  }
+
+  static bool direct_composition(const gpu::GPUInfo& input) {
+    return input.direct_composition;
   }
 
   static bool supports_overlays(const gpu::GPUInfo& input) {
@@ -248,33 +238,18 @@ struct StructTraits<gpu::mojom::GpuInfoDataView, gpu::GPUInfo> {
     return input.can_support_threaded_texture_mailbox;
   }
 
-  static gpu::CollectInfoResult basic_info_state(const gpu::GPUInfo& input) {
-    return input.basic_info_state;
-  }
-
-  static gpu::CollectInfoResult context_info_state(const gpu::GPUInfo& input) {
-    return input.context_info_state;
-  }
 #if defined(OS_WIN)
   static const gpu::DxDiagNode& dx_diagnostics(const gpu::GPUInfo& input) {
     return input.dx_diagnostics;
   }
-#else
-  static const base::Optional<gpu::DxDiagNode>& dx_diagnostics(
-      const gpu::GPUInfo& input) {
-    static const base::Optional<gpu::DxDiagNode> dx_diag_node(base::nullopt);
-    return dx_diag_node;
-  }
-#endif
 
-  static gpu::CollectInfoResult dx_diagnostics_info_state(
-      const gpu::GPUInfo& input) {
-#if defined(OS_WIN)
-    return input.dx_diagnostics_info_state;
-#else
-    return gpu::CollectInfoResult::kCollectInfoNone;
-#endif
+  static bool supports_dx12(const gpu::GPUInfo& input) {
+    return input.supports_dx12;
   }
+  static bool supports_vulkan(const gpu::GPUInfo& input) {
+    return input.supports_vulkan;
+  }
+#endif
 
   static const gpu::VideoDecodeAcceleratorCapabilities&
   video_decode_accelerator_capabilities(const gpu::GPUInfo& input) {

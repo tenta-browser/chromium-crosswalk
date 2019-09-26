@@ -15,12 +15,13 @@
 
 #include "base/auto_reset.h"
 #include "base/bind.h"
+#include "base/bind_helpers.h"
 #include "base/callback_helpers.h"
 #include "base/compiler_specific.h"
 #include "base/location.h"
 #include "base/macros.h"
+#include "base/metrics/histogram_functions.h"
 #include "base/metrics/histogram_macros.h"
-#include "base/metrics/sparse_histogram.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/string_number_conversions.h"  // For HexEncode.
 #include "base/strings/string_util.h"  // For LowerCaseEqualsASCII.
@@ -179,6 +180,7 @@ HttpCache::Transaction::Transaction(RequestPriority priority, HttpCache* cache)
       validation_cause_(VALIDATION_CAUSE_UNDEFINED),
       cant_conditionalize_zero_freshness_from_memhint_(false),
       recorded_histograms_(false),
+      parallel_writing_pattern_(PARALLEL_WRITING_NONE),
       moved_network_transaction_to_writers_(false),
       websocket_handshake_stream_base_create_helper_(NULL),
       in_do_loop_(false),
@@ -365,7 +367,7 @@ int HttpCache::Transaction::Read(IOBuffer* buf, int buf_len,
   read_buf_ = buf;
   io_buf_len_ = buf_len;
   int rv = TransitionToReadingState();
-  if (rv != OK)
+  if (rv != OK || next_state_ == STATE_NONE)
     return rv;
 
   rv = DoLoop(OK);
@@ -385,16 +387,20 @@ int HttpCache::Transaction::TransitionToReadingState() {
       // LOAD_DISABLE_CACHE) or there was an error during the headers phase
       // due to which the transaction cannot write to the cache or the consumer
       // is reading the auth response from the network.
-      // TODO(crbug.com/740947) to get rid of this state in future.
+      // TODO(http://crbug.com/740947) to get rid of this state in future.
       next_state_ = STATE_NETWORK_READ;
       return OK;
     }
 
     // If there is no network, and no cache entry, then there is nothing to read
-    // from. An error state should be set for the next read, else this
-    // transaction should have been terminated once it reached this state.
+    // from.
     next_state_ = STATE_NONE;
-    DCHECK_GT(OK, shared_writing_error_);
+
+    // An error state should be set for the next read, else this transaction
+    // should have been terminated once it reached this state. To assert we
+    // could dcheck that shared_writing_error_ is set to a valid error value but
+    // in some specific conditions (http://crbug.com/806344) it's possible that
+    // the consumer does an extra Read in which case the assert will fail.
     return shared_writing_error_;
   }
 
@@ -558,10 +564,12 @@ void HttpCache::Transaction::PopulateNetErrorDetails(
 
 void HttpCache::Transaction::SetPriority(RequestPriority priority) {
   priority_ = priority;
-  if (network_trans_) {
-    DCHECK(!InWriters());
+
+  if (network_trans_)
     network_trans_->SetPriority(priority_);
-  } else if (InWriters()) {
+
+  if (InWriters()) {
+    DCHECK(!network_trans_ || partial_);
     entry_->writers->UpdatePriority();
   }
 }
@@ -660,6 +668,15 @@ void HttpCache::Transaction::WriteModeTransactionAboutToBecomeReader() {
       entry_->writers->network_transaction()) {
     SaveNetworkTransactionInfo(*(entry_->writers->network_transaction()));
   }
+}
+
+void HttpCache::Transaction::MaybeSetParallelWritingPatternForMetrics(
+    HttpCache::ParallelWritingPattern pattern) {
+  // It's possible a transaction could not join existing writers and then
+  // creates a new writers. In that case the original reason for not being able
+  // to join writers should be logged.
+  if (parallel_writing_pattern_ == PARALLEL_WRITING_NONE)
+    parallel_writing_pattern_ = pattern;
 }
 
 //-----------------------------------------------------------------------------
@@ -1112,7 +1129,7 @@ int HttpCache::Transaction::DoOpenEntry() {
   uint8_t in_memory_info =
       cache_->GetCurrentBackend()->GetEntryInMemoryData(cache_key_);
   if (MaybeRejectBasedOnEntryInMemoryData(in_memory_info)) {
-    cache_->GetCurrentBackend()->DoomEntry(cache_key_, base::Bind([](int) {}));
+    cache_->GetCurrentBackend()->DoomEntry(cache_key_, base::DoNothing());
     return net::ERR_CACHE_ENTRY_NOT_SUITABLE;
   }
 
@@ -2493,8 +2510,9 @@ int HttpCache::Transaction::BeginPartialCacheValidation() {
 int HttpCache::Transaction::ValidateEntryHeadersAndContinue() {
   DCHECK_EQ(mode_, READ_WRITE);
 
-  if (!partial_->UpdateFromStoredHeaders(
-          response_.headers.get(), entry_->disk_entry, truncated_)) {
+  if (!partial_->UpdateFromStoredHeaders(response_.headers.get(),
+                                         entry_->disk_entry, truncated_,
+                                         cache_->IsWritingInProgress(entry_))) {
     return DoRestartPartialRequest();
   }
 
@@ -2982,11 +3000,14 @@ int HttpCache::Transaction::WriteResponseInfoToEntry(bool truncated) {
 
   io_buf_len_ = data->pickle()->size();
 
-  // Summarize some info on cacheability in memory.
-  cache_->GetCurrentBackend()->SetEntryInMemoryData(
-      cache_key_, ComputeUnusablePerCachingHeaders()
-                      ? HINT_UNUSABLE_PER_CACHING_HEADERS
-                      : 0);
+  // Summarize some info on cacheability in memory. Don't do it if doomed
+  // since then |entry_| isn't definitive for |cache_key_|.
+  if (!entry_->doomed) {
+    cache_->GetCurrentBackend()->SetEntryInMemoryData(
+        cache_key_, ComputeUnusablePerCachingHeaders()
+                        ? HINT_UNUSABLE_PER_CACHING_HEADERS
+                        : 0);
+  }
 
   return entry_->disk_entry->WriteData(kResponseInfoIndex, 0, data.get(),
                                        io_buf_len_, io_callback_, true);
@@ -3039,11 +3060,11 @@ int HttpCache::Transaction::OnCacheReadError(int result, bool restart) {
   DLOG(ERROR) << "ReadData failed: " << result;
   const int result_for_histogram = std::max(0, -result);
   if (restart) {
-    UMA_HISTOGRAM_SPARSE_SLOWLY("HttpCache.ReadErrorRestartable",
-                                result_for_histogram);
+    base::UmaHistogramSparse("HttpCache.ReadErrorRestartable",
+                             result_for_histogram);
   } else {
-    UMA_HISTOGRAM_SPARSE_SLOWLY("HttpCache.ReadErrorNonRestartable",
-                                result_for_histogram);
+    base::UmaHistogramSparse("HttpCache.ReadErrorNonRestartable",
+                             result_for_histogram);
   }
 
   // Avoid using this entry in the future.
@@ -3136,12 +3157,16 @@ void HttpCache::Transaction::ResetPartialState(bool delete_object) {
   if (!delete_object) {
     // The simplest way to re-initialize partial_ is to create a new object.
     partial_.reset(new PartialData());
-    if (partial_->Init(request_->extra_headers))
+
+    // Reset the range header to the original value (http://crbug.com/820599).
+    custom_request_->extra_headers.RemoveHeader(HttpRequestHeaders::kRange);
+    if (partial_->Init(initial_request_->extra_headers))
       partial_->SetHeaders(custom_request_->extra_headers);
     else
       partial_.reset();
   }
 }
+
 void HttpCache::Transaction::ResetNetworkTransaction() {
   SaveNetworkTransactionInfo(*network_trans_);
   network_trans_.reset();
@@ -3235,6 +3260,9 @@ void HttpCache::Transaction::SyncCacheEntryStatusToResponse() {
 void HttpCache::Transaction::RecordHistograms() {
   DCHECK(!recorded_histograms_);
   recorded_histograms_ = true;
+
+  UMA_HISTOGRAM_ENUMERATION("HttpCache.ParallelWritingPattern",
+                            parallel_writing_pattern_, PARALLEL_WRITING_MAX);
 
   if (CacheEntryStatus::ENTRY_UNDEFINED == cache_entry_status_)
     return;
@@ -3344,7 +3372,8 @@ void HttpCache::Transaction::RecordHistograms() {
   DCHECK(!range_requested_) << "Cache entry status " << cache_entry_status_;
   DCHECK(!first_cache_access_since_.is_null());
 
-  TimeDelta total_time = base::TimeTicks::Now() - first_cache_access_since_;
+  base::TimeTicks now = base::TimeTicks::Now();
+  TimeDelta total_time = now - first_cache_access_since_;
 
   UMA_HISTOGRAM_TIMES("HttpCache.AccessToDone", total_time);
 
@@ -3365,6 +3394,7 @@ void HttpCache::Transaction::RecordHistograms() {
   }
 
   TimeDelta before_send_time = send_request_since_ - first_cache_access_since_;
+  TimeDelta after_send_time = now - send_request_since_;
   int64_t before_send_percent = (total_time.ToInternalValue() == 0)
                                     ? 0
                                     : before_send_time * 100 / total_time;
@@ -3383,23 +3413,28 @@ void HttpCache::Transaction::RecordHistograms() {
     case CacheEntryStatus::ENTRY_CANT_CONDITIONALIZE: {
       UMA_HISTOGRAM_TIMES("HttpCache.BeforeSend.CantConditionalize",
                           before_send_time);
+      UMA_HISTOGRAM_TIMES("HttpCache.AfterSend.CantConditionalize",
+                          after_send_time);
       UMA_HISTOGRAM_PERCENTAGE("HttpCache.PercentBeforeSend.CantConditionalize",
                                before_send_sample);
       break;
     }
     case CacheEntryStatus::ENTRY_NOT_IN_CACHE: {
       UMA_HISTOGRAM_TIMES("HttpCache.BeforeSend.NotCached", before_send_time);
+      UMA_HISTOGRAM_TIMES("HttpCache.AfterSend.NotCached", after_send_time);
       UMA_HISTOGRAM_PERCENTAGE("HttpCache.PercentBeforeSend.NotCached",
                                before_send_sample);
       break;
     }
     case CacheEntryStatus::ENTRY_VALIDATED: {
       UMA_HISTOGRAM_TIMES("HttpCache.BeforeSend.Validated", before_send_time);
+      UMA_HISTOGRAM_TIMES("HttpCache.AfterSend.Validated", after_send_time);
       UMA_HISTOGRAM_PERCENTAGE("HttpCache.PercentBeforeSend.Validated",
                                before_send_sample);
       break;
     }
     case CacheEntryStatus::ENTRY_UPDATED: {
+      UMA_HISTOGRAM_TIMES("HttpCache.AfterSend.Updated", after_send_time);
       UMA_HISTOGRAM_TIMES("HttpCache.BeforeSend.Updated", before_send_time);
       UMA_HISTOGRAM_PERCENTAGE("HttpCache.PercentBeforeSend.Updated",
                                before_send_sample);

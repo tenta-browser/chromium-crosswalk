@@ -28,6 +28,7 @@
 #include "components/policy/policy_constants.h"
 #include "components/sync/driver/sync_service.h"
 #include "components/sync/engine/cycle/sync_cycle_snapshot.h"
+#include "components/sync/engine_impl/loopback_server/persistent_permanent_entity.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "ui/base/layout.h"
 
@@ -92,15 +93,6 @@ class TwoClientBookmarksSyncTest : public SyncTest {
 
  private:
   DISALLOW_COPY_AND_ASSIGN(TwoClientBookmarksSyncTest);
-};
-
-class LegacyTwoClientBookmarksSyncTest : public SyncTest {
- public:
-  LegacyTwoClientBookmarksSyncTest() : SyncTest(TWO_CLIENT_LEGACY) {}
-  ~LegacyTwoClientBookmarksSyncTest() override {}
-
- private:
-  DISALLOW_COPY_AND_ASSIGN(LegacyTwoClientBookmarksSyncTest);
 };
 
 IN_PROC_BROWSER_TEST_F(TwoClientBookmarksSyncTest, Sanity) {
@@ -874,15 +866,8 @@ IN_PROC_BROWSER_TEST_F(TwoClientBookmarksSyncTest, SC_ReverseTheOrderOf10BMs) {
   ASSERT_TRUE(BookmarksMatchVerifierChecker().Wait());
 }
 
-// flaky on Windows: http://crbug.com/412169
-#if defined(OS_WIN) || defined(OS_MACOSX)
-#define MAYBE_SC_MovingBMsFromBMBarToBMFolder \
-  DISABLED_SC_MovingBMsFromBMBarToBMFolder
-#else
-#define MAYBE_SC_MovingBMsFromBMBarToBMFolder SC_MovingBMsFromBMBarToBMFolder
-#endif
 IN_PROC_BROWSER_TEST_F(TwoClientBookmarksSyncTest,
-                       MAYBE_SC_MovingBMsFromBMBarToBMFolder) {
+                       SC_MovingBMsFromBMBarToBMFolder) {
   ASSERT_TRUE(SetupSync()) << "SetupSync() failed.";
   ASSERT_TRUE(AllModelsMatchVerifier());
 
@@ -906,15 +891,8 @@ IN_PROC_BROWSER_TEST_F(TwoClientBookmarksSyncTest,
   }
 }
 
-// flaky on Windows and Mac: http://crbug.com/412169
-#if defined(OS_WIN) || defined(OS_MACOSX)
-#define MAYBE_SC_MovingBMsFromBMFoldToBMBar \
-  DISABLED_SC_MovingBMsFromBMFoldToBMBar
-#else
-#define MAYBE_SC_MovingBMsFromBMFoldToBMBar SC_MovingBMsFromBMFoldToBMBar
-#endif
 IN_PROC_BROWSER_TEST_F(TwoClientBookmarksSyncTest,
-                       MAYBE_SC_MovingBMsFromBMFoldToBMBar) {
+                       SC_MovingBMsFromBMFoldToBMBar) {
   ASSERT_TRUE(SetupSync()) << "SetupSync() failed.";
   ASSERT_TRUE(AllModelsMatchVerifier());
 
@@ -1614,8 +1592,7 @@ IN_PROC_BROWSER_TEST_F(TwoClientBookmarksSyncTest, MC_DuplicateFolders) {
   ASSERT_FALSE(ContainsDuplicateBookmarks(0));
 }
 
-// This test fails when run with FakeServer and FakeServerInvalidationService.
-IN_PROC_BROWSER_TEST_F(LegacyTwoClientBookmarksSyncTest, MC_DeleteBookmark) {
+IN_PROC_BROWSER_TEST_F(TwoClientBookmarksSyncTest, MC_DeleteBookmark) {
   ASSERT_TRUE(SetupSync()) << "SetupSync() failed.";
   ASSERT_TRUE(GetClient(1)->DisableSyncForDatatype(syncer::BOOKMARKS));
 
@@ -1860,7 +1837,7 @@ IN_PROC_BROWSER_TEST_F(TwoClientBookmarksSyncTest,
   ASSERT_TRUE(IsEncryptionComplete(1));
   ASSERT_TRUE(GetSyncService(1)->IsPassphraseRequired());
 
-  // Client 1 adds bookmarks between the first two and between the second two.
+  // Client 0 adds bookmarks between the first two and between the second two.
   ASSERT_NE(nullptr, AddURL(0, 1, IndexedURLTitle(3), GURL(IndexedURL(3))));
   ASSERT_NE(nullptr, AddURL(0, 3, IndexedURLTitle(4), GURL(IndexedURL(4))));
   EXPECT_FALSE(AllModelsMatchVerifier());
@@ -1940,13 +1917,15 @@ IN_PROC_BROWSER_TEST_F(TwoClientBookmarksSyncTest, RacyPositionChanges) {
 
 // Trigger the server side creation of Synced Bookmarks. Ensure both clients
 // remain syncing afterwards. Add bookmarks to the synced bookmarks folder
-// and ensure both clients receive the boomkmark.
-IN_PROC_BROWSER_TEST_F(LegacyTwoClientBookmarksSyncTest,
-                       CreateSyncedBookmarks) {
+// and ensure both clients receive the bookmark.
+IN_PROC_BROWSER_TEST_F(TwoClientBookmarksSyncTest, CreateSyncedBookmarks) {
   ASSERT_TRUE(SetupSync()) << "SetupSync() failed.";
   ASSERT_TRUE(AllModelsMatchVerifier());
 
-  TriggerCreateSyncedBookmarks();
+  fake_server_->InjectEntity(syncer::PersistentPermanentEntity::CreateNew(
+      syncer::BOOKMARKS, "synced_bookmarks", "Synced Bookmarks",
+      "google_chrome_bookmarks"));
+  ASSERT_TRUE(BookmarksMatchChecker().Wait());
 
   // Add a bookmark on Client 0 and ensure it syncs over. This will also trigger
   // both clients downloading the new Synced Bookmarks folder.

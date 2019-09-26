@@ -15,8 +15,8 @@
 #include "content/common/content_export.h"
 #include "content/renderer/media_recorder/audio_track_recorder.h"
 #include "content/renderer/media_recorder/video_track_recorder.h"
-#include "third_party/WebKit/public/platform/WebMediaRecorderHandler.h"
-#include "third_party/WebKit/public/platform/WebMediaStream.h"
+#include "third_party/blink/public/platform/web_media_recorder_handler.h"
+#include "third_party/blink/public/platform/web_media_stream.h"
 
 namespace blink {
 class WebMediaRecorderHandlerClient;
@@ -46,7 +46,8 @@ class AudioTrackRecorder;
 class CONTENT_EXPORT MediaRecorderHandler final
     : public blink::WebMediaRecorderHandler {
  public:
-  MediaRecorderHandler();
+  explicit MediaRecorderHandler(
+      scoped_refptr<base::SingleThreadTaskRunner> task_runner);
   ~MediaRecorderHandler() override;
 
   // blink::WebMediaRecorderHandler.
@@ -123,6 +124,8 @@ class CONTENT_EXPORT MediaRecorderHandler final
 
   // Worker class doing the actual Webm Muxing work.
   std::unique_ptr<media::WebmMuxer> webm_muxer_;
+
+  scoped_refptr<base::SingleThreadTaskRunner> task_runner_;
 
   base::WeakPtrFactory<MediaRecorderHandler> weak_factory_;
 

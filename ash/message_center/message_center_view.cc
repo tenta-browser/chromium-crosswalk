@@ -10,6 +10,8 @@
 #include "ash/message_center/message_center_button_bar.h"
 #include "ash/message_center/message_center_style.h"
 #include "ash/message_center/notifier_settings_view.h"
+#include "ash/public/cpp/ash_features.h"
+#include "ash/public/cpp/ash_switches.h"
 #include "ash/resources/vector_icons/vector_icons.h"
 #include "ash/session/session_controller.h"
 #include "ash/shell.h"
@@ -21,15 +23,16 @@
 #include "build/build_config.h"
 #include "ui/accessibility/ax_node_data.h"
 #include "ui/base/l10n/l10n_util.h"
+#include "ui/compositor/paint_recorder.h"
 #include "ui/gfx/animation/slide_animation.h"
 #include "ui/gfx/canvas.h"
 #include "ui/gfx/geometry/insets.h"
 #include "ui/gfx/geometry/rect.h"
 #include "ui/gfx/geometry/size.h"
+#include "ui/gfx/skia_paint_util.h"
 #include "ui/message_center/message_center.h"
 #include "ui/message_center/message_center_types.h"
 #include "ui/message_center/public/cpp/message_center_constants.h"
-#include "ui/message_center/ui_controller.h"
 #include "ui/message_center/views/message_view.h"
 #include "ui/message_center/views/message_view_factory.h"
 #include "ui/message_center/views/notification_control_buttons_view.h"
@@ -51,10 +54,6 @@ using message_center::NotificationList;
 namespace ash {
 
 // static
-const SkColor MessageCenterView::kBackgroundColor =
-    SkColorSetARGB(0xF2, 0xf0, 0xf0, 0xf2);
-
-// static
 const size_t MessageCenterView::kMaxVisibleNotifications = 100;
 
 // static
@@ -65,6 +64,9 @@ namespace {
 constexpr int kMinScrollViewHeight = 77;
 constexpr int kEmptyViewHeight = 96;
 constexpr gfx::Insets kEmptyViewPadding(0, 0, 24, 0);
+constexpr int kScrollShadowOffsetY = -2;
+constexpr int kScrollShadowBlur = 2;
+constexpr SkColor kScrollShadowColor = SkColorSetA(SK_ColorBLACK, 0x24);
 
 void SetViewHierarchyEnabled(views::View* view, bool enabled) {
   for (int i = 0; i < view->child_count(); i++)
@@ -72,40 +74,108 @@ void SetViewHierarchyEnabled(views::View* view, bool enabled) {
   view->SetEnabled(enabled);
 }
 
-// View that is shown when there are no notifications.
-class EmptyNotificationView : public views::View {
+// Create a view that is shown when there are no notifications.
+views::View* CreateEmptyNotificationView() {
+  auto* view = new views::View;
+  auto layout = std::make_unique<views::BoxLayout>(views::BoxLayout::kVertical,
+                                                   kEmptyViewPadding, 0);
+  layout->set_main_axis_alignment(views::BoxLayout::MAIN_AXIS_ALIGNMENT_END);
+  layout->set_cross_axis_alignment(
+      views::BoxLayout::CROSS_AXIS_ALIGNMENT_CENTER);
+  view->SetLayoutManager(std::move(layout));
+
+  views::ImageView* icon = new views::ImageView();
+  icon->SetImage(gfx::CreateVectorIcon(kNotificationCenterAllDoneIcon,
+                                       message_center_style::kEmptyIconSize,
+                                       message_center_style::kEmptyViewColor));
+  icon->SetBorder(
+      views::CreateEmptyBorder(message_center_style::kEmptyIconPadding));
+  view->AddChildView(icon);
+
+  views::Label* label = new views::Label(
+      l10n_util::GetStringUTF16(IDS_ASH_MESSAGE_CENTER_NO_MESSAGES));
+  label->SetEnabledColor(message_center_style::kEmptyViewColor);
+  // "Roboto-Medium, 12sp" is specified in the mock.
+  label->SetFontList(
+      gfx::FontList().DeriveWithWeight(gfx::Font::Weight::MEDIUM));
+  label->SetHorizontalAlignment(gfx::ALIGN_CENTER);
+  label->SetSubpixelRenderingEnabled(false);
+  view->AddChildView(label);
+
+  view->SetPaintToLayer();
+  view->layer()->SetFillsBoundsOpaquely(false);
+
+  return view;
+}
+
+class MessageCenterScrollView : public views::ScrollView {
  public:
-  EmptyNotificationView() {
-    views::BoxLayout* layout =
-        new views::BoxLayout(views::BoxLayout::kVertical, kEmptyViewPadding, 0);
-    layout->set_main_axis_alignment(views::BoxLayout::MAIN_AXIS_ALIGNMENT_END);
-    layout->set_cross_axis_alignment(
-        views::BoxLayout::CROSS_AXIS_ALIGNMENT_CENTER);
-    SetLayoutManager(layout);
-
-    views::ImageView* icon = new views::ImageView();
-    icon->SetImage(gfx::CreateVectorIcon(
-        kNotificationCenterAllDoneIcon, message_center_style::kEmptyIconSize,
-        message_center_style::kEmptyViewColor));
-    icon->SetBorder(
-        views::CreateEmptyBorder(message_center_style::kEmptyIconPadding));
-    AddChildView(icon);
-
-    views::Label* label = new views::Label(
-        l10n_util::GetStringUTF16(IDS_ASH_MESSAGE_CENTER_NO_MESSAGES));
-    label->SetEnabledColor(message_center_style::kEmptyViewColor);
-    // "Roboto-Medium, 12sp" is specified in the mock.
-    label->SetFontList(message_center_style::GetFontListForSizeAndWeight(
-        message_center_style::kEmptyLabelSize, gfx::Font::Weight::MEDIUM));
-    label->SetHorizontalAlignment(gfx::ALIGN_CENTER);
-    AddChildView(label);
-  }
-
-  // views::View:
-  int GetHeightForWidth(int w) const override { return kEmptyViewHeight; }
+  MessageCenterScrollView(MessageCenterView* owner) : owner_(owner) {}
+  ~MessageCenterScrollView() override = default;
 
  private:
-  DISALLOW_COPY_AND_ASSIGN(EmptyNotificationView);
+  // views::View:
+  void GetAccessibleNodeData(ui::AXNodeData* node_data) override {
+    node_data->role = ax::mojom::Role::kDialog;
+    node_data->SetName(
+        l10n_util::GetStringUTF16(IDS_ASH_MESSAGE_CENTER_FOOTER_TITLE));
+  }
+
+  // views::ScrollBarController:
+  void ScrollToPosition(views::ScrollBar* source, int position) override {
+    views::ScrollView::ScrollToPosition(source, position);
+    owner_->UpdateScrollerShadowVisibility();
+  }
+
+  MessageCenterView* const owner_;
+
+  DISALLOW_COPY_AND_ASSIGN(MessageCenterScrollView);
+};
+
+// A view that displays a shadow at the bottom when |scroller_| is bounded.
+class ScrollShadowView : public views::View {
+ public:
+  ScrollShadowView(int max_scroll_view_height, int button_height)
+      : max_scroll_view_height_(max_scroll_view_height),
+        button_height_(button_height) {
+    SetPaintToLayer();
+    layer()->SetFillsBoundsOpaquely(false);
+    set_can_process_events_within_subtree(false);
+  }
+  ~ScrollShadowView() override = default;
+
+ protected:
+  void PaintChildren(const views::PaintInfo& paint_info) override {
+    views::View::PaintChildren(paint_info);
+
+    if (height() != max_scroll_view_height_)
+      return;
+
+    // Draw a shadow at the bottom of the viewport when scrolled.
+    DrawShadow(paint_info.context(),
+               gfx::Rect(0, height(), width(), button_height_));
+  }
+
+ private:
+  // Draws a drop shadow above |shadowed_area|.
+  void DrawShadow(const ui::PaintContext& context,
+                  const gfx::Rect& shadowed_area) {
+    ui::PaintRecorder recorder(context, size());
+    gfx::Canvas* canvas = recorder.canvas();
+    cc::PaintFlags flags;
+    gfx::ShadowValues shadow;
+    shadow.emplace_back(gfx::Vector2d(0, kScrollShadowOffsetY),
+                        kScrollShadowBlur, kScrollShadowColor);
+    flags.setLooper(gfx::CreateShadowDrawLooper(shadow));
+    flags.setAntiAlias(true);
+    canvas->ClipRect(shadowed_area, SkClipOp::kDifference);
+    canvas->DrawRect(shadowed_area, flags);
+  }
+
+  const int max_scroll_view_height_;
+  const int button_height_;
+
+  DISALLOW_COPY_AND_ASSIGN(ScrollShadowView);
 };
 
 }  // namespace
@@ -114,32 +184,35 @@ class EmptyNotificationView : public views::View {
 
 MessageCenterView::MessageCenterView(
     MessageCenter* message_center,
-    message_center::UiController* ui_controller,
     int max_height,
     bool initially_settings_visible)
     : message_center_(message_center),
-      ui_controller_(ui_controller),
       settings_visible_(initially_settings_visible),
       is_locked_(Shell::Get()->session_controller()->IsScreenLocked()) {
-  if (is_locked_)
+  if (is_locked_ && !features::IsLockScreenNotificationsEnabled())
     mode_ = Mode::LOCKED;
   else if (initially_settings_visible)
     mode_ = Mode::SETTINGS;
 
   message_center_->AddObserver(this);
   set_notify_enter_exit_on_child(true);
-  SetBackground(views::CreateSolidBackground(kBackgroundColor));
-  SetFocusBehavior(views::View::FocusBehavior::ALWAYS);
+  SetFocusBehavior(views::View::FocusBehavior::NEVER);
 
   button_bar_ = new MessageCenterButtonBar(
-      this, message_center, initially_settings_visible, GetButtonBarTitle());
+      this, message_center, initially_settings_visible, is_locked_);
   button_bar_->SetCloseAllButtonEnabled(false);
 
   const int button_height = button_bar_->GetPreferredSize().height();
+  const int max_scroll_view_height = max_height - button_height;
 
-  scroller_ = new views::ScrollView();
-  scroller_->SetBackgroundColor(kBackgroundColor);
-  scroller_->ClipHeightTo(kMinScrollViewHeight, max_height - button_height);
+  scroller_shadow_ =
+      new ScrollShadowView(max_scroll_view_height, button_height);
+
+  scroller_ = new MessageCenterScrollView(this);
+  // Need to set the transparent background explicitly, since ScrollView has
+  // set the default opaque background color.
+  scroller_->SetBackgroundColor(SK_ColorTRANSPARENT);
+  scroller_->ClipHeightTo(kMinScrollViewHeight, max_scroll_view_height);
   scroller_->SetVerticalScrollBar(new views::OverlayScrollBar(false));
   scroller_->SetHorizontalScrollBar(new views::OverlayScrollBar(true));
 
@@ -155,22 +228,26 @@ MessageCenterView::MessageCenterView(
   // an intermediate view for the contents whose children we can swap in and
   // out.
   views::View* scroller_contents = new views::View();
-  scroller_contents->SetLayoutManager(new views::FillLayout());
+  scroller_contents->SetLayoutManager(std::make_unique<views::FillLayout>());
   scroller_contents->AddChildView(message_list_view_.get());
   scroller_->SetContents(scroller_contents);
 
   settings_view_ = new NotifierSettingsView();
 
-  no_notifications_view_ = new EmptyNotificationView();
+  no_notifications_view_ = CreateEmptyNotificationView();
 
   scroller_->SetVisible(false);  // Because it has no notifications at first.
   settings_view_->SetVisible(mode_ == Mode::SETTINGS);
   no_notifications_view_->SetVisible(mode_ == Mode::NO_NOTIFICATIONS);
 
-  AddChildView(scroller_);
-  AddChildView(settings_view_);
   AddChildView(no_notifications_view_);
+  AddChildView(scroller_);
+  AddChildView(scroller_shadow_);
+  AddChildView(settings_view_);
   AddChildView(button_bar_);
+
+  if (switches::IsSidebarEnabled())
+    MessageView::SetSidebarEnabled();
 }
 
 MessageCenterView::~MessageCenterView() {
@@ -232,7 +309,7 @@ void MessageCenterView::OnLockStateChanged(bool locked) {
   is_locked_ = locked;
   Update(true /* animate */);
   // Refresh a11y information, because accessible name of the view changes.
-  NotifyAccessibilityEvent(ui::AX_EVENT_ARIA_ATTRIBUTE_CHANGED, true);
+  NotifyAccessibilityEvent(ax::mojom::Event::kAriaAttributeChanged, true);
 }
 
 void MessageCenterView::OnAllNotificationsCleared() {
@@ -243,8 +320,7 @@ void MessageCenterView::OnAllNotificationsCleared() {
 
   // Action by user.
   message_center_->RemoveAllNotifications(
-      true /* by_user */,
-      message_center::MessageCenter::RemoveType::NON_PINNED);
+      true /* by_user */, MessageCenter::RemoveType::NON_PINNED);
   is_clearing_all_notifications_ = false;
 }
 
@@ -286,6 +362,13 @@ void MessageCenterView::OnDidChangeFocus(views::View* before,
   }
 }
 
+void MessageCenterView::UpdateScrollerShadowVisibility() {
+  // |scroller_shadow_| is visible only if |scroller_| is not all scrolled.
+  scroller_shadow_->SetVisible(scroller_->contents()->height() +
+                                   scroller_->contents()->y() !=
+                               scroller_shadow_->height());
+}
+
 void MessageCenterView::Layout() {
   if (is_closing_)
     return;
@@ -299,6 +382,7 @@ void MessageCenterView::Layout() {
   // TODO(tetsui): Fix the bug above without calling SetBounds, as SetBounds
   // invokes Layout() which is a heavy operation.
   scroller_->SetBounds(0, 0, width(), height() - button_height);
+  scroller_shadow_->SetBounds(0, 0, width(), height() - button_height);
   if (settings_view_->visible()) {
     settings_view_->SetBounds(0, height() - settings_height, width(),
                               settings_height);
@@ -314,7 +398,7 @@ void MessageCenterView::Layout() {
 gfx::Size MessageCenterView::CalculatePreferredSize() const {
   int width = 0;
   for (int i = 0; i < child_count(); ++i) {
-    const views::View* child = child_at(0);
+    const views::View* child = child_at(i);
     if (child->visible())
       width = std::max(width, child->GetPreferredSize().width());
   }
@@ -325,17 +409,11 @@ int MessageCenterView::GetHeightForWidth(int width) const {
   if (settings_transition_animation_ &&
       settings_transition_animation_->is_animating()) {
     return button_bar_->GetHeightForWidth(width) +
-           GetContentHeightDuringAnimation(width);
+           GetContentHeightDuringAnimation();
   }
 
-  int content_height = 0;
-  if (mode_ == Mode::NOTIFICATIONS)
-    content_height += scroller_->GetHeightForWidth(width);
-  else if (mode_ == Mode::SETTINGS)
-    content_height += settings_view_->GetHeightForWidth(width);
-  else if (no_notifications_view_->visible())
-    content_height += no_notifications_view_->GetHeightForWidth(width);
-  return button_bar_->GetHeightForWidth(width) + content_height;
+  return button_bar_->GetHeightForWidth(width) +
+         GetContentHeightForMode(mode_, width);
 }
 
 bool MessageCenterView::OnMouseWheel(const ui::MouseWheelEvent& event) {
@@ -354,11 +432,6 @@ void MessageCenterView::OnMouseExited(const ui::MouseEvent& event) {
 
   message_list_view_->ResetRepositionSession();
   Update(true /* animate */);
-}
-
-void MessageCenterView::GetAccessibleNodeData(ui::AXNodeData* node_data) {
-  node_data->role = ui::AX_ROLE_DIALOG;
-  node_data->SetName(GetButtonBarTitle());
 }
 
 void MessageCenterView::OnNotificationAdded(const std::string& id) {
@@ -449,47 +522,6 @@ void MessageCenterView::OnQuietModeChanged(bool is_quiet_mode) {
   button_bar_->SetQuietModeState(is_quiet_mode);
 }
 
-void MessageCenterView::ClickOnNotification(
-    const std::string& notification_id) {
-  message_center_->ClickOnNotification(notification_id);
-}
-
-void MessageCenterView::RemoveNotification(const std::string& notification_id,
-                                           bool by_user) {
-  message_center_->RemoveNotification(notification_id, by_user);
-}
-
-void MessageCenterView::ClickOnNotificationButton(
-    const std::string& notification_id,
-    int button_index) {
-  message_center_->ClickOnNotificationButton(notification_id, button_index);
-}
-
-void MessageCenterView::ClickOnNotificationButtonWithReply(
-    const std::string& notification_id,
-    int button_index,
-    const base::string16& reply) {
-  message_center_->ClickOnNotificationButtonWithReply(notification_id,
-                                                      button_index, reply);
-}
-
-void MessageCenterView::ClickOnSettingsButton(
-    const std::string& notification_id) {
-  message_center_->ClickOnSettingsButton(notification_id);
-}
-
-void MessageCenterView::UpdateNotificationSize(
-    const std::string& notification_id) {
-  // TODO(edcourtney, yoshiki): We don't call OnNotificationUpdated directly
-  // because it resets the reposition session, which can end up deleting
-  // notification items when it cancels animations. This causes problems for
-  // ARC notifications. See crbug.com/714493. OnNotificationUpdated should not
-  // have to consider the reposition session, but OnMouseEntered and
-  // OnMouseExited don't work properly for ARC notifications at the moment.
-  // See crbug.com/714587.
-  UpdateNotification(notification_id);
-}
-
 void MessageCenterView::AnimationEnded(const gfx::Animation* animation) {
   DCHECK_EQ(animation, settings_transition_animation_.get());
 
@@ -527,33 +559,26 @@ void MessageCenterView::AnimationCanceled(const gfx::Animation* animation) {
   AnimationEnded(animation);
 }
 
+void MessageCenterView::OnViewPreferredSizeChanged(views::View* observed_view) {
+  DCHECK_EQ(std::string(MessageView::kViewClassName),
+            observed_view->GetClassName());
+  UpdateNotification(
+      static_cast<MessageView*>(observed_view)->notification_id());
+}
+
 void MessageCenterView::AddNotificationAt(const Notification& notification,
                                           int index) {
   MessageView* view = message_center::MessageViewFactory::Create(
-      this, notification, false);  // Not top-level.
-
-  // TODO(yoshiki): Temporarily disable context menu on custom (arc)
-  // notifications. See crbug.com/750307 for details.
-  if (notification.type() != message_center::NOTIFICATION_TYPE_CUSTOM &&
-      notification.should_show_settings_button()) {
-    view->set_context_menu_controller(&context_menu_controller_);
-  }
-
+      notification, false);  // Not top-level.
+  view->AddObserver(this);
   view->set_scroller(scroller_);
   message_list_view_->AddNotificationAt(view, index);
-}
-
-base::string16 MessageCenterView::GetButtonBarTitle() const {
-  if (is_locked_)
-    return l10n_util::GetStringUTF16(IDS_ASH_MESSAGE_CENTER_FOOTER_LOCKSCREEN);
-
-  return l10n_util::GetStringUTF16(IDS_ASH_MESSAGE_CENTER_FOOTER_TITLE);
 }
 
 void MessageCenterView::Update(bool animate) {
   bool no_message_views = (message_list_view_->GetNotificationCount() == 0);
 
-  if (is_locked_)
+  if (is_locked_ && !features::IsLockScreenNotificationsEnabled())
     SetVisibilityMode(Mode::LOCKED, animate);
   else if (settings_visible_)
     SetVisibilityMode(Mode::SETTINGS, animate);
@@ -561,16 +586,6 @@ void MessageCenterView::Update(bool animate) {
     SetVisibilityMode(Mode::NO_NOTIFICATIONS, animate);
   else
     SetVisibilityMode(Mode::NOTIFICATIONS, animate);
-
-  if (no_message_views) {
-    scroller_->SetFocusBehavior(FocusBehavior::NEVER);
-  } else {
-#if defined(OS_MACOSX)
-    scroller_->SetFocusBehavior(FocusBehavior::ACCESSIBLE_ONLY);
-#else
-    scroller_->SetFocusBehavior(FocusBehavior::ALWAYS);
-#endif
-  }
 
   UpdateButtonBarStatus();
 
@@ -587,28 +602,45 @@ void MessageCenterView::SetVisibilityMode(Mode mode, bool animate) {
   if (mode == mode_)
     return;
 
-  if (mode_ == Mode::NOTIFICATIONS)
-    source_view_ = scroller_;
-  else if (mode_ == Mode::SETTINGS)
-    source_view_ = settings_view_;
-  else if (mode_ == Mode::NO_NOTIFICATIONS)
-    source_view_ = no_notifications_view_;
-  else
-    source_view_ = nullptr;
+  switch (mode_) {
+    case Mode::NOTIFICATIONS:
+      source_view_ = scroller_;
+      break;
+    case Mode::SETTINGS:
+      source_view_ = settings_view_;
+      break;
+    case Mode::LOCKED:
+      source_view_ = nullptr;
+      break;
+    case Mode::NO_NOTIFICATIONS:
+      source_view_ = no_notifications_view_;
+      break;
+  }
 
-  if (mode == Mode::NOTIFICATIONS)
-    target_view_ = scroller_;
-  else if (mode == Mode::SETTINGS)
-    target_view_ = settings_view_;
-  else if (mode == Mode::NO_NOTIFICATIONS)
-    target_view_ = no_notifications_view_;
-  else
-    target_view_ = nullptr;
+  switch (mode) {
+    case Mode::NOTIFICATIONS:
+      target_view_ = scroller_;
+      break;
+    case Mode::SETTINGS:
+      target_view_ = settings_view_;
+      break;
+    case Mode::LOCKED:
+      target_view_ = nullptr;
+      break;
+    case Mode::NO_NOTIFICATIONS:
+      target_view_ = no_notifications_view_;
+      break;
+  }
+
+  source_height_ = GetContentHeightForMode(mode_, width());
+  target_height_ = GetContentHeightForMode(mode, width());
 
   mode_ = mode;
 
-  source_height_ = source_view_ ? source_view_->GetHeightForWidth(width()) : 0;
-  target_height_ = target_view_ ? target_view_->GetHeightForWidth(width()) : 0;
+  int contents_max_height =
+      max_height_ - button_bar_->GetPreferredSize().height();
+  source_height_ = std::min(contents_max_height, source_height_);
+  target_height_ = std::min(contents_max_height, target_height_);
 
   if (source_view_)
     source_view_->SetVisible(true);
@@ -638,11 +670,9 @@ void MessageCenterView::UpdateButtonBarStatus() {
   }
 
   button_bar_->SetBackArrowVisible(mode_ == Mode::SETTINGS);
-  button_bar_->SetButtonsVisible(!is_locked_);
-  button_bar_->SetTitle(GetButtonBarTitle());
+  button_bar_->SetIsLocked(is_locked_);
 
-  if (!is_locked_)
-    EnableCloseAllIfAppropriate();
+  EnableCloseAllIfAppropriate();
 }
 
 void MessageCenterView::EnableCloseAllIfAppropriate() {
@@ -686,7 +716,7 @@ void MessageCenterView::UpdateNotification(const std::string& id) {
   }
 
   // Notify accessibility that the contents have changed.
-  view->NotifyAccessibilityEvent(ui::AX_EVENT_CHILDREN_CHANGED, false);
+  view->NotifyAccessibilityEvent(ax::mojom::Event::kChildrenChanged, false);
 }
 
 void MessageCenterView::NotifyAnimationState(bool animating) {
@@ -717,16 +747,29 @@ int MessageCenterView::GetSettingsHeightForWidth(int width) const {
   }
 }
 
-int MessageCenterView::GetContentHeightDuringAnimation(int width) const {
+int MessageCenterView::GetContentHeightDuringAnimation() const {
   DCHECK(settings_transition_animation_);
-  int content_height = settings_transition_animation_->CurrentValueBetween(
+  int contents_height = settings_transition_animation_->CurrentValueBetween(
       target_view_ == settings_view_ ? 0 : source_height_,
       source_view_ == settings_view_ ? 0 : target_height_);
   if (target_view_ == settings_view_)
-    content_height = std::max(source_height_, content_height);
+    contents_height = std::max(source_height_, contents_height);
   if (source_view_ == settings_view_)
-    content_height = std::max(target_height_, content_height);
-  return content_height;
+    contents_height = std::max(target_height_, contents_height);
+  return contents_height;
+}
+
+int MessageCenterView::GetContentHeightForMode(Mode mode, int width) const {
+  switch (mode) {
+    case Mode::NOTIFICATIONS:
+      return scroller_->GetHeightForWidth(width);
+    case Mode::SETTINGS:
+      return settings_view_->GetHeightForWidth(width);
+    case Mode::LOCKED:
+      return 0;
+    case Mode::NO_NOTIFICATIONS:
+      return kEmptyViewHeight;
+  }
 }
 
 }  // namespace ash

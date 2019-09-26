@@ -5,8 +5,9 @@
 #include "ui/ozone/platform/cast/gl_surface_cast.h"
 
 #include "base/feature_list.h"
-#include "base/memory/ptr_util.h"
+#include "base/strings/string_number_conversions.h"
 #include "chromecast/base/cast_features.h"
+#include "chromecast/base/chromecast_switches.h"
 #include "ui/gfx/vsync_provider.h"
 #include "ui/ozone/common/egl_util.h"
 #include "ui/ozone/platform/cast/gl_ozone_egl_cast.h"
@@ -17,10 +18,20 @@ namespace {
 // or make it dynamic that throttles framerate if device is overheating.
 base::TimeDelta GetVSyncInterval() {
   if (base::FeatureList::IsEnabled(chromecast::kTripleBuffer720)) {
-    return base::TimeDelta::FromSeconds(1) / 59.9;
-  } else {
-    return base::TimeDelta::FromSeconds(2) / 59.9;
+    return base::TimeDelta::FromSeconds(1) / 59.94;
   }
+
+  base::CommandLine* command_line = base::CommandLine::ForCurrentProcess();
+  if (command_line->HasSwitch(switches::kVSyncInterval)) {
+    const std::string interval_str =
+        command_line->GetSwitchValueASCII(switches::kVSyncInterval);
+    double interval = 0;
+    if (base::StringToDouble(interval_str, &interval) && interval > 0) {
+      return base::TimeDelta::FromSeconds(1) / interval;
+    }
+  }
+
+  return base::TimeDelta::FromSeconds(2) / 59.94;
 }
 
 }  // namespace
@@ -88,9 +99,10 @@ bool GLSurfaceCast::ScheduleOverlayPlane(int z_order,
                                          gfx::OverlayTransform transform,
                                          gl::GLImage* image,
                                          const gfx::Rect& bounds_rect,
-                                         const gfx::RectF& crop_rect) {
+                                         const gfx::RectF& crop_rect,
+                                         bool enable_blend) {
   return image->ScheduleOverlayPlane(widget_, z_order, transform, bounds_rect,
-                                     crop_rect);
+                                     crop_rect, enable_blend);
 }
 
 EGLConfig GLSurfaceCast::GetConfig() {
@@ -117,7 +129,6 @@ EGLConfig GLSurfaceCast::GetConfig() {
 
 GLSurfaceCast::~GLSurfaceCast() {
   Destroy();
-  parent_->ChildDestroyed();
 }
 
 }  // namespace ui

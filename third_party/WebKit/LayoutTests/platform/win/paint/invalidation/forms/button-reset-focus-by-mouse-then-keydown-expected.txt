@@ -3,6 +3,17 @@
     {
       "name": "LayoutView #document",
       "bounds": [800, 600],
+      "drawsContent": false,
+      "backgroundColor": "#FFFFFF"
+    },
+    {
+      "name": "Scrolling Layer",
+      "bounds": [800, 600],
+      "drawsContent": false
+    },
+    {
+      "name": "Scrolling Contents Layer",
+      "bounds": [800, 600],
       "contentsOpaque": true,
       "backgroundColor": "#FFFFFF",
       "paintInvalidations": [
@@ -12,13 +23,8 @@
           "reason": "subtree"
         },
         {
-          "object": "LayoutText #text",
+          "object": "InlineTextBox 'Reset'",
           "rect": [16, 10, 34, 18],
-          "reason": "subtree"
-        },
-        {
-          "object": "LayoutBlockFlow (anonymous)",
-          "rect": [16, 11, 34, 16],
           "reason": "subtree"
         }
       ]

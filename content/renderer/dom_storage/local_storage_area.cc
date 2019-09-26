@@ -6,7 +6,7 @@
 
 #include "base/rand_util.h"
 #include "base/strings/string_number_conversions.h"
-#include "third_party/WebKit/public/platform/WebURL.h"
+#include "third_party/blink/public/platform/web_url.h"
 
 using blink::WebString;
 using blink::WebURL;
@@ -16,7 +16,7 @@ namespace content {
 LocalStorageArea::LocalStorageArea(
     scoped_refptr<LocalStorageCachedArea> cached_area)
     : cached_area_(std::move(cached_area)),
-      id_(base::Uint64ToString(base::RandUint64())) {
+      id_(base::NumberToString(base::RandUint64())) {
   cached_area_->AreaCreated(this);
 }
 

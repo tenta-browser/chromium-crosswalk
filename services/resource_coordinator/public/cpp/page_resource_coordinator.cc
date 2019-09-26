@@ -15,6 +15,12 @@ PageResourceCoordinator::PageResourceCoordinator(
 
 PageResourceCoordinator::~PageResourceCoordinator() = default;
 
+void PageResourceCoordinator::SetIsLoading(bool is_loading) {
+  if (!service_)
+    return;
+  service_->SetIsLoading(is_loading);
+}
+
 void PageResourceCoordinator::SetVisibility(bool visible) {
   if (!service_)
     return;
@@ -51,8 +57,8 @@ void PageResourceCoordinator::AddFrame(const FrameResourceCoordinator& frame) {
     return;
   // We could keep the ID around ourselves, but this hop ensures that the child
   // has been created on the service-side.
-  frame.service()->GetID(base::Bind(&PageResourceCoordinator::AddFrameByID,
-                                    weak_ptr_factory_.GetWeakPtr()));
+  frame.service()->GetID(base::BindOnce(&PageResourceCoordinator::AddFrameByID,
+                                        weak_ptr_factory_.GetWeakPtr()));
 }
 
 void PageResourceCoordinator::RemoveFrame(
@@ -60,8 +66,9 @@ void PageResourceCoordinator::RemoveFrame(
   DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
   if (!service_)
     return;
-  frame.service()->GetID(base::Bind(&PageResourceCoordinator::RemoveFrameByID,
-                                    weak_ptr_factory_.GetWeakPtr()));
+  frame.service()->GetID(
+      base::BindOnce(&PageResourceCoordinator::RemoveFrameByID,
+                     weak_ptr_factory_.GetWeakPtr()));
 }
 
 void PageResourceCoordinator::ConnectToService(

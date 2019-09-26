@@ -10,6 +10,7 @@
 #include <set>
 #include <string>
 
+#include "chrome/browser/chromeos/accessibility/accessibility_manager.h"
 #include "chrome/browser/chromeos/arc/accessibility/ax_tree_source_arc.h"
 #include "chrome/browser/ui/app_list/arc/arc_app_list_prefs.h"
 #include "components/arc/common/accessibility_helper.mojom.h"
@@ -69,6 +70,9 @@ class ArcAccessibilityHelperBridge
       mojom::AccessibilityNodeInfoDataPtr event_source) override;
   void OnAccessibilityEvent(
       mojom::AccessibilityEventDataPtr event_data) override;
+  void OnNotificationStateChanged(
+      const std::string& notification_key,
+      mojom::AccessibilityNotificationStateType state) override;
 
   // AXTreeSourceArc::Delegate overrides.
   void OnAction(const ui::AXActionData& data) const override;
@@ -81,8 +85,13 @@ class ArcAccessibilityHelperBridge
   void OnNotificationSurfaceRemoved(ArcNotificationSurface* surface) override;
 
   const std::map<int32_t, std::unique_ptr<AXTreeSourceArc>>&
-  task_id_to_tree_for_test() {
+  task_id_to_tree_for_test() const {
     return task_id_to_tree_;
+  }
+
+  const std::map<std::string, std::unique_ptr<AXTreeSourceArc>>&
+  notification_key_to_tree_for_test() const {
+    return notification_key_to_tree_;
   }
 
  protected:
@@ -96,18 +105,37 @@ class ArcAccessibilityHelperBridge
 
   void OnActionResult(const ui::AXActionData& data, bool result) const;
 
+  void OnAccessibilityStatusChanged(
+      const chromeos::AccessibilityStatusEventDetails& event_details);
+  void UpdateFilterType();
+  void UpdateTouchExplorationPassThrough(aura::Window* window);
+  void UpdateTreeIdOfNotificationSurface(const std::string& notification_key,
+                                         uint32_t tree_id);
+
   AXTreeSourceArc* GetOrCreateFromTaskId(int32_t task_id);
+  AXTreeSourceArc* GetFromNotificationKey(const std::string& notification_key);
   AXTreeSourceArc* CreateFromNotificationKey(
       const std::string& notification_key);
-  AXTreeSourceArc* GetFromNotificationKey(
-      const std::string& notification_key) const;
   AXTreeSourceArc* GetFromTreeId(int32_t tree_id) const;
 
+  bool activation_observer_added_ = false;
   Profile* const profile_;
   ArcBridgeService* const arc_bridge_service_;
   std::map<int32_t, std::unique_ptr<AXTreeSourceArc>> task_id_to_tree_;
   std::map<std::string, std::unique_ptr<AXTreeSourceArc>>
       notification_key_to_tree_;
+  std::unique_ptr<chromeos::AccessibilityStatusSubscription>
+      accessibility_status_subscription_;
+
+  // Map for managing notifications in backward compatible way, creating
+  // notification with WINDOW_STATE_CHANGED event.
+  // Key: notification key
+  // Value: retain counter
+  // TODO(yawano): Remove this after this becomes unnecessary.
+  std::map<std::string, int32_t> backward_compat_notification_keys_;
+
+  // TODO(yawano): Remove this after this becomes unnecessary.
+  std::set<std::string> notification_keys_;
 
   DISALLOW_COPY_AND_ASSIGN(ArcAccessibilityHelperBridge);
 };

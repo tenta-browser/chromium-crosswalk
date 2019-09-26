@@ -14,7 +14,6 @@
 #include "base/callback.h"
 #include "base/lazy_instance.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/mock_entropy_provider.h"
@@ -39,7 +38,6 @@
 #include "components/sync_preferences/testing_pref_service_syncable.h"
 #include "content/public/test/test_browser_thread_bundle.h"
 #include "extensions/browser/quota_service.h"
-#include "net/url_request/url_request_context_getter.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 #if defined(OS_WIN)
@@ -78,7 +76,6 @@ class IncidentReportingServiceTest : public testing::Test {
         const CreateDownloadFinderCallback& create_download_finder_callback,
         const StartUploadCallback& start_upload_callback)
         : IncidentReportingService(nullptr,
-                                   nullptr,
                                    base::TimeDelta::FromMilliseconds(5),
                                    task_runner),
           pre_profile_add_callback_(pre_profile_add_callback),
@@ -125,8 +122,6 @@ class IncidentReportingServiceTest : public testing::Test {
 
     std::unique_ptr<safe_browsing::IncidentReportUploader> StartReportUpload(
         const safe_browsing::IncidentReportUploader::OnResultCallback& callback,
-        const scoped_refptr<net::URLRequestContextGetter>&
-            request_context_getter,
         const safe_browsing::ClientIncidentReport& report) override {
       return start_upload_callback_.Run(callback, report);
     }
@@ -297,7 +292,7 @@ class IncidentReportingServiceTest : public testing::Test {
     incident->set_path(kTestTrackedPrefPath);
     if (value)
       incident->set_atomic_value(value);
-    return base::MakeUnique<safe_browsing::TrackedPreferenceIncident>(
+    return std::make_unique<safe_browsing::TrackedPreferenceIncident>(
         std::move(incident), false /* is_personal */);
   }
 
@@ -404,8 +399,8 @@ class IncidentReportingServiceTest : public testing::Test {
             callback) {
       // Post a task to run the callback.
       base::ThreadTaskRunnerHandle::Get()->PostTask(
-          FROM_HERE, base::BindOnce(callback, base::Passed(&binary_download),
-                                    base::Passed(&non_binary_download)));
+          FROM_HERE, base::BindOnce(callback, std::move(binary_download),
+                                    std::move(non_binary_download)));
       return std::unique_ptr<safe_browsing::LastDownloadFinder>(
           new FakeDownloadFinder(on_deleted));
     }
@@ -560,7 +555,7 @@ class IncidentReportingServiceTest : public testing::Test {
       on_start_upload_callback_.Run();
       on_start_upload_callback_ = base::Closure();
     }
-    return base::MakeUnique<FakeUploader>(
+    return std::make_unique<FakeUploader>(
         base::Bind(&IncidentReportingServiceTest::OnUploaderDestroyed,
                    base::Unretained(this)),
         callback, upload_result_);
@@ -1312,11 +1307,11 @@ TEST_F(IncidentReportingServiceTest, CleanLegacyPruneState) {
   // Set up a prune state dict with data to be cleared (and not).
   std::unique_ptr<base::DictionaryValue> incidents_sent(
       new base::DictionaryValue());
-  auto type_dict = base::MakeUnique<base::DictionaryValue>();
+  auto type_dict = std::make_unique<base::DictionaryValue>();
   type_dict->SetKey("foo", base::Value("47"));
   incidents_sent->SetWithoutPathExpansion(blacklist_load_type,
                                           std::move(type_dict));
-  type_dict = base::MakeUnique<base::DictionaryValue>();
+  type_dict = std::make_unique<base::DictionaryValue>();
   type_dict->SetKey("bar", base::Value("43"));
   incidents_sent->SetWithoutPathExpansion(preference_type,
                                           std::move(type_dict));

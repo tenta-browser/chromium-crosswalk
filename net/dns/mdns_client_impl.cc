@@ -81,7 +81,7 @@ int MDnsConnection::SocketHandler::DoLoop(int rv) {
       connection_->OnDatagramReceived(&response_, recv_addr_, rv);
 
     rv = socket_->RecvFrom(
-        response_.io_buffer(), response_.io_buffer()->size(), &recv_addr_,
+        response_.io_buffer(), response_.io_buffer_size(), &recv_addr_,
         base::Bind(&MDnsConnection::SocketHandler::OnDatagramReceived,
                    base::Unretained(this)));
   } while (rv > 0);
@@ -227,7 +227,7 @@ void MDnsClientImpl::Core::HandlePacket(DnsResponse* response,
   // erroneous behavior in case a packet contains multiple exclusive
   // records with the same type and name.
   std::map<MDnsCache::Key, MDnsCache::UpdateType> update_keys;
-
+  DCHECK_GT(bytes_read, 0);
   if (!response->InitParseWithoutQuery(bytes_read)) {
     DVLOG(1) << "Could not understand an mDNS packet.";
     return;  // Message is unreadable.
@@ -417,19 +417,18 @@ void MDnsClientImpl::Core::QueryCache(
 }
 
 MDnsClientImpl::MDnsClientImpl()
-    : clock_(new base::DefaultClock),
-      cleanup_timer_(new base::Timer(false, false)) {
-}
+    : clock_(base::DefaultClock::GetInstance()),
+      cleanup_timer_(new base::Timer(false, false)) {}
 
-MDnsClientImpl::MDnsClientImpl(std::unique_ptr<base::Clock> clock,
+MDnsClientImpl::MDnsClientImpl(base::Clock* clock,
                                std::unique_ptr<base::Timer> timer)
-    : clock_(std::move(clock)), cleanup_timer_(std::move(timer)) {}
+    : clock_(clock), cleanup_timer_(std::move(timer)) {}
 
 MDnsClientImpl::~MDnsClientImpl() = default;
 
 bool MDnsClientImpl::StartListening(MDnsSocketFactory* socket_factory) {
   DCHECK(!core_.get());
-  core_.reset(new Core(clock_.get(), cleanup_timer_.get()));
+  core_.reset(new Core(clock_, cleanup_timer_.get()));
   if (!core_->Init(socket_factory)) {
     core_.reset();
     return false;
@@ -450,7 +449,7 @@ std::unique_ptr<MDnsListener> MDnsClientImpl::CreateListener(
     const std::string& name,
     MDnsListener::Delegate* delegate) {
   return std::unique_ptr<MDnsListener>(
-      new MDnsListenerImpl(rrtype, name, clock_.get(), delegate, this));
+      new MDnsListenerImpl(rrtype, name, clock_, delegate, this));
 }
 
 std::unique_ptr<MDnsTransaction> MDnsClientImpl::CreateTransaction(

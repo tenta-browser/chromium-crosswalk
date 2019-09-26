@@ -6,6 +6,7 @@
 
 #include <memory>
 
+#include "ash/app_list/app_list_controller_impl.h"
 #include "ash/public/cpp/config.h"
 #include "ash/public/cpp/shelf_item_delegate.h"
 #include "ash/public/cpp/shelf_model.h"
@@ -17,20 +18,13 @@
 #include "ash/shelf/shelf_observer.h"
 #include "ash/shelf/shelf_widget.h"
 #include "ash/shell.h"
+#include "ash/system/status_area_widget.h"
 #include "base/logging.h"
-#include "ui/app_list/presenter/app_list.h"
 #include "ui/display/types/display_constants.h"
 #include "ui/gfx/geometry/rect.h"
+#include "ui/keyboard/keyboard_controller_observer.h"
 
 namespace ash {
-
-namespace {
-
-// A callback that does nothing after shelf item selection handling.
-void NoopCallback(ShelfAction,
-                  base::Optional<std::vector<mojom::MenuItemPtr>>) {}
-
-}  // namespace
 
 // Shelf::AutoHideEventHandler -----------------------------------------------
 
@@ -82,6 +76,7 @@ void Shelf::CreateShelfWidget(aura::Window* root) {
   aura::Window* shelf_container =
       root->GetChildById(kShellWindowId_ShelfContainer);
   shelf_widget_.reset(new ShelfWidget(shelf_container, this));
+  shelf_widget_->Initialize();
 
   DCHECK(!shelf_layout_manager_);
   shelf_layout_manager_ = shelf_widget_->shelf_layout_manager();
@@ -96,12 +91,11 @@ void Shelf::CreateShelfWidget(aura::Window* root) {
 }
 
 void Shelf::ShutdownShelfWidget() {
-  if (shelf_widget_)
-    shelf_widget_->Shutdown();
+  shelf_widget_->Shutdown();
 }
 
 void Shelf::DestroyShelfWidget() {
-  // May be called multiple times during shutdown.
+  DCHECK(shelf_widget_);
   shelf_widget_.reset();
 }
 
@@ -195,8 +189,20 @@ ShelfVisibilityState Shelf::GetVisibilityState() const {
 }
 
 int Shelf::GetAccessibilityPanelHeight() const {
-  return shelf_layout_manager_ ? shelf_layout_manager_->chromevox_panel_height()
-                               : 0;
+  return shelf_layout_manager_
+             ? shelf_layout_manager_->accessibility_panel_height()
+             : 0;
+}
+
+void Shelf::SetAccessibilityPanelHeight(int height) {
+  if (shelf_layout_manager_)
+    shelf_layout_manager_->SetAccessibilityPanelHeight(height);
+}
+
+int Shelf::GetDockedMagnifierHeight() const {
+  return shelf_layout_manager_
+             ? shelf_layout_manager_->docked_magnifier_height()
+             : 0;
 }
 
 gfx::Rect Shelf::GetIdealBounds() {
@@ -229,7 +235,7 @@ void Shelf::LaunchShelfItem(int item_index) {
   // Iterating until we have hit the index we are interested in which
   // is true once indexes_left becomes negative.
   for (int i = 0; i < item_count && indexes_left >= 0; i++) {
-    if (items[i].type != TYPE_APP_LIST) {
+    if (items[i].type != TYPE_APP_LIST && items[i].type != TYPE_BACK_BUTTON) {
       found_index = i;
       indexes_left--;
     }
@@ -257,7 +263,7 @@ void Shelf::ActivateShelfItemOnDisplay(int item_index, int64_t display_id) {
   std::unique_ptr<ui::Event> event = std::make_unique<ui::KeyEvent>(
       ui::ET_KEY_RELEASED, ui::VKEY_UNKNOWN, ui::EF_NONE);
   item_delegate->ItemSelected(std::move(event), display_id, LAUNCH_FROM_UNKNOWN,
-                              base::Bind(&NoopCallback));
+                              base::DoNothing());
 }
 
 bool Shelf::ProcessGestureEvent(const ui::GestureEvent& event) {
@@ -268,7 +274,7 @@ bool Shelf::ProcessGestureEvent(const ui::GestureEvent& event) {
 }
 
 void Shelf::ProcessMouseWheelEvent(const ui::MouseWheelEvent& event) {
-  Shell::Get()->app_list()->ProcessMouseWheelEvent(event);
+  Shell::Get()->app_list_controller()->ProcessMouseWheelEvent(event);
 }
 
 void Shelf::AddObserver(ShelfObserver* observer) {
@@ -288,8 +294,31 @@ StatusAreaWidget* Shelf::GetStatusAreaWidget() const {
   return shelf_widget_->status_area_widget();
 }
 
+TrayBackgroundView* Shelf::GetSystemTrayAnchor() const {
+  return GetStatusAreaWidget()->GetSystemTrayAnchor();
+}
+
+bool Shelf::ShouldHideOnSecondaryDisplay(session_manager::SessionState state) {
+  if (Shell::GetPrimaryRootWindowController()->shelf() == this)
+    return false;
+
+  return state != session_manager::SessionState::ACTIVE;
+}
+
 void Shelf::SetVirtualKeyboardBoundsForTesting(const gfx::Rect& bounds) {
-  shelf_layout_manager_->OnKeyboardBoundsChanging(bounds);
+  keyboard::KeyboardStateDescriptor state;
+  state.is_available = !bounds.IsEmpty();
+  state.is_locked = false;
+  state.visual_bounds = bounds;
+  state.occluded_bounds = bounds;
+  state.displaced_bounds = gfx::Rect();
+  shelf_layout_manager_->OnKeyboardAvailabilityChanged(state.is_available);
+  shelf_layout_manager_->OnKeyboardVisibleBoundsChanged(state.visual_bounds);
+  shelf_layout_manager_->OnKeyboardWorkspaceOccludedBoundsChanged(
+      state.occluded_bounds);
+  shelf_layout_manager_->OnKeyboardWorkspaceDisplacingBoundsChanged(
+      state.displaced_bounds);
+  shelf_layout_manager_->OnKeyboardAppearanceChanged(state);
 }
 
 ShelfLockingManager* Shelf::GetShelfLockingManagerForTesting() {
@@ -305,11 +334,6 @@ LoginShelfView* Shelf::GetLoginShelfViewForTesting() {
 }
 
 void Shelf::WillDeleteShelfLayoutManager() {
-  if (Shell::GetAshConfig() == Config::MASH) {
-    // TODO(sky): this should be removed once Shell is used everywhere.
-    ShutdownShelfWidget();
-  }
-
   // Clear event handlers that might forward events to the destroyed instance.
   auto_hide_event_handler_.reset();
   bezel_event_handler_.reset();

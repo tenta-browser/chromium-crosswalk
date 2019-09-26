@@ -7,6 +7,7 @@
 #include "ash/public/cpp/config.h"
 #include "ash/shell.h"
 #include "ash/wm/resize_shadow_controller.h"
+#include "ash/wm/tablet_mode/tablet_mode_controller.h"
 #include "ash/wm/window_resizer.h"
 #include "ash/wm/window_state.h"
 #include "ash/wm/window_state_observer.h"
@@ -63,8 +64,13 @@ void ShowResizeShadow(aura::Window* window, int component) {
     // TODO: http://crbug.com/640773.
     return;
   }
-  if (!wm::GetWindowState(window)->can_be_dragged())
+
+  // Window resize in tablet mode is disabled (except in splitscreen).
+  if (Shell::Get()
+          ->tablet_mode_controller()
+          ->IsTabletModeWindowManagerEnabled()) {
     return;
+  }
 
   ResizeShadowController* resize_shadow_controller =
       Shell::Get()->resize_shadow_controller();
@@ -77,8 +83,6 @@ void HideResizeShadow(aura::Window* window) {
     // TODO: http://crbug.com/640773.
     return;
   }
-  if (!wm::GetWindowState(window)->can_be_dragged())
-    return;
 
   ResizeShadowController* resize_shadow_controller =
       Shell::Get()->resize_shadow_controller();
@@ -183,6 +187,8 @@ void WmToplevelWindowEventHandler::OnKeyEvent(ui::KeyEvent* event) {
 
 void WmToplevelWindowEventHandler::OnMouseEvent(ui::MouseEvent* event,
                                                 aura::Window* target) {
+  UpdateGestureTarget(nullptr);
+
   if (event->handled())
     return;
   if ((event->flags() &
@@ -222,6 +228,11 @@ void WmToplevelWindowEventHandler::OnMouseEvent(ui::MouseEvent* event,
 
 void WmToplevelWindowEventHandler::OnGestureEvent(ui::GestureEvent* event,
                                                   aura::Window* target) {
+  if (event->type() == ui::ET_GESTURE_END)
+    UpdateGestureTarget(nullptr);
+  else if (event->type() == ui::ET_GESTURE_BEGIN)
+    UpdateGestureTarget(target);
+
   if (event->handled())
     return;
   if (!target->delegate())
@@ -414,6 +425,8 @@ void WmToplevelWindowEventHandler::RevertDrag() {
 }
 
 bool WmToplevelWindowEventHandler::CompleteDrag(DragResult result) {
+  UpdateGestureTarget(nullptr);
+
   if (!window_resizer_)
     return false;
 
@@ -580,6 +593,23 @@ void WmToplevelWindowEventHandler::ResizerWindowDestroyed() {
 
 void WmToplevelWindowEventHandler::OnDisplayConfigurationChanging() {
   CompleteDrag(DragResult::REVERT);
+}
+
+void WmToplevelWindowEventHandler::OnWindowDestroying(aura::Window* window) {
+  DCHECK_EQ(gesture_target_, window);
+  if (gesture_target_ == window)
+    UpdateGestureTarget(nullptr);
+}
+
+void WmToplevelWindowEventHandler::UpdateGestureTarget(aura::Window* target) {
+  if (gesture_target_ == target)
+    return;
+
+  if (gesture_target_)
+    gesture_target_->RemoveObserver(this);
+  gesture_target_ = target;
+  if (gesture_target_)
+    gesture_target_->AddObserver(this);
 }
 
 }  // namespace wm

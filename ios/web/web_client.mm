@@ -36,10 +36,6 @@ std::unique_ptr<WebMainParts> WebClient::CreateWebMainParts() {
   return nullptr;
 }
 
-std::string WebClient::GetAcceptLangs(BrowserState* state) const {
-  return std::string();
-}
-
 std::string WebClient::GetApplicationLocale() const {
   return "en-US";
 }
@@ -74,7 +70,13 @@ base::RefCountedMemory* WebClient::GetDataResourceBytes(int resource_id) const {
   return nullptr;
 }
 
-NSString* WebClient::GetEarlyPageScript(BrowserState* browser_state) const {
+NSString* WebClient::GetDocumentStartScriptForAllFrames(
+    BrowserState* browser_state) const {
+  return @"";
+}
+
+NSString* WebClient::GetDocumentStartScriptForMainFrame(
+    BrowserState* browser_state) const {
   return @"";
 }
 

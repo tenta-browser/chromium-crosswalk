@@ -4,6 +4,8 @@
 
 #include "chrome/browser/chromeos/login/ui/webui_login_view.h"
 
+#include <memory>
+
 #include "ash/accelerators/accelerator_controller.h"
 #include "ash/focus_cycler.h"
 #include "ash/root_window_controller.h"
@@ -22,14 +24,13 @@
 #include "base/trace_event/trace_event.h"
 #include "base/values.h"
 #include "chrome/browser/chrome_notification_types.h"
-#include "chrome/browser/chromeos/accessibility/accessibility_util.h"
 #include "chrome/browser/chromeos/app_mode/kiosk_app_manager.h"
 #include "chrome/browser/chromeos/lock_screen_apps/state_controller.h"
 #include "chrome/browser/chromeos/login/ui/login_display_host_webui.h"
+#include "chrome/browser/chromeos/login/ui/login_display_webui.h"
 #include "chrome/browser/chromeos/login/ui/preloaded_web_view.h"
 #include "chrome/browser/chromeos/login/ui/preloaded_web_view_factory.h"
 #include "chrome/browser/chromeos/login/ui/web_contents_forced_title.h"
-#include "chrome/browser/chromeos/login/ui/webui_login_display.h"
 #include "chrome/browser/chromeos/profiles/profile_helper.h"
 #include "chrome/browser/extensions/chrome_extension_web_contents_observer.h"
 #include "chrome/browser/media/webrtc/media_capture_devices_dispatcher.h"
@@ -58,7 +59,7 @@
 #include "content/public/browser/web_ui.h"
 #include "content/public/common/renderer_preferences.h"
 #include "extensions/browser/view_type_utils.h"
-#include "third_party/WebKit/public/platform/WebInputEvent.h"
+#include "third_party/blink/public/platform/web_input_event.h"
 #include "ui/gfx/geometry/rect.h"
 #include "ui/gfx/geometry/size.h"
 #include "ui/keyboard/keyboard_controller.h"
@@ -88,6 +89,8 @@ const char kAccelNameDeviceRequisitionShark[] = "device_requisition_shark";
 const char kAccelNameAppLaunchBailout[] = "app_launch_bailout";
 const char kAccelNameAppLaunchNetworkConfig[] = "app_launch_network_config";
 const char kAccelNameBootstrappingSlave[] = "bootstrapping_slave";
+const char kAccelNameDemoMode[] = "demo_mode";
+const char kAccelSendFeedback[] = "send_feedback";
 
 // A class to change arrow key traversal behavior when it's alive.
 class ScopedArrowKeyTraversal {
@@ -173,6 +176,12 @@ WebUILoginView::WebUILoginView(const WebViewSettings& settings)
   accel_map_[ui::Accelerator(
       ui::VKEY_S, ui::EF_CONTROL_DOWN | ui::EF_ALT_DOWN | ui::EF_SHIFT_DOWN)] =
       kAccelNameBootstrappingSlave;
+
+  accel_map_[ui::Accelerator(
+      ui::VKEY_D, ui::EF_CONTROL_DOWN | ui::EF_ALT_DOWN)] = kAccelNameDemoMode;
+
+  accel_map_[ui::Accelerator(ui::VKEY_I, ui::EF_SHIFT_DOWN | ui::EF_ALT_DOWN)] =
+      kAccelSendFeedback;
 
   for (AccelMap::iterator i(accel_map_.begin()); i != accel_map_.end(); ++i) {
     if (!ash_util::IsRunningInMash()) {
@@ -261,7 +270,7 @@ void WebUILoginView::Init() {
   }
 
   if (!webui_login_) {
-    webui_login_ = base::MakeUnique<views::WebView>(signin_profile);
+    webui_login_ = std::make_unique<views::WebView>(signin_profile);
     webui_login_->set_owned_by_client();
     is_reusing_webview_ = false;
   }
@@ -398,6 +407,10 @@ void WebUILoginView::AboutToRequestFocusFromTabTraversal(bool reverse) {
   web_view()->web_contents()->FocusThroughTabTraversal(reverse);
   GetWidget()->Activate();
   web_view()->web_contents()->Focus();
+
+  content::WebUI* web_ui = GetWebUI();
+  if (web_ui)
+    web_ui->CallJavascriptFunctionUnsafe("cr.ui.Oobe.focusReturned");
 }
 
 void WebUILoginView::Observe(int type,
@@ -452,7 +465,7 @@ void WebUILoginView::OnVirtualKeyboardStateChanged(bool activated,
 ////////////////////////////////////////////////////////////////////////////////
 // keyboard::KeyboardControllerObserver:
 
-void WebUILoginView::OnKeyboardAvailabilityChanging(const bool is_available) {
+void WebUILoginView::OnKeyboardAvailabilityChanged(const bool is_available) {
   if (!GetOobeUI())
     return;
   CoreOobeView* view = GetOobeUI()->GetCoreOobeView();
@@ -546,11 +559,11 @@ void WebUILoginView::RequestMediaAccessPermission(
 }
 
 bool WebUILoginView::CheckMediaAccessPermission(
-    content::WebContents* web_contents,
+    content::RenderFrameHost* render_frame_host,
     const GURL& security_origin,
     content::MediaStreamType type) {
   return MediaCaptureDevicesDispatcher::GetInstance()
-      ->CheckMediaAccessPermission(web_contents, security_origin, type);
+      ->CheckMediaAccessPermission(render_frame_host, security_origin, type);
 }
 
 bool WebUILoginView::PreHandleGestureEvent(
@@ -603,7 +616,7 @@ bool WebUILoginView::MoveFocusToSystemTray(bool reverse) {
   // goes to the system tray, because the web-UI shelf has already been
   // traversed when we reach here.
   ash::Shelf* shelf = ash::Shelf::ForWindow(GetWidget()->GetNativeWindow());
-  if (!reverse && ash::ShelfWidget::IsUsingMdLoginShelf()) {
+  if (!reverse && ash::ShelfWidget::IsUsingViewsShelf()) {
     shelf->shelf_widget()->set_default_last_focusable_child(reverse);
     ash::Shell::Get()->focus_cycler()->FocusWidget(shelf->shelf_widget());
     return true;

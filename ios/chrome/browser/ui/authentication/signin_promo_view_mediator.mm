@@ -4,7 +4,8 @@
 
 #import "ios/chrome/browser/ui/authentication/signin_promo_view_mediator.h"
 
-#include "base/memory/ptr_util.h"
+#include <memory>
+
 #include "base/metrics/histogram_macros.h"
 #include "base/metrics/user_metrics.h"
 #include "base/metrics/user_metrics_action.h"
@@ -45,162 +46,6 @@ bool IsSupportedAccessPoint(signin_metrics::AccessPoint access_point) {
       return true;
     default:
       return false;
-  }
-}
-
-void RecordSigninImpressionUserActionForAccessPoint(
-    signin_metrics::AccessPoint access_point) {
-  switch (access_point) {
-    case signin_metrics::AccessPoint::ACCESS_POINT_BOOKMARK_MANAGER:
-      base::RecordAction(
-          base::UserMetricsAction("Signin_Impression_FromBookmarkManager"));
-      break;
-    case signin_metrics::AccessPoint::ACCESS_POINT_RECENT_TABS:
-      base::RecordAction(
-          base::UserMetricsAction("Signin_Impression_FromRecentTabs"));
-      break;
-    case signin_metrics::AccessPoint::ACCESS_POINT_SETTINGS:
-      base::RecordAction(
-          base::UserMetricsAction("Signin_Impression_FromSettings"));
-      break;
-    case signin_metrics::AccessPoint::ACCESS_POINT_TAB_SWITCHER:
-      base::RecordAction(
-          base::UserMetricsAction("Signin_Impression_FromTabSwitcher"));
-      break;
-    default:
-      NOTREACHED() << "Unexpected value for access point "
-                   << static_cast<int>(access_point);
-      break;
-  }
-}
-
-void RecordSigninImpressionWithAccountUserActionForAccessPoint(
-    signin_metrics::AccessPoint access_point) {
-  switch (access_point) {
-    case signin_metrics::AccessPoint::ACCESS_POINT_BOOKMARK_MANAGER:
-      base::RecordAction(base::UserMetricsAction(
-          "Signin_ImpressionWithAccount_FromBookmarkManager"));
-      break;
-    case signin_metrics::AccessPoint::ACCESS_POINT_RECENT_TABS:
-      base::RecordAction(base::UserMetricsAction(
-          "Signin_ImpressionWithAccount_FromRecentTabs"));
-      break;
-    case signin_metrics::AccessPoint::ACCESS_POINT_SETTINGS:
-      base::RecordAction(
-          base::UserMetricsAction("Signin_ImpressionWithAccount_FromSettings"));
-      break;
-    case signin_metrics::AccessPoint::ACCESS_POINT_TAB_SWITCHER:
-      base::RecordAction(base::UserMetricsAction(
-          "Signin_ImpressionWithAccount_FromTabSwitcher"));
-      break;
-    default:
-      NOTREACHED() << "Unexpected value for access point "
-                   << static_cast<int>(access_point);
-      break;
-  }
-}
-
-void RecordSigninImpressionWithNoAccountUserActionForAccessPoint(
-    signin_metrics::AccessPoint access_point) {
-  switch (access_point) {
-    case signin_metrics::AccessPoint::ACCESS_POINT_BOOKMARK_MANAGER:
-      base::RecordAction(base::UserMetricsAction(
-          "Signin_ImpressionWithNoAccount_FromBookmarkManager"));
-      break;
-    case signin_metrics::AccessPoint::ACCESS_POINT_RECENT_TABS:
-      base::RecordAction(base::UserMetricsAction(
-          "Signin_ImpressionWithNoAccount_FromRecentTabs"));
-      break;
-    case signin_metrics::AccessPoint::ACCESS_POINT_SETTINGS:
-      base::RecordAction(base::UserMetricsAction(
-          "Signin_ImpressionWithNoAccount_FromSettings"));
-      break;
-    case signin_metrics::AccessPoint::ACCESS_POINT_TAB_SWITCHER:
-      base::RecordAction(base::UserMetricsAction(
-          "Signin_ImpressionWithNoAccount_FromTabSwitcher"));
-      break;
-    default:
-      NOTREACHED() << "Unexpected value for access point "
-                   << static_cast<int>(access_point);
-      break;
-  }
-}
-
-void RecordSigninDefaultUserActionForAccessPoint(
-    signin_metrics::AccessPoint access_point) {
-  switch (access_point) {
-    case signin_metrics::AccessPoint::ACCESS_POINT_BOOKMARK_MANAGER:
-      base::RecordAction(base::UserMetricsAction(
-          "Signin_SigninWithDefault_FromBookmarkManager"));
-      break;
-    case signin_metrics::AccessPoint::ACCESS_POINT_RECENT_TABS:
-      base::RecordAction(
-          base::UserMetricsAction("Signin_SigninWithDefault_FromRecentTabs"));
-      break;
-    case signin_metrics::AccessPoint::ACCESS_POINT_SETTINGS:
-      base::RecordAction(
-          base::UserMetricsAction("Signin_SigninWithDefault_FromSettings"));
-      break;
-    case signin_metrics::AccessPoint::ACCESS_POINT_TAB_SWITCHER:
-      base::RecordAction(
-          base::UserMetricsAction("Signin_SigninWithDefault_FromTabSwitcher"));
-      break;
-    default:
-      NOTREACHED() << "Unexpected value for access point "
-                   << static_cast<int>(access_point);
-      break;
-  }
-}
-
-void RecordSigninNotDefaultUserActionForAccessPoint(
-    signin_metrics::AccessPoint access_point) {
-  switch (access_point) {
-    case signin_metrics::AccessPoint::ACCESS_POINT_BOOKMARK_MANAGER:
-      base::RecordAction(base::UserMetricsAction(
-          "Signin_SigninNotDefault_FromBookmarkManager"));
-      break;
-    case signin_metrics::AccessPoint::ACCESS_POINT_RECENT_TABS:
-      base::RecordAction(
-          base::UserMetricsAction("Signin_SigninNotDefault_FromRecentTabs"));
-      break;
-    case signin_metrics::AccessPoint::ACCESS_POINT_SETTINGS:
-      base::RecordAction(
-          base::UserMetricsAction("Signin_SigninNotDefault_FromSettings"));
-      break;
-    case signin_metrics::AccessPoint::ACCESS_POINT_TAB_SWITCHER:
-      base::RecordAction(
-          base::UserMetricsAction("Signin_SigninNotDefault_FromTabSwitcher"));
-      break;
-    default:
-      NOTREACHED() << "Unexpected value for access point "
-                   << static_cast<int>(access_point);
-      break;
-  }
-}
-
-void RecordSigninNewAccountUserActionForAccessPoint(
-    signin_metrics::AccessPoint access_point) {
-  switch (access_point) {
-    case signin_metrics::AccessPoint::ACCESS_POINT_BOOKMARK_MANAGER:
-      base::RecordAction(base::UserMetricsAction(
-          "Signin_SigninNewAccount_FromBookmarkManager"));
-      break;
-    case signin_metrics::AccessPoint::ACCESS_POINT_RECENT_TABS:
-      base::RecordAction(
-          base::UserMetricsAction("Signin_SigninNewAccount_FromRecentTabs"));
-      break;
-    case signin_metrics::AccessPoint::ACCESS_POINT_SETTINGS:
-      base::RecordAction(
-          base::UserMetricsAction("Signin_SigninNewAccount_FromSettings"));
-      break;
-    case signin_metrics::AccessPoint::ACCESS_POINT_TAB_SWITCHER:
-      base::RecordAction(
-          base::UserMetricsAction("Signin_SigninNewAccount_FromTabSwitcher"));
-      break;
-    default:
-      NOTREACHED() << "Unexpected value for access point "
-                   << static_cast<int>(access_point);
-      break;
   }
 }
 
@@ -365,9 +210,9 @@ const char* AlreadySeenSigninViewPreferenceKey(
       [self selectIdentity:identities[0]];
     }
     _identityServiceObserver =
-        base::MakeUnique<ChromeIdentityServiceObserverBridge>(self);
+        std::make_unique<ChromeIdentityServiceObserverBridge>(self);
     _browserProviderObserver =
-        base::MakeUnique<ChromeBrowserProviderObserverBridge>(self);
+        std::make_unique<ChromeBrowserProviderObserverBridge>(self);
   }
   return self;
 }
@@ -449,12 +294,9 @@ const char* AlreadySeenSigninViewPreferenceKey(
   if (_signinPromoViewState == ios::SigninPromoViewState::NeverVisible)
     _signinPromoViewState = ios::SigninPromoViewState::Unused;
   _isSigninPromoViewVisible = YES;
-  RecordSigninImpressionUserActionForAccessPoint(_accessPoint);
-  if (_defaultIdentity) {
-    RecordSigninImpressionWithAccountUserActionForAccessPoint(_accessPoint);
-  } else {
-    RecordSigninImpressionWithNoAccountUserActionForAccessPoint(_accessPoint);
-  }
+  signin_metrics::RecordSigninImpressionUserActionForAccessPoint(_accessPoint);
+  signin_metrics::RecordSigninImpressionWithAccountUserActionForAccessPoint(
+      _accessPoint, !!_defaultIdentity);
   const char* displayedCountPreferenceKey =
       DisplayedCountPreferenceKey(_accessPoint);
   if (!displayedCountPreferenceKey)
@@ -466,7 +308,7 @@ const char* AlreadySeenSigninViewPreferenceKey(
 }
 
 - (void)signinPromoViewHidden {
-  DCHECK(![self isInvalidClosedOrNeverVisible]);
+  DCHECK(![self isInvalidOrClosed]);
   _isSigninPromoViewVisible = NO;
 }
 
@@ -572,7 +414,7 @@ const char* AlreadySeenSigninViewPreferenceKey(
 - (void)chromeIdentityServiceDidChange:(ios::ChromeIdentityService*)identity {
   DCHECK(!_identityServiceObserver.get());
   _identityServiceObserver =
-      base::MakeUnique<ChromeIdentityServiceObserverBridge>(self);
+      std::make_unique<ChromeIdentityServiceObserverBridge>(self);
 }
 
 - (void)chromeBrowserProviderWillBeDestroyed {
@@ -587,8 +429,8 @@ const char* AlreadySeenSigninViewPreferenceKey(
   DCHECK(_isSigninPromoViewVisible);
   DCHECK(![self isInvalidClosedOrNeverVisible]);
   [self sendImpressionsTillSigninButtonsHistogram];
-  signin_metrics::RecordSigninUserActionForAccessPoint(_accessPoint);
-  RecordSigninNewAccountUserActionForAccessPoint(_accessPoint);
+  signin_metrics::RecordSigninUserActionForAccessPoint(
+      _accessPoint, signin_metrics::PromoAction::PROMO_ACTION_NEW_ACCOUNT);
   [self showSigninWithIdentity:nil
                    promoAction:signin_metrics::PromoAction::
                                    PROMO_ACTION_NEW_ACCOUNT];
@@ -600,8 +442,8 @@ const char* AlreadySeenSigninViewPreferenceKey(
   DCHECK(_isSigninPromoViewVisible);
   DCHECK(![self isInvalidClosedOrNeverVisible]);
   [self sendImpressionsTillSigninButtonsHistogram];
-  signin_metrics::RecordSigninUserActionForAccessPoint(_accessPoint);
-  RecordSigninDefaultUserActionForAccessPoint(_accessPoint);
+  signin_metrics::RecordSigninUserActionForAccessPoint(
+      _accessPoint, signin_metrics::PromoAction::PROMO_ACTION_WITH_DEFAULT);
   [self showSigninWithIdentity:_defaultIdentity
                    promoAction:signin_metrics::PromoAction::
                                    PROMO_ACTION_WITH_DEFAULT];
@@ -613,8 +455,8 @@ const char* AlreadySeenSigninViewPreferenceKey(
   DCHECK(_isSigninPromoViewVisible);
   DCHECK(![self isInvalidClosedOrNeverVisible]);
   [self sendImpressionsTillSigninButtonsHistogram];
-  signin_metrics::RecordSigninUserActionForAccessPoint(_accessPoint);
-  RecordSigninNotDefaultUserActionForAccessPoint(_accessPoint);
+  signin_metrics::RecordSigninUserActionForAccessPoint(
+      _accessPoint, signin_metrics::PromoAction::PROMO_ACTION_NOT_DEFAULT);
   [self showSigninWithIdentity:nil
                    promoAction:signin_metrics::PromoAction::
                                    PROMO_ACTION_NOT_DEFAULT];

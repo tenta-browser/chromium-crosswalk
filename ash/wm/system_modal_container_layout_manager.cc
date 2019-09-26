@@ -136,11 +136,9 @@ void SystemModalContainerLayoutManager::OnWindowPropertyChanged(
 // implementation:
 
 void SystemModalContainerLayoutManager::
-    OnKeyboardWorkspaceOccludedBoundsChanging(const gfx::Rect& new_bounds) {
+    OnKeyboardWorkspaceOccludedBoundsChanged(const gfx::Rect& new_bounds) {
   PositionDialogsAfterWorkAreaResize();
 }
-
-void SystemModalContainerLayoutManager::OnKeyboardClosed() {}
 
 bool SystemModalContainerLayoutManager::IsPartOfActiveModalWindow(
     aura::Window* window) {

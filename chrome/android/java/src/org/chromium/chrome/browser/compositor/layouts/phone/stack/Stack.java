@@ -14,15 +14,16 @@ import android.view.animation.Interpolator;
 
 import org.chromium.base.metrics.RecordUserAction;
 import org.chromium.chrome.R;
+import org.chromium.chrome.browser.ChromeFeatureList;
 import org.chromium.chrome.browser.compositor.layouts.ChromeAnimation;
 import org.chromium.chrome.browser.compositor.layouts.Layout;
 import org.chromium.chrome.browser.compositor.layouts.Layout.Orientation;
 import org.chromium.chrome.browser.compositor.layouts.components.LayoutTab;
 import org.chromium.chrome.browser.compositor.layouts.eventfilter.ScrollDirection;
-import org.chromium.chrome.browser.compositor.layouts.phone.StackLayout;
+import org.chromium.chrome.browser.compositor.layouts.phone.StackLayoutBase;
 import org.chromium.chrome.browser.compositor.layouts.phone.stack.StackAnimation.OverviewAnimationType;
 import org.chromium.chrome.browser.tab.Tab;
-import org.chromium.chrome.browser.tabmodel.TabModel;
+import org.chromium.chrome.browser.tabmodel.TabList;
 import org.chromium.chrome.browser.tabmodel.TabModelUtils;
 import org.chromium.chrome.browser.util.FeatureUtilities;
 import org.chromium.chrome.browser.util.MathUtils;
@@ -146,7 +147,7 @@ public class Stack {
     private static final float LANDSCAPE_SWIPE_DRAG_TAB_OFFSET_DP = 40.f;
 
     // External References
-    private TabModel mTabModel;
+    private TabList mTabList;
 
     // True when the stack is still visible for animation but it is going to be empty.
     private boolean mIsDying;
@@ -231,7 +232,7 @@ public class Stack {
     private Animator mViewAnimations;
 
     // The parent Layout
-    private final StackLayout mLayout;
+    private final StackLayoutBase mLayout;
 
     // Border values
     private float mBorderTransparentTop;
@@ -240,7 +241,7 @@ public class Stack {
     private float mBorderTopPadding;
     private float mBorderLeftPadding;
 
-    private boolean mIsStackForCurrentTabModel;
+    private boolean mIsStackForCurrentTabList;
 
     private final AnimatorListenerAdapter mViewAnimatorListener = new AnimatorListenerAdapter() {
         @Override
@@ -257,16 +258,23 @@ public class Stack {
     /**
      * @param layout The parent layout.
      */
-    public Stack(Context context, StackLayout layout) {
+    public Stack(Context context, StackLayoutBase layout) {
         mLayout = layout;
         contextChanged(context);
     }
 
     /**
-     * @param tabmodel The model to attach to this stack.
+     * @param tabList The list to attach to this stack.
      */
-    public void setTabModel(TabModel tabmodel) {
-        mTabModel = tabmodel;
+    public void setTabList(TabList tabList) {
+        mTabList = tabList;
+    }
+
+    /**
+     * @return The TabList associated with this stack.
+     */
+    public TabList getTabList() {
+        return mTabList;
     }
 
     /**
@@ -403,7 +411,7 @@ public class Stack {
             finishAnimation(time);
         }
         startAnimation(time, OverviewAnimationType.NEW_TAB_OPENED,
-                TabModelUtils.getTabIndexById(mTabModel, id), TabModel.INVALID_TAB_INDEX, false);
+                TabModelUtils.getTabIndexById(mTabList, id), TabList.INVALID_TAB_INDEX, false);
     }
 
     /**
@@ -413,7 +421,7 @@ public class Stack {
      * @param id   The id of the tab to select.
      */
     public void tabSelectingEffect(long time, int id) {
-        int index = TabModelUtils.getTabIndexById(mTabModel, id);
+        int index = TabModelUtils.getTabIndexById(mTabList, id);
         startAnimation(time, OverviewAnimationType.TAB_FOCUSED, index, -1, false);
     }
 
@@ -433,10 +441,10 @@ public class Stack {
     }
 
     /**
-     * @return Whether or not the TabModel represented by this TabStackState should be displayed.
+     * @return Whether or not the TabList represented by this TabStackState should be displayed.
      */
     public boolean isDisplayable() {
-        return !mTabModel.isIncognito() || (!mIsDying && mTabModel.getCount() > 0);
+        return !mTabList.isIncognito() || (!mIsDying && mTabList.getCount() > 0);
     }
 
     private float getDefaultDiscardDirection() {
@@ -447,10 +455,10 @@ public class Stack {
     /**
      * show is called to set up the initial variables, and must always be called before
      * displaying the stack.
-     * @param isStackForCurrentTabModel Whether this {@link Stack} is for the current tab model.
+     * @param isStackForCurrentTabList Whether this {@link Stack} is for the current tab list.
      */
-    public void show(boolean isStackForCurrentTabModel) {
-        mIsStackForCurrentTabModel = isStackForCurrentTabModel;
+    public void show(boolean isStackForCurrentTabList) {
+        mIsStackForCurrentTabList = isStackForCurrentTabList;
 
         mDiscardDirection = getDefaultDiscardDirection();
 
@@ -476,7 +484,7 @@ public class Stack {
      * @param type The type of the animation to start.
      */
     private void startAnimation(long time, OverviewAnimationType type) {
-        startAnimation(time, type, TabModel.INVALID_TAB_INDEX, false);
+        startAnimation(time, type, TabList.INVALID_TAB_INDEX, false);
     }
 
     /**
@@ -487,7 +495,7 @@ public class Stack {
      * @param finishImmediately Whether the animation jumps straight to the end.
      */
     private void startAnimation(long time, OverviewAnimationType type, boolean finishImmediately) {
-        startAnimation(time, type, TabModel.INVALID_TAB_INDEX, finishImmediately);
+        startAnimation(time, type, TabList.INVALID_TAB_INDEX, finishImmediately);
     }
 
     /**
@@ -500,7 +508,7 @@ public class Stack {
      */
     private void startAnimation(
             long time, OverviewAnimationType type, int sourceIndex, boolean finishImmediately) {
-        startAnimation(time, type, mTabModel.index(), sourceIndex, finishImmediately);
+        startAnimation(time, type, mTabList.index(), sourceIndex, finishImmediately);
     }
 
     private void startAnimation(long time, OverviewAnimationType type, int focusIndex,
@@ -519,7 +527,7 @@ public class Stack {
             // First try to build a View animation.  Then fallback to the compositor animation if
             // one isn't created.
             mViewAnimations = mViewAnimationFactory.createAnimatorForType(
-                    type, mStackTabs, mLayout.getViewContainer(), mTabModel, focusIndex);
+                    type, mStackTabs, mLayout.getViewContainer(), mTabList, focusIndex);
 
             if (mViewAnimations != null) {
                 mViewAnimations.addListener(mViewAnimatorListener);
@@ -529,7 +537,7 @@ public class Stack {
                 // state of the tab switcher and the OverviewAnimationType specified.
                 mTabAnimations =
                         mAnimationFactory.createAnimatorSetForType(type, mStackTabs, focusIndex,
-                                sourceIndex, mSpacing, mScrollOffset, mWarpSize, getDiscardRange());
+                                sourceIndex, mSpacing, mWarpSize, getDiscardRange());
             }
 
             if (mTabAnimations != null) mTabAnimations.start();
@@ -569,7 +577,7 @@ public class Stack {
                 // Nothing to do.
                 break;
             case DISCARD_ALL:
-                mLayout.uiDoneClosingAllTabs(mTabModel.isIncognito());
+                mLayout.uiDoneClosingAllTabs(mTabList.isIncognito());
                 cleanupStackTabState();
                 break;
             case UNDISCARD:
@@ -584,7 +592,7 @@ public class Stack {
                         StackTab tab = mStackTabs[i];
                         if (tab.isDying()) {
                             mLayout.uiDoneClosingTab(
-                                    time, tab.getId(), true, mTabModel.isIncognito());
+                                    time, tab.getId(), true, mTabList.isIncognito());
                         }
                     }
                 }
@@ -836,8 +844,8 @@ public class Stack {
             if (!mInSwipe) {
                 mDiscardingTab = getTabAtPositon(x, y);
             } else {
-                if (mTabModel.index() < 0) return;
-                mDiscardingTab = mStackTabs[mTabModel.index()];
+                if (mTabList.index() < 0) return;
+                mDiscardingTab = mStackTabs[mTabList.index()];
             }
 
             if (mDiscardingTab != null) {
@@ -905,7 +913,7 @@ public class Stack {
         }
 
         if (mScrollingTab == null && mInSwipe && mStackTabs != null) {
-            int index = mTabModel.index();
+            int index = mTabList.index();
             if (index >= 0 && index <= mStackTabs.length) mScrollingTab = mStackTabs[index];
         }
 
@@ -1693,6 +1701,7 @@ public class Stack {
                 // If the tab is completed covered, don't bother drawing it at all.
                 layoutTab.setVisible(false);
                 layoutTab.setDrawDecoration(true);
+                mLayout.releaseResourcesForTab(layoutTab);
             } else {
                 // Fade the tab as it gets too close to the next one. This helps
                 // prevent overlapping shadows from becoming too dark.
@@ -1974,17 +1983,17 @@ public class Stack {
      *                     we're calling this while the switcher is already visible.
      */
     private void createStackTabs(boolean restoreState) {
-        final int count = mTabModel.getCount();
+        final int count = mTabList.getCount();
         if (count == 0) {
             cleanupTabs();
         } else {
             StackTab[] oldTabs = mStackTabs;
             mStackTabs = new StackTab[count];
 
-            final boolean isIncognito = mTabModel.isIncognito();
+            final boolean isIncognito = mTabList.isIncognito();
             final boolean needTitle = !mLayout.isHiding();
             for (int i = 0; i < count; ++i) {
-                Tab tab = mTabModel.getTabAt(i);
+                Tab tab = mTabList.getTabAt(i);
                 int tabId = tab != null ? tab.getId() : Tab.INVALID_TAB_ID;
                 mStackTabs[i] = findTabById(oldTabs, tabId);
 
@@ -2001,8 +2010,7 @@ public class Stack {
                 layoutTab.setInsetBorderVertical(true);
                 layoutTab.setShowToolbar(!FeatureUtilities.isChromeHomeEnabled());
                 layoutTab.setToolbarAlpha(0.f);
-                layoutTab.setAnonymizeToolbar(!mIsStackForCurrentTabModel
-                        || mTabModel.index() != i);
+                layoutTab.setAnonymizeToolbar(!mIsStackForCurrentTabList || mTabList.index() != i);
 
                 if (mStackTabs[i] == null) {
                     mStackTabs[i] = new StackTab(layoutTab);
@@ -2034,7 +2042,7 @@ public class Stack {
      * @return   Whether the tab has successfully been created and added.
      */
     private boolean createTabHelper(int id) {
-        if (TabModelUtils.getTabById(mTabModel, id) == null) return false;
+        if (TabModelUtils.getTabById(mTabList, id) == null) return false;
 
         // Check to see if the tab already exists in our model.  This is
         // just to cover the case where stackEntered and then tabCreated()
@@ -2215,15 +2223,15 @@ public class Stack {
     }
 
     private void resetAllScrollOffset() {
-        if (mTabModel == null) return;
+        if (mTabList == null) return;
         // Reset the scroll position to put the important {@link StackTab} into focus.
         // This does not scroll the {@link StackTab}s there but rather moves everything
         // there immediately.
         // The selected tab is supposed to show at the center of the screen.
         float maxTabsPerPage = getScrollDimensionSize() / mSpacing;
         float centerOffsetIndex = maxTabsPerPage / 2.0f - 0.5f;
-        final int count = mTabModel.getCount();
-        final int index = mTabModel.index();
+        final int count = mTabList.getCount();
+        final int index = mTabList.index();
         if (index < centerOffsetIndex || count <= maxTabsPerPage) {
             mScrollOffset = 0;
         } else if (index == count - 1 && Math.ceil(maxTabsPerPage) < count) {
@@ -2273,7 +2281,7 @@ public class Stack {
      */
     public float getMaxTabHeight() {
         if (FeatureUtilities.isChromeHomeEnabled() && mCurrentMode == Orientation.PORTRAIT) {
-            return mLayout.getHeightMinusBrowserControls() - StackLayout.MODERN_TOP_MARGIN_DP;
+            return mLayout.getHeightMinusBrowserControls() - StackLayoutBase.MODERN_TOP_MARGIN_DP;
         }
         return mLayout.getHeightMinusBrowserControls();
     }
@@ -2308,7 +2316,12 @@ public class Stack {
     }
 
     private void updateCurrentMode(int orientation) {
-        mCurrentMode = orientation;
+        if (ChromeFeatureList.isEnabled(ChromeFeatureList.HORIZONTAL_TAB_SWITCHER_ANDROID)) {
+            mCurrentMode = Orientation.LANDSCAPE;
+        } else {
+            mCurrentMode = orientation;
+        }
+
         mDiscardDirection = getDefaultDiscardDirection();
         setWarpState(true, false);
         final float opaqueTopPadding = mBorderTopPadding - mBorderTransparentTop;
@@ -2407,7 +2420,7 @@ public class Stack {
         startAnimation(time, OverviewAnimationType.ENTER_STACK);
 
         // Update the scroll offset to put the focused tab at the top.
-        final int index = mTabModel.index();
+        final int index = mTabList.index();
 
         if (mCurrentMode == Orientation.PORTRAIT) {
             mScrollOffset = -index * mSpacing;
@@ -2448,7 +2461,7 @@ public class Stack {
         if (ty > toolbarSize) mSwipeCanScroll = true;
         if (!mSwipeCanScroll) return;
 
-        final int index = mTabModel.index();
+        final int index = mTabList.index();
 
         // Check to make sure the index is still valid.
         if (index < 0 || index >= mStackTabs.length) {
@@ -2536,7 +2549,7 @@ public class Stack {
         mEvenOutProgress = 0.f;
 
         // Select the current tab so we exit the switcher.
-        Tab tab = TabModelUtils.getCurrentTab(mTabModel);
+        Tab tab = TabModelUtils.getCurrentTab(mTabList);
         mLayout.uiSelectingTab(time, tab != null ? tab.getId() : Tab.INVALID_TAB_ID);
     }
 

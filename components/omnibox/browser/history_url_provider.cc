@@ -10,6 +10,7 @@
 
 #include "base/bind.h"
 #include "base/command_line.h"
+#include "base/feature_list.h"
 #include "base/location.h"
 #include "base/macros.h"
 #include "base/metrics/histogram_macros.h"
@@ -18,6 +19,7 @@
 #include "base/strings/utf_string_conversions.h"
 #include "base/threading/sequenced_task_runner_handle.h"
 #include "base/time/time.h"
+#include "base/trace_event/memory_usage_estimator.h"
 #include "base/trace_event/trace_event.h"
 #include "components/bookmarks/browser/bookmark_utils.h"
 #include "components/history/core/browser/history_backend.h"
@@ -287,6 +289,10 @@ class SearchTermsDataSnapshot : public SearchTermsData {
   std::string GetSearchClient() const override;
   std::string GoogleImageSearchSource() const override;
 
+  // Estimates dynamic memory usage.
+  // See base/trace_event/memory_usage_estimator.h for more info.
+  size_t EstimateMemoryUsage() const override;
+
  private:
   std::string google_base_url_value_;
   std::string application_locale_;
@@ -328,6 +334,18 @@ std::string SearchTermsDataSnapshot::GetSearchClient() const {
 
 std::string SearchTermsDataSnapshot::GoogleImageSearchSource() const {
   return google_image_search_source_;
+}
+
+size_t SearchTermsDataSnapshot::EstimateMemoryUsage() const {
+  size_t res = 0;
+
+  res += base::trace_event::EstimateMemoryUsage(google_base_url_value_);
+  res += base::trace_event::EstimateMemoryUsage(application_locale_);
+  res += base::trace_event::EstimateMemoryUsage(rlz_parameter_value_);
+  res += base::trace_event::EstimateMemoryUsage(search_client_);
+  res += base::trace_event::EstimateMemoryUsage(google_image_search_source_);
+
+  return res;
 }
 
 // -----------------------------------------------------------------
@@ -402,7 +420,7 @@ HistoryURLProvider::VisitClassifier::VisitClassifier(
     const GURL url_with_prefix = url_formatter::FixupURL(
         base::UTF16ToUTF8(prefix_it->prefix + input.text()), desired_tld);
     if (url_with_prefix.is_valid() &&
-        db_->GetRowForURL(url_with_prefix, &url_row_)) {
+        db_->GetRowForURL(url_with_prefix, &url_row_) && !url_row_.hidden()) {
       type_ = VISITED;
       return;
     }
@@ -441,6 +459,18 @@ HistoryURLProviderParams::HistoryURLProviderParams(
       search_terms_data(new SearchTermsDataSnapshot(search_terms_data)) {}
 
 HistoryURLProviderParams::~HistoryURLProviderParams() {
+}
+
+size_t HistoryURLProviderParams::EstimateMemoryUsage() const {
+  size_t res = 0;
+
+  res += base::trace_event::EstimateMemoryUsage(input);
+  res += base::trace_event::EstimateMemoryUsage(what_you_typed_match);
+  res += base::trace_event::EstimateMemoryUsage(matches);
+  res += base::trace_event::EstimateMemoryUsage(default_search_provider);
+  res += base::trace_event::EstimateMemoryUsage(search_terms_data);
+
+  return res;
 }
 
 HistoryURLProvider::HistoryURLProvider(AutocompleteProviderClient* client,
@@ -559,6 +589,16 @@ void HistoryURLProvider::Stop(bool clear_cached_results,
     params_->cancel_flag.Set();
 }
 
+size_t HistoryURLProvider::EstimateMemoryUsage() const {
+  size_t res = HistoryProvider::EstimateMemoryUsage();
+
+  if (params_)
+    res += base::trace_event::EstimateMemoryUsage(*params_);
+  res += base::trace_event::EstimateMemoryUsage(scoring_params_);
+
+  return res;
+}
+
 AutocompleteMatch HistoryURLProvider::SuggestExactInput(
     const AutocompleteInput& input,
     const GURL& destination_url,
@@ -584,7 +624,8 @@ AutocompleteMatch HistoryURLProvider::SuggestExactInput(
     const size_t offset = trim_http ? TrimHttpPrefix(&display_string) : 0;
     match.fill_into_edit =
         AutocompleteInput::FormattedStringWithEquivalentMeaning(
-            destination_url, display_string, client()->GetSchemeClassifier());
+            destination_url, display_string, client()->GetSchemeClassifier(),
+            nullptr);
     // The what-you-typed match is generally only allowed to be default for
     // URL inputs or when there is no default search provider.  (It's also
     // allowed to be default for UNKNOWN inputs where the destination is a known
@@ -898,8 +939,8 @@ void HistoryURLProvider::QueryComplete(
       }
       matches_.push_back(HistoryMatchToACMatch(*params, i, relevance));
     }
-    if (base::FeatureList::IsEnabled(omnibox::kOmniboxTabSwitchSuggestions))
-      ConvertOpenTabMatches();
+    if (OmniboxFieldTrial::InTabSwitchSuggestionTrial())
+      ConvertOpenTabMatches(&params->input);
   }
 
   done_ = true;
@@ -1200,7 +1241,7 @@ AutocompleteMatch HistoryURLProvider::HistoryMatchToACMatch(
           url_formatter::FormatUrl(info.url(), fill_into_edit_format_types,
                                    net::UnescapeRule::SPACES, nullptr, nullptr,
                                    &inline_autocomplete_offset),
-          client()->GetSchemeClassifier());
+          client()->GetSchemeClassifier(), &inline_autocomplete_offset);
   // |inline_autocomplete_offset| was guaranteed not to be npos before the call
   // to FormatUrl().  If it is npos now, that means the represented location no
   // longer exists as such in the formatted string, e.g. if the offset pointed
@@ -1226,7 +1267,8 @@ AutocompleteMatch HistoryURLProvider::HistoryMatchToACMatch(
       history_match.input_location + params.input.text().length()};
 
   const auto format_types = AutocompleteMatch::GetFormatTypes(
-      !params.trim_http || history_match.match_in_scheme,
+      params.input.parts().scheme.len > 0 || !params.trim_http ||
+          history_match.match_in_scheme,
       history_match.match_in_subdomain, history_match.match_after_host);
   match.contents = url_formatter::FormatUrlWithOffsets(
       info.url(), format_types, net::UnescapeRule::SPACES, nullptr, nullptr,

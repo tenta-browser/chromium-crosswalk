@@ -7,7 +7,6 @@
 #include "base/bind.h"
 #include "base/command_line.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "build/build_config.h"
@@ -167,29 +166,28 @@ TEST_F(TranslateUIDelegateTest, ShouldAlwaysTranslateBeCheckedByDefaultNever) {
   }
 }
 
-TEST_F(TranslateUIDelegateTest, ShouldAlwaysTranslateBeCheckedByDefault2) {
-  const char kGroupName[] = "GroupA";
-  std::map<std::string, std::string> params = {
-      {kAlwaysTranslateOfferThreshold, "2"}};
-  variations::AssociateVariationParams(translate::kTranslateUI2016Q2TrialName,
-                                       kGroupName, params);
-  // need a trial_list to init the global instance used internally
-  // inside CreateFieldTrial().
-  base::FieldTrialList trial_list(nullptr);
-  base::FieldTrialList::CreateFieldTrial(translate::kTranslateUI2016Q2TrialName,
-                                         kGroupName);
-
-  std::unique_ptr<TranslatePrefs> prefs(client_->GetTranslatePrefs());
-  prefs->ResetTranslationAcceptedCount("ar");
-
-  for (int i = 0; i < 2; i++) {
-    EXPECT_FALSE(delegate_->ShouldAlwaysTranslateBeCheckedByDefault());
+TEST_F(TranslateUIDelegateTest, ShouldShowAlwaysTranslateShortcut) {
+  std::unique_ptr<TranslatePrefs> prefs = client_->GetTranslatePrefs();
+  for (int i = 0; i < kAlwaysTranslateShortcutMinimumAccepts; i++) {
+    EXPECT_FALSE(delegate_->ShouldShowAlwaysTranslateShortcut())
+        << " at iteration #" << i;
     prefs->IncrementTranslationAcceptedCount("ar");
   }
-  EXPECT_TRUE(delegate_->ShouldAlwaysTranslateBeCheckedByDefault());
-  prefs->IncrementTranslationAcceptedCount("ar");
+  EXPECT_TRUE(delegate_->ShouldShowAlwaysTranslateShortcut());
+  driver_.set_incognito();
+  EXPECT_FALSE(delegate_->ShouldShowAlwaysTranslateShortcut());
+}
 
-  EXPECT_FALSE(delegate_->ShouldAlwaysTranslateBeCheckedByDefault());
+TEST_F(TranslateUIDelegateTest, ShouldShowNeverTranslateShortcut) {
+  std::unique_ptr<TranslatePrefs> prefs = client_->GetTranslatePrefs();
+  for (int i = 0; i < kNeverTranslateShortcutMinimumDenials; i++) {
+    EXPECT_FALSE(delegate_->ShouldShowNeverTranslateShortcut())
+        << " at iteration #" << i;
+    prefs->IncrementTranslationDeniedCount("ar");
+  }
+  EXPECT_TRUE(delegate_->ShouldShowNeverTranslateShortcut());
+  driver_.set_incognito();
+  EXPECT_FALSE(delegate_->ShouldShowNeverTranslateShortcut());
 }
 
 TEST_F(TranslateUIDelegateTest, LanguageCodes) {

@@ -83,7 +83,7 @@
 #include "zutil.h"
 #include "inftrees.h"
 #include "inflate.h"
-#include "contrib/optimizations/inffast_chunky.h"
+#include "contrib/optimizations/inffast_chunk.h"
 #include "contrib/optimizations/chunkcopy.h"
 
 #ifdef MAKEFIXED
@@ -419,7 +419,7 @@ unsigned copy;
            and is subsequently either overwritten or left deliberately
            undefined at the end of decode; so there's really no point.
          */
-        memset(state->window + wsize, 0, CHUNKCOPY_CHUNK_SIZE);
+        zmemzero(state->window + wsize, CHUNKCOPY_CHUNK_SIZE);
 #endif
     }
 
@@ -1054,9 +1054,10 @@ int flush;
         case LEN_:
             state->mode = LEN;
         case LEN:
-            if (have >= 6 && left >= 258) {
+            if (have >= INFLATE_FAST_MIN_INPUT &&
+                left >= INFLATE_FAST_MIN_OUTPUT) {
                 RESTORE();
-                inflate_fast_chunky(strm, out);
+                inflate_fast_chunk_(strm, out);
                 LOAD();
                 if (state->mode == TYPE)
                     state->back = -1;

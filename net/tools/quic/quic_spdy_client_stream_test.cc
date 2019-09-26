@@ -9,8 +9,11 @@
 #include "base/macros.h"
 #include "net/quic/core/quic_utils.h"
 #include "net/quic/core/spdy_utils.h"
+#include "net/quic/core/tls_client_handshaker.h"
 #include "net/quic/platform/api/quic_logging.h"
+#include "net/quic/platform/api/quic_ptr_util.h"
 #include "net/quic/platform/api/quic_socket_address.h"
+#include "net/quic/platform/api/quic_string.h"
 #include "net/quic/platform/api/quic_test.h"
 #include "net/quic/platform/api/quic_text_utils.h"
 #include "net/quic/test_tools/crypto_test_utils.h"
@@ -19,7 +22,7 @@
 #include "net/tools/quic/quic_spdy_client_session.h"
 
 using base::IntToString;
-using std::string;
+using testing::_;
 using testing::StrictMock;
 
 namespace net {
@@ -38,7 +41,8 @@ class MockQuicSpdyClientSession : public QuicSpdyClientSession {
             QuicServerId("example.com", 443, PRIVACY_MODE_DISABLED),
             &crypto_config_,
             push_promise_index),
-        crypto_config_(crypto_test_utils::ProofVerifierForTesting()) {}
+        crypto_config_(crypto_test_utils::ProofVerifierForTesting(),
+                       TlsClientHandshaker::CreateSslCtx()) {}
   ~MockQuicSpdyClientSession() override = default;
 
   MOCK_METHOD1(CloseStream, void(QuicStreamId stream_id));
@@ -64,10 +68,10 @@ class QuicSpdyClientStreamTest : public QuicTest {
     headers_[":status"] = "200";
     headers_["content-length"] = "11";
 
-    stream_.reset(new QuicSpdyClientStream(
+    stream_ = QuicMakeUnique<QuicSpdyClientStream>(
         QuicSpdySessionPeer::GetNthClientInitiatedStreamId(session_, 0),
-        &session_));
-    stream_visitor_.reset(new StreamVisitor());
+        &session_);
+    stream_visitor_ = QuicMakeUnique<StreamVisitor>();
     stream_->set_visitor(stream_visitor_.get());
   }
 
@@ -86,14 +90,15 @@ class QuicSpdyClientStreamTest : public QuicTest {
   std::unique_ptr<QuicSpdyClientStream> stream_;
   std::unique_ptr<StreamVisitor> stream_visitor_;
   SpdyHeaderBlock headers_;
-  string body_;
+  QuicString body_;
 };
 
 TEST_F(QuicSpdyClientStreamTest, TestReceivingIllegalResponseStatusCode) {
   headers_[":status"] = "200 ok";
 
+  EXPECT_CALL(*connection_, SendControlFrame(_));
   EXPECT_CALL(*connection_,
-              SendRstStream(stream_->id(), QUIC_BAD_APPLICATION_PAYLOAD, 0));
+              OnStreamReset(stream_->id(), QUIC_BAD_APPLICATION_PAYLOAD));
   auto headers = AsHeaderList(headers_);
   stream_->OnStreamHeaderList(false, headers.uncompressed_header_bytes(),
                               headers);
@@ -136,7 +141,7 @@ TEST_F(QuicSpdyClientStreamTest, TestFramingOnePacket) {
 }
 
 TEST_F(QuicSpdyClientStreamTest, DISABLED_TestFramingExtraData) {
-  string large_body = "hello world!!!!!!";
+  QuicString large_body = "hello world!!!!!!";
 
   auto headers = AsHeaderList(headers_);
   stream_->OnStreamHeaderList(false, headers.uncompressed_header_bytes(),
@@ -146,8 +151,9 @@ TEST_F(QuicSpdyClientStreamTest, DISABLED_TestFramingExtraData) {
   EXPECT_EQ("200", stream_->response_headers().find(":status")->second);
   EXPECT_EQ(200, stream_->response_code());
 
+  EXPECT_CALL(*connection_, SendControlFrame(_));
   EXPECT_CALL(*connection_,
-              SendRstStream(stream_->id(), QUIC_BAD_APPLICATION_PAYLOAD, 0));
+              OnStreamReset(stream_->id(), QUIC_BAD_APPLICATION_PAYLOAD));
   stream_->OnStreamFrame(
       QuicStreamFrame(stream_->id(), /*fin=*/false, /*offset=*/0, large_body));
 

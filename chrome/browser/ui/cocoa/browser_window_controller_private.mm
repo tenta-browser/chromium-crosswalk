@@ -32,12 +32,10 @@
 #import "chrome/browser/ui/cocoa/floating_bar_backing_view.h"
 #import "chrome/browser/ui/cocoa/framed_browser_window.h"
 #import "chrome/browser/ui/cocoa/fullscreen/fullscreen_toolbar_controller.h"
-#include "chrome/browser/ui/cocoa/fullscreen_low_power_coordinator.h"
 #import "chrome/browser/ui/cocoa/fullscreen_window.h"
 #import "chrome/browser/ui/cocoa/infobars/infobar_container_controller.h"
 #include "chrome/browser/ui/cocoa/last_active_browser_cocoa.h"
 #include "chrome/browser/ui/cocoa/location_bar/location_bar_view_mac.h"
-#import "chrome/browser/ui/cocoa/permission_bubble/permission_bubble_cocoa.h"
 #import "chrome/browser/ui/cocoa/profiles/avatar_button_controller.h"
 #import "chrome/browser/ui/cocoa/profiles/avatar_icon_controller.h"
 #import "chrome/browser/ui/cocoa/status_bubble_mac.h"
@@ -362,7 +360,7 @@ willPositionSheet:(NSWindow*)sheet
   // Have to do this here, otherwise later calls can crash because the window
   // has no delegate.
   [sourceWindow setDelegate:nil];
-  [destWindow setDelegate:self];
+  [destWindow setDelegate:[self nsWindowController]];
 
   // With this call, valgrind complains that a "Conditional jump or move depends
   // on uninitialised value(s)".  The error happens in -[NSThemeFrame
@@ -391,7 +389,7 @@ willPositionSheet:(NSWindow*)sheet
 
   [sourceWindow setWindowController:nil];
   [self setWindow:destWindow];
-  [destWindow setWindowController:self];
+  [destWindow setWindowController:[self nsWindowController]];
 
   // Move the status bubble over, if we have one.
   if (statusBubble_)
@@ -610,9 +608,8 @@ willPositionSheet:(NSWindow*)sheet
 
       NSWindow* windowForToolbar = [window _windowForToolbar];
       if ([windowForToolbar isKindOfClass:[FramedBrowserWindow class]]) {
-        BrowserWindowController* bwc =
-            base::mac::ObjCCastStrict<BrowserWindowController>(
-                [windowForToolbar windowController]);
+        BrowserWindowController* bwc = [BrowserWindowController
+            browserWindowControllerForWindow:windowForToolbar];
         if ([bwc hasToolbar])
           [[window contentView] setHidden:YES];
       }
@@ -659,12 +656,15 @@ willPositionSheet:(NSWindow*)sheet
   [self showFullscreenExitBubbleIfNecessary];
   browser_->WindowFullscreenStateChanged();
 
-  if (fullscreenLowPowerCoordinator_)
-    fullscreenLowPowerCoordinator_->SetInFullscreenTransition(false);
-
   if (shouldExitAfterEnteringFullscreen_) {
     shouldExitAfterEnteringFullscreen_ = NO;
-    [self exitAppKitFullscreen];
+
+    // At 10.13, -windowDidEnteredFullscreen: is called before the AppKit
+    // fullscreen transition is complete. This causes AppKit to emit "not in
+    // fullscreen state" and ignore the call when we try to toggle fullscreen
+    // in the same runloop that entered it. To handle this case, invoke
+    // -toggleFullscreen: asynchronously.
+    [self exitAppKitFullscreenAsync:!base::mac::IsAtMostOS10_12()];
   }
 
   // In macOS 10.12 and earlier, the web content's NSTrackingInVisibleRect
@@ -682,9 +682,6 @@ willPositionSheet:(NSWindow*)sheet
 
 - (void)windowWillExitFullScreen:(NSNotification*)notification {
   [tabStripController_ setVisualEffectsDisabledForFullscreen:NO];
-
-  if (fullscreenLowPowerCoordinator_)
-    fullscreenLowPowerCoordinator_->SetInFullscreenTransition(true);
 
   // macOS 10.12 and earlier have issues with exiting fullscreen while a window
   // is on the detached/low power path (playing a video with no UI visible).
@@ -733,9 +730,6 @@ willPositionSheet:(NSWindow*)sheet
     return;
   }
 
-  // Destroy the NSWindow used for fullscreen low power mode.
-  fullscreenLowPowerCoordinator_.reset();
-
   if (notification)  // For System Fullscreen when non-nil.
     [self deregisterForContentViewResizeNotifications];
 
@@ -764,7 +758,6 @@ willPositionSheet:(NSWindow*)sheet
   [self deregisterForContentViewResizeNotifications];
   [self resetCustomAppKitFullscreenVariables];
   [self adjustUIForExitingFullscreen];
-  fullscreenLowPowerCoordinator_.reset();
 }
 
 - (void)windowDidFailToExitFullScreen:(NSWindow*)window {
@@ -857,30 +850,11 @@ willPositionSheet:(NSWindow*)sheet
   return [bookmarkBarController_ toolbarDividerOpacity];
 }
 
-- (void)updateInfoBarTipVisibility {
-  // If there's no toolbar then hide the infobar tip.
-  [infoBarContainerController_
-      setShouldSuppressTopInfoBarTip:![self hasToolbar]];
-}
-
-- (NSInteger)infoBarAnchorPointY {
-  LocationBarViewMac* locationBarView = [self locationBarBridge];
-
-  // The point, in window coordinates.
-  NSPoint iconBottom = locationBarView->GetInfoBarAnchorPoint();
-
-  // The toolbar, in window coordinates.
-  NSView* toolbar = [toolbarController_ view];
-  CGFloat toolbarY = NSMinY([toolbar convertRect:[toolbar bounds] toView:nil]);
-
-  return iconBottom.y - toolbarY;
-}
-
 - (void)enterAppKitFullscreen {
   [[self window] toggleFullScreen:nil];
 }
 
-- (void)exitAppKitFullscreen {
+- (void)exitAppKitFullscreenAsync:(BOOL)async {
   // If we're in the process of entering fullscreen, toggleSystemFullscreen
   // will get ignored. Set |shouldExitAfterEnteringFullscreen_| to true so
   // the browser will exit fullscreen immediately after it enters it.
@@ -889,7 +863,13 @@ willPositionSheet:(NSWindow*)sheet
     return;
   }
 
-  [[self window] toggleFullScreen:nil];
+  if (async) {
+    [[self window] performSelector:@selector(toggleFullScreen:)
+                        withObject:nil
+                        afterDelay:0];
+  } else {
+    [[self window] toggleFullScreen:nil];
+  }
 }
 
 - (NSRect)fullscreenButtonFrame {
@@ -951,7 +931,6 @@ willPositionSheet:(NSWindow*)sheet
       NSHeight([[bookmarkBarController_ view] bounds])];
 
   [layout setInfoBarHeight:[infoBarContainerController_ heightOfInfoBars]];
-  [layout setInfoBarAnchorPointY:[self infoBarAnchorPointY]];
 
   [layout setHasDownloadShelf:(downloadShelfController_.get() != nil)];
   [layout setDownloadShelfHeight:
@@ -972,10 +951,6 @@ willPositionSheet:(NSWindow*)sheet
 
   // The info bar is never hidden. Sometimes it has zero effective height.
   [[infoBarContainerController_ view] setFrame:output.infoBarFrame];
-  [infoBarContainerController_
-      setMaxTopArrowHeight:output.infoBarMaxTopArrowHeight];
-  [infoBarContainerController_
-      setInfobarArrowX:[self locationBarBridge]->GetInfoBarAnchorPoint().x];
 
   [[downloadShelfController_ view] setFrame:output.downloadShelfFrame];
 
@@ -990,12 +965,6 @@ willPositionSheet:(NSWindow*)sheet
   [findBarCocoaController_
       positionFindBarViewAtMaxY:output.findBarMaxY
                        maxWidth:NSWidth(output.contentAreaFrame)];
-
-  if (fullscreenLowPowerCoordinator_) {
-    fullscreenLowPowerCoordinator_->SetLayoutParameters(
-        output.toolbarFrame, output.infoBarFrame, output.contentAreaFrame,
-        output.downloadShelfFrame);
-  }
 }
 
 - (void)updateSubviewZOrder {
@@ -1177,34 +1146,11 @@ willPositionSheet:(NSWindow*)sheet
   if (![self shouldUseCustomAppKitFullscreenTransition:YES])
     return nil;
 
-  NSWindow* lowPowerWindow = nil;
-  static const bool fullscreen_low_power_disabled_at_command_line =
-      base::CommandLine::ForCurrentProcess()->HasSwitch(
-          switches::kDisableFullscreenLowPowerMode);
-  // Temporarily disabled on 10.13 because the window turns black when exiting
-  // FSLP. See https://crbug.com/742691 for progress.
-  if (!base::mac::IsAtLeastOS10_13() &&
-      !fullscreen_low_power_disabled_at_command_line) {
-    WebContents* webContents = [self webContents];
-    if (webContents && webContents->GetRenderWidgetHostView()) {
-      fullscreenLowPowerCoordinator_.reset(
-          new FullscreenLowPowerCoordinatorCocoa(
-              [self window], webContents->GetRenderWidgetHostView()
-                                 ->GetAcceleratedWidgetMac()));
-      lowPowerWindow =
-          fullscreenLowPowerCoordinator_->GetFullscreenLowPowerWindow();
-    }
-  }
-
   fullscreenTransition_.reset(
       [[BrowserWindowFullscreenTransition alloc] initEnterWithController:self]);
 
   NSArray* customWindows =
       [fullscreenTransition_ customWindowsForFullScreenTransition];
-  if (customWindows && lowPowerWindow)
-    customWindows = [customWindows arrayByAddingObject:lowPowerWindow];
-  else
-    fullscreenLowPowerCoordinator_.reset();
 
   isUsingCustomAnimation_ = customWindows != nil;
   return customWindows;
@@ -1261,21 +1207,6 @@ willPositionSheet:(NSWindow*)sheet
 - (FullscreenToolbarVisibilityLockController*)
     fullscreenToolbarVisibilityLockController {
   return [fullscreenToolbarController_ visibilityLockController];
-}
-
-- (void)windowWillBeginSheet:(NSNotification*)notification {
-  if (fullscreenLowPowerCoordinator_)
-    fullscreenLowPowerCoordinator_->SetHasActiveSheet(true);
-}
-
-- (void)windowDidEndSheet:(NSNotification*)notification {
-  if (fullscreenLowPowerCoordinator_)
-    fullscreenLowPowerCoordinator_->SetHasActiveSheet(false);
-}
-
-- (void)childWindowsDidChange {
-  if (fullscreenLowPowerCoordinator_)
-    fullscreenLowPowerCoordinator_->ChildWindowsChanged();
 }
 
 @end  // @implementation BrowserWindowController(Private)

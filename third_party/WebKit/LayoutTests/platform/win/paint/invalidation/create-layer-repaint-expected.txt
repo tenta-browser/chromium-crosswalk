@@ -3,18 +3,29 @@
     {
       "name": "LayoutView #document",
       "bounds": [800, 600],
+      "drawsContent": false,
+      "backgroundColor": "#FFFFFF"
+    },
+    {
+      "name": "Scrolling Layer",
+      "bounds": [800, 600],
+      "drawsContent": false
+    },
+    {
+      "name": "Scrolling Contents Layer",
+      "bounds": [800, 600],
       "contentsOpaque": true,
       "backgroundColor": "#FFFFFF",
       "paintInvalidations": [
         {
-          "object": "LayoutBlockFlow DIV id='test' class='stretchy'",
+          "object": "LayoutBlockFlow HTML",
           "rect": [28, 56, 500, 50],
-          "reason": "subtree"
+          "reason": "disappeared"
         },
         {
           "object": "LayoutBlockFlow DIV id='test' class='stretchy'",
           "rect": [28, 56, 250, 50],
-          "reason": "subtree"
+          "reason": "appeared"
         }
       ]
     }
@@ -22,11 +33,7 @@
   "objectPaintInvalidations": [
     {
       "object": "LayoutBlockFlow DIV id='test' class='stretchy'",
-      "reason": "subtree"
-    },
-    {
-      "object": "LayoutBlockFlow DIV id='test' class='stretchy'",
-      "reason": "subtree"
+      "reason": "style change"
     }
   ]
 }

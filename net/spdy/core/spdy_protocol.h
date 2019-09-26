@@ -34,8 +34,11 @@
 
 namespace net {
 
-// A stream id is a 31 bit entity.
-typedef uint32_t SpdyStreamId;
+// A stream ID is a 31-bit entity.
+using SpdyStreamId = uint32_t;
+
+// A SETTINGS ID is a 16-bit entity.
+using SpdySettingsId = uint16_t;
 
 // Specifies the stream ID used to denote the current session (for
 // flow control).
@@ -50,6 +53,12 @@ const uint32_t kSpdyMaxFrameSizeLimit = (1 << 24) - 1;
 // The initial value for the maximum frame payload size as per the spec. This is
 // the maximum control frame size we accept.
 const uint32_t kHttp2DefaultFramePayloadLimit = 1 << 14;
+
+// The maximum size of the control frames that we send, including the size of
+// the header. This limit is arbitrary. We can enforce it here or at the
+// application layer. We chose the framing layer, but this can be changed (or
+// removed) if necessary later down the line.
+const size_t kHttp2MaxControlFrameSendSize = kHttp2DefaultFramePayloadLimit - 1;
 
 // Number of octets in the frame header.
 const size_t kFrameHeaderSize = 9;
@@ -112,7 +121,6 @@ enum SpdyDataFlags {
 enum SpdyControlFlags {
   CONTROL_FLAG_NONE = 0x00,
   CONTROL_FLAG_FIN = 0x01,
-  CONTROL_FLAG_UNIDIRECTIONAL = 0x02,
 };
 
 enum SpdyPingFlags {
@@ -136,7 +144,7 @@ enum Http2SettingsControlFlags {
 };
 
 // Wire values of HTTP/2 setting identifiers.
-enum SpdySettingsIds : uint16_t {
+enum SpdyKnownSettingsId : SpdySettingsId {
   // HPACK header table maximum size.
   SETTINGS_HEADER_TABLE_SIZE = 0x1,
   SETTINGS_MIN = SETTINGS_HEADER_TABLE_SIZE,
@@ -150,20 +158,25 @@ enum SpdySettingsIds : uint16_t {
   SETTINGS_MAX_FRAME_SIZE = 0x5,
   // The maximum size of header list that the sender is prepared to accept.
   SETTINGS_MAX_HEADER_LIST_SIZE = 0x6,
-  SETTINGS_MAX = SETTINGS_MAX_HEADER_LIST_SIZE
+  // Enable Websockets over HTTP/2, see
+  // https://tools.ietf.org/html/draft-ietf-httpbis-h2-websockets-00.
+  SETTINGS_ENABLE_CONNECT_PROTOCOL = 0x8,
+  SETTINGS_MAX = SETTINGS_ENABLE_CONNECT_PROTOCOL,
+  // Experimental setting used to configure an alternative write scheduler.
+  SETTINGS_EXPERIMENT_SCHEDULER = 0xFF45,
 };
 
 // This explicit operator is needed, otherwise compiler finds
 // overloaded operator to be ambiguous.
 SPDY_EXPORT_PRIVATE std::ostream& operator<<(std::ostream& out,
-                                             SpdySettingsIds id);
+                                             SpdyKnownSettingsId id);
 
 // This operator is needed, because SpdyFrameType is an enum class,
 // therefore implicit conversion to underlying integer type is not allowed.
 SPDY_EXPORT_PRIVATE std::ostream& operator<<(std::ostream& out,
                                              SpdyFrameType frame_type);
 
-using SettingsMap = std::map<SpdySettingsIds, uint32_t>;
+using SettingsMap = std::map<SpdySettingsId, uint32_t>;
 
 // HTTP/2 error codes, RFC 7540 Section 7.
 enum SpdyErrorCode : uint32_t {
@@ -246,13 +259,13 @@ const char* FrameTypeToString(SpdyFrameType frame_type);
 
 // If |wire_setting_id| is the on-the-wire representation of a defined SETTINGS
 // parameter, parse it to |*setting_id| and return true.
-SPDY_EXPORT_PRIVATE bool ParseSettingsId(uint16_t wire_setting_id,
-                                         SpdySettingsIds* setting_id);
+SPDY_EXPORT_PRIVATE bool ParseSettingsId(SpdySettingsId wire_setting_id,
+                                         SpdyKnownSettingsId* setting_id);
 
-// Return if |id| corresponds to a defined setting;
-// stringify |id| to |*settings_id_string| regardless.
-SPDY_EXPORT_PRIVATE bool SettingsIdToString(SpdySettingsIds id,
-                                            const char** settings_id_string);
+// Returns a string representation of the |id| for logging/debugging. Returns
+// the |id| prefixed with "SETTINGS_UNKNOWN_" for unknown SETTINGS IDs. To parse
+// the |id| into a SpdyKnownSettingsId (if applicable), use ParseSettingsId().
+SPDY_EXPORT_PRIVATE SpdyString SettingsIdToString(SpdySettingsId id);
 
 // Parse |wire_error_code| to a SpdyErrorCode.
 // Treat unrecognized error codes as INTERNAL_ERROR
@@ -276,6 +289,8 @@ const size_t kPriorityFrameSize = kFrameHeaderSize + 5;
 // RST_STREAM frame has error_code (4 octets) field.
 const size_t kRstStreamFrameSize = kFrameHeaderSize + 4;
 const size_t kSettingsFrameMinimumSize = kFrameHeaderSize;
+const size_t kSettingsOneSettingSize =
+    sizeof(uint32_t) + sizeof(SpdySettingsId);
 // PUSH_PROMISE frame has promised_stream_id (4 octet) field.
 const size_t kPushPromiseFrameMinimumSize = kFrameHeaderSize + 4;
 // PING frame has opaque_bytes (8 octet) field.
@@ -300,15 +315,22 @@ const int32_t kInitialStreamWindowSize = 64 * 1024 - 1;
 const int32_t kInitialSessionWindowSize = 64 * 1024 - 1;
 // The NPN string for HTTP2, "h2".
 extern const char* const kHttp2Npn;
+// An estimate size of the HPACK overhead for each header field. 1 bytes for
+// indexed literal, 1 bytes for key literal and length encoding, and 2 bytes for
+// value literal and length encoding.
+const size_t kPerHeaderHpackOverhead = 4;
 
 // Names of pseudo-headers defined for HTTP/2 requests.
 SPDY_EXPORT_PRIVATE extern const char* const kHttp2AuthorityHeader;
 SPDY_EXPORT_PRIVATE extern const char* const kHttp2MethodHeader;
 SPDY_EXPORT_PRIVATE extern const char* const kHttp2PathHeader;
 SPDY_EXPORT_PRIVATE extern const char* const kHttp2SchemeHeader;
+SPDY_EXPORT_PRIVATE extern const char* const kHttp2ProtocolHeader;
 
 // Name of pseudo-header defined for HTTP/2 responses.
 SPDY_EXPORT_PRIVATE extern const char* const kHttp2StatusHeader;
+
+SPDY_EXPORT_PRIVATE size_t GetNumberRequiredContinuationFrames(size_t size);
 
 // Variant type (i.e. tagged union) that is either a SPDY 3.x priority value,
 // or else an HTTP/2 stream dependency tuple {parent stream ID, weight,
@@ -417,6 +439,9 @@ class SPDY_EXPORT_PRIVATE SpdyFrameIR {
   virtual SpdyFrameType frame_type() const = 0;
   SpdyStreamId stream_id() const { return stream_id_; }
   virtual bool fin() const;
+  // Returns an estimate of the size of the serialized frame, without applying
+  // compression. May not be exact.
+  virtual size_t size() const = 0;
 
   // Returns the number of bytes of flow control window that would be consumed
   // by this frame if written to the wire.
@@ -535,6 +560,8 @@ class SPDY_EXPORT_PRIVATE SpdyDataIR : public SpdyFrameWithFinIR {
 
   int flow_control_window_consumed() const override;
 
+  size_t size() const override;
+
  private:
   // Used to store data that this SpdyDataIR should own.
   std::unique_ptr<SpdyString> data_store_;
@@ -561,6 +588,8 @@ class SPDY_EXPORT_PRIVATE SpdyRstStreamIR : public SpdyFrameIR {
 
   SpdyFrameType frame_type() const override;
 
+  size_t size() const override;
+
  private:
   SpdyErrorCode error_code_;
 
@@ -574,7 +603,7 @@ class SPDY_EXPORT_PRIVATE SpdySettingsIR : public SpdyFrameIR {
 
   // Overwrites as appropriate.
   const SettingsMap& values() const { return values_; }
-  void AddSetting(SpdySettingsIds id, int32_t value) { values_[id] = value; }
+  void AddSetting(SpdySettingsId id, int32_t value) { values_[id] = value; }
 
   bool is_ack() const { return is_ack_; }
   void set_is_ack(bool is_ack) { is_ack_ = is_ack; }
@@ -582,6 +611,8 @@ class SPDY_EXPORT_PRIVATE SpdySettingsIR : public SpdyFrameIR {
   void Visit(SpdyFrameVisitor* visitor) const override;
 
   SpdyFrameType frame_type() const override;
+
+  size_t size() const override;
 
  private:
   SettingsMap values_;
@@ -601,6 +632,8 @@ class SPDY_EXPORT_PRIVATE SpdyPingIR : public SpdyFrameIR {
   void Visit(SpdyFrameVisitor* visitor) const override;
 
   SpdyFrameType frame_type() const override;
+
+  size_t size() const override;
 
  private:
   SpdyPingId id_;
@@ -648,6 +681,8 @@ class SPDY_EXPORT_PRIVATE SpdyGoAwayIR : public SpdyFrameIR {
 
   SpdyFrameType frame_type() const override;
 
+  size_t size() const override;
+
  private:
   SpdyStreamId last_good_stream_id_;
   SpdyErrorCode error_code_;
@@ -667,6 +702,8 @@ class SPDY_EXPORT_PRIVATE SpdyHeadersIR : public SpdyFrameWithHeaderBlockIR {
   void Visit(SpdyFrameVisitor* visitor) const override;
 
   SpdyFrameType frame_type() const override;
+
+  size_t size() const override;
 
   bool has_priority() const { return has_priority_; }
   void set_has_priority(bool has_priority) { has_priority_ = has_priority; }
@@ -714,6 +751,8 @@ class SPDY_EXPORT_PRIVATE SpdyWindowUpdateIR : public SpdyFrameIR {
 
   SpdyFrameType frame_type() const override;
 
+  size_t size() const override;
+
  private:
   int32_t delta_;
 
@@ -737,6 +776,8 @@ class SPDY_EXPORT_PRIVATE SpdyPushPromiseIR
   void Visit(SpdyFrameVisitor* visitor) const override;
 
   SpdyFrameType frame_type() const override;
+
+  size_t size() const override;
 
   bool padded() const { return padded_; }
   int padding_payload_len() const { return padding_payload_len_; }
@@ -772,6 +813,7 @@ class SPDY_EXPORT_PRIVATE SpdyContinuationIR : public SpdyFrameIR {
   void take_encoding(std::unique_ptr<SpdyString> encoding) {
     encoding_ = std::move(encoding);
   }
+  size_t size() const override;
 
  private:
   std::unique_ptr<SpdyString> encoding_;
@@ -798,6 +840,8 @@ class SPDY_EXPORT_PRIVATE SpdyAltSvcIR : public SpdyFrameIR {
 
   SpdyFrameType frame_type() const override;
 
+  size_t size() const override;
+
  private:
   SpdyString origin_;
   SpdyAltSvcWireFormat::AlternativeServiceVector altsvc_vector_;
@@ -821,6 +865,8 @@ class SPDY_EXPORT_PRIVATE SpdyPriorityIR : public SpdyFrameIR {
   void Visit(SpdyFrameVisitor* visitor) const override;
 
   SpdyFrameType frame_type() const override;
+
+  size_t size() const override;
 
  private:
   SpdyStreamId parent_stream_id_;
@@ -851,6 +897,8 @@ class SPDY_EXPORT_PRIVATE SpdyUnknownIR : public SpdyFrameIR {
   SpdyFrameType frame_type() const override;
 
   int flow_control_window_consumed() const override;
+
+  size_t size() const override;
 
  protected:
   // Allows subclasses to overwrite the default length.

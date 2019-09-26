@@ -115,7 +115,7 @@ const net::BackoffEntry::Policy* BackoffPolicy::Get() {
   return &g_backoff_policy.Get().policy_;
 }
 
-base::TickClock* g_test_clock = nullptr;
+const base::TickClock* g_test_clock = nullptr;
 
 }  // namespace
 
@@ -150,7 +150,7 @@ ChromeRuntimeAPIDelegate::~ChromeRuntimeAPIDelegate() {
 
 // static
 void ChromeRuntimeAPIDelegate::set_tick_clock_for_tests(
-    base::TickClock* clock) {
+    const base::TickClock* clock) {
   g_test_clock = clock;
 }
 
@@ -252,11 +252,11 @@ void ChromeRuntimeAPIDelegate::OpenURL(const GURL& uninstall_url) {
   if (!browser)
     browser = new Browser(Browser::CreateParams(profile, false));
 
-  chrome::NavigateParams params(
-      browser, uninstall_url, ui::PAGE_TRANSITION_CLIENT_REDIRECT);
+  NavigateParams params(browser, uninstall_url,
+                        ui::PAGE_TRANSITION_CLIENT_REDIRECT);
   params.disposition = WindowOpenDisposition::NEW_FOREGROUND_TAB;
   params.user_gesture = false;
-  chrome::Navigate(&params);
+  Navigate(&params);
 }
 
 bool ChromeRuntimeAPIDelegate::GetPlatformInfo(PlatformInfo* info) {

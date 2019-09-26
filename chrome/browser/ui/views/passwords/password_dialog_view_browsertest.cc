@@ -2,9 +2,13 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <memory>
+
 #include "base/memory/ptr_util.h"
+#include "base/run_loop.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
+#include "build/build_config.h"
 #include "chrome/browser/password_manager/chrome_password_manager_client.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser.h"
@@ -19,31 +23,20 @@
 #include "components/password_manager/core/browser/password_bubble_experiment.h"
 #include "components/password_manager/core/common/password_manager_pref_names.h"
 #include "components/prefs/pref_service.h"
-#include "net/url_request/test_url_fetcher_factory.h"
+#include "net/test/embedded_test_server/embedded_test_server.h"
+#include "net/test/embedded_test_server/http_request.h"
+#include "net/test/embedded_test_server/http_response.h"
 #include "testing/gmock/include/gmock/gmock.h"
+#include "ui/base/ui_base_switches.h"
 #include "ui/views/test/widget_test.h"
 #include "ui/views/widget/widget.h"
 
 using ::testing::Field;
+using net::test_server::BasicHttpResponse;
+using net::test_server::HttpRequest;
+using net::test_server::HttpResponse;
 
 namespace {
-
-// A helper class that will create FakeURLFetcher and record the requested URLs.
-class TestURLFetcherCallback {
- public:
-  std::unique_ptr<net::FakeURLFetcher> CreateURLFetcher(
-      const GURL& url,
-      net::URLFetcherDelegate* d,
-      const std::string& response_data,
-      net::HttpStatusCode response_code,
-      net::URLRequestStatus::Status status) {
-    OnRequestDone(url);
-    return std::unique_ptr<net::FakeURLFetcher>(
-        new net::FakeURLFetcher(url, d, response_data, response_code, status));
-  }
-
-  MOCK_METHOD1(OnRequestDone, void(const GURL&));
-};
 
 // ManagePasswordsUIController subclass to capture the dialog instance
 class TestManagePasswordsUIController : public ManagePasswordsUIController {
@@ -111,7 +104,7 @@ class PasswordDialogViewTest : public DialogBrowserTest {
  public:
   // DialogBrowserTest:
   void SetUpOnMainThread() override;
-  void ShowDialog(const std::string& name) override;
+  void ShowUi(const std::string& name) override;
 
   void SetupChooseCredentials(
       std::vector<std::unique_ptr<autofill::PasswordForm>> local_credentials,
@@ -127,12 +120,29 @@ class PasswordDialogViewTest : public DialogBrowserTest {
   }
 
   MOCK_METHOD1(OnChooseCredential, void(const autofill::PasswordForm*));
+  MOCK_METHOD0(OnIconRequestDone, void());
+
+  // Called on the server background thread.
+  std::unique_ptr<HttpResponse> HandleRequest(const HttpRequest& request) {
+    std::unique_ptr<BasicHttpResponse> response(new BasicHttpResponse);
+    if (request.relative_url == "/icon.png") {
+      OnIconRequestDone();
+    }
+    return std::move(response);
+  }
 
  private:
   TestManagePasswordsUIController* controller_;
 };
 
 void PasswordDialogViewTest::SetUpOnMainThread() {
+#if defined(OS_MACOSX)
+  // On non-Mac platforms, animations are globally disabled during tests; on
+  // Mac they are generally not, but these tests are dramatically slower and
+  // flakier with animations.
+  base::CommandLine::ForCurrentProcess()->AppendSwitch(
+      switches::kDisableModalAnimations);
+#endif
   SetupTabWithTestController(browser());
 }
 
@@ -172,6 +182,10 @@ content::WebContents* PasswordDialogViewTest::SetupTabWithTestController(
 
 IN_PROC_BROWSER_TEST_F(PasswordDialogViewTest,
                        PopupAccountChooserWithMultipleCredentialsReturnEmpty) {
+  // Set up the test server to handle the form icon request.
+  embedded_test_server()->RegisterRequestHandler(base::BindRepeating(
+      &PasswordDialogViewTest::HandleRequest, base::Unretained(this)));
+  ASSERT_TRUE(embedded_test_server()->InitializeAndListen());
   GURL origin("https://example.com");
   std::vector<std::unique_ptr<autofill::PasswordForm>> local_credentials;
   autofill::PasswordForm form;
@@ -179,22 +193,16 @@ IN_PROC_BROWSER_TEST_F(PasswordDialogViewTest,
   form.display_name = base::ASCIIToUTF16("Peter");
   form.username_value = base::ASCIIToUTF16("peter@pan.test");
   form.icon_url = GURL("broken url");
-  local_credentials.push_back(base::MakeUnique<autofill::PasswordForm>(form));
-  GURL icon_url("https://google.com/icon.png");
-  form.icon_url = icon_url;
+  local_credentials.push_back(std::make_unique<autofill::PasswordForm>(form));
+  form.icon_url = embedded_test_server()->GetURL("/icon.png");
   form.display_name = base::ASCIIToUTF16("Peter Pan");
   form.federation_origin =
       url::Origin::Create(GURL("https://google.com/federation"));
-  local_credentials.push_back(base::MakeUnique<autofill::PasswordForm>(form));
+  local_credentials.push_back(std::make_unique<autofill::PasswordForm>(form));
 
   // Prepare to capture the network request.
-  TestURLFetcherCallback url_callback;
-  net::FakeURLFetcherFactory factory(
-      nullptr, base::Bind(&TestURLFetcherCallback::CreateURLFetcher,
-                          base::Unretained(&url_callback)));
-  factory.SetFakeResponse(icon_url, std::string(), net::HTTP_OK,
-                          net::URLRequestStatus::FAILED);
-  EXPECT_CALL(url_callback, OnRequestDone(icon_url));
+  EXPECT_CALL(*this, OnIconRequestDone());
+  embedded_test_server()->StartAcceptingConnections();
 
   SetupChooseCredentials(std::move(local_credentials), origin);
   ASSERT_TRUE(controller()->current_account_chooser());
@@ -202,6 +210,7 @@ IN_PROC_BROWSER_TEST_F(PasswordDialogViewTest,
   EXPECT_CALL(*this, OnChooseCredential(nullptr));
   EXPECT_CALL(*controller(), OnDialogClosed());
   dialog->GetWidget()->Close();
+  base::RunLoop().RunUntilIdle();
 
   EXPECT_FALSE(controller()->current_autosignin_prompt());
 }
@@ -216,13 +225,13 @@ IN_PROC_BROWSER_TEST_F(
   form.display_name = base::ASCIIToUTF16("Peter");
   form.username_value = base::ASCIIToUTF16("peter@pan.test");
   form.icon_url = GURL("broken url");
-  local_credentials.push_back(base::MakeUnique<autofill::PasswordForm>(form));
+  local_credentials.push_back(std::make_unique<autofill::PasswordForm>(form));
   GURL icon_url("https://google.com/icon.png");
   form.icon_url = icon_url;
   form.display_name = base::ASCIIToUTF16("Peter Pan");
   form.federation_origin =
       url::Origin::Create(GURL("https://google.com/federation"));
-  local_credentials.push_back(base::MakeUnique<autofill::PasswordForm>(form));
+  local_credentials.push_back(std::make_unique<autofill::PasswordForm>(form));
 
   SetupChooseCredentials(std::move(local_credentials), origin);
   ASSERT_TRUE(controller()->current_account_chooser());
@@ -247,7 +256,7 @@ IN_PROC_BROWSER_TEST_F(PasswordDialogViewTest,
   form.origin = origin;
   form.display_name = base::ASCIIToUTF16("Peter");
   form.username_value = base::ASCIIToUTF16("peter@pan.test");
-  local_credentials.push_back(base::MakeUnique<autofill::PasswordForm>(form));
+  local_credentials.push_back(std::make_unique<autofill::PasswordForm>(form));
 
   SetupChooseCredentials(std::move(local_credentials), origin);
 
@@ -256,6 +265,7 @@ IN_PROC_BROWSER_TEST_F(PasswordDialogViewTest,
   EXPECT_CALL(*this, OnChooseCredential(nullptr));
   EXPECT_CALL(*controller(), OnDialogClosed());
   dialog->GetWidget()->Close();
+  base::RunLoop().RunUntilIdle();
   EXPECT_FALSE(controller()->current_autosignin_prompt());
 }
 
@@ -267,7 +277,7 @@ IN_PROC_BROWSER_TEST_F(PasswordDialogViewTest,
   form.origin = origin;
   form.display_name = base::ASCIIToUTF16("Peter");
   form.username_value = base::ASCIIToUTF16("peter@pan.test");
-  local_credentials.push_back(base::MakeUnique<autofill::PasswordForm>(form));
+  local_credentials.push_back(std::make_unique<autofill::PasswordForm>(form));
 
   SetupChooseCredentials(std::move(local_credentials), origin);
 
@@ -287,7 +297,7 @@ IN_PROC_BROWSER_TEST_F(PasswordDialogViewTest,
   form.origin = origin;
   form.display_name = base::ASCIIToUTF16("Peter");
   form.username_value = base::ASCIIToUTF16("peter@pan.test");
-  local_credentials.push_back(base::MakeUnique<autofill::PasswordForm>(form));
+  local_credentials.push_back(std::make_unique<autofill::PasswordForm>(form));
 
   SetupChooseCredentials(std::move(local_credentials), origin);
 
@@ -316,7 +326,7 @@ IN_PROC_BROWSER_TEST_F(PasswordDialogViewTest,
   form.origin = origin;
   form.display_name = base::ASCIIToUTF16("Peter");
   form.username_value = base::ASCIIToUTF16("peter@pan.test");
-  local_credentials.push_back(base::MakeUnique<autofill::PasswordForm>(form));
+  local_credentials.push_back(std::make_unique<autofill::PasswordForm>(form));
 
   SetupChooseCredentials(std::move(local_credentials), origin);
 
@@ -348,7 +358,7 @@ IN_PROC_BROWSER_TEST_F(PasswordDialogViewTest,
   form.origin = origin;
   form.display_name = base::ASCIIToUTF16("Peter");
   form.username_value = base::ASCIIToUTF16("peter@pan.test");
-  local_credentials.push_back(base::MakeUnique<autofill::PasswordForm>(form));
+  local_credentials.push_back(std::make_unique<autofill::PasswordForm>(form));
 
   Browser* incognito = CreateIncognitoBrowser();
   content::WebContents* tab = SetupTabWithTestController(incognito);
@@ -385,6 +395,7 @@ IN_PROC_BROWSER_TEST_F(PasswordDialogViewTest, PopupAutoSigninPrompt) {
   EXPECT_TRUE(dialog->GetWidget()->client_view()->AcceleratorPressed(esc));
   EXPECT_TRUE(bubble_observer.widget_closed());
   content::RunAllPendingInMessageLoop();
+  base::RunLoop().RunUntilIdle();
   testing::Mock::VerifyAndClearExpectations(controller());
   EXPECT_TRUE(
       password_bubble_experiment::ShouldShowAutoSignInPromptFirstRunExperience(
@@ -439,7 +450,7 @@ IN_PROC_BROWSER_TEST_F(PasswordDialogViewTest,
 }
 
 // DialogBrowserTest methods for interactive dialog invocation.
-void PasswordDialogViewTest::ShowDialog(const std::string& name) {
+void PasswordDialogViewTest::ShowUi(const std::string& name) {
   if (name == "AutoSigninFirstRun") {
     controller()->OnPromptEnableAutoSignin();
     return;
@@ -453,18 +464,18 @@ void PasswordDialogViewTest::ShowDialog(const std::string& name) {
   form.username_value = base::ASCIIToUTF16("peter@pan.test");
   if (name == "PopupAutoSigninPrompt") {
     form.icon_url = GURL("broken url");
-    local_credentials.push_back(base::MakeUnique<autofill::PasswordForm>(form));
+    local_credentials.push_back(std::make_unique<autofill::PasswordForm>(form));
     form.icon_url = GURL("https://google.com/icon.png");
     form.display_name = base::ASCIIToUTF16("Peter");
     form.federation_origin =
         url::Origin::Create(GURL("https://google.com/federation"));
-    local_credentials.push_back(base::MakeUnique<autofill::PasswordForm>(form));
+    local_credentials.push_back(std::make_unique<autofill::PasswordForm>(form));
     controller()->OnAutoSignin(std::move(local_credentials), origin);
     EXPECT_EQ(password_manager::ui::AUTO_SIGNIN_STATE,
               controller()->GetState());
   } else if (base::StartsWith(name, "PopupAccountChooserWith",
                               base::CompareCase::SENSITIVE)) {
-    local_credentials.push_back(base::MakeUnique<autofill::PasswordForm>(form));
+    local_credentials.push_back(std::make_unique<autofill::PasswordForm>(form));
     if (name == "PopupAccountChooserWithMultipleCredentialClickSignIn") {
       form.icon_url = GURL("https://google.com/icon.png");
       form.display_name = base::ASCIIToUTF16("Tinkerbell");
@@ -472,19 +483,19 @@ void PasswordDialogViewTest::ShowDialog(const std::string& name) {
       form.federation_origin =
           url::Origin::Create(GURL("https://google.com/neverland"));
       local_credentials.push_back(
-          base::MakeUnique<autofill::PasswordForm>(form));
+          std::make_unique<autofill::PasswordForm>(form));
       form.display_name = base::ASCIIToUTF16("James Hook");
       form.username_value = base::ASCIIToUTF16("james@pan.test");
       form.federation_origin =
           url::Origin::Create(GURL("https://google.com/jollyroger"));
       local_credentials.push_back(
-          base::MakeUnique<autofill::PasswordForm>(form));
+          std::make_unique<autofill::PasswordForm>(form));
       form.display_name = base::ASCIIToUTF16("Wendy Darling");
       form.username_value = base::ASCIIToUTF16("wendy@pan.test");
       form.federation_origin =
           url::Origin::Create(GURL("https://google.com/london"));
       local_credentials.push_back(
-          base::MakeUnique<autofill::PasswordForm>(form));
+          std::make_unique<autofill::PasswordForm>(form));
     }
     SetupChooseCredentials(std::move(local_credentials), origin);
   } else {
@@ -493,26 +504,24 @@ void PasswordDialogViewTest::ShowDialog(const std::string& name) {
   }
 }
 
-IN_PROC_BROWSER_TEST_F(PasswordDialogViewTest,
-                       InvokeDialog_PopupAutoSigninPrompt) {
-  RunDialog();
+IN_PROC_BROWSER_TEST_F(PasswordDialogViewTest, InvokeUi_PopupAutoSigninPrompt) {
+  ShowAndVerifyUi();
 }
 
 IN_PROC_BROWSER_TEST_F(
     PasswordDialogViewTest,
-    InvokeDialog_PopupAccountChooserWithSingleCredentialClickSignIn) {
-  RunDialog();
+    InvokeUi_PopupAccountChooserWithSingleCredentialClickSignIn) {
+  ShowAndVerifyUi();
 }
 
 IN_PROC_BROWSER_TEST_F(
     PasswordDialogViewTest,
-    InvokeDialog_PopupAccountChooserWithMultipleCredentialClickSignIn) {
-  RunDialog();
+    InvokeUi_PopupAccountChooserWithMultipleCredentialClickSignIn) {
+  ShowAndVerifyUi();
 }
 
-IN_PROC_BROWSER_TEST_F(PasswordDialogViewTest,
-                       InvokeDialog_AutoSigninFirstRun) {
-  RunDialog();
+IN_PROC_BROWSER_TEST_F(PasswordDialogViewTest, InvokeUi_AutoSigninFirstRun) {
+  ShowAndVerifyUi();
 }
 
 }  // namespace

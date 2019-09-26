@@ -4031,31 +4031,6 @@ error::Error GLES2DecoderPassthroughImpl::HandleCompressedCopyTextureCHROMIUM(
   return error::kNoError;
 }
 
-error::Error GLES2DecoderPassthroughImpl::HandleProduceTextureCHROMIUMImmediate(
-    uint32_t immediate_data_size,
-    const volatile void* cmd_data) {
-  const volatile gles2::cmds::ProduceTextureCHROMIUMImmediate& c = *static_cast<
-      const volatile gles2::cmds::ProduceTextureCHROMIUMImmediate*>(cmd_data);
-  GLenum target = static_cast<GLenum>(c.target);
-  uint32_t data_size;
-  if (!GLES2Util::ComputeDataSize<GLbyte, 16>(1, &data_size)) {
-    return error::kOutOfBounds;
-  }
-  if (data_size > immediate_data_size) {
-    return error::kOutOfBounds;
-  }
-  volatile const GLbyte* mailbox = GetImmediateDataAs<volatile const GLbyte*>(
-      c, data_size, immediate_data_size);
-  if (mailbox == nullptr) {
-    return error::kOutOfBounds;
-  }
-  error::Error error = DoProduceTextureCHROMIUM(target, mailbox);
-  if (error != error::kNoError) {
-    return error;
-  }
-  return error::kNoError;
-}
-
 error::Error
 GLES2DecoderPassthroughImpl::HandleProduceTextureDirectCHROMIUMImmediate(
     uint32_t immediate_data_size,
@@ -4065,7 +4040,6 @@ GLES2DecoderPassthroughImpl::HandleProduceTextureDirectCHROMIUMImmediate(
           const volatile gles2::cmds::ProduceTextureDirectCHROMIUMImmediate*>(
           cmd_data);
   GLuint texture = c.texture;
-  GLenum target = static_cast<GLenum>(c.target);
   uint32_t data_size;
   if (!GLES2Util::ComputeDataSize<GLbyte, 16>(1, &data_size)) {
     return error::kOutOfBounds;
@@ -4078,7 +4052,7 @@ GLES2DecoderPassthroughImpl::HandleProduceTextureDirectCHROMIUMImmediate(
   if (mailbox == nullptr) {
     return error::kOutOfBounds;
   }
-  error::Error error = DoProduceTextureDirectCHROMIUM(texture, target, mailbox);
+  error::Error error = DoProduceTextureDirectCHROMIUM(texture, mailbox);
   if (error != error::kNoError) {
     return error;
   }
@@ -4092,7 +4066,6 @@ GLES2DecoderPassthroughImpl::HandleCreateAndConsumeTextureINTERNALImmediate(
   const volatile gles2::cmds::CreateAndConsumeTextureINTERNALImmediate& c =
       *static_cast<const volatile gles2::cmds::
                        CreateAndConsumeTextureINTERNALImmediate*>(cmd_data);
-  GLenum target = static_cast<GLenum>(c.target);
   GLuint texture = static_cast<GLuint>(c.texture);
   uint32_t data_size;
   if (!GLES2Util::ComputeDataSize<GLbyte, 16>(1, &data_size)) {
@@ -4106,8 +4079,7 @@ GLES2DecoderPassthroughImpl::HandleCreateAndConsumeTextureINTERNALImmediate(
   if (mailbox == nullptr) {
     return error::kOutOfBounds;
   }
-  error::Error error =
-      DoCreateAndConsumeTextureINTERNAL(target, texture, mailbox);
+  error::Error error = DoCreateAndConsumeTextureINTERNAL(texture, mailbox);
   if (error != error::kNoError) {
     return error;
   }
@@ -4218,6 +4190,32 @@ error::Error GLES2DecoderPassthroughImpl::HandleLoseContextCHROMIUM(
   return error::kNoError;
 }
 
+error::Error
+GLES2DecoderPassthroughImpl::HandleUnpremultiplyAndDitherCopyCHROMIUM(
+    uint32_t immediate_data_size,
+    const volatile void* cmd_data) {
+  const volatile gles2::cmds::UnpremultiplyAndDitherCopyCHROMIUM& c =
+      *static_cast<
+          const volatile gles2::cmds::UnpremultiplyAndDitherCopyCHROMIUM*>(
+          cmd_data);
+  if (!features().unpremultiply_and_dither_copy) {
+    return error::kUnknownCommand;
+  }
+
+  GLuint source_id = static_cast<GLuint>(c.source_id);
+  GLuint dest_id = static_cast<GLuint>(c.dest_id);
+  GLint x = static_cast<GLint>(c.x);
+  GLint y = static_cast<GLint>(c.y);
+  GLsizei width = static_cast<GLsizei>(c.width);
+  GLsizei height = static_cast<GLsizei>(c.height);
+  error::Error error = DoUnpremultiplyAndDitherCopyCHROMIUM(
+      source_id, dest_id, x, y, width, height);
+  if (error != error::kNoError) {
+    return error;
+  }
+  return error::kNoError;
+}
+
 error::Error GLES2DecoderPassthroughImpl::HandleDrawBuffersEXTImmediate(
     uint32_t immediate_data_size,
     const volatile void* cmd_data) {
@@ -4275,19 +4273,6 @@ error::Error GLES2DecoderPassthroughImpl::HandleCommitOverlayPlanesCHROMIUM(
     uint32_t immediate_data_size,
     const volatile void* cmd_data) {
   error::Error error = DoCommitOverlayPlanesCHROMIUM();
-  if (error != error::kNoError) {
-    return error;
-  }
-  return error::kNoError;
-}
-
-error::Error GLES2DecoderPassthroughImpl::HandleSwapInterval(
-    uint32_t immediate_data_size,
-    const volatile void* cmd_data) {
-  const volatile gles2::cmds::SwapInterval& c =
-      *static_cast<const volatile gles2::cmds::SwapInterval*>(cmd_data);
-  GLint interval = static_cast<GLint>(c.interval);
-  error::Error error = DoSwapInterval(interval);
   if (error != error::kNoError) {
     return error;
   }
@@ -4566,12 +4551,32 @@ error::Error GLES2DecoderPassthroughImpl::HandleBeginRasterCHROMIUM(
   GLuint sk_color = static_cast<GLuint>(c.sk_color);
   GLuint msaa_sample_count = static_cast<GLuint>(c.msaa_sample_count);
   GLboolean can_use_lcd_text = static_cast<GLboolean>(c.can_use_lcd_text);
-  GLboolean use_distance_field_text =
-      static_cast<GLboolean>(c.use_distance_field_text);
-  GLint pixel_config = static_cast<GLint>(c.pixel_config);
+  GLint color_type = static_cast<GLint>(c.color_type);
+  GLuint color_space_transfer_cache_id =
+      static_cast<GLuint>(c.color_space_transfer_cache_id);
   error::Error error = DoBeginRasterCHROMIUM(
-      texture_id, sk_color, msaa_sample_count, can_use_lcd_text,
-      use_distance_field_text, pixel_config);
+      texture_id, sk_color, msaa_sample_count, can_use_lcd_text, color_type,
+      color_space_transfer_cache_id);
+  if (error != error::kNoError) {
+    return error;
+  }
+  return error::kNoError;
+}
+
+error::Error GLES2DecoderPassthroughImpl::HandleRasterCHROMIUM(
+    uint32_t immediate_data_size,
+    const volatile void* cmd_data) {
+  const volatile gles2::cmds::RasterCHROMIUM& c =
+      *static_cast<const volatile gles2::cmds::RasterCHROMIUM*>(cmd_data);
+  if (!features().chromium_raster_transport) {
+    return error::kUnknownCommand;
+  }
+
+  GLsizeiptr size = static_cast<GLsizeiptr>(c.size);
+  uint32_t data_size = size;
+  const void* list = GetSharedMemoryAs<const void*>(
+      c.list_shm_id, c.list_shm_offset, data_size);
+  error::Error error = DoRasterCHROMIUM(size, list);
   if (error != error::kNoError) {
     return error;
   }
@@ -4593,15 +4598,23 @@ error::Error GLES2DecoderPassthroughImpl::HandleEndRasterCHROMIUM(
 }
 
 error::Error
-GLES2DecoderPassthroughImpl::HandleDeleteTransferCacheEntryCHROMIUM(
+GLES2DecoderPassthroughImpl::HandleCreateTransferCacheEntryINTERNAL(
     uint32_t immediate_data_size,
     const volatile void* cmd_data) {
-  const volatile gles2::cmds::DeleteTransferCacheEntryCHROMIUM& c =
+  const volatile gles2::cmds::CreateTransferCacheEntryINTERNAL& c =
       *static_cast<
-          const volatile gles2::cmds::DeleteTransferCacheEntryCHROMIUM*>(
+          const volatile gles2::cmds::CreateTransferCacheEntryINTERNAL*>(
           cmd_data);
-  GLuint64 handle_id = c.handle_id();
-  error::Error error = DoDeleteTransferCacheEntryCHROMIUM(handle_id);
+  GLuint entry_type = static_cast<GLuint>(c.entry_type);
+  GLuint entry_id = static_cast<GLuint>(c.entry_id);
+  GLuint handle_shm_id = static_cast<GLuint>(c.handle_shm_id);
+  GLuint handle_shm_offset = static_cast<GLuint>(c.handle_shm_offset);
+  GLuint data_shm_id = static_cast<GLuint>(c.data_shm_id);
+  GLuint data_shm_offset = static_cast<GLuint>(c.data_shm_offset);
+  GLuint data_size = static_cast<GLuint>(c.data_size);
+  error::Error error = DoCreateTransferCacheEntryINTERNAL(
+      entry_type, entry_id, handle_shm_id, handle_shm_offset, data_shm_id,
+      data_shm_offset, data_size);
   if (error != error::kNoError) {
     return error;
   }
@@ -4609,15 +4622,33 @@ GLES2DecoderPassthroughImpl::HandleDeleteTransferCacheEntryCHROMIUM(
 }
 
 error::Error
-GLES2DecoderPassthroughImpl::HandleUnlockTransferCacheEntryCHROMIUM(
+GLES2DecoderPassthroughImpl::HandleDeleteTransferCacheEntryINTERNAL(
     uint32_t immediate_data_size,
     const volatile void* cmd_data) {
-  const volatile gles2::cmds::UnlockTransferCacheEntryCHROMIUM& c =
+  const volatile gles2::cmds::DeleteTransferCacheEntryINTERNAL& c =
       *static_cast<
-          const volatile gles2::cmds::UnlockTransferCacheEntryCHROMIUM*>(
+          const volatile gles2::cmds::DeleteTransferCacheEntryINTERNAL*>(
           cmd_data);
-  GLuint64 handle_id = c.handle_id();
-  error::Error error = DoUnlockTransferCacheEntryCHROMIUM(handle_id);
+  GLuint entry_type = static_cast<GLuint>(c.entry_type);
+  GLuint entry_id = static_cast<GLuint>(c.entry_id);
+  error::Error error = DoDeleteTransferCacheEntryINTERNAL(entry_type, entry_id);
+  if (error != error::kNoError) {
+    return error;
+  }
+  return error::kNoError;
+}
+
+error::Error
+GLES2DecoderPassthroughImpl::HandleUnlockTransferCacheEntryINTERNAL(
+    uint32_t immediate_data_size,
+    const volatile void* cmd_data) {
+  const volatile gles2::cmds::UnlockTransferCacheEntryINTERNAL& c =
+      *static_cast<
+          const volatile gles2::cmds::UnlockTransferCacheEntryINTERNAL*>(
+          cmd_data);
+  GLuint entry_type = static_cast<GLuint>(c.entry_type);
+  GLuint entry_id = static_cast<GLuint>(c.entry_id);
+  error::Error error = DoUnlockTransferCacheEntryINTERNAL(entry_type, entry_id);
   if (error != error::kNoError) {
     return error;
   }

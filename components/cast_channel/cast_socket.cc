@@ -7,6 +7,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include <memory>
 #include <utility>
 
 #include "base/bind.h"
@@ -45,8 +46,10 @@
 #include "net/socket/ssl_client_socket.h"
 #include "net/socket/stream_socket.h"
 #include "net/socket/tcp_client_socket.h"
+#include "net/socket/transport_client_socket.h"
 #include "net/ssl/ssl_config_service.h"
 #include "net/ssl/ssl_info.h"
+#include "net/traffic_annotation/network_traffic_annotation.h"
 
 // Helper for logging data with remote host IP and authentication state.
 // Assumes |ip_endpoint_| of type net::IPEndPoint and |channel_auth_| of enum
@@ -105,9 +108,10 @@ CastSocketImpl::CastSocketImpl(const CastSocketOpenParams& open_params,
       ready_state_(ReadyState::NONE),
       auth_delegate_(nullptr) {
   DCHECK(open_params.ip_endpoint.address().IsValid());
-  DCHECK(open_params_.net_log);
-  net_log_source_.type = net::NetLogSourceType::SOCKET;
-  net_log_source_.id = open_params_.net_log->NextID();
+  if (open_params_.net_log) {
+    net_log_source_.type = net::NetLogSourceType::SOCKET;
+    net_log_source_.id = open_params_.net_log->NextID();
+  }
 }
 
 CastSocketImpl::~CastSocketImpl() {
@@ -149,7 +153,7 @@ bool CastSocketImpl::audio_only() const {
   return audio_only_;
 }
 
-std::unique_ptr<net::TCPClientSocket> CastSocketImpl::CreateTcpSocket() {
+std::unique_ptr<net::TransportClientSocket> CastSocketImpl::CreateTcpSocket() {
   net::AddressList addresses(open_params_.ip_endpoint);
   return std::unique_ptr<net::TCPClientSocket>(new net::TCPClientSocket(
       addresses, nullptr, open_params_.net_log, net_log_source_));
@@ -251,7 +255,7 @@ void CastSocketImpl::Connect() {
   DCHECK_EQ(ReadyState::NONE, ready_state_);
   DCHECK_EQ(ConnectionState::START_CONNECT, connect_state_);
 
-  delegate_ = base::MakeUnique<CastSocketMessageDelegate>(this);
+  delegate_ = std::make_unique<CastSocketMessageDelegate>(this);
 
   SetReadyState(ReadyState::CONNECTING);
   SetConnectState(ConnectionState::TCP_CONNECT);
@@ -455,7 +459,33 @@ int CastSocketImpl::DoAuthChallengeSend() {
                           << CastMessageToString(challenge_message);
 
   ResetConnectLoopCallback();
-  transport_->SendMessage(challenge_message, connect_loop_callback_.callback());
+
+  net::NetworkTrafficAnnotationTag traffic_annotation =
+      net::DefineNetworkTrafficAnnotation("cast_socket", R"(
+        semantics {
+          sender: "Cast Socket"
+          description:
+            "An auth challenge request sent to a Cast device as a part of "
+            "establishing a connection to it."
+          trigger:
+            "A new Cast device has been discovered via mDNS in the local "
+            "network."
+          data:
+            "A serialized protobuf message containing the nonce challenge. No "
+            "user data."
+          destination: OTHER
+          destination_other:
+            "Data will be sent to a Cast device in local network."
+        }
+        policy {
+          cookies_allowed: NO
+          setting:
+            "This request cannot be disabled, but it would not be sent if user "
+            "does not connect a Cast device to the local network."
+          policy_exception_justification: "Not implemented."
+        })");
+  transport_->SendMessage(challenge_message, connect_loop_callback_.callback(),
+                          traffic_annotation);
 
   // Always return IO_PENDING since the result is always asynchronous.
   return net::ERR_IO_PENDING;

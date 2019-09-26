@@ -5,6 +5,9 @@
 (async function() {
   TestRunner.addResult(`Tests quota reporting.\n`);
   await TestRunner.loadModule('application_test_runner');
+    // Note: every test that uses a storage API must manually clean-up state from previous tests.
+  await ApplicationTestRunner.resetState();
+
   await TestRunner.loadModule('console_test_runner');
   await TestRunner.showPanel('resources');
 
@@ -12,7 +15,7 @@
 
   async function writeArray() {
     var array = [];
-    for (var i = 0; i < 5000000; i++)
+    for (var i = 0; i < 20000; i++)
       array.push(i % 10);
     var mainFrameId = TestRunner.resourceTreeModel.mainFrame.id;
     await new Promise(resolve => ApplicationTestRunner.createDatabase(mainFrameId, 'Database1', resolve));
@@ -35,7 +38,8 @@
     });
     // Quota will vary between setups, rather strip it altogether
     var clean = view._quotaRow.innerHTML.replace(/\&nbsp;/g, ' ');
-    var quotaStripped = clean.replace(/(.*) \d+ .?B([^\d]*)/, '$1 --$2');
+    // Clean usage value because it's platform-dependent.
+    var quotaStripped = clean.replace(/[\d.]+ (K?B used out of) \d+ .?B([^\d]*)/, '-- $1 --$2');
     TestRunner.addResult(quotaStripped);
 
     TestRunner.addResult('Usage breakdown:');
@@ -45,8 +49,11 @@
       for (var j = 0; j < children.length; j++) {
         if (children[j].classList.contains('usage-breakdown-legend-title'))
           typeUsage = children[j].textContent + typeUsage;
-        if (children[j].classList.contains('usage-breakdown-legend-value'))
-          typeUsage = typeUsage + children[j].textContent;
+        if (children[j].classList.contains('usage-breakdown-legend-value')) {
+          // Clean usage value because it's platform-dependent.
+          var cleanedValue = children[j].textContent.replace(/\d+.\d\sKB/, '--.- KB');
+          typeUsage = typeUsage + cleanedValue;
+        }
       }
       TestRunner.addResult(typeUsage);
     }
@@ -68,7 +75,7 @@
   TestRunner.markStep('Now with data');
 
   await writeArray();
-  await dumpWhenMatches(clearStorageView, usage => usage > 5000000);
+  await dumpWhenMatches(clearStorageView, usage => usage > 20000);
 
   TestRunner.completeTest();
 })();

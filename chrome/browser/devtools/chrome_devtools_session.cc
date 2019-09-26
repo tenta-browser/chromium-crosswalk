@@ -6,7 +6,9 @@
 
 #include "chrome/browser/devtools/protocol/browser_handler.h"
 #include "chrome/browser/devtools/protocol/page_handler.h"
+#include "chrome/browser/devtools/protocol/target_handler.h"
 #include "content/public/browser/devtools_agent_host.h"
+#include "content/public/browser/devtools_agent_host_client.h"
 
 #if defined(OS_CHROMEOS)
 #include "chrome/browser/devtools/protocol/window_manager_handler.h"
@@ -14,14 +16,17 @@
 
 ChromeDevToolsSession::ChromeDevToolsSession(
     content::DevToolsAgentHost* agent_host,
-    int session_id)
+    content::DevToolsAgentHostClient* client)
     : agent_host_(agent_host),
-      session_id_(session_id),
+      client_(client),
       dispatcher_(std::make_unique<protocol::UberDispatcher>(this)) {
   dispatcher_->setFallThroughForNotFound(true);
-  if (agent_host->GetWebContents()) {
+  if (agent_host->GetWebContents() &&
+      agent_host->GetType() == content::DevToolsAgentHost::kTypePage) {
     page_handler_ = std::make_unique<PageHandler>(agent_host->GetWebContents(),
                                                   dispatcher_.get());
+    target_handler_ = std::make_unique<TargetHandler>(
+        agent_host->GetWebContents(), dispatcher_.get());
   }
   browser_handler_ = std::make_unique<BrowserHandler>(dispatcher_.get());
 #if defined(OS_CHROMEOS)
@@ -35,12 +40,12 @@ ChromeDevToolsSession::~ChromeDevToolsSession() = default;
 void ChromeDevToolsSession::sendProtocolResponse(
     int call_id,
     std::unique_ptr<protocol::Serializable> message) {
-  agent_host_->SendProtocolMessageToClient(session_id_, message->serialize());
+  client_->DispatchProtocolMessage(agent_host_, message->serialize());
 }
 
 void ChromeDevToolsSession::sendProtocolNotification(
     std::unique_ptr<protocol::Serializable> message) {
-  agent_host_->SendProtocolMessageToClient(session_id_, message->serialize());
+  client_->DispatchProtocolMessage(agent_host_, message->serialize());
 }
 
 void ChromeDevToolsSession::flushProtocolNotifications() {}

@@ -4,19 +4,21 @@
 
 #include "base/path_service.h"
 #include "base/posix/global_descriptors.h"
+#include "build/build_config.h"
 #include "content/browser/child_process_launcher.h"
 #include "content/browser/child_process_launcher_helper.h"
 #include "content/browser/child_process_launcher_helper_posix.h"
 #include "content/browser/sandbox_host_linux.h"
 #include "content/browser/zygote_host/zygote_communication_linux.h"
 #include "content/browser/zygote_host/zygote_host_impl_linux.h"
+#include "content/public/browser/child_process_launcher_utils.h"
 #include "content/public/browser/content_browser_client.h"
-#include "content/public/browser/zygote_handle_linux.h"
 #include "content/public/common/common_sandbox_support_linux.h"
 #include "content/public/common/content_client.h"
 #include "content/public/common/content_switches.h"
 #include "content/public/common/result_codes.h"
 #include "content/public/common/sandboxed_process_launcher_delegate.h"
+#include "content/public/common/zygote_handle.h"
 #include "gpu/config/gpu_switches.h"
 #include "services/service_manager/sandbox/linux/sandbox_linux.h"
 
@@ -35,7 +37,7 @@ void ChildProcessLauncherHelper::BeforeLaunchOnClientThread() {
 
 std::unique_ptr<FileMappedForLaunch>
 ChildProcessLauncherHelper::GetFilesToMap() {
-  DCHECK_CURRENTLY_ON(BrowserThread::PROCESS_LAUNCHER);
+  DCHECK(CurrentlyOnProcessLauncherTaskRunner());
   return CreateDefaultPosixFilesToMap(child_process_id(), mojo_client_handle(),
                                       true /* include_service_required_files */,
                                       GetProcessType(), command_line());
@@ -78,8 +80,23 @@ ChildProcessLauncherHelper::LaunchProcessOnLauncherThread(
     // be created lazily here, or in the delegate GetZygote() implementations.
     // Additionally, the delegate could provide a UseGenericZygote() method.
     base::ProcessHandle handle = zygote_handle->ForkRequest(
-        command_line()->argv(), std::move(files_to_register), GetProcessType());
+        command_line()->argv(), files_to_register->GetMapping(),
+        GetProcessType());
     *launch_result = LAUNCH_RESULT_SUCCESS;
+
+#if !defined(OS_OPENBSD)
+    if (handle) {
+      // This is just a starting score for a renderer or extension (the
+      // only types of processes that will be started this way).  It will
+      // get adjusted as time goes on.  (This is the same value as
+      // chrome::kLowestRendererOomScore in chrome/chrome_constants.h, but
+      // that's not something we can include here.)
+      const int kLowestRendererOomScore = 300;
+      ZygoteHostImpl::GetInstance()->AdjustRendererOOMScore(
+          handle, kLowestRendererOomScore);
+    }
+#endif
+
     Process process;
     process.process = base::Process(handle);
     process.zygote = zygote_handle;
@@ -114,14 +131,17 @@ base::TerminationStatus ChildProcessLauncherHelper::GetTerminationStatus(
 }
 
 // static
-bool ChildProcessLauncherHelper::TerminateProcess(
-    const base::Process& process, int exit_code, bool wait) {
-  return process.Terminate(exit_code, wait);
+bool ChildProcessLauncherHelper::TerminateProcess(const base::Process& process,
+                                                  int exit_code) {
+  // TODO(https://crbug.com/818244): Determine whether we should also call
+  // EnsureProcessTerminated() to make sure of process-exit, and reap it.
+  return process.Terminate(exit_code, false);
 }
 
 // static
 void ChildProcessLauncherHelper::ForceNormalProcessTerminationSync(
     ChildProcessLauncherHelper::Process process) {
+  DCHECK(CurrentlyOnProcessLauncherTaskRunner());
   process.process.Terminate(RESULT_CODE_NORMAL_EXIT, false);
   // On POSIX, we must additionally reap the child.
   if (process.zygote) {
@@ -136,7 +156,7 @@ void ChildProcessLauncherHelper::ForceNormalProcessTerminationSync(
 void ChildProcessLauncherHelper::SetProcessPriorityOnLauncherThread(
     base::Process process,
     const ChildProcessLauncherPriority& priority) {
-  DCHECK_CURRENTLY_ON(BrowserThread::PROCESS_LAUNCHER);
+  DCHECK(CurrentlyOnProcessLauncherTaskRunner());
   if (process.CanBackgroundProcesses())
     process.SetProcessBackgrounded(priority.background);
 }

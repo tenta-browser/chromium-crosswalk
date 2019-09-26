@@ -33,7 +33,6 @@ _SRC_ROOT = os.path.abspath(
     os.path.join(os.path.dirname(__file__), os.pardir, os.pardir))
 _DEFAULT_ARCHIVE_DIR = os.path.join(_SRC_ROOT, 'out', 'binary-size-results')
 _DEFAULT_OUT_DIR = os.path.join(_SRC_ROOT, 'out', 'binary-size-build')
-_DEFAULT_ANDROID_TARGET = 'monochrome_public_apk'
 _BINARY_SIZE_DIR = os.path.join(_SRC_ROOT, 'tools', 'binary_size')
 _RESOURCE_SIZES_PATH = os.path.join(
     _SRC_ROOT, 'build', 'android', 'resource_sizes.py')
@@ -48,14 +47,18 @@ class BaseDiff(object):
     self.name = name
     self.banner = '\n' + '*' * 30 + name + '*' * 30
 
-  def AppendResults(self, logfile):
+  def AppendResults(self, logfiles):
     """Print and write diff results to an open |logfile|."""
-    _PrintAndWriteToFile(logfile, self.banner)
+    full, short = logfiles
+    _WriteToFile(full, self.banner)
+    _WriteToFile(short, self.banner)
+
     for s in self.Summary():
-      print s
-    print
+      _WriteToFile(short, s)
+    _WriteToFile(short, '')
+
     for s in self.DetailedResults():
-      logfile.write(s + '\n')
+      full.write(s + '\n')
 
   @property
   def summary_stat(self):
@@ -73,10 +76,10 @@ class BaseDiff(object):
     """Prepare a binary size diff with ready to print results."""
     raise NotImplementedError()
 
-  def RunDiff(self, logfile, before_dir, after_dir):
+  def RunDiff(self, logfiles, before_dir, after_dir):
     logging.info('Creating: %s', self.name)
     self.ProduceDiff(before_dir, after_dir)
-    self.AppendResults(logfile)
+    self.AppendResults(logfiles)
 
 
 class NativeDiff(BaseDiff):
@@ -112,7 +115,8 @@ class NativeDiff(BaseDiff):
 
 
 class ResourceSizesDiff(BaseDiff):
-  _SUMMARY_SECTIONS = ('Breakdown', 'Specifics', 'StaticInitializersCount')
+  _SUMMARY_SECTIONS = (
+      'Breakdown', 'Dex', 'Specifics', 'StaticInitializersCount')
   # Sections where it makes sense to sum subsections into a section total.
   _AGGREGATE_SECTIONS = (
       'InstallBreakdown', 'Breakdown', 'MainLibInfo', 'Uncompressed')
@@ -195,7 +199,7 @@ class _BuildHelper(object):
   def __init__(self, args):
     self.cloud = args.cloud
     self.enable_chrome_android_internal = args.enable_chrome_android_internal
-    self.extra_gn_args_str = ''
+    self.extra_gn_args_str = args.gn_args
     self.max_jobs = args.max_jobs
     self.max_load_average = args.max_load_average
     self.output_directory = args.output_directory
@@ -261,18 +265,28 @@ class _BuildHelper(object):
       self.max_jobs = '10000' if self.use_goma else '500'
 
     if os.path.exists(os.path.join(os.path.dirname(_SRC_ROOT), 'src-internal')):
-      self.extra_gn_args_str = ' is_chrome_branded=true'
+      self.extra_gn_args_str = (
+          'is_chrome_branded=true ' + self.extra_gn_args_str)
     else:
       self.extra_gn_args_str = (
-          ' ffmpeg_branding="Chrome" proprietary_codecs=true')
+          'ffmpeg_branding="Chrome" proprietary_codecs=true' +
+          self.extra_gn_args_str)
     if self.IsLinux():
-      self.extra_gn_args_str += (
-          ' is_cfi=false generate_linker_map=true')
-    self.target = self.target if self.IsAndroid() else 'chrome'
+      self.extra_gn_args_str = (
+          'is_cfi=false generate_linker_map=true ' + self.extra_gn_args_str)
+    self.extra_gn_args_str = ' ' + self.extra_gn_args_str.strip()
+
+    if not self.target:
+      if self.IsLinux():
+        self.target = 'chrome'
+      elif self.enable_chrome_android_internal:
+        self.target = 'monochrome_apk'
+      else:
+        self.target = 'monochrome_public_apk'
 
   def _GenGnCmd(self):
     gn_args = 'is_official_build=true'
-    gn_args += ' symbol_level=1'
+    gn_args += ' symbol_level=0'
     # Variables often become unused when experimenting with macros to reduce
     # size, so don't fail on warnings.
     gn_args += ' treat_warnings_as_errors=false'
@@ -411,7 +425,7 @@ class _DiffArchiveManager(object):
     """Perform diffs given two build archives."""
     before = self.build_archives[before_id]
     after = self.build_archives[after_id]
-    diff_path = self._DiffFilePath(before, after)
+    diff_path, short_diff_path = self._DiffFilePaths(before, after)
     if not self._CanDiff(before, after):
       logging.info(
           'Skipping diff for %s due to missing build archives.', diff_path)
@@ -425,26 +439,30 @@ class _DiffArchiveManager(object):
           'Skipping diff for %s and %s. Matching diff already exists: %s',
           before.rev, after.rev, diff_path)
     else:
-      if os.path.exists(diff_path):
-        os.remove(diff_path)
-      with open(diff_path, 'a') as diff_file:
+      with open(diff_path, 'w') as diff_file, \
+           open(short_diff_path, 'w') as summary_file:
         for d in self.diffs:
-          d.RunDiff(diff_file, before.dir, after.dir)
+          d.RunDiff((diff_file, summary_file), before.dir, after.dir)
       metadata.Write()
       self._AddDiffSummaryStat(before, after)
+    if os.path.exists(short_diff_path):
+      _PrintFile(short_diff_path)
     logging.info('See detailed diff results here: %s',
                  os.path.relpath(diff_path))
 
   def Summarize(self):
+    path = os.path.join(self.archive_dir, 'last_diff_summary.txt')
     if self._summary_stats:
-      path = os.path.join(self.archive_dir, 'last_diff_summary.txt')
       with open(path, 'w') as f:
         stats = sorted(
             self._summary_stats, key=lambda x: x[0].value, reverse=True)
-        _PrintAndWriteToFile(f, '\nDiff Summary')
+        _WriteToFile(f, '\nDiff Summary')
         for s, before, after in stats:
-          _PrintAndWriteToFile(f, '{:>+10} {} {} for range: {}..{}',
+          _WriteToFile(f, '{:>+10} {} {} for range: {}..{}',
                                s.value, s.units, s.name, before, after)
+    # Print cached file if all builds were cached.
+    if os.path.exists(path):
+      _PrintFile(path)
     if self.build_archives:
       supersize_path = os.path.join(_BINARY_SIZE_DIR, 'supersize')
       size2 = ''
@@ -470,8 +488,9 @@ class _DiffArchiveManager(object):
   def _CanDiff(self, before, after):
     return before.Exists() and after.Exists()
 
-  def _DiffFilePath(self, before, after):
-    return os.path.join(self._DiffDir(before, after), 'diff_results.txt')
+  def _DiffFilePaths(self, before, after):
+    ret = os.path.join(self._DiffDir(before, after), 'diff_results')
+    return ret + '.txt', ret + '.short.txt'
 
   def _DiffMetadataPath(self, before, after):
     return os.path.join(self._DiffDir(before, after), 'metadata.txt')
@@ -568,7 +587,7 @@ def _GclientSyncCmd(rev, subrepo):
   return retcode
 
 
-def _SyncAndBuild(archive, build, subrepo):
+def _SyncAndBuild(archive, build, subrepo, no_gclient):
   """Sync, build and return non 0 if any commands failed."""
   # Simply do a checkout if subrepo is used.
   retcode = 0
@@ -577,7 +596,7 @@ def _SyncAndBuild(archive, build, subrepo):
       logging.info('Skipping git checkout since already at desired rev')
     else:
       logging.info('Skipping gclient sync since already at desired rev')
-  elif subrepo != _SRC_ROOT:
+  elif subrepo != _SRC_ROOT or no_gclient:
     _GitCmd(['checkout',  archive.rev], subrepo)
   else:
     # Move to a detached state since gclient sync doesn't work with local
@@ -664,25 +683,33 @@ def _DownloadBuildArtifacts(archive, build, supersize_path, depot_tools_path):
 
 
 def _DownloadAndArchive(gsutil_path, archive, dl_dir, build, supersize_path):
-  proc = subprocess.Popen([gsutil_path, 'version'], stdout=subprocess.PIPE,
-                          stderr=subprocess.STDOUT)
-  output, _ = proc.communicate()
-  if proc.returncode:
-    _Die('gsutil error. Please file a bug in Tools>BinarySize. Output:\n%s',
-         output)
+  # Wraps gsutil calls and returns stdout + stderr.
+  def gsutil_cmd(args, fail_msg=None):
+    fail_msg = fail_msg or ''
+    proc = subprocess.Popen([gsutil_path] + args, stdout=subprocess.PIPE,
+                            stderr=subprocess.STDOUT)
+    output = proc.communicate()[0].rstrip()
+    if proc.returncode or not output:
+      _Die(fail_msg + ' Process output:\n%s' % output)
+    return output
 
+  # Fails if gsutil isn't configured.
+  gsutil_cmd(['version'],
+             'gsutil error. Please file a bug in Tools>BinarySize.')
   dl_dst = os.path.join(dl_dir, archive.rev)
   logging.info('Downloading build artifacts for %s', archive.rev)
-  # gsutil writes stdout and stderr to stderr, so pipe stdout and stderr to
-  # sys.stdout.
-  retcode = subprocess.call(
-      [gsutil_path, 'cp', build.DownloadUrl(archive.rev), dl_dst],
-      stdout=sys.stdout, stderr=subprocess.STDOUT)
-  if retcode:
-      _Die('unexpected error while downloading %s. It may no longer exist on '
-           'the server or it may not have been uploaded yet (check %s). '
-           'Otherwise, you may not have the correct access permissions.',
-           build.DownloadUrl(archive.rev), build.builder_url)
+
+  # Fails if archive isn't found.
+  output = gsutil_cmd(['stat', build.DownloadUrl(archive.rev)],
+      'Unexpected error while downloading %s. It may no longer exist on the '
+      'server or it may not have been uploaded yet (check %s). Otherwise, you '
+      'may not have the correct access permissions.' % (
+      build.DownloadUrl(archive.rev), build.builder_url))
+  size = re.search(r'Content-Length:\s+([0-9]+)', output).group(1)
+  logging.info('File size: %s', _ReadableBytes(int(size)))
+
+  # Download archive. Any failures here are unexpected.
+  gsutil_cmd(['cp', build.DownloadUrl(archive.rev), dl_dst])
 
   # Files needed for supersize and resource_sizes. Paths relative to out dir.
   to_extract = [build.main_lib_path, build.map_file_path, 'args.gn']
@@ -696,6 +723,17 @@ def _DownloadAndArchive(gsutil_path, archive, dl_dir, build, supersize_path):
     build.output_directory, output_directory = dl_out, build.output_directory
     archive.ArchiveBuildResults(supersize_path)
     build.output_directory = output_directory
+
+
+def _ReadableBytes(b):
+  val = b
+  units = ['Bytes','KB', 'MB', 'GB']
+  for unit in units:
+    if val < 1024:
+      return '%.2f %s' % (val, unit)
+    val /= 1024.0
+  else:
+    return '%d %s' % (b, 'Bytes')
 
 
 def _ExtractFiles(to_extract, dst, z):
@@ -712,13 +750,17 @@ def _ExtractFiles(to_extract, dst, z):
   return os.path.join(dst, output_dir)
 
 
-def _PrintAndWriteToFile(logfile, s, *args, **kwargs):
+def _WriteToFile(logfile, s, *args, **kwargs):
   if isinstance(s, basestring):
     data = s.format(*args, **kwargs) + '\n'
   else:
     data = '\n'.join(s) + '\n'
-  sys.stdout.write(data)
   logfile.write(data)
+
+
+def _PrintFile(path):
+  with open(path) as f:
+    sys.stdout.write(f.read())
 
 
 @contextmanager
@@ -741,17 +783,23 @@ def _CurrentGitHash(subrepo):
 
 def _SetRestoreFunc(subrepo):
   branch = _GitCmd(['rev-parse', '--abbrev-ref', 'HEAD'], subrepo)
-  atexit.register(lambda: _GitCmd(['checkout', branch], subrepo))
+  # Happens when the repo didn't start on a named branch.
+  if branch == 'HEAD':
+    branch = _GitCmd(['rev-parse', 'HEAD'], subrepo)
+  def _RestoreFunc():
+    logging.warning('Restoring original git checkout')
+    _GitCmd(['checkout', branch], subrepo)
+  atexit.register(_RestoreFunc)
 
 
 def main():
   parser = argparse.ArgumentParser(
       description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+  parser.add_argument('rev',
+                      help='Find binary size bloat for this commit.')
   parser.add_argument('--archive-directory',
                       default=_DEFAULT_ARCHIVE_DIR,
                       help='Where results are stored.')
-  parser.add_argument('rev',
-                      help='Find binary size bloat for this commit.')
   parser.add_argument('--reference-rev',
                       help='Older rev to diff against. If not supplied, '
                            'the previous commit to rev will be used.')
@@ -778,10 +826,13 @@ def main():
                       help='Custom path to depot tools. Needed for --cloud if '
                            'depot tools isn\'t in your PATH.')
   parser.add_argument('--subrepo',
-                      help='Specify a subrepo directory to use. Gclient sync '
-                           'will be skipped if this option is used and all git '
-                           'commands will be executed from the subrepo '
-                           'directory. This option doesn\'t work with --cloud.')
+                      help='Specify a subrepo directory to use. Implies '
+                           '--no-gclient. All git commands will be executed '
+                           'from the subrepo directory. Does not work with '
+                           '--cloud.')
+  parser.add_argument('--no-gclient',
+                      action='store_true',
+                      help='Do not perform gclient sync steps.')
   parser.add_argument('-v',
                       '--verbose',
                       action='store_true',
@@ -804,6 +855,9 @@ def main():
   build_group.add_argument('--clean',
                            action='store_true',
                            help='Do a clean build for each revision.')
+  build_group.add_argument('--gn-args',
+                           default='',
+                           help='Extra GN args to set.')
   build_group.add_argument('--target-os',
                            default='android',
                            choices=['android', 'linux'],
@@ -816,9 +870,10 @@ def main():
                            action='store_true',
                            help='Allow downstream targets to be built.')
   build_group.add_argument('--target',
-                           default=_DEFAULT_ANDROID_TARGET,
-                           help='GN APK target to build. Ignored for Linux. '
-                                'Default %s.' % _DEFAULT_ANDROID_TARGET)
+                           help='GN target to build. Linux default: chrome. '
+                                'Android default: monochrome_public_apk or '
+                                'monochrome_apk (depending on '
+                                '--enable-chrome-android-internal)')
   if len(sys.argv) == 1:
     parser.print_help()
     sys.exit()
@@ -867,7 +922,8 @@ def main():
           _DownloadBuildArtifacts(
               archive, build, supersize_path, args.depot_tools_path)
         else:
-          build_failure = _SyncAndBuild(archive, build, subrepo)
+          build_failure = _SyncAndBuild(archive, build, subrepo,
+                                        args.no_gclient)
           if build_failure:
             logging.info(
                 'Build failed for %s, diffs using this rev will be skipped.',

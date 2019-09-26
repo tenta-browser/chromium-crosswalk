@@ -9,6 +9,7 @@
 #include <set>
 
 #include "base/macros.h"
+#include "base/task/cancelable_task_tracker.h"
 #include "base/values.h"
 #include "chrome/browser/media/media_engagement_score.h"
 #include "chrome/browser/media/media_engagement_score_details.mojom.h"
@@ -101,6 +102,10 @@ class MediaEngagementService : public KeyedService,
   // is cleared.
   static const char kHistogramURLsDeletedScoreReductionName[];
 
+  // The name of the histogram that records the reason why the engagement was
+  // cleared, either partially or fully.
+  static const char kHistogramClearName[];
+
  private:
   friend class MediaEngagementBrowserTest;
   friend class MediaEngagementContentsObserverTest;
@@ -108,7 +113,7 @@ class MediaEngagementService : public KeyedService,
   friend class MediaEngagementSessionTest;
   friend class MediaEngagementContentsObserver;
 
-  MediaEngagementService(Profile* profile, std::unique_ptr<base::Clock> clock);
+  MediaEngagementService(Profile* profile, base::Clock* clock);
 
   // Returns true if we should record engagement for this url. Currently,
   // engagement is only earned for HTTP and HTTPS.
@@ -123,13 +128,25 @@ class MediaEngagementService : public KeyedService,
   void Clear(const GURL& url);
 
   // An internal clock for testing.
-  std::unique_ptr<base::Clock> clock_;
+  base::Clock* clock_;
 
   // Records all the stored scores to a histogram.
   void RecordStoredScoresToHistogram();
 
+  std::vector<MediaEngagementScore> GetAllStoredScores() const;
+
   int GetSchemaVersion() const;
   void SetSchemaVersion(int);
+
+  // Remove origins from `deleted_origins` that have no more visits in the
+  // history service, represented as `origin_data`. This is meant to be used
+  // when the service receives a notification of history expiration.
+  void RemoveOriginsWithNoVisits(
+      const std::set<GURL>& deleted_origins,
+      const history::OriginCountAndLastVisitMap& origin_data);
+
+  // Allows us to cancel the RecordScoresToHistogram task if we are destroyed.
+  base::CancelableTaskTracker task_tracker_;
 
   DISALLOW_COPY_AND_ASSIGN(MediaEngagementService);
 };

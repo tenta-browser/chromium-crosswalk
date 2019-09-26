@@ -11,8 +11,11 @@
 #include "base/json/json_writer.h"
 #include "base/run_loop.h"
 #include "base/strings/stringprintf.h"
+#include "base/test/scoped_feature_list.h"
 #include "build/build_config.h"
 #include "cc/base/switches.h"
+#include "components/viz/common/features.h"
+#include "components/viz/common/switches.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/content_switches.h"
 #include "content/public/test/browser_test.h"
@@ -30,7 +33,7 @@
 #include "headless/public/util/testing/test_in_memory_protocol_handler.h"
 #include "headless/test/headless_browser_test.h"
 #include "headless/test/tab_socket_test.h"
-#include "printing/features/features.h"
+#include "printing/buildflags/buildflags.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/skia/include/core/SkBitmap.h"
@@ -171,8 +174,8 @@ class HeadlessWindowOpenTabSocketTest : public HeadlessBrowserTest,
     devtools_client_->GetPage()->Enable();
     devtools_client_->GetPage()->GetExperimental()->GetResourceTree(
         page::GetResourceTreeParams::Builder().Build(),
-        base::Bind(&HeadlessWindowOpenTabSocketTest::OnResourceTree,
-                   base::Unretained(this)));
+        base::BindOnce(&HeadlessWindowOpenTabSocketTest::OnResourceTree,
+                       base::Unretained(this)));
   }
 
   void OnResourceTree(std::unique_ptr<page::GetResourceTreeResult> result) {
@@ -201,8 +204,8 @@ class HeadlessWindowOpenTabSocketTest : public HeadlessBrowserTest,
     CHECK(tab_socket);
     tab_socket->InstallHeadlessTabSocketBindings(
         *child_frame_execution_context_id_,
-        base::Bind(&HeadlessWindowOpenTabSocketTest::OnTabSocketInstalled,
-                   base::Unretained(this)));
+        base::BindOnce(&HeadlessWindowOpenTabSocketTest::OnTabSocketInstalled,
+                       base::Unretained(this)));
   }
 
   void OnTabSocketInstalled(bool success) {
@@ -218,8 +221,8 @@ class HeadlessWindowOpenTabSocketTest : public HeadlessBrowserTest,
               window.TabSocket.send('Embedder sent us: ' + message);
             };
           )",
-        base::Bind(&HeadlessWindowOpenTabSocketTest::OnEvaluateResult,
-                   base::Unretained(this)));
+        base::BindOnce(&HeadlessWindowOpenTabSocketTest::OnEvaluateResult,
+                       base::Unretained(this)));
   }
 
   void OnEvaluateResult(std::unique_ptr<runtime::EvaluateResult> result) {
@@ -311,14 +314,22 @@ IN_PROC_BROWSER_TEST_F(HeadlessNoDevToolsTabSocketTest, Test) {
   tab_socket_ = web_contents->GetHeadlessTabSocket();
   CHECK(tab_socket_);
   tab_socket_->InstallMainFrameMainWorldHeadlessTabSocketBindings(
-      base::Bind(&HeadlessNoDevToolsTabSocketTest::OnInstalledHeadlessTabSocket,
-                 base::Unretained(this)));
+      base::BindOnce(
+          &HeadlessNoDevToolsTabSocketTest::OnInstalledHeadlessTabSocket,
+          base::Unretained(this)));
   tab_socket_->SetListener(this);
 
   RunAsynchronousTest();
 }
 
-IN_PROC_BROWSER_TEST_F(HeadlessWebContentsTest, Focus) {
+#if defined(OS_WIN)
+// crbug.com/828042
+#define MAYBE_Focus DISABLED_Focus
+#else
+#define MAYBE_Focus Focus
+#endif
+
+IN_PROC_BROWSER_TEST_F(HeadlessWebContentsTest, MAYBE_Focus) {
   EXPECT_TRUE(embedded_test_server()->Start());
 
   HeadlessBrowserContext* browser_context =
@@ -397,15 +408,15 @@ class HeadlessWebContentsScreenshotTest
             .Build();
     devtools_client_->GetRuntime()->Evaluate(
         std::move(params),
-        base::Bind(&HeadlessWebContentsScreenshotTest::OnPageSetupCompleted,
-                   base::Unretained(this)));
+        base::BindOnce(&HeadlessWebContentsScreenshotTest::OnPageSetupCompleted,
+                       base::Unretained(this)));
   }
 
   void OnPageSetupCompleted(std::unique_ptr<runtime::EvaluateResult> result) {
     devtools_client_->GetPage()->GetExperimental()->CaptureScreenshot(
         page::CaptureScreenshotParams::Builder().Build(),
-        base::Bind(&HeadlessWebContentsScreenshotTest::OnScreenshotCaptured,
-                   base::Unretained(this)));
+        base::BindOnce(&HeadlessWebContentsScreenshotTest::OnScreenshotCaptured,
+                       base::Unretained(this)));
   }
 
   void OnScreenshotCaptured(
@@ -451,8 +462,8 @@ class HeadlessWebContentsPDFTest : public HeadlessAsyncDevTooledBrowserTest {
             .Build();
     devtools_client_->GetRuntime()->Evaluate(
         std::move(params),
-        base::Bind(&HeadlessWebContentsPDFTest::OnPageSetupCompleted,
-                   base::Unretained(this)));
+        base::BindOnce(&HeadlessWebContentsPDFTest::OnPageSetupCompleted,
+                       base::Unretained(this)));
   }
 
   void OnPageSetupCompleted(std::unique_ptr<runtime::EvaluateResult> result) {
@@ -466,8 +477,8 @@ class HeadlessWebContentsPDFTest : public HeadlessAsyncDevTooledBrowserTest {
             .SetMarginLeft(0)
             .SetMarginRight(0)
             .Build(),
-        base::Bind(&HeadlessWebContentsPDFTest::OnPDFCreated,
-                   base::Unretained(this)));
+        base::BindOnce(&HeadlessWebContentsPDFTest::OnPDFCreated,
+                       base::Unretained(this)));
   }
 
   void OnPDFCreated(std::unique_ptr<page::PrintToPDFResult> result) {
@@ -494,14 +505,15 @@ class HeadlessWebContentsPDFTest : public HeadlessAsyncDevTooledBrowserTest {
 
       gfx::Rect rect(kPaperWidth * kDpi, kPaperHeight * kDpi);
       printing::PdfRenderSettings settings(
-          rect, gfx::Point(0, 0), kDpi, true,
-          printing::PdfRenderSettings::Mode::NORMAL);
+          rect, gfx::Point(0, 0), gfx::Size(kDpi, kDpi), /*autorotate=*/true,
+          /*use_color=*/true, printing::PdfRenderSettings::Mode::NORMAL);
       std::vector<uint8_t> page_bitmap_data(kColorChannels *
                                             settings.area.size().GetArea());
       EXPECT_TRUE(chrome_pdf::RenderPDFPageToBitmap(
           pdf_data.data(), pdf_data.size(), i, page_bitmap_data.data(),
           settings.area.size().width(), settings.area.size().height(),
-          settings.dpi, settings.autorotate));
+          settings.dpi.width(), settings.dpi.height(), settings.autorotate,
+          settings.use_color));
       EXPECT_EQ(0x56, page_bitmap_data[0]);  // B
       EXPECT_EQ(0x34, page_bitmap_data[1]);  // G
       EXPECT_EQ(0x12, page_bitmap_data[2]);  // R
@@ -559,7 +571,7 @@ class MainWorldHeadlessTabSocketTest : public TabSocketTest {
   void RunTabSocketTest() override {
     CreateMainWorldTabSocket(
         main_frame_id(),
-        base::Bind(
+        base::BindOnce(
             &MainWorldHeadlessTabSocketTest::OnInstalledHeadlessTabSocket,
             base::Unretained(this)));
   }
@@ -571,8 +583,9 @@ class MainWorldHeadlessTabSocketTest : public TabSocketTest {
               window.TabSocket.send('Embedder sent us: ' + message);
             };
           )",
-        base::Bind(&MainWorldHeadlessTabSocketTest::FailOnJsEvaluateException,
-                   base::Unretained(this)));
+        base::BindOnce(
+            &MainWorldHeadlessTabSocketTest::FailOnJsEvaluateException,
+            base::Unretained(this)));
 
     HeadlessTabSocket* headless_tab_socket =
         web_contents_->GetHeadlessTabSocket();
@@ -610,9 +623,9 @@ class MainWorldHeadlessTabSocketBindingsNotInstalledTest
   void RunTabSocketTest() override {
     CreateIsolatedWorldTabSocket(
         "Test World", main_frame_id(),
-        base::Bind(&MainWorldHeadlessTabSocketBindingsNotInstalledTest::
-                       OnIsolatedWorldCreated,
-                   base::Unretained(this)));
+        base::BindOnce(&MainWorldHeadlessTabSocketBindingsNotInstalledTest::
+                           OnIsolatedWorldCreated,
+                       base::Unretained(this)));
   }
 
   void OnIsolatedWorldCreated(int execution_context_id) {
@@ -620,9 +633,9 @@ class MainWorldHeadlessTabSocketBindingsNotInstalledTest
     // isolated world not the main world.
     devtools_client_->GetRuntime()->Evaluate(
         "window.TabSocket.send('This should not work!');",
-        base::Bind(&MainWorldHeadlessTabSocketBindingsNotInstalledTest::
-                       ExpectJsException,
-                   base::Unretained(this)));
+        base::BindOnce(&MainWorldHeadlessTabSocketBindingsNotInstalledTest::
+                           ExpectJsException,
+                       base::Unretained(this)));
 
     HeadlessTabSocket* headless_tab_socket =
         web_contents_->GetHeadlessTabSocket();
@@ -645,8 +658,9 @@ class IsolatedWorldHeadlessTabSocketTest : public TabSocketTest {
   void RunTabSocketTest() override {
     CreateIsolatedWorldTabSocket(
         "Test World", main_frame_id(),
-        base::Bind(&IsolatedWorldHeadlessTabSocketTest::OnIsolatedWorldCreated,
-                   base::Unretained(this)));
+        base::BindOnce(
+            &IsolatedWorldHeadlessTabSocketTest::OnIsolatedWorldCreated,
+            base::Unretained(this)));
   }
 
   void OnIsolatedWorldCreated(int execution_context_id) {
@@ -669,7 +683,7 @@ class IsolatedWorldHeadlessTabSocketTest : public TabSocketTest {
                   )")
             .SetContextId(GetV8ExecutionContextIdByWorldName("Test World"))
             .Build(),
-        base::Bind(
+        base::BindOnce(
             &IsolatedWorldHeadlessTabSocketTest::FailOnJsEvaluateException,
             base::Unretained(this)));
   }
@@ -701,7 +715,7 @@ class MultipleIframesIsolatedWorldHeadlessTabSocketTest : public TabSocketTest {
         dom_snapshot::GetSnapshotParams::Builder()
             .SetComputedStyleWhitelist(std::vector<std::string>())
             .Build(),
-        base::Bind(
+        base::BindOnce(
             &MultipleIframesIsolatedWorldHeadlessTabSocketTest::OnSnapshot,
             base::Unretained(this)));
   }
@@ -727,9 +741,9 @@ class MultipleIframesIsolatedWorldHeadlessTabSocketTest : public TabSocketTest {
         }
         CreateIsolatedWorldTabSocket(
             frame_name, node->GetFrameId(),
-            base::Bind(&MultipleIframesIsolatedWorldHeadlessTabSocketTest::
-                           OnIsolatedWorldCreated,
-                       base::Unretained(this), frame_name));
+            base::BindOnce(&MultipleIframesIsolatedWorldHeadlessTabSocketTest::
+                               OnIsolatedWorldCreated,
+                           base::Unretained(this), frame_name));
       }
     }
   }
@@ -753,9 +767,9 @@ class MultipleIframesIsolatedWorldHeadlessTabSocketTest : public TabSocketTest {
                 frame_name.c_str()))
             .SetContextId(execution_context_id)
             .Build(),
-        base::Bind(&MultipleIframesIsolatedWorldHeadlessTabSocketTest::
-                       FailOnJsEvaluateException,
-                   base::Unretained(this)));
+        base::BindOnce(&MultipleIframesIsolatedWorldHeadlessTabSocketTest::
+                           FailOnJsEvaluateException,
+                       base::Unretained(this)));
   }
 
   void OnMessageFromContext(const std::string& message,
@@ -782,21 +796,21 @@ class SingleTabMultipleIsolatedWorldsHeadlessTabSocketTest
   void RunTabSocketTest() override {
     CreateIsolatedWorldTabSocket(
         "Isolated World 1", main_frame_id(),
-        base::Bind(&SingleTabMultipleIsolatedWorldsHeadlessTabSocketTest::
-                       OnIsolatedWorldCreated,
-                   base::Unretained(this), "Isolated World 1"));
+        base::BindOnce(&SingleTabMultipleIsolatedWorldsHeadlessTabSocketTest::
+                           OnIsolatedWorldCreated,
+                       base::Unretained(this), "Isolated World 1"));
 
     CreateIsolatedWorldTabSocket(
         "Isolated World 2", main_frame_id(),
-        base::Bind(&SingleTabMultipleIsolatedWorldsHeadlessTabSocketTest::
-                       OnIsolatedWorldCreated,
-                   base::Unretained(this), "Isolated World 2"));
+        base::BindOnce(&SingleTabMultipleIsolatedWorldsHeadlessTabSocketTest::
+                           OnIsolatedWorldCreated,
+                       base::Unretained(this), "Isolated World 2"));
 
     CreateIsolatedWorldTabSocket(
         "Isolated World 3", main_frame_id(),
-        base::Bind(&SingleTabMultipleIsolatedWorldsHeadlessTabSocketTest::
-                       OnIsolatedWorldCreated,
-                   base::Unretained(this), "Isolated World 3"));
+        base::BindOnce(&SingleTabMultipleIsolatedWorldsHeadlessTabSocketTest::
+                           OnIsolatedWorldCreated,
+                       base::Unretained(this), "Isolated World 3"));
   }
 
   void OnIsolatedWorldCreated(std::string frame_name,
@@ -818,9 +832,9 @@ class SingleTabMultipleIsolatedWorldsHeadlessTabSocketTest
                 frame_name.c_str()))
             .SetContextId(execution_context_id)
             .Build(),
-        base::Bind(&SingleTabMultipleIsolatedWorldsHeadlessTabSocketTest::
-                       FailOnJsEvaluateException,
-                   base::Unretained(this)));
+        base::BindOnce(&SingleTabMultipleIsolatedWorldsHeadlessTabSocketTest::
+                           FailOnJsEvaluateException,
+                       base::Unretained(this)));
   }
 
   void OnMessageFromContext(const std::string& message,
@@ -840,6 +854,57 @@ class SingleTabMultipleIsolatedWorldsHeadlessTabSocketTest
 
 HEADLESS_ASYNC_DEVTOOLED_TEST_F(
     SingleTabMultipleIsolatedWorldsHeadlessTabSocketTest);
+
+class LargeStringTabSocketTest : public TabSocketTest {
+ public:
+  void RunTabSocketTest() override {
+    CreateMainWorldTabSocket(
+        main_frame_id(),
+        base::BindOnce(&LargeStringTabSocketTest::OnInstalledHeadlessTabSocket,
+                       base::Unretained(this)));
+  }
+
+  void OnInstalledHeadlessTabSocket(int execution_context_id) {
+    devtools_client_->GetRuntime()->Evaluate(
+        R"(window.TabSocket.onmessage =
+            function(message) {
+              window.TabSocket.send('Embedder sent us: ' + message);
+            };
+          )",
+        base::BindOnce(&LargeStringTabSocketTest::FailOnJsEvaluateException,
+                       base::Unretained(this)));
+
+    HeadlessTabSocket* headless_tab_socket =
+        web_contents_->GetHeadlessTabSocket();
+    DCHECK(headless_tab_socket);
+
+    std::string big_string;
+    big_string.reserve(IPC::Channel::kMaximumMessageSize);
+    for (size_t i = 0; i < IPC::Channel::kMaximumMessageSize; i++) {
+      big_string.push_back('A' + (i % 24));
+    }
+
+    headless_tab_socket->SendMessageToContext(big_string, execution_context_id);
+    headless_tab_socket->SetListener(this);
+    main_frame_execution_context_id_ = execution_context_id;
+  }
+
+  void OnMessageFromContext(const std::string& message,
+                            int execution_context_id) override {
+    EXPECT_EQ(execution_context_id, *main_frame_execution_context_id_);
+    messages_.push_back(message);
+    if (messages_.size() == 1u) {
+      EXPECT_EQ(18 + IPC::Channel::kMaximumMessageSize, messages_[0].size());
+      FinishAsynchronousTest();
+    }
+  }
+
+ private:
+  std::vector<std::string> messages_;
+  base::Optional<int> main_frame_execution_context_id_;
+};
+
+HEADLESS_ASYNC_DEVTOOLED_TEST_F(LargeStringTabSocketTest);
 
 // Regression test for https://crbug.com/733569.
 class HeadlessWebContentsRequestStorageQuotaTest
@@ -983,8 +1048,8 @@ class ResourceSchedulerTest
       max_requests_in_flight_ = num_requests_in_flight_;
     browser()->BrowserIOThread()->PostDelayedTask(
         FROM_HERE,
-        base::Bind(&ResourceSchedulerTest::AllowRequest, base::Unretained(this),
-                   complete_request),
+        base::BindOnce(&ResourceSchedulerTest::AllowRequest,
+                       base::Unretained(this), complete_request),
         base::TimeDelta::FromMilliseconds(100));
   }
 
@@ -1071,7 +1136,7 @@ class HeadlessWebContentsBeginFrameControlTest
             .SetHeight(200)
             .SetEnableBeginFrameControl(true)
             .Build(),
-        base::Bind(
+        base::BindOnce(
             &HeadlessWebContentsBeginFrameControlTest::OnCreateTargetResult,
             base::Unretained(this)));
 
@@ -1083,8 +1148,15 @@ class HeadlessWebContentsBeginFrameControlTest
 
   void SetUpCommandLine(base::CommandLine* command_line) override {
     HeadlessBrowserTest::SetUpCommandLine(command_line);
-    command_line->AppendSwitch(cc::switches::kRunAllCompositorStagesBeforeDraw);
+    // See bit.ly/headless-rendering for why we use these flags.
+    command_line->AppendSwitch(switches::kRunAllCompositorStagesBeforeDraw);
     command_line->AppendSwitch(switches::kDisableNewContentRenderingTimeout);
+    command_line->AppendSwitch(cc::switches::kDisableCheckerImaging);
+    command_line->AppendSwitch(cc::switches::kDisableThreadedAnimation);
+    command_line->AppendSwitch(switches::kDisableThreadedScrolling);
+
+    scoped_feature_list_.InitAndEnableFeature(
+        features::kEnableSurfaceSynchronization);
   }
 
   void OnCreateTargetResult(
@@ -1100,15 +1172,16 @@ class HeadlessWebContentsBeginFrameControlTest
 
     devtools_client_->GetPage()->GetExperimental()->StopLoading(
         page::StopLoadingParams::Builder().Build(),
-        base::Bind(&HeadlessWebContentsBeginFrameControlTest::LoadingStopped,
-                   base::Unretained(this)));
+        base::BindOnce(
+            &HeadlessWebContentsBeginFrameControlTest::LoadingStopped,
+            base::Unretained(this)));
   }
 
   void LoadingStopped(std::unique_ptr<page::StopLoadingResult>) {
     devtools_client_->GetPage()->AddObserver(this);
-    devtools_client_->GetPage()->Enable(
-        base::Bind(&HeadlessWebContentsBeginFrameControlTest::PageDomainEnabled,
-                   base::Unretained(this)));
+    devtools_client_->GetPage()->Enable(base::BindOnce(
+        &HeadlessWebContentsBeginFrameControlTest::PageDomainEnabled,
+        base::Unretained(this)));
   }
 
   void PageDomainEnabled() {
@@ -1140,36 +1213,32 @@ class HeadlessWebContentsBeginFrameControlTest
         "HeadlessWebContentsBeginFrameControlTest::OnNeedsBeginFramesChanged",
         "needs_begin_frames", params.GetNeedsBeginFrames());
     needs_begin_frames_ = params.GetNeedsBeginFrames();
-    if (needs_begin_frames_ && !frame_in_flight_ && page_ready_)
+    // With full-pipeline mode and surface sync, the needs_begin_frame signal
+    // should become and then always stay true.
+    EXPECT_TRUE(needs_begin_frames_);
+    EXPECT_FALSE(frame_in_flight_);
+    if (page_ready_)
       OnNeedsBeginFrame();
   }
 
-  void OnMainFrameReadyForScreenshots(
-      const headless_experimental::MainFrameReadyForScreenshotsParams& params)
-      override {
-    TRACE_EVENT0("headless",
-                 "HeadlessWebContentsBeginFrameControlTest::"
-                 "OnMainFrameReadyForScreenshots");
-    main_frame_ready_ = true;
-  }
-
   void BeginFrame(bool screenshot) {
-    if (!needs_begin_frames_ && !screenshot)
-      return;
+    // With full-pipeline mode and surface sync, the needs_begin_frame signal
+    // should always be true.
+    EXPECT_TRUE(needs_begin_frames_);
 
     frame_in_flight_ = true;
+    num_begin_frames_++;
 
     auto builder = headless_experimental::BeginFrameParams::Builder();
     if (screenshot) {
-      DCHECK(main_frame_ready_);
       builder.SetScreenshot(
           headless_experimental::ScreenshotParams::Builder().Build());
     }
 
     devtools_client_->GetHeadlessExperimental()->GetExperimental()->BeginFrame(
         builder.Build(),
-        base::Bind(&HeadlessWebContentsBeginFrameControlTest::FrameFinished,
-                   base::Unretained(this)));
+        base::BindOnce(&HeadlessWebContentsBeginFrameControlTest::FrameFinished,
+                       base::Unretained(this)));
   }
 
   void FrameFinished(
@@ -1206,13 +1275,15 @@ class HeadlessWebContentsBeginFrameControlTest
             base::Unretained(this)));
   }
 
+  base::test::ScopedFeatureList scoped_feature_list_;
+
   HeadlessBrowserContext* browser_context_ = nullptr;  // Not owned.
   HeadlessWebContentsImpl* web_contents_ = nullptr;    // Not owned.
 
   bool page_ready_ = false;
   bool needs_begin_frames_ = false;
   bool frame_in_flight_ = false;
-  bool main_frame_ready_ = false;
+  int num_begin_frames_ = 0;
   std::unique_ptr<HeadlessDevToolsClient> browser_devtools_client_;
   std::unique_ptr<HeadlessDevToolsClient> devtools_client_;
 };
@@ -1228,15 +1299,21 @@ class HeadlessWebContentsBeginFrameControlBasicTest
     return "/blue_page.html";
   }
 
-  void OnNeedsBeginFrame() override { BeginFrame(false); }
+  void OnNeedsBeginFrame() override {
+    // Try to capture a screenshot in first frame. This should fail because the
+    // surface doesn't exist yet.
+    BeginFrame(true);
+  }
 
   void OnFrameFinished(std::unique_ptr<headless_experimental::BeginFrameResult>
                            result) override {
-    if (!sent_screenshot_request_) {
-      // Once the main frame is ready, capture a screenshot.
-      sent_screenshot_request_ = main_frame_ready_;
-      BeginFrame(sent_screenshot_request_);
-    } else {
+    if (num_begin_frames_ == 1) {
+      // First BeginFrame should have caused damage.
+      EXPECT_TRUE(result->GetHasDamage());
+      // But the screenshot should have failed (see above).
+      EXPECT_FALSE(result->HasScreenshotData());
+    } else if (num_begin_frames_ == 2) {
+      // Expect a valid screenshot in second BeginFrame.
       EXPECT_TRUE(result->GetHasDamage());
       EXPECT_TRUE(result->HasScreenshotData());
       if (result->HasScreenshotData()) {
@@ -1251,14 +1328,22 @@ class HeadlessWebContentsBeginFrameControlBasicTest
         SkColor actual_color = result_bitmap.getColor(100, 100);
         EXPECT_EQ(expected_color, actual_color);
       }
+    } else {
+      DCHECK_EQ(3, num_begin_frames_);
+      // Can't guarantee that the last BeginFrame didn't have damage, but it
+      // should not have a screenshot.
+      EXPECT_FALSE(result->HasScreenshotData());
+    }
 
+    if (num_begin_frames_ < 3) {
+      // Capture a screenshot in second but not third BeginFrame.
+      BeginFrame(num_begin_frames_ == 1);
+    } else {
       // Post completion to avoid deleting the WebContents on the same callstack
       // as frame finished callback.
       PostFinishAsynchronousTest();
     }
   }
-
-  bool sent_screenshot_request_ = false;
 };
 
 HEADLESS_ASYNC_DEVTOOLED_TEST_F(HeadlessWebContentsBeginFrameControlBasicTest);
@@ -1274,48 +1359,9 @@ class HeadlessWebContentsBeginFrameControlViewportTest
     return "/blue_box.html";
   }
 
-  void OnNeedsBeginFrame() override { BeginFrame(false); }
-
-  void OnFrameFinished(std::unique_ptr<headless_experimental::BeginFrameResult>
-                           result) override {
-    if (!sent_screenshot_request_) {
-      // Once the main frame is ready, set the view size and position and then
-      // capture a screenshot.
-      if (main_frame_ready_) {
-        SetUpViewport();
-        return;
-      }
-
-      BeginFrame(false);
-    } else {
-      EXPECT_TRUE(result->GetHasDamage());
-      EXPECT_TRUE(result->HasScreenshotData());
-      if (result->HasScreenshotData()) {
-        std::string base64 = result->GetScreenshotData();
-        EXPECT_LT(0u, base64.length());
-        SkBitmap result_bitmap;
-        EXPECT_TRUE(DecodePNG(base64, &result_bitmap));
-
-        EXPECT_EQ(200, result_bitmap.width());
-        EXPECT_EQ(200, result_bitmap.height());
-        SkColor expected_color = SkColorSetRGB(0x00, 0x00, 0xff);
-
-        SkColor actual_color = result_bitmap.getColor(100, 100);
-        EXPECT_EQ(expected_color, actual_color);
-        actual_color = result_bitmap.getColor(0, 0);
-        EXPECT_EQ(expected_color, actual_color);
-        actual_color = result_bitmap.getColor(0, 199);
-        EXPECT_EQ(expected_color, actual_color);
-        actual_color = result_bitmap.getColor(199, 0);
-        EXPECT_EQ(expected_color, actual_color);
-        actual_color = result_bitmap.getColor(199, 199);
-        EXPECT_EQ(expected_color, actual_color);
-      }
-
-      // Post completion to avoid deleting the WebContents on the same callstack
-      // as frame finished callback.
-      PostFinishAsynchronousTest();
-    }
+  void OnNeedsBeginFrame() override {
+    // Send a first BeginFrame to initialize the surface.
+    BeginFrame(false);
   }
 
   void SetUpViewport() {
@@ -1332,23 +1378,59 @@ class HeadlessWebContentsBeginFrameControlViewportTest
                                  .SetY(200)
                                  .SetWidth(100)
                                  .SetHeight(100)
-                                 .SetScale(2)
+                                 .SetScale(3)
                                  .Build())
                 .Build(),
-            base::Bind(&HeadlessWebContentsBeginFrameControlViewportTest::
-                           SetDeviceMetricsOverrideDone,
-                       base::Unretained(this)));
+            base::BindOnce(&HeadlessWebContentsBeginFrameControlViewportTest::
+                               SetDeviceMetricsOverrideDone,
+                           base::Unretained(this)));
   }
 
   void SetDeviceMetricsOverrideDone(
       std::unique_ptr<emulation::SetDeviceMetricsOverrideResult> result) {
     EXPECT_TRUE(result);
-    // Take a screenshot.
-    sent_screenshot_request_ = true;
+    // Take a screenshot in the second BeginFrame.
     BeginFrame(true);
   }
 
-  bool sent_screenshot_request_ = false;
+  void OnFrameFinished(std::unique_ptr<headless_experimental::BeginFrameResult>
+                           result) override {
+    if (num_begin_frames_ == 1) {
+      SetUpViewport();
+      return;
+    }
+
+    DCHECK_EQ(2, num_begin_frames_);
+    // Second BeginFrame should have a screenshot of the configured viewport and
+    // of the correct size.
+    EXPECT_TRUE(result->GetHasDamage());
+    EXPECT_TRUE(result->HasScreenshotData());
+    if (result->HasScreenshotData()) {
+      std::string base64 = result->GetScreenshotData();
+      EXPECT_LT(0u, base64.length());
+      SkBitmap result_bitmap;
+      EXPECT_TRUE(DecodePNG(base64, &result_bitmap));
+
+      EXPECT_EQ(300, result_bitmap.width());
+      EXPECT_EQ(300, result_bitmap.height());
+      SkColor expected_color = SkColorSetRGB(0x00, 0x00, 0xff);
+
+      SkColor actual_color = result_bitmap.getColor(100, 100);
+      EXPECT_EQ(expected_color, actual_color);
+      actual_color = result_bitmap.getColor(0, 0);
+      EXPECT_EQ(expected_color, actual_color);
+      actual_color = result_bitmap.getColor(0, 299);
+      EXPECT_EQ(expected_color, actual_color);
+      actual_color = result_bitmap.getColor(299, 0);
+      EXPECT_EQ(expected_color, actual_color);
+      actual_color = result_bitmap.getColor(299, 299);
+      EXPECT_EQ(expected_color, actual_color);
+    }
+
+    // Post completion to avoid deleting the WebContents on the same callstack
+    // as frame finished callback.
+    PostFinishAsynchronousTest();
+  }
 };
 
 HEADLESS_ASYNC_DEVTOOLED_TEST_F(
@@ -1372,7 +1454,7 @@ class CookiesEnabled : public HeadlessAsyncDevTooledBrowserTest,
   void OnLoadEventFired(const page::LoadEventFiredParams& params) override {
     devtools_client_->GetRuntime()->Evaluate(
         "window.test_result",
-        base::Bind(&CookiesEnabled::OnResult, base::Unretained(this)));
+        base::BindOnce(&CookiesEnabled::OnResult, base::Unretained(this)));
   }
 
   void OnResult(std::unique_ptr<runtime::EvaluateResult> result) {
@@ -1407,7 +1489,7 @@ class CookiesDisabled : public HeadlessAsyncDevTooledBrowserTest,
   void OnLoadEventFired(const page::LoadEventFiredParams& params) override {
     devtools_client_->GetRuntime()->Evaluate(
         "window.test_result",
-        base::Bind(&CookiesDisabled::OnResult, base::Unretained(this)));
+        base::BindOnce(&CookiesDisabled::OnResult, base::Unretained(this)));
   }
 
   void OnResult(std::unique_ptr<runtime::EvaluateResult> result) {
@@ -1425,5 +1507,93 @@ class CookiesDisabled : public HeadlessAsyncDevTooledBrowserTest,
 };
 
 HEADLESS_ASYNC_DEVTOOLED_TEST_F(CookiesDisabled);
+
+namespace {
+const char* kPageWhichOpensAWindow = R"(
+<html>
+<body>
+<script>
+window.open('/page2.html');
+</script>
+</body>
+</html>
+)";
+
+const char* kPage2 = R"(
+<html>
+<body>
+Page 2.
+</body>
+</html>
+)";
+}  // namespace
+
+class WebContentsOpenTest : public page::Observer,
+                            public HeadlessAsyncDevTooledBrowserTest {
+ public:
+  void RunDevTooledTest() override {
+    http_handler_->SetHeadlessBrowserContext(browser_context_);
+    devtools_client_->GetPage()->AddObserver(this);
+
+    base::RunLoop run_loop(base::RunLoop::Type::kNestableTasksAllowed);
+    devtools_client_->GetPage()->Enable(run_loop.QuitClosure());
+    run_loop.Run();
+
+    devtools_client_->GetPage()->Navigate("http://foo.com/index.html");
+  }
+
+  ProtocolHandlerMap GetProtocolHandlers() override {
+    ProtocolHandlerMap protocol_handlers;
+    std::unique_ptr<TestInMemoryProtocolHandler> http_handler(
+        new TestInMemoryProtocolHandler(browser()->BrowserIOThread(), nullptr));
+    http_handler_ = http_handler.get();
+    http_handler_->InsertResponse("http://foo.com/index.html",
+                                  {kPageWhichOpensAWindow, "text/html"});
+    http_handler_->InsertResponse("http://foo.com/page2.html",
+                                  {kPage2, "text/html"});
+    protocol_handlers[url::kHttpScheme] = std::move(http_handler);
+    return protocol_handlers;
+  }
+
+  const TestInMemoryProtocolHandler* http_handler() const {
+    return http_handler_;
+  }
+
+ private:
+  TestInMemoryProtocolHandler* http_handler_;  // NOT OWNED
+};
+
+class DontBlockWebContentsOpenTest : public WebContentsOpenTest {
+ public:
+  void CustomizeHeadlessBrowserContext(
+      HeadlessBrowserContext::Builder& builder) override {
+    builder.SetBlockNewWebContents(false);
+  }
+
+  void OnLoadEventFired(const page::LoadEventFiredParams&) override {
+    EXPECT_THAT(
+        http_handler()->urls_requested(),
+        ElementsAre("http://foo.com/index.html", "http://foo.com/page2.html"));
+    FinishAsynchronousTest();
+  }
+};
+
+HEADLESS_ASYNC_DEVTOOLED_TEST_F(DontBlockWebContentsOpenTest);
+
+class BlockWebContentsOpenTest : public WebContentsOpenTest {
+ public:
+  void CustomizeHeadlessBrowserContext(
+      HeadlessBrowserContext::Builder& builder) override {
+    builder.SetBlockNewWebContents(true);
+  }
+
+  void OnLoadEventFired(const page::LoadEventFiredParams&) override {
+    EXPECT_THAT(http_handler()->urls_requested(),
+                ElementsAre("http://foo.com/index.html"));
+    FinishAsynchronousTest();
+  }
+};
+
+HEADLESS_ASYNC_DEVTOOLED_TEST_F(BlockWebContentsOpenTest);
 
 }  // namespace headless

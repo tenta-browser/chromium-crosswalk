@@ -2,6 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <memory>
+
 #include "base/bind.h"
 #include "base/callback.h"
 #include "base/run_loop.h"
@@ -12,6 +14,7 @@
 #include "chrome/common/chrome_features.h"
 #include "chrome/test/base/in_process_browser_test.h"
 #include "chrome/test/base/ui_test_utils.h"
+#include "content/public/browser/browser_thread.h"
 #include "net/cert/mock_cert_verifier.h"
 #include "net/http/transport_security_state.h"
 #include "net/test/embedded_test_server/embedded_test_server.h"
@@ -29,7 +32,7 @@ class ExpectCTBrowserTest : public CertVerifierBrowserTest {
   ExpectCTBrowserTest() : CertVerifierBrowserTest() {}
 
   void SetUpOnMainThread() override {
-    run_loop_ = base::MakeUnique<base::RunLoop>();
+    run_loop_ = std::make_unique<base::RunLoop>();
   }
 
   void TearDown() override { run_loop_.reset(nullptr); }

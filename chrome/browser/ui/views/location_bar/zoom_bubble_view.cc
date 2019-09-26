@@ -10,6 +10,7 @@
 #include "base/i18n/number_formatting.h"
 #include "base/i18n/rtl.h"
 #include "base/strings/stringprintf.h"
+#include "build/build_config.h"
 #include "chrome/app/vector_icons/vector_icons.h"
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/platform_util.h"
@@ -22,6 +23,7 @@
 #include "chrome/browser/ui/views/harmony/chrome_layout_provider.h"
 #include "chrome/browser/ui/views/location_bar/location_bar_view.h"
 #include "chrome/browser/ui/views/location_bar/zoom_view.h"
+#include "chrome/browser/ui/views_mode_controller.h"
 #include "chrome/common/extensions/api/extension_action/action_info.h"
 #include "chrome/grit/generated_resources.h"
 #include "chrome/grit/theme_resources.h"
@@ -112,6 +114,86 @@ class ZoomValue : public views::Label {
   DISALLOW_COPY_AND_ASSIGN(ZoomValue);
 };
 
+views::View* GetAnchorViewForBrowser(Browser* browser, bool is_fullscreen) {
+#if !defined(OS_MACOSX) || BUILDFLAG(MAC_VIEWS_BROWSER)
+#if BUILDFLAG(MAC_VIEWS_BROWSER)
+  if (views_mode_controller::IsViewsBrowserCocoa())
+    return nullptr;  // Cocoa browsers always use anchor rects instead of views.
+#endif
+  BrowserView* browser_view = BrowserView::GetBrowserViewForBrowser(browser);
+  if (!is_fullscreen ||
+      browser_view->immersive_mode_controller()->IsRevealed()) {
+    LocationBarView* location_bar = browser_view->GetLocationBarView();
+    return ui::MaterialDesignController::IsSecondaryUiMaterial()
+               ? static_cast<views::View*>(location_bar)
+               : static_cast<views::View*>(location_bar->zoom_view());
+  }
+  return nullptr;
+#else  // OS_MACOSX && !MAC_VIEWS_BROWSER
+  return nullptr;
+#endif
+}
+
+ImmersiveModeController* GetImmersiveModeControllerForBrowser(
+    Browser* browser) {
+#if !defined(OS_MACOSX) || BUILDFLAG(MAC_VIEWS_BROWSER)
+#if BUILDFLAG(MAC_VIEWS_BROWSER)
+  if (views_mode_controller::IsViewsBrowserCocoa())
+    return nullptr;
+#endif
+  BrowserView* browser_view = BrowserView::GetBrowserViewForBrowser(browser);
+  return browser_view->immersive_mode_controller();
+#else
+  return nullptr;
+#endif
+}
+
+#if !defined(OS_MACOSX) || BUILDFLAG(MAC_VIEWS_BROWSER)
+void ParentToViewsBrowser(Browser* browser,
+                          ZoomBubbleView* zoom_bubble,
+                          views::View* anchor_view,
+                          content::WebContents* web_contents) {
+  BrowserView* browser_view = BrowserView::GetBrowserViewForBrowser(browser);
+  // If we do not have an anchor view, parent the bubble to the content area.
+  if (!anchor_view)
+    zoom_bubble->set_parent_window(web_contents->GetNativeView());
+
+  views::Widget* zoom_bubble_widget =
+      views::BubbleDialogDelegateView::CreateBubble(zoom_bubble);
+  if (zoom_bubble_widget && anchor_view) {
+    browser_view->GetLocationBarView()->zoom_view()->OnBubbleWidgetCreated(
+        zoom_bubble_widget);
+  }
+}
+#endif
+
+#if defined(OS_MACOSX)
+void ParentToCocoaBrowser(Browser* browser, ZoomBubbleView* zoom_bubble) {
+  gfx::NativeView parent =
+      platform_util::GetViewForWindow(browser->window()->GetNativeWindow());
+  DCHECK(parent);
+  zoom_bubble->set_arrow(views::BubbleBorder::TOP_RIGHT);
+  zoom_bubble->set_parent_window(parent);
+  views::BubbleDialogDelegateView::CreateBubble(zoom_bubble);
+}
+#endif
+
+void ParentToBrowser(Browser* browser,
+                     ZoomBubbleView* zoom_bubble,
+                     views::View* anchor_view,
+                     content::WebContents* web_contents) {
+#if defined(OS_MACOSX) && BUILDFLAG(MAC_VIEWS_BROWSER)
+  if (views_mode_controller::IsViewsBrowserCocoa())
+    ParentToCocoaBrowser(browser, zoom_bubble);
+  else
+    ParentToViewsBrowser(browser, zoom_bubble, anchor_view, web_contents);
+#elif defined(OS_MACOSX)
+  ParentToCocoaBrowser(browser, zoom_bubble);
+#else
+  ParentToViewsBrowser(browser, zoom_bubble, anchor_view, web_contents);
+#endif
+}
+
 }  // namespace
 
 // static
@@ -129,20 +211,10 @@ void ZoomBubbleView::ShowBubble(content::WebContents* web_contents,
   DCHECK(browser->window() &&
          browser->exclusive_access_manager()->fullscreen_controller());
 
-  views::View* anchor_view = nullptr;
-  ImmersiveModeController* immersive_mode_controller = nullptr;
   bool is_fullscreen = browser->window()->IsFullscreen();
-#if !defined(OS_MACOSX) || BUILDFLAG(MAC_VIEWS_BROWSER)
-  BrowserView* browser_view = BrowserView::GetBrowserViewForBrowser(browser);
-  if (!is_fullscreen ||
-      browser_view->immersive_mode_controller()->IsRevealed()) {
-    if (ui::MaterialDesignController::IsSecondaryUiMaterial())
-      anchor_view = browser_view->GetLocationBarView();
-    else
-      anchor_view = browser_view->GetLocationBarView()->zoom_view();
-  }
-  immersive_mode_controller = browser_view->immersive_mode_controller();
-#endif
+  views::View* anchor_view = GetAnchorViewForBrowser(browser, is_fullscreen);
+  ImmersiveModeController* immersive_mode_controller =
+      GetImmersiveModeControllerForBrowser(browser);
 
   // Find the extension that initiated the zoom change, if any.
   zoom::ZoomController* zoom_controller =
@@ -153,7 +225,7 @@ void ZoomBubbleView::ShowBubble(content::WebContents* web_contents,
   // initiated by an extension, then the bubble can be reused and only the label
   // text needs to be updated.
   if (zoom_bubble_ && zoom_bubble_->GetAnchorView() == anchor_view && !client) {
-    DCHECK_EQ(web_contents, zoom_bubble_->web_contents_);
+    DCHECK_EQ(web_contents, zoom_bubble_->web_contents());
     zoom_bubble_->Refresh();
     return;
   }
@@ -173,25 +245,7 @@ void ZoomBubbleView::ShowBubble(content::WebContents* web_contents,
             ->extension());
   }
 
-#if !defined(OS_MACOSX) || BUILDFLAG(MAC_VIEWS_BROWSER)
-  // If we do not have an anchor view, parent the bubble to the content area.
-  if (!anchor_view)
-    zoom_bubble_->set_parent_window(web_contents->GetNativeView());
-
-  views::Widget* zoom_bubble_widget =
-      views::BubbleDialogDelegateView::CreateBubble(zoom_bubble_);
-  if (anchor_view) {
-    zoom_bubble_widget->AddObserver(
-        browser_view->GetLocationBarView()->zoom_view());
-  }
-#else
-  gfx::NativeView parent =
-      platform_util::GetViewForWindow(browser->window()->GetNativeWindow());
-  DCHECK(parent);
-  zoom_bubble_->set_arrow(views::BubbleBorder::TOP_RIGHT);
-  zoom_bubble_->set_parent_window(parent);
-  views::BubbleDialogDelegateView::CreateBubble(zoom_bubble_);
-#endif
+  ParentToBrowser(browser, zoom_bubble_, anchor_view, web_contents);
 
   // Adjust for fullscreen after creation as it relies on the content size.
   if (is_fullscreen)
@@ -230,10 +284,11 @@ ZoomBubbleView::ZoomBubbleView(
       zoom_out_button_(nullptr),
       zoom_in_button_(nullptr),
       reset_button_(nullptr),
-      web_contents_(web_contents),
       auto_close_(reason == AUTOMATIC),
       ignore_close_bubble_(false),
-      immersive_mode_controller_(immersive_mode_controller) {
+      immersive_mode_controller_(immersive_mode_controller),
+      session_id_(
+          chrome::FindBrowserWithWebContents(web_contents)->session_id()) {
   set_notify_enter_exit_on_child(true);
   if (immersive_mode_controller_)
     immersive_mode_controller_->AddObserver(this);
@@ -274,14 +329,14 @@ void ZoomBubbleView::Init() {
   const ChromeLayoutProvider* provider = ChromeLayoutProvider::Get();
   const int spacing =
       provider->GetDistanceMetric(DISTANCE_UNRELATED_CONTROL_HORIZONTAL);
-  views::BoxLayout* box_layout = new views::BoxLayout(
+  auto box_layout = std::make_unique<views::BoxLayout>(
       views::BoxLayout::kHorizontal,
       provider->GetInsetsMetric(INSETS_TOAST) - margins(), spacing);
   box_layout->set_main_axis_alignment(
       views::BoxLayout::MAIN_AXIS_ALIGNMENT_CENTER);
   box_layout->set_cross_axis_alignment(
       views::BoxLayout::CROSS_AXIS_ALIGNMENT_CENTER);
-  SetLayoutManager(box_layout);
+  SetLayoutManager(std::move(box_layout));
 
   // Calculate child views margins in |this| client view.
   const int label_vertical_spacing =
@@ -313,7 +368,7 @@ void ZoomBubbleView::Init() {
   }
 
   // Add zoom label with the new zoom percent.
-  label_ = new ZoomValue(web_contents_);
+  label_ = new ZoomValue(web_contents());
   UpdateZoomPercent();
   label_->SetProperty(views::kMarginsKey,
                       new gfx::Insets(label_vertical_margin));
@@ -358,9 +413,8 @@ void ZoomBubbleView::WindowClosing() {
   bool this_bubble = zoom_bubble_ == this;
   if (this_bubble)
     zoom_bubble_ = nullptr;
+
   UpdateZoomIconVisibility();
-  if (this_bubble)
-    web_contents_ = nullptr;
 }
 
 void ZoomBubbleView::CloseBubble() {
@@ -368,7 +422,7 @@ void ZoomBubbleView::CloseBubble() {
     return;
 
   // Widget's Close() is async, but we don't want to use zoom_bubble_ after
-  // this. Additionally web_contents_ may have been destroyed.
+  // this. Additionally web_contents() may have been destroyed.
   zoom_bubble_ = nullptr;
   LocationBarBubbleDelegateView::CloseBubble();
 }
@@ -385,17 +439,17 @@ void ZoomBubbleView::ButtonPressed(views::Button* sender,
 
   if (sender == image_button_) {
     DCHECK(extension_info_.icon_image) << "Invalid button press.";
-    Browser* browser = chrome::FindBrowserWithWebContents(web_contents_);
+    Browser* browser = chrome::FindBrowserWithWebContents(web_contents());
     chrome::AddSelectedTabWithURL(
         browser, GURL(base::StringPrintf("chrome://extensions?id=%s",
                                          extension_info_.id.c_str())),
         ui::PAGE_TRANSITION_FROM_API);
   } else if (sender == zoom_out_button_) {
-    zoom::PageZoom::Zoom(web_contents_, content::PAGE_ZOOM_OUT);
+    zoom::PageZoom::Zoom(web_contents(), content::PAGE_ZOOM_OUT);
   } else if (sender == zoom_in_button_) {
-    zoom::PageZoom::Zoom(web_contents_, content::PAGE_ZOOM_IN);
+    zoom::PageZoom::Zoom(web_contents(), content::PAGE_ZOOM_IN);
   } else if (sender == reset_button_) {
-    zoom::PageZoom::Zoom(web_contents_, content::PAGE_ZOOM_RESET);
+    zoom::PageZoom::Zoom(web_contents(), content::PAGE_ZOOM_RESET);
   } else {
     NOTREACHED();
   }
@@ -435,13 +489,9 @@ void ZoomBubbleView::SetExtensionInfo(const extensions::Extension* extension) {
   bool has_default_sized_icon =
       !icons.Get(gfx::kFaviconSize, ExtensionIconSet::MATCH_EXACTLY).empty();
   if (has_default_sized_icon) {
-    extension_info_.icon_image.reset(
-        new extensions::IconImage(web_contents_->GetBrowserContext(),
-                                  extension,
-                                  icons,
-                                  icon_size,
-                                  default_extension_icon_image,
-                                  this));
+    extension_info_.icon_image.reset(new extensions::IconImage(
+        web_contents()->GetBrowserContext(), extension, icons, icon_size,
+        default_extension_icon_image, this));
     return;
   }
 
@@ -452,22 +502,23 @@ void ZoomBubbleView::SetExtensionInfo(const extensions::Extension* extension) {
 
   icon_size = browser_action->default_icon.map().begin()->first;
   extension_info_.icon_image.reset(
-      new extensions::IconImage(web_contents_->GetBrowserContext(),
-                                extension,
-                                browser_action->default_icon,
-                                icon_size,
-                                default_extension_icon_image,
-                                this));
+      new extensions::IconImage(web_contents()->GetBrowserContext(), extension,
+                                browser_action->default_icon, icon_size,
+                                default_extension_icon_image, this));
 }
 
 void ZoomBubbleView::UpdateZoomPercent() {
   label_->SetText(base::FormatPercent(
-      zoom::ZoomController::FromWebContents(web_contents_)->GetZoomPercent()));
-  label_->NotifyAccessibilityEvent(ui::AX_EVENT_TEXT_CHANGED, true);
+      zoom::ZoomController::FromWebContents(web_contents())->GetZoomPercent()));
+  label_->NotifyAccessibilityEvent(ax::mojom::Event::kTextChanged, true);
 }
 
 void ZoomBubbleView::UpdateZoomIconVisibility() {
-  Browser* browser = chrome::FindBrowserWithWebContents(web_contents_);
+  // Note that we can't rely on web_contents() here, as it may have been
+  // destroyed by the time we get this call. Also note parent_window() (if set)
+  // may also be destroyed: the call to WindowClosing() may be triggered by
+  // parent window destruction tearing down its child windows.
+  Browser* browser = chrome::FindBrowserWithID(session_id_);
   if (browser && browser->window() && browser->window()->GetLocationBar())
     browser->window()->GetLocationBar()->UpdateZoomViewVisibility();
 }

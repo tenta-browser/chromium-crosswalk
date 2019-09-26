@@ -2,14 +2,15 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <memory>
+
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/run_loop.h"
 #include "base/threading/platform_thread.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "chromecast/browser/cast_media_blocker.h"
 #include "chromecast/browser/test/cast_browser_test.h"
-#include "chromecast/chromecast_features.h"
+#include "chromecast/chromecast_buildflags.h"
 #include "content/public/browser/media_session.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/test/browser_test_utils.h"
@@ -44,7 +45,7 @@ class CastMediaBlockerBrowserTest : public CastBrowserTest {
     web_contents_ = NavigateToURL(gurl);
     WaitForLoadStop(web_contents_);
 
-    blocker_ = base::MakeUnique<CastMediaBlocker>(
+    blocker_ = std::make_unique<CastMediaBlocker>(
         content::MediaSession::Get(web_contents_));
   }
 

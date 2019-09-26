@@ -10,7 +10,6 @@
 #include "base/android/jni_array.h"
 #include "base/android/jni_string.h"
 #include "base/feature_list.h"
-#include "base/memory/ptr_util.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/strings/string16.h"
 #include "base/strings/string_util.h"
@@ -55,6 +54,7 @@
 #include "net/base/registry_controlled_domains/registry_controlled_domain.h"
 #include "third_party/metrics_proto/omnibox_event.pb.h"
 #include "ui/base/device_form_factor.h"
+#include "ui/base/window_open_disposition.h"
 
 using base::android::AttachCurrentThread;
 using base::android::ConvertJavaStringToUTF16;
@@ -91,7 +91,7 @@ class ZeroSuggestPrefetcher : public AutocompleteControllerDelegate {
 
 ZeroSuggestPrefetcher::ZeroSuggestPrefetcher(Profile* profile)
     : controller_(new AutocompleteController(
-          base::MakeUnique<ChromeAutocompleteProviderClient>(profile),
+          std::make_unique<ChromeAutocompleteProviderClient>(profile),
           this,
           AutocompleteProvider::TYPE_ZERO_SUGGEST)) {
   // Creating an arbitrary fake_request_source to avoid passing in an invalid
@@ -128,7 +128,7 @@ void ZeroSuggestPrefetcher::OnResultChanged(bool default_match_changed) {
 
 AutocompleteControllerAndroid::AutocompleteControllerAndroid(Profile* profile)
     : autocomplete_controller_(new AutocompleteController(
-          base::WrapUnique(new ChromeAutocompleteProviderClient(profile)),
+          std::make_unique<ChromeAutocompleteProviderClient>(profile),
           this,
           AutocompleteClassifier::DefaultOmniboxProviders())),
       inside_synchronous_start_(false),
@@ -257,6 +257,7 @@ void AutocompleteControllerAndroid::OnSuggestionSelected(
       input_.type(),
       true,
       selected_index,
+      WindowOpenDisposition::CURRENT_TAB,
       false,
       SessionTabHelper::IdForTab(web_contents),
       current_page_classification,
@@ -619,8 +620,7 @@ static void JNI_AutocompleteController_PrefetchZeroSuggestResults(
   if (!profile)
     return;
 
-  if (!OmniboxFieldTrial::InZeroSuggestPersonalizedFieldTrial(
-          profile->GetPrefs()))
+  if (!OmniboxFieldTrial::InZeroSuggestPersonalizedFieldTrial())
     return;
 
   // ZeroSuggestPrefetcher deletes itself after it's done prefetching.

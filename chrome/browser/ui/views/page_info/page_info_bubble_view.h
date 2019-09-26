@@ -12,29 +12,33 @@
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "chrome/browser/ui/page_info/page_info_ui.h"
+#include "chrome/browser/ui/views/bubble_anchor_util_views.h"
 #include "chrome/browser/ui/views/page_info/chosen_object_view_observer.h"
+#include "chrome/browser/ui/views/page_info/page_info_bubble_view_base.h"
 #include "chrome/browser/ui/views/page_info/permission_selector_row.h"
 #include "chrome/browser/ui/views/page_info/permission_selector_row_observer.h"
-#include "content/public/browser/web_contents_observer.h"
-#include "ui/views/bubble/bubble_dialog_delegate.h"
+#include "ui/gfx/native_widget_types.h"
 #include "ui/views/controls/button/button.h"
 #include "ui/views/controls/link_listener.h"
 #include "ui/views/controls/separator.h"
 #include "ui/views/controls/styled_label_listener.h"
 
-class GURL;
-class Browser;
 class BubbleHeaderView;
+class GURL;
 class HoverButton;
 class Profile;
 
 namespace content {
 class WebContents;
-}
+}  // namespace content
+
+namespace gfx {
+class Rect;
+}  // namespace gfx
 
 namespace net {
 class X509Certificate;
-}
+}  // namespace net
 
 namespace security_state {
 struct SecurityInfo;
@@ -42,18 +46,18 @@ struct SecurityInfo;
 
 namespace test {
 class PageInfoBubbleViewTestApi;
-}
+}  // namespace test
 
 namespace views {
 class Link;
+class View;
 class Widget;
 }  // namespace views
 
 // The views implementation of the page info UI.
-class PageInfoBubbleView : public content::WebContentsObserver,
+class PageInfoBubbleView : public PageInfoBubbleViewBase,
                            public PermissionSelectorRowObserver,
                            public ChosenObjectViewObserver,
-                           public views::BubbleDialogDelegateView,
                            public views::ButtonListener,
                            public views::LinkListener,
                            public views::StyledLabelListener,
@@ -65,15 +69,6 @@ class PageInfoBubbleView : public content::WebContentsObserver,
   static constexpr int kPermissionColumnSetId = 0;
 
   ~PageInfoBubbleView() override;
-
-  // Type of the bubble being displayed.
-  enum BubbleType {
-    BUBBLE_NONE,
-    // Usual page info bubble for websites.
-    BUBBLE_PAGE_INFO,
-    // Custom bubble for internal pages like chrome:// and chrome-extensions://.
-    BUBBLE_INTERNAL_PAGE
-  };
 
   enum PageInfoBubbleViewID {
     VIEW_ID_NONE = 0,
@@ -88,17 +83,17 @@ class PageInfoBubbleView : public content::WebContentsObserver,
   };
 
   // Creates the appropriate page info bubble for the given |url|.
+  // |anchor_view| will be used to place the bubble.  If |anchor_view| is null,
+  // |anchor_rect| will be used instead.  |parent_window| will become the
+  // parent of the widget hosting the bubble view.
   static views::BubbleDialogDelegateView* CreatePageInfoBubble(
-      Browser* browser,
+      views::View* anchor_view,
+      const gfx::Rect& anchor_rect,
+      gfx::NativeWindow parent_window,
+      Profile* profile,
       content::WebContents* web_contents,
       const GURL& url,
       const security_state::SecurityInfo& security_info);
-
-  // Returns the type of the bubble being shown.
-  static BubbleType GetShownBubbleType();
-
-  // Returns a weak reference to the page info bubble being shown.
-  static views::BubbleDialogDelegateView* GetPageInfoBubble();
 
  private:
   friend class PageInfoBubbleViewBrowserTest;
@@ -112,44 +107,38 @@ class PageInfoBubbleView : public content::WebContentsObserver,
                      const GURL& url,
                      const security_state::SecurityInfo& security_info);
 
-  // WebContentsObserver implementation.
-  void RenderFrameDeleted(content::RenderFrameHost* render_frame_host) override;
+  // PageInfoBubbleViewBase:
+  gfx::Size CalculatePreferredSize() const override;
+  void OnWidgetDestroying(views::Widget* widget) override;
   void WebContentsDestroyed() override;
-  void WasHidden() override;
-  void DidStartNavigation(content::NavigationHandle* handle) override;
 
-  // PermissionSelectorRowObserver implementation.
+  // PermissionSelectorRowObserver:
   void OnPermissionChanged(
       const PageInfoUI::PermissionInfo& permission) override;
 
-  // ChosenObjectViewObserver implementation.
+  // ChosenObjectViewObserver:
   void OnChosenObjectDeleted(const PageInfoUI::ChosenObjectInfo& info) override;
 
-  // views::BubbleDialogDelegateView implementation.
-  base::string16 GetWindowTitle() const override;
-  bool ShouldShowCloseButton() const override;
-  void OnWidgetDestroying(views::Widget* widget) override;
-  int GetDialogButtons() const override;
-
-  // views::ButtonListener implementation.
+  // views::ButtonListener:
   void ButtonPressed(views::Button* button, const ui::Event& event) override;
 
-  // views::LinkListener implementation.
+  // views::LinkListener:
   void LinkClicked(views::Link* source, int event_flags) override;
 
-  // views::StyledLabelListener implementation.
+  // views::StyledLabelListener:
   void StyledLabelLinkClicked(views::StyledLabel* label,
                               const gfx::Range& range,
                               int event_flags) override;
 
-  // views::View implementation.
-  gfx::Size CalculatePreferredSize() const override;
-
-  // PageInfoUI implementations.
+  // PageInfoUI:
   void SetCookieInfo(const CookieInfoList& cookie_info_list) override;
   void SetPermissionInfo(const PermissionInfoList& permission_info_list,
                          ChosenObjectInfoList chosen_object_info_list) override;
   void SetIdentityInfo(const IdentityInfo& identity_info) override;
+#if defined(SAFE_BROWSING_DB_LOCAL)
+  std::unique_ptr<PageInfoUI::SecurityDescription>
+  CreateSecurityDescriptionForPasswordReuse() const override;
+#endif
 
   // Creates the contents of the |site_settings_view_|. The ownership of the
   // returned view is transferred to the caller.
@@ -170,9 +159,6 @@ class PageInfoBubbleView : public content::WebContentsObserver,
 
   // The header section (containing security-related information).
   BubbleHeaderView* header_;
-
-  // The security summary for the current page.
-  base::string16 summary_text_;
 
   // The view that contains the certificate, cookie, and permissions sections.
   views::View* site_settings_view_;

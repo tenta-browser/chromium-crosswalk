@@ -33,7 +33,7 @@ class CTVerifier;
 class NetLog;
 class SSLClientSocket;
 class StreamSocket;
-class TCPClientSocket;
+class TransportClientSocket;
 class TransportSecurityState;
 class X509Certificate;
 }
@@ -44,13 +44,14 @@ class Logger;
 struct LastError;
 
 // Cast device capabilities.
-enum CastDeviceCapability {
+enum CastDeviceCapability : int {
   NONE = 0,
   VIDEO_OUT = 1 << 0,
   VIDEO_IN = 1 << 1,
   AUDIO_OUT = 1 << 2,
   AUDIO_IN = 1 << 3,
-  DEV_MODE = 1 << 4
+  DEV_MODE = 1 << 4,
+  MULTIZONE_GROUP = 1 << 5
 };
 
 // Public interface of the CastSocket class.
@@ -271,8 +272,8 @@ class CastSocketImpl : public CastSocket {
   // READY_STATE_CLOSED.
   void CloseInternal();
 
-  // Creates an instance of TCPClientSocket.
-  virtual std::unique_ptr<net::TCPClientSocket> CreateTcpSocket();
+  // Creates an instance of TransportClientSocket.
+  virtual std::unique_ptr<net::TransportClientSocket> CreateTcpSocket();
   // Creates an instance of SSLClientSocket with the given underlying |socket|.
   virtual std::unique_ptr<net::SSLClientSocket> CreateSslSocket(
       std::unique_ptr<net::StreamSocket> socket);
@@ -355,7 +356,7 @@ class CastSocketImpl : public CastSocket {
   std::unique_ptr<net::CTPolicyEnforcer> ct_policy_enforcer_;
 
   // Owned ptr to the underlying TCP socket.
-  std::unique_ptr<net::TCPClientSocket> tcp_socket_;
+  std::unique_ptr<net::TransportClientSocket> tcp_socket_;
 
   // Owned ptr to the underlying SSL socket.
   std::unique_ptr<net::SSLClientSocket> socket_;

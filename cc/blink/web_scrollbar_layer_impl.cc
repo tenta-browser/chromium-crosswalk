@@ -6,7 +6,6 @@
 
 #include <utility>
 
-#include "base/memory/ptr_util.h"
 #include "cc/blink/scrollbar_impl.h"
 #include "cc/blink/web_layer_impl.h"
 #include "cc/layers/layer.h"
@@ -61,8 +60,7 @@ WebScrollbarLayerImpl::WebScrollbarLayerImpl(
                                            is_left_side_vertical_scrollbar,
                                            cc::ElementId()))) {}
 
-WebScrollbarLayerImpl::~WebScrollbarLayerImpl() {
-}
+WebScrollbarLayerImpl::~WebScrollbarLayerImpl() = default;
 
 blink::WebLayer* WebScrollbarLayerImpl::Layer() {
   return layer_.get();

@@ -5,16 +5,19 @@
 #include "components/offline_pages/core/downloads/download_ui_adapter.h"
 
 #include "base/bind.h"
+#include "base/bind_helpers.h"
 #include "base/guid.h"
 #include "base/logging.h"
-#include "base/memory/ptr_util.h"
 #include "base/threading/thread_task_runner_handle.h"
+#include "base/trace_event/trace_event.h"
 #include "components/offline_pages/core/background/request_coordinator.h"
 #include "components/offline_pages/core/background/save_page_request.h"
 #include "components/offline_pages/core/client_namespace_constants.h"
 #include "components/offline_pages/core/client_policy_controller.h"
 #include "components/offline_pages/core/downloads/offline_item_conversions.h"
 #include "components/offline_pages/core/offline_page_model.h"
+#include "components/offline_pages/core/thumbnail_decoder.h"
+#include "ui/gfx/image/image.h"
 
 namespace {
 // Value of this constant doesn't matter, only its address is used.
@@ -62,7 +65,7 @@ void DownloadUIAdapter::AttachToOfflinePageModel(
 DownloadUIAdapter::ItemInfo::ItemInfo(const OfflinePageItem& page,
                                       bool temporarily_hidden,
                                       bool is_suggested)
-    : ui_item(base::MakeUnique<OfflineItem>(
+    : ui_item(std::make_unique<OfflineItem>(
           OfflineItemConversions::CreateOfflineItem(page, is_suggested))),
       is_request(false),
       offline_id(page.offline_id),
@@ -71,7 +74,7 @@ DownloadUIAdapter::ItemInfo::ItemInfo(const OfflinePageItem& page,
 
 DownloadUIAdapter::ItemInfo::ItemInfo(const SavePageRequest& request,
                                       bool temporarily_hidden)
-    : ui_item(base::MakeUnique<OfflineItem>(
+    : ui_item(std::make_unique<OfflineItem>(
           OfflineItemConversions::CreateOfflineItem(request))),
       is_request(true),
       offline_id(request.request_id()),
@@ -80,16 +83,18 @@ DownloadUIAdapter::ItemInfo::ItemInfo(const SavePageRequest& request,
 
 DownloadUIAdapter::ItemInfo::~ItemInfo() {}
 
-DownloadUIAdapter::DownloadUIAdapter(OfflineContentAggregator* aggregator,
-                                     OfflinePageModel* model,
-                                     RequestCoordinator* request_coordinator,
-                                     std::unique_ptr<Delegate> delegate)
+DownloadUIAdapter::DownloadUIAdapter(
+    OfflineContentAggregator* aggregator,
+    OfflinePageModel* model,
+    RequestCoordinator* request_coordinator,
+    std::unique_ptr<ThumbnailDecoder> thumbnail_decoder,
+    std::unique_ptr<Delegate> delegate)
     : aggregator_(aggregator),
       model_(model),
       request_coordinator_(request_coordinator),
+      thumbnail_decoder_(std::move(thumbnail_decoder)),
       delegate_(std::move(delegate)),
       state_(State::NOT_LOADED),
-      observers_count_(0),
       weak_ptr_factory_(this) {
   delegate_->SetUIAdapter(this);
   if (aggregator_)
@@ -106,18 +111,7 @@ void DownloadUIAdapter::AddObserver(
   DCHECK(observer);
   if (observers_.HasObserver(observer))
     return;
-  if (observers_count_ == 0)
-    LoadCache();
   observers_.AddObserver(observer);
-  ++observers_count_;
-  // If the items are already loaded, post the notification right away.
-  // Don't just invoke it from here to avoid reentrancy in the client.
-  if (state_ == State::LOADED) {
-    base::ThreadTaskRunnerHandle::Get()->PostTask(
-        FROM_HERE,
-        base::Bind(&DownloadUIAdapter::NotifyItemsLoaded,
-                   weak_ptr_factory_.GetWeakPtr(), base::Unretained(observer)));
-  }
 }
 
 void DownloadUIAdapter::RemoveObserver(
@@ -126,10 +120,6 @@ void DownloadUIAdapter::RemoveObserver(
   if (!observers_.HasObserver(observer))
     return;
   observers_.RemoveObserver(observer);
-  --observers_count_;
-  // Once the last observer is gone, clear cached data.
-  if (observers_count_ == 0)
-    ClearCache();
 }
 
 void DownloadUIAdapter::OfflinePageModelLoaded(OfflinePageModel* model) {
@@ -147,7 +137,7 @@ void DownloadUIAdapter::OfflinePageAdded(OfflinePageModel* model,
   bool is_suggested = model->GetPolicyController()->IsSuggested(
       added_page.client_id.name_space);
   AddItemHelper(
-      base::MakeUnique<ItemInfo>(added_page, temporarily_hidden, is_suggested));
+      std::make_unique<ItemInfo>(added_page, temporarily_hidden, is_suggested));
 }
 
 void DownloadUIAdapter::OfflinePageDeleted(
@@ -164,7 +154,7 @@ void DownloadUIAdapter::OnAdded(const SavePageRequest& added_request) {
 
   bool temporarily_hidden =
       delegate_->IsTemporarilyHiddenInUI(added_request.client_id());
-  AddItemHelper(base::MakeUnique<ItemInfo>(added_request, temporarily_hidden));
+  AddItemHelper(std::make_unique<ItemInfo>(added_request, temporarily_hidden));
 }
 
 // RequestCoordinator::Observer
@@ -198,7 +188,7 @@ void DownloadUIAdapter::OnChanged(const SavePageRequest& request) {
 
   bool temporarily_hidden =
       delegate_->IsTemporarilyHiddenInUI(request.client_id());
-  items_[guid] = base::MakeUnique<ItemInfo>(request, temporarily_hidden);
+  items_[guid] = std::make_unique<ItemInfo>(request, temporarily_hidden);
 
   if (state_ != State::LOADED)
     return;
@@ -210,6 +200,9 @@ void DownloadUIAdapter::OnChanged(const SavePageRequest& request) {
 
 void DownloadUIAdapter::OnNetworkProgress(const SavePageRequest& request,
                                           int64_t received_bytes) {
+  if (state_ != State::LOADED)
+    return;
+
   for (auto& item : items_) {
     if (item.second->is_request &&
         item.second->offline_id == request.request_id()) {
@@ -226,6 +219,9 @@ void DownloadUIAdapter::OnNetworkProgress(const SavePageRequest& request,
 
 void DownloadUIAdapter::TemporaryHiddenStatusChanged(
     const ClientId& client_id) {
+  if (state_ != State::LOADED)
+    return;
+
   bool hidden = delegate_->IsTemporarilyHiddenInUI(client_id);
 
   for (const auto& item : items_) {
@@ -245,50 +241,124 @@ void DownloadUIAdapter::TemporaryHiddenStatusChanged(
   }
 }
 
-std::vector<OfflineItem> DownloadUIAdapter::GetAllItems() {
-  std::vector<OfflineItem> result;
-  for (const auto& item : items_) {
-    if (delegate_->IsTemporarilyHiddenInUI(item.second->client_id))
-      continue;
-    result.push_back(*(item.second->ui_item));
+void DownloadUIAdapter::GetAllItems(
+    OfflineContentProvider::MultipleItemCallback callback) {
+  if (state_ == State::LOADED) {
+    ReplyWithAllItems(std::move(callback));
+    return;
   }
-  return result;
+
+  postponed_callbacks_.emplace_back(std::move(callback));
+  LoadCache();
 }
 
-const OfflineItem* DownloadUIAdapter::GetItemById(const ContentId& id) {
-  OfflineItems::const_iterator it = items_.find(id.id);
-  if (it == items_.end() ||
-      delegate_->IsTemporarilyHiddenInUI(it->second->client_id)) {
-    return nullptr;
+void DownloadUIAdapter::GetVisualsForItem(
+    const ContentId& id,
+    const VisualsCallback& visuals_callback) {
+  auto it = items_.find(id.id);
+  if (it == items_.end() || !thumbnail_decoder_) {
+    base::ThreadTaskRunnerHandle::Get()->PostTask(
+        FROM_HERE, base::BindOnce(visuals_callback, id, nullptr));
+    return;
   }
-  return it->second->ui_item.get();
+  const ItemInfo* item = it->second.get();
+  model_->GetThumbnailByOfflineId(
+      item->offline_id,
+      base::BindOnce(&DownloadUIAdapter::OnThumbnailLoaded,
+                     weak_ptr_factory_.GetWeakPtr(), id, visuals_callback));
 }
 
-bool DownloadUIAdapter::AreItemsAvailable() {
-  return state_ == State::LOADED;
+void DownloadUIAdapter::OnThumbnailLoaded(
+    const ContentId& content_id,
+    const VisualsCallback& visuals_callback,
+    std::unique_ptr<OfflinePageThumbnail> thumbnail) {
+  DCHECK(thumbnail_decoder_);
+  if (!thumbnail || thumbnail->thumbnail.empty()) {
+    // PostTask not required, GetThumbnailByOfflineId does it for us.
+    visuals_callback.Run(content_id, nullptr);
+    return;
+  }
+
+  auto forward_visuals_lambda = [](const ContentId& content_id,
+                                   const VisualsCallback& visuals_callback,
+                                   const gfx::Image& image) {
+    if (image.IsEmpty()) {
+      visuals_callback.Run(content_id, nullptr);
+      return;
+    }
+    auto visuals =
+        std::make_unique<offline_items_collection::OfflineItemVisuals>();
+    visuals->icon = image;
+    visuals_callback.Run(content_id, std::move(visuals));
+  };
+
+  thumbnail_decoder_->DecodeAndCropThumbnail(
+      thumbnail->thumbnail,
+      base::BindOnce(forward_visuals_lambda, content_id, visuals_callback));
+}
+
+void DownloadUIAdapter::ThumbnailAdded(OfflinePageModel* model,
+                                       const OfflinePageThumbnail& thumbnail) {
+  // Note, this is an O(N) lookup. Not ideal, but this method is called at most
+  // 10 times a day (once per prefetch download), so it's probably not worth
+  // optimizing.
+  auto it =
+      std::find_if(items_.cbegin(), items_.cend(),
+                   [&](const OfflineItems::value_type& entry) {
+                     return entry.second->offline_id == thumbnail.offline_id;
+                   });
+  if (it == items_.end() || !it->second->ui_item)
+    return;
+  for (auto& observer : observers_)
+    observer.OnItemUpdated(*it->second->ui_item);
+}
+
+// TODO(dimich): Remove this method since it is not used currently. If needed,
+// it has to be updated to fault in the initial load of items. Currently it
+// simply returns nullopt if the cache is not loaded.
+void DownloadUIAdapter::GetItemById(
+    const ContentId& id,
+    OfflineContentProvider::SingleItemCallback callback) {
+  base::Optional<OfflineItem> offline_item;
+  if (state_ == State::LOADED) {
+    OfflineItems::const_iterator it = items_.find(id.id);
+    if (it != items_.end() && it->second->ui_item &&
+        !delegate_->IsTemporarilyHiddenInUI(it->second->client_id)) {
+      offline_item = *it->second->ui_item.get();
+    }
+  }
+  base::ThreadTaskRunnerHandle::Get()->PostTask(
+      FROM_HERE, base::BindOnce(std::move(callback), offline_item));
 }
 
 void DownloadUIAdapter::OpenItem(const ContentId& id) {
-  const OfflineItem* item = GetItemById(id);
-  if (!item)
+  if (state_ == State::LOADED) {
+    OpenItemByGuid(id.id);
     return;
+  }
 
-  delegate_->OpenItem(*item, GetOfflineIdByGuid(id.id));
+  postponed_operations_.push_back(
+      base::BindOnce(&DownloadUIAdapter::OpenItemByGuid,
+                     weak_ptr_factory_.GetWeakPtr(), id.id));
+  LoadCache();
 }
 
 void DownloadUIAdapter::RemoveItem(const ContentId& id) {
-  OfflineItems::const_iterator it = items_.find(id.id);
-  if (it == items_.end())
+  if (state_ == State::LOADED) {
+    RemoveItemByGuid(id.id);
     return;
+  }
 
-  std::vector<int64_t> page_ids;
-  page_ids.push_back(it->second->offline_id);
-  model_->DeletePagesByOfflineId(
-      page_ids, base::Bind(&DownloadUIAdapter::OnDeletePagesDone,
-                           weak_ptr_factory_.GetWeakPtr()));
+  postponed_operations_.push_back(
+      base::BindOnce(&DownloadUIAdapter::RemoveItemByGuid,
+                     weak_ptr_factory_.GetWeakPtr(), id.id));
+  LoadCache();
 }
 
 int64_t DownloadUIAdapter::GetOfflineIdByGuid(const std::string& guid) const {
+  if (state_ != State::LOADED)
+    return 0;
+
   if (deleting_item_ && deleting_item_->ui_item->id.id == guid)
     return deleting_item_->offline_id;
 
@@ -311,8 +381,7 @@ void DownloadUIAdapter::CancelDownloadContinuation(
     std::vector<std::unique_ptr<SavePageRequest>> requests) {
   std::vector<int64_t> request_ids = FilterRequestsByGuid(
       std::move(requests), guid, request_coordinator_->GetPolicyController());
-  request_coordinator_->RemoveRequests(
-      request_ids, base::Bind([](const MultipleItemStatuses&) {}));
+  request_coordinator_->RemoveRequests(request_ids, base::DoNothing());
 }
 
 void DownloadUIAdapter::PauseDownload(const ContentId& id) {
@@ -339,8 +408,7 @@ void DownloadUIAdapter::ResumeDownload(const ContentId& id,
         base::Bind(&DownloadUIAdapter::ResumeDownloadContinuation,
                    weak_ptr_factory_.GetWeakPtr(), id.id));
   } else {
-    request_coordinator_->StartImmediateProcessing(
-        base::Bind([](bool result) {}));
+    request_coordinator_->StartImmediateProcessing(base::DoNothing());
   }
 }
 
@@ -354,11 +422,16 @@ void DownloadUIAdapter::ResumeDownloadContinuation(
 // Note that several LoadCache calls may be issued before the async GetAllPages
 // comes back.
 void DownloadUIAdapter::LoadCache() {
+  if (state_ != State::NOT_LOADED)
+    return;
   state_ = State::LOADING_PAGES;
-  model_->GetAllPages(base::Bind(&DownloadUIAdapter::OnOfflinePagesLoaded,
-                                 weak_ptr_factory_.GetWeakPtr()));
+  model_->GetAllPages(
+      base::BindRepeating(&DownloadUIAdapter::OnOfflinePagesLoaded,
+                          weak_ptr_factory_.GetWeakPtr()));
 }
 
+// TODO(dimich): Start clearing this cache on UI close. Also, after OpenItem can
+// done without loading all items from database.
 void DownloadUIAdapter::ClearCache() {
   // Once loaded, this class starts to observe the model. Only remove observer
   // if it was added.
@@ -368,6 +441,8 @@ void DownloadUIAdapter::ClearCache() {
   }
   items_.clear();
   state_ = State::NOT_LOADED;
+  TRACE_EVENT_ASYNC_END0("offline_pages", "DownloadUIAdapter: items cached",
+                         this);
 }
 
 void DownloadUIAdapter::OnOfflinePagesLoaded(
@@ -386,7 +461,7 @@ void DownloadUIAdapter::OnOfflinePagesLoaded(
       bool is_suggested =
           model_->GetPolicyController()->IsSuggested(page.client_id.name_space);
       std::unique_ptr<ItemInfo> item =
-          base::MakeUnique<ItemInfo>(page, temporarily_hidden, is_suggested);
+          std::make_unique<ItemInfo>(page, temporarily_hidden, is_suggested);
       items_[guid] = std::move(item);
     }
   }
@@ -412,23 +487,29 @@ void DownloadUIAdapter::OnRequestsLoaded(
       bool temporarily_hidden =
           delegate_->IsTemporarilyHiddenInUI(request->client_id());
       std::unique_ptr<ItemInfo> item =
-          base::MakeUnique<ItemInfo>(*request.get(), temporarily_hidden);
+          std::make_unique<ItemInfo>(*request.get(), temporarily_hidden);
       items_[guid] = std::move(item);
     }
   }
   request_coordinator_->AddObserver(this);
 
   state_ = State::LOADED;
-  for (auto& observer : observers_)
-    observer.OnItemsAvailable(this);
-}
+  TRACE_EVENT_ASYNC_BEGIN1("offline_pages", "DownloadUIAdapter: items cached",
+                           this, "initial count", items_.size());
 
-void DownloadUIAdapter::NotifyItemsLoaded(
-    OfflineContentProvider::Observer* observer) {
-  if (observer && observers_.HasObserver(observer))
-    observer->OnItemsAvailable(this);
-}
+  // If there are callers waiting for GetAllItems callback, call them.
+  for (auto& callback : postponed_callbacks_) {
+    ReplyWithAllItems(std::move(callback));
+  }
+  postponed_callbacks_.clear();
 
+  // If there were requests to perform operations on items before cache was
+  // loaded, perform them now.
+  for (auto& operation : postponed_operations_) {
+    std::move(operation).Run();
+  }
+  postponed_operations_.clear();
+}
 
 void DownloadUIAdapter::OnDeletePagesDone(DeletePageResult result) {
   // TODO(dimich): Consider adding UMA to record user actions.
@@ -484,6 +565,52 @@ void DownloadUIAdapter::DeleteItemHelper(const std::string& guid) {
   }
 
   deleting_item_.reset();
+}
+
+void DownloadUIAdapter::ReplyWithAllItems(
+    OfflineContentProvider::MultipleItemCallback callback) {
+  std::vector<OfflineItem> items;
+  for (const auto& item : items_) {
+    if (delegate_->IsTemporarilyHiddenInUI(item.second->client_id))
+      continue;
+    items.push_back(*(item.second->ui_item));
+  }
+
+  base::ThreadTaskRunnerHandle::Get()->PostTask(
+      FROM_HERE, base::BindOnce(std::move(callback), items));
+}
+
+void DownloadUIAdapter::OpenItemByGuid(const std::string& guid) {
+  if (state_ != State::LOADED) {
+    return;
+  }
+
+  OfflineItems::const_iterator it = items_.find(guid);
+  if (it == items_.end())
+    return;
+
+  const OfflineItem* item = it->second->ui_item.get();
+  if (!item)
+    return;
+
+  delegate_->OpenItem(*item, GetOfflineIdByGuid(guid));
+}
+
+void DownloadUIAdapter::RemoveItemByGuid(const std::string& guid) {
+  if (state_ != State::LOADED) {
+    return;
+  }
+
+  OfflineItems::const_iterator it = items_.find(guid);
+  if (it == items_.end())
+    return;
+
+  std::vector<int64_t> page_ids;
+  page_ids.push_back(it->second->offline_id);
+
+  model_->DeletePagesByOfflineId(
+      page_ids, base::BindRepeating(&DownloadUIAdapter::OnDeletePagesDone,
+                                    weak_ptr_factory_.GetWeakPtr()));
 }
 
 }  // namespace offline_pages

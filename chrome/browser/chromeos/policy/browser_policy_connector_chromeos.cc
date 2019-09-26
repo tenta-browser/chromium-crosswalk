@@ -31,6 +31,7 @@
 #include "chrome/browser/chromeos/policy/device_local_account_policy_service.h"
 #include "chrome/browser/chromeos/policy/device_network_configuration_updater.h"
 #include "chrome/browser/chromeos/policy/enrollment_config.h"
+#include "chrome/browser/chromeos/policy/hostname_handler.h"
 #include "chrome/browser/chromeos/policy/minimum_version_policy_handler.h"
 #include "chrome/browser/chromeos/policy/remote_commands/affiliated_remote_commands_invalidator.h"
 #include "chrome/browser/chromeos/policy/server_backed_state_keys_broker.h"
@@ -119,11 +120,11 @@ BrowserPolicyConnectorChromeOS::BrowserPolicyConnectorChromeOS()
           ->StartAuthPolicyService();
 
       device_active_directory_policy_manager_ =
-          ActiveDirectoryPolicyManager::CreateForDevicePolicy(
-              std::move(device_cloud_policy_store))
-              .release();
-      AddPolicyProvider(base::WrapUnique<ConfigurationPolicyProvider>(
-          device_active_directory_policy_manager_));
+          new DeviceActiveDirectoryPolicyManager(
+              std::move(device_cloud_policy_store));
+      providers_for_init_.push_back(
+          base::WrapUnique<ConfigurationPolicyProvider>(
+              device_active_directory_policy_manager_));
     } else {
       state_keys_broker_ = std::make_unique<ServerBackedStateKeysBroker>(
           chromeos::DBusThreadManager::Get()->GetSessionManagerClient());
@@ -131,13 +132,14 @@ BrowserPolicyConnectorChromeOS::BrowserPolicyConnectorChromeOS()
       device_cloud_policy_manager_ = new DeviceCloudPolicyManagerChromeOS(
           std::move(device_cloud_policy_store),
           base::ThreadTaskRunnerHandle::Get(), state_keys_broker_.get());
-      AddPolicyProvider(base::WrapUnique<ConfigurationPolicyProvider>(
-          device_cloud_policy_manager_));
+      providers_for_init_.push_back(
+          base::WrapUnique<ConfigurationPolicyProvider>(
+              device_cloud_policy_manager_));
     }
   }
 
   global_user_cloud_policy_provider_ = new ProxyPolicyProvider();
-  AddPolicyProvider(std::unique_ptr<ConfigurationPolicyProvider>(
+  providers_for_init_.push_back(std::unique_ptr<ConfigurationPolicyProvider>(
       global_user_cloud_policy_provider_));
 }
 
@@ -193,7 +195,7 @@ void BrowserPolicyConnectorChromeOS::Init(
 
   SetTimezoneIfPolicyAvailable();
 
-  network_configuration_updater_ =
+  device_network_configuration_updater_ =
       DeviceNetworkConfigurationUpdater::CreateForDevicePolicy(
           GetPolicyService(),
           chromeos::NetworkHandler::Get()
@@ -203,6 +205,9 @@ void BrowserPolicyConnectorChromeOS::Init(
 
   bluetooth_policy_handler_ =
       std::make_unique<BluetoothPolicyHandler>(chromeos::CrosSettings::Get());
+
+  hostname_handler_ =
+      std::make_unique<HostnameHandler>(chromeos::CrosSettings::Get());
 
   minimum_version_policy_handler_ =
       std::make_unique<MinimumVersionPolicyHandler>(
@@ -219,7 +224,7 @@ void BrowserPolicyConnectorChromeOS::PreShutdown() {
 }
 
 void BrowserPolicyConnectorChromeOS::Shutdown() {
-  network_configuration_updater_.reset();
+  device_network_configuration_updater_.reset();
 
   if (device_local_account_policy_service_)
     device_local_account_policy_service_->Shutdown();
@@ -229,6 +234,9 @@ void BrowserPolicyConnectorChromeOS::Shutdown() {
 
   if (device_cloud_policy_manager_)
     device_cloud_policy_manager_->RemoveDeviceCloudPolicyManagerObserver(this);
+
+  if (hostname_handler_)
+    hostname_handler_->Shutdown();
 
   ChromeBrowserPolicyConnector::Shutdown();
 }
@@ -270,6 +278,16 @@ std::string BrowserPolicyConnectorChromeOS::GetDeviceAssetID() const {
         device_cloud_policy_manager_->device_store()->policy();
     if (policy && policy->has_annotated_asset_id())
       return policy->annotated_asset_id();
+  }
+  return std::string();
+}
+
+std::string BrowserPolicyConnectorChromeOS::GetDeviceAnnotatedLocation() const {
+  if (device_cloud_policy_manager_) {
+    const enterprise_management::PolicyData* policy =
+        device_cloud_policy_manager_->device_store()->policy();
+    if (policy && policy->has_annotated_location())
+      return policy->annotated_location();
   }
   return std::string();
 }
@@ -344,6 +362,15 @@ void BrowserPolicyConnectorChromeOS::OnDeviceCloudPolicyManagerDisconnected() {
   DCHECK(!device_cloud_policy_initializer_);
 
   RestartDeviceCloudPolicyInitializer();
+}
+
+std::vector<std::unique_ptr<policy::ConfigurationPolicyProvider>>
+BrowserPolicyConnectorChromeOS::CreatePolicyProviders() {
+  auto providers = ChromeBrowserPolicyConnector::CreatePolicyProviders();
+  for (auto& provider_ptr : providers_for_init_)
+    providers.push_back(std::move(provider_ptr));
+  providers_for_init_.clear();
+  return providers;
 }
 
 void BrowserPolicyConnectorChromeOS::SetTimezoneIfPolicyAvailable() {

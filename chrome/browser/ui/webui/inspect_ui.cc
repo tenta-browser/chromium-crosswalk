@@ -5,7 +5,6 @@
 #include "chrome/browser/ui/webui/inspect_ui.h"
 
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/metrics/user_metrics.h"
 #include "chrome/browser/devtools/devtools_targets_ui.h"
 #include "chrome/browser/devtools/devtools_ui_bindings.h"
@@ -41,6 +40,7 @@ namespace {
 
 const char kInitUICommand[]  = "init-ui";
 const char kInspectCommand[]  = "inspect";
+const char kInspectFallbackCommand[] = "inspect-fallback";
 const char kInspectAdditionalCommand[] = "inspect-additional";
 const char kActivateCommand[]  = "activate";
 const char kCloseCommand[] = "close";
@@ -69,7 +69,7 @@ const char kIsAdditionalField[] = "isAdditional";
 void GetUiDevToolsTargets(base::ListValue& targets) {
   for (const auto& client_pair :
        ui_devtools::UiDevToolsServer::GetClientNamesAndUrls()) {
-    auto target_data = base::MakeUnique<base::DictionaryValue>();
+    auto target_data = std::make_unique<base::DictionaryValue>();
     target_data->SetString(kNameField, client_pair.first);
     target_data->SetString(kUrlField, client_pair.second);
     target_data->SetBoolean(kIsAdditionalField, true);
@@ -91,6 +91,7 @@ class InspectMessageHandler : public WebUIMessageHandler {
 
   void HandleInitUICommand(const base::ListValue* args);
   void HandleInspectCommand(const base::ListValue* args);
+  void HandleInspectFallbackCommand(const base::ListValue* args);
   void HandleInspectAdditionalCommand(const base::ListValue* args);
   void HandleActivateCommand(const base::ListValue* args);
   void HandleCloseCommand(const base::ListValue* args);
@@ -109,52 +110,72 @@ class InspectMessageHandler : public WebUIMessageHandler {
 };
 
 void InspectMessageHandler::RegisterMessages() {
-  web_ui()->RegisterMessageCallback(kInitUICommand,
-      base::Bind(&InspectMessageHandler::HandleInitUICommand,
-                 base::Unretained(this)));
-  web_ui()->RegisterMessageCallback(kInspectCommand,
-      base::Bind(&InspectMessageHandler::HandleInspectCommand,
-                 base::Unretained(this)));
+  web_ui()->RegisterMessageCallback(
+      kInitUICommand,
+      base::BindRepeating(&InspectMessageHandler::HandleInitUICommand,
+                          base::Unretained(this)));
+  web_ui()->RegisterMessageCallback(
+      kInspectCommand,
+      base::BindRepeating(&InspectMessageHandler::HandleInspectCommand,
+                          base::Unretained(this)));
+  web_ui()->RegisterMessageCallback(
+      kInspectFallbackCommand,
+      base::BindRepeating(&InspectMessageHandler::HandleInspectFallbackCommand,
+                          base::Unretained(this)));
   web_ui()->RegisterMessageCallback(
       kInspectAdditionalCommand,
-      base::Bind(&InspectMessageHandler::HandleInspectAdditionalCommand,
-                 base::Unretained(this)));
-  web_ui()->RegisterMessageCallback(kActivateCommand,
-      base::Bind(&InspectMessageHandler::HandleActivateCommand,
-                 base::Unretained(this)));
-  web_ui()->RegisterMessageCallback(kCloseCommand,
-      base::Bind(&InspectMessageHandler::HandleCloseCommand,
-                 base::Unretained(this)));
-  web_ui()->RegisterMessageCallback(kDiscoverUsbDevicesEnabledCommand,
-      base::Bind(&InspectMessageHandler::HandleBooleanPrefChanged,
-                  base::Unretained(this),
-                  &prefs::kDevToolsDiscoverUsbDevicesEnabled[0]));
-  web_ui()->RegisterMessageCallback(kPortForwardingEnabledCommand,
-      base::Bind(&InspectMessageHandler::HandleBooleanPrefChanged,
-                 base::Unretained(this),
-                 &prefs::kDevToolsPortForwardingEnabled[0]));
-  web_ui()->RegisterMessageCallback(kPortForwardingConfigCommand,
-      base::Bind(&InspectMessageHandler::HandlePortForwardingConfigCommand,
-                 base::Unretained(this)));
-  web_ui()->RegisterMessageCallback(kDiscoverTCPTargetsEnabledCommand,
-      base::Bind(&InspectMessageHandler::HandleBooleanPrefChanged,
-                 base::Unretained(this),
-                 &prefs::kDevToolsDiscoverTCPTargetsEnabled[0]));
-  web_ui()->RegisterMessageCallback(kTCPDiscoveryConfigCommand,
-      base::Bind(&InspectMessageHandler::HandleTCPDiscoveryConfigCommand,
-                 base::Unretained(this)));
-  web_ui()->RegisterMessageCallback(kOpenNodeFrontendCommand,
-      base::Bind(&InspectMessageHandler::HandleOpenNodeFrontendCommand,
-                 base::Unretained(this)));
-  web_ui()->RegisterMessageCallback(kReloadCommand,
-      base::Bind(&InspectMessageHandler::HandleReloadCommand,
-                 base::Unretained(this)));
-  web_ui()->RegisterMessageCallback(kOpenCommand,
-      base::Bind(&InspectMessageHandler::HandleOpenCommand,
-                 base::Unretained(this)));
-  web_ui()->RegisterMessageCallback(kInspectBrowser,
-      base::Bind(&InspectMessageHandler::HandleInspectBrowserCommand,
-                 base::Unretained(this)));
+      base::BindRepeating(
+          &InspectMessageHandler::HandleInspectAdditionalCommand,
+          base::Unretained(this)));
+  web_ui()->RegisterMessageCallback(
+      kActivateCommand,
+      base::BindRepeating(&InspectMessageHandler::HandleActivateCommand,
+                          base::Unretained(this)));
+  web_ui()->RegisterMessageCallback(
+      kCloseCommand,
+      base::BindRepeating(&InspectMessageHandler::HandleCloseCommand,
+                          base::Unretained(this)));
+  web_ui()->RegisterMessageCallback(
+      kDiscoverUsbDevicesEnabledCommand,
+      base::BindRepeating(&InspectMessageHandler::HandleBooleanPrefChanged,
+                          base::Unretained(this),
+                          &prefs::kDevToolsDiscoverUsbDevicesEnabled[0]));
+  web_ui()->RegisterMessageCallback(
+      kPortForwardingEnabledCommand,
+      base::BindRepeating(&InspectMessageHandler::HandleBooleanPrefChanged,
+                          base::Unretained(this),
+                          &prefs::kDevToolsPortForwardingEnabled[0]));
+  web_ui()->RegisterMessageCallback(
+      kPortForwardingConfigCommand,
+      base::BindRepeating(
+          &InspectMessageHandler::HandlePortForwardingConfigCommand,
+          base::Unretained(this)));
+  web_ui()->RegisterMessageCallback(
+      kDiscoverTCPTargetsEnabledCommand,
+      base::BindRepeating(&InspectMessageHandler::HandleBooleanPrefChanged,
+                          base::Unretained(this),
+                          &prefs::kDevToolsDiscoverTCPTargetsEnabled[0]));
+  web_ui()->RegisterMessageCallback(
+      kTCPDiscoveryConfigCommand,
+      base::BindRepeating(
+          &InspectMessageHandler::HandleTCPDiscoveryConfigCommand,
+          base::Unretained(this)));
+  web_ui()->RegisterMessageCallback(
+      kOpenNodeFrontendCommand,
+      base::BindRepeating(&InspectMessageHandler::HandleOpenNodeFrontendCommand,
+                          base::Unretained(this)));
+  web_ui()->RegisterMessageCallback(
+      kReloadCommand,
+      base::BindRepeating(&InspectMessageHandler::HandleReloadCommand,
+                          base::Unretained(this)));
+  web_ui()->RegisterMessageCallback(
+      kOpenCommand,
+      base::BindRepeating(&InspectMessageHandler::HandleOpenCommand,
+                          base::Unretained(this)));
+  web_ui()->RegisterMessageCallback(
+      kInspectBrowser,
+      base::BindRepeating(&InspectMessageHandler::HandleInspectBrowserCommand,
+                          base::Unretained(this)));
 }
 
 void InspectMessageHandler::HandleInitUICommand(const base::ListValue*) {
@@ -176,6 +197,14 @@ void InspectMessageHandler::HandleInspectCommand(const base::ListValue* args) {
   std::string id;
   if (ParseStringArgs(args, &source, &id))
     inspect_ui_->Inspect(source, id);
+}
+
+void InspectMessageHandler::HandleInspectFallbackCommand(
+    const base::ListValue* args) {
+  std::string source;
+  std::string id;
+  if (ParseStringArgs(args, &source, &id))
+    inspect_ui_->InspectFallback(source, id);
 }
 
 void InspectMessageHandler::HandleInspectAdditionalCommand(
@@ -326,7 +355,7 @@ void DevToolsUIBindingsEnabler::DidFinishNavigation(
 
 InspectUI::InspectUI(content::WebUI* web_ui)
     : WebUIController(web_ui) {
-  web_ui->AddMessageHandler(base::MakeUnique<InspectMessageHandler>(this));
+  web_ui->AddMessageHandler(std::make_unique<InspectMessageHandler>(this));
   Profile* profile = Profile::FromWebUI(web_ui);
   content::WebUIDataSource::Add(profile, CreateInspectUIHTMLSource());
 
@@ -356,6 +385,16 @@ void InspectUI::Inspect(const std::string& source_id,
     Profile* profile = Profile::FromBrowserContext(
         web_ui()->GetWebContents()->GetBrowserContext());
     DevToolsWindow::OpenDevToolsWindow(target, profile);
+  }
+}
+
+void InspectUI::InspectFallback(const std::string& source_id,
+                                const std::string& target_id) {
+  scoped_refptr<DevToolsAgentHost> target = FindTarget(source_id, target_id);
+  if (target) {
+    Profile* profile = Profile::FromBrowserContext(
+        web_ui()->GetWebContents()->GetBrowserContext());
+    DevToolsWindow::OpenDevToolsWindowWithBundledFrontend(target, profile);
   }
 }
 
@@ -428,9 +467,9 @@ void InspectUI::InspectBrowserWithCustomFrontend(
 
 void InspectUI::InspectDevices(Browser* browser) {
   base::RecordAction(base::UserMetricsAction("InspectDevices"));
-  chrome::NavigateParams params(chrome::GetSingletonTabNavigateParams(
+  NavigateParams params(GetSingletonTabNavigateParams(
       browser, GURL(chrome::kChromeUIInspectURL)));
-  params.path_behavior = chrome::NavigateParams::IGNORE_AND_NAVIGATE;
+  params.path_behavior = NavigateParams::IGNORE_AND_NAVIGATE;
   ShowSingletonTabOverwritingNTP(browser, params);
 }
 
@@ -455,7 +494,7 @@ void InspectUI::StartListeningNotifications() {
   PopulateAdditionalTargets(additional_targets);
 
   AddTargetUIHandler(
-      DevToolsTargetsUIHandler::CreateForLocal(callback));
+      DevToolsTargetsUIHandler::CreateForLocal(callback, profile));
   if (profile->IsOffTheRecord()) {
     ShowIncognitoWarning();
   } else {

@@ -8,7 +8,6 @@
 
 #include "base/logging.h"
 #include "base/mac/foundation_util.h"
-#include "base/memory/ptr_util.h"
 #import "ios/web/navigation/legacy_navigation_manager_impl.h"
 #import "ios/web/navigation/navigation_item_impl.h"
 #import "ios/web/navigation/navigation_item_storage_builder.h"
@@ -44,7 +43,6 @@ CRWSessionStorage* SessionStorageBuilder::BuildStorage(
        ++index) {
     web::NavigationItemImpl* item =
         navigation_manager->GetNavigationItemImplAtIndex(index);
-    ;
     [item_storages addObject:item_storage_builder.BuildStorage(item)];
   }
   session_storage.itemStorages = item_storages;
@@ -82,7 +80,7 @@ void SessionStorageBuilder::ExtractSessionState(
       cert_builder.BuildSessionCertificatePolicyCache(
           storage.certPolicyCacheStorage);
   if (!cert_policy_cache)
-    cert_policy_cache = base::MakeUnique<SessionCertificatePolicyCacheImpl>();
+    cert_policy_cache = std::make_unique<SessionCertificatePolicyCacheImpl>();
   web_state->certificate_policy_cache_ = std::move(cert_policy_cache);
   web::SerializableUserDataManager::FromWebState(web_state)
       ->AddSerializableUserData(storage.userData);

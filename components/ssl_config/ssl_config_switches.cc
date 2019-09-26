@@ -25,9 +25,6 @@ const char kSSLVersionTLSv12[] = "tls1.2";
 const char kSSLVersionTLSv13[] = "tls1.3";
 
 const char kTLS13VariantDisabled[] = "disabled";
-const char kTLS13VariantDraft[] = "draft";
-const char kTLS13VariantExperiment[] = "experiment";
-const char kTLS13VariantExperiment2[] = "experiment2";
-const char kTLS13VariantExperiment3[] = "experiment3";
+const char kTLS13VariantDraft23[] = "draft23";
 
 }  // namespace switches

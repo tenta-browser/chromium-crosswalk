@@ -59,9 +59,8 @@ SafeBrowsingURLRequestContextGetter::GetURLRequestContext() {
         new net::DefaultChannelIDStore(channel_id_db.get())));
 
     // Set up the CookieStore
-    content::CookieStoreConfig cookie_config(
-        CookieFilePath(), content::CookieStoreConfig::EPHEMERAL_SESSION_COOKIES,
-        nullptr);
+    content::CookieStoreConfig cookie_config(CookieFilePath(), false, false,
+                                             nullptr);
     cookie_config.channel_id_service = channel_id_service_.get();
     cookie_config.background_task_runner = background_task_runner;
     safe_browsing_cookie_store_ = content::CreateCookieStore(cookie_config);
@@ -116,6 +115,15 @@ void SafeBrowsingURLRequestContextGetter::ServiceShuttingDown() {
 
 void SafeBrowsingURLRequestContextGetter::DisableQuicOnIOThread() {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
+
+  // |http_network_session_| is only initialized once GetURLRequestContext() is
+  // (lazily) called. With most consumers shifting to use
+  // SafeBrowsingNetworkContext instead of this class directly, now on startup
+  // GetURLRequestContext() might not have been called yet. So expliclity call
+  // it to make sure http_network_session_ is initialized. Don't call it though
+  // if shutdown has already started.
+  if (!http_network_session_ && !shut_down_)
+    GetURLRequestContext();
 
   if (http_network_session_)
     http_network_session_->DisableQuic();

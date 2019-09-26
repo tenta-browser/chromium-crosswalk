@@ -13,7 +13,6 @@ source_set("activity_services") {
     "appex_constants.mm",
     "canonical_url_retriever.h",
     "canonical_url_retriever.mm",
-    "canonical_url_retriever_private.h",
     "chrome_activity_item_source.h",
     "chrome_activity_item_source.mm",
     "chrome_activity_item_thumbnail_generator.h",
@@ -32,10 +31,12 @@ source_set("activity_services") {
     "resources:activity_services_print",
     "resources:activity_services_reading_list",
     "//base",
+    "//components/ui_metrics",
     "//ios/chrome/app/strings",
     "//ios/chrome/browser",
     "//ios/chrome/browser/browser_state",
     "//ios/chrome/browser/passwords",
+    "//ios/chrome/browser/snapshots",
     "//ios/chrome/browser/tabs",
     "//ios/chrome/browser/ui",
     "//ios/chrome/browser/ui/activity_services/requirements",
@@ -62,7 +63,6 @@ source_set("coordinator") {
   ]
   deps = [
     ":activity_services",
-    ":features",
     "//base",
     "//ios/chrome/browser",
     "//ios/chrome/browser/browser_state",
@@ -70,6 +70,7 @@ source_set("coordinator") {
     "//ios/chrome/browser/tabs",
     "//ios/chrome/browser/ui/activity_services/requirements",
     "//ios/chrome/browser/ui/commands",
+    "//ios/chrome/browser/ui/coordinators:chrome_coordinators",
     "//url",
   ]
 }
@@ -88,9 +89,11 @@ source_set("unit_tests") {
     ":activity_services",
     "//base",
     "//base/test:test_support",
+    "//components/ui_metrics",
     "//ios/chrome/app/strings",
     "//ios/chrome/browser/browser_state:test_support",
     "//ios/chrome/browser/passwords",
+    "//ios/chrome/browser/snapshots",
     "//ios/chrome/browser/tabs",
     "//ios/chrome/browser/ui/activity_services/requirements",
     "//ios/chrome/browser/ui/commands",
@@ -128,15 +131,4 @@ source_set("eg_tests") {
     "//ui/base",
   ]
   libs = [ "XCTest.framework" ]
-}
-
-source_set("features") {
-  configs += [ "//build/config/compiler:enable_arc" ]
-  sources = [
-    "canonical_url_feature.cc",
-    "canonical_url_feature.h",
-  ]
-  deps = [
-    "//base",
-  ]
 }

@@ -22,20 +22,20 @@
 #include "content/renderer/renderer_blink_platform_impl.h"
 #include "ppapi/shared_impl/ppapi_globals.h"
 #include "ppapi/shared_impl/var_tracker.h"
-#include "third_party/WebKit/public/platform/WebClipboard.h"
-#include "third_party/WebKit/public/platform/WebCoalescedInputEvent.h"
-#include "third_party/WebKit/public/platform/WebPoint.h"
-#include "third_party/WebKit/public/platform/WebRect.h"
-#include "third_party/WebKit/public/platform/WebSize.h"
-#include "third_party/WebKit/public/web/WebAssociatedURLLoaderClient.h"
-#include "third_party/WebKit/public/web/WebDocument.h"
-#include "third_party/WebKit/public/web/WebElement.h"
-#include "third_party/WebKit/public/web/WebFrame.h"
-#include "third_party/WebKit/public/web/WebPluginContainer.h"
-#include "third_party/WebKit/public/web/WebPluginParams.h"
-#include "third_party/WebKit/public/web/WebPrintParams.h"
-#include "third_party/WebKit/public/web/WebPrintPresetOptions.h"
-#include "third_party/WebKit/public/web/WebPrintScalingOption.h"
+#include "third_party/blink/public/platform/web_clipboard.h"
+#include "third_party/blink/public/platform/web_coalesced_input_event.h"
+#include "third_party/blink/public/platform/web_point.h"
+#include "third_party/blink/public/platform/web_rect.h"
+#include "third_party/blink/public/platform/web_size.h"
+#include "third_party/blink/public/web/web_associated_url_loader_client.h"
+#include "third_party/blink/public/web/web_document.h"
+#include "third_party/blink/public/web/web_element.h"
+#include "third_party/blink/public/web/web_frame.h"
+#include "third_party/blink/public/web/web_plugin_container.h"
+#include "third_party/blink/public/web/web_plugin_params.h"
+#include "third_party/blink/public/web/web_print_params.h"
+#include "third_party/blink/public/web/web_print_preset_options.h"
+#include "third_party/blink/public/web/web_print_scaling_option.h"
 #include "url/gurl.h"
 
 using ppapi::V8ObjectVar;
@@ -81,7 +81,10 @@ PepperWebPluginImpl::PepperWebPluginImpl(
   init_data_->url = params.url;
 
   // Set subresource URL for crash reporting.
-  base::debug::SetCrashKeyValue("subresource_url", init_data_->url.spec());
+  static base::debug::CrashKeyString* subresource_url =
+      base::debug::AllocateCrashKeyString("subresource_url",
+                                          base::debug::CrashKeySize::Size256);
+  base::debug::SetCrashKeyString(subresource_url, init_data_->url.spec());
 
   if (throttler_)
     throttler_->SetWebPlugin(this);
@@ -320,7 +323,7 @@ bool PepperWebPluginImpl::ExecuteEditCommand(const blink::WebString& name,
 
     blink::WebString text =
         blink::Platform::Current()->Clipboard()->ReadPlainText(
-            blink::WebClipboard::kBufferStandard);
+            blink::mojom::ClipboardBuffer::kStandard);
 
     instance_->ReplaceSelection(text.Utf8());
     return true;

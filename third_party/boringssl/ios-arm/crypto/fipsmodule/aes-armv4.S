@@ -44,6 +44,11 @@
 # define __ARM_ARCH__ __LINUX_ARM_ARCH__
 #endif
 
+@ Silence ARMv8 deprecated IT instruction warnings. This file is used by both
+@ ARMv7 and ARMv8 processors and does not use ARMv8 instructions. (ARMv8 AES
+@ instructions are in aesv8-armx.pl.)
+
+
 .text
 #if defined(__thumb2__) && !defined(__APPLE__)
 .syntax	unified
@@ -174,7 +179,7 @@ _asm_AES_encrypt:
 	adr	r3,.
 #endif
 	stmdb	sp!,{r1,r4-r12,lr}
-#ifdef	__APPLE__
+#if defined(__thumb2__) || defined(__APPLE__)
 	adr	r10,AES_Te
 #else
 	sub	r10,r3,#_asm_AES_encrypt-AES_Te	@ Te
@@ -457,7 +462,7 @@ Lok:	stmdb	sp!,{r4,r5,r6,r7,r8,r9,r10,r11,r12,lr}
 	mov	lr,r1			@ bits
 	mov	r11,r2			@ key
 
-#ifdef	__APPLE__
+#if defined(__thumb2__) || defined(__APPLE__)
 	adr	r10,AES_Te+1024				@ Te4
 #else
 	sub	r10,r3,#_armv4_AES_set_encrypt_key-AES_Te-1024	@ Te4
@@ -959,7 +964,7 @@ _asm_AES_decrypt:
 	adr	r3,.
 #endif
 	stmdb	sp!,{r1,r4-r12,lr}
-#ifdef	__APPLE__
+#if defined(__thumb2__) || defined(__APPLE__)
 	adr	r10,AES_Td
 #else
 	sub	r10,r3,#_asm_AES_decrypt-AES_Td	@ Td

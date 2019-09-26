@@ -4,7 +4,6 @@
 
 #include <memory>
 
-#include "base/memory/ptr_util.h"
 #include "chrome/browser/printing/cloud_print/privet_device_lister_impl.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -120,7 +119,7 @@ class MockServiceDiscoveryClient : public ServiceDiscoveryClient {
   std::unique_ptr<ServiceWatcher> CreateServiceWatcher(
       const std::string& service_type,
       const ServiceWatcher::UpdatedCallback& callback) override {
-    return base::MakeUnique<MockServiceWatcher>(service_type, callback,
+    return std::make_unique<MockServiceWatcher>(service_type, callback,
                                                 mock_delegate_);
   }
 
@@ -129,7 +128,7 @@ class MockServiceDiscoveryClient : public ServiceDiscoveryClient {
   std::unique_ptr<ServiceResolver> CreateServiceResolver(
       const std::string& service_name,
       ServiceResolver::ResolveCompleteCallback callback) override {
-    return base::MakeUnique<MockServiceResolver>(
+    return std::make_unique<MockServiceResolver>(
         service_name, std::move(callback), mock_delegate_);
   }
 

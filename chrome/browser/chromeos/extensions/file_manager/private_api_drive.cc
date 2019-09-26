@@ -653,6 +653,50 @@ void FileManagerPrivateInternalPinDriveFileFunction::OnPinStateSet(
   }
 }
 
+bool FileManagerPrivateInternalEnsureFileDownloadedFunction::RunAsync() {
+  DCHECK_CURRENTLY_ON(BrowserThread::UI);
+
+  using extensions::api::file_manager_private_internal::EnsureFileDownloaded::
+      Params;
+  const std::unique_ptr<Params> params(Params::Create(*args_));
+  EXTENSION_FUNCTION_VALIDATE(params);
+
+  const base::FilePath drive_path =
+      drive::util::ExtractDrivePath(file_manager::util::GetLocalPathFromURL(
+          render_frame_host(), GetProfile(), GURL(params->url)));
+  if (drive_path.empty()) {
+    // Not under Drive. No need to fill the cache.
+    SendResponse(true);
+    return true;
+  }
+
+  drive::FileSystemInterface* const file_system =
+      drive::util::GetFileSystemByProfile(GetProfile());
+  if (!file_system)  // |file_system| is NULL if Drive is disabled.
+    return false;
+
+  file_system->GetFile(
+      drive_path,
+      base::Bind(&FileManagerPrivateInternalEnsureFileDownloadedFunction::
+                     OnDownloadFinished,
+                 this));
+  return true;
+}
+
+void FileManagerPrivateInternalEnsureFileDownloadedFunction::OnDownloadFinished(
+    drive::FileError error,
+    const base::FilePath& file_path,
+    std::unique_ptr<drive::ResourceEntry> entry) {
+  DCHECK_CURRENTLY_ON(BrowserThread::UI);
+
+  if (error == drive::FILE_ERROR_OK) {
+    SendResponse(true);
+  } else {
+    SetError(drive::FileErrorToString(error));
+    SendResponse(false);
+  }
+}
+
 bool FileManagerPrivateInternalCancelFileTransfersFunction::RunAsync() {
   using extensions::api::file_manager_private_internal::CancelFileTransfers::
       Params;
@@ -763,13 +807,13 @@ void FileManagerPrivateSearchDriveFunction::OnEntryDefinitionList(
     std::unique_ptr<SearchResultInfoList> search_result_info_list,
     std::unique_ptr<EntryDefinitionList> entry_definition_list) {
   DCHECK_EQ(search_result_info_list->size(), entry_definition_list->size());
-  auto entries = base::MakeUnique<base::ListValue>();
+  auto entries = std::make_unique<base::ListValue>();
 
   // Convert Drive files to something File API stack can understand.
   for (EntryDefinitionList::const_iterator it = entry_definition_list->begin();
        it != entry_definition_list->end();
        ++it) {
-    auto entry = base::MakeUnique<base::DictionaryValue>();
+    auto entry = std::make_unique<base::DictionaryValue>();
     entry->SetString("fileSystemName", it->file_system_name);
     entry->SetString("fileSystemRoot", it->file_system_root_url);
     entry->SetString("fileFullPath", "/" + it->full_path.AsUTF8Unsafe());
@@ -869,10 +913,10 @@ void FileManagerPrivateSearchDriveMetadataFunction::OnEntryDefinitionList(
   // file_manager_private_custom_bindings.js for how this is magically
   // converted to a FileEntry.
   for (size_t i = 0; i < entry_definition_list->size(); ++i) {
-    auto result_dict = base::MakeUnique<base::DictionaryValue>();
+    auto result_dict = std::make_unique<base::DictionaryValue>();
 
     // FileEntry fields.
-    auto entry = base::MakeUnique<base::DictionaryValue>();
+    auto entry = std::make_unique<base::DictionaryValue>();
     entry->SetString(
         "fileSystemName", entry_definition_list->at(i).file_system_name);
     entry->SetString(
@@ -944,7 +988,7 @@ bool FileManagerPrivateRequestAccessTokenFunction::RunAsync() {
 
   if (!drive_service) {
     // DriveService is not available.
-    SetResult(base::MakeUnique<base::Value>(std::string()));
+    SetResult(std::make_unique<base::Value>(std::string()));
     SendResponse(true);
     return true;
   }
@@ -964,7 +1008,7 @@ bool FileManagerPrivateRequestAccessTokenFunction::RunAsync() {
 void FileManagerPrivateRequestAccessTokenFunction::OnAccessTokenFetched(
     google_apis::DriveApiErrorCode code,
     const std::string& access_token) {
-  SetResult(base::MakeUnique<base::Value>(access_token));
+  SetResult(std::make_unique<base::Value>(access_token));
   SendResponse(true);
 }
 
@@ -1003,7 +1047,7 @@ void FileManagerPrivateInternalGetShareUrlFunction::OnGetShareUrl(
     return;
   }
 
-  SetResult(base::MakeUnique<base::Value>(share_url.spec()));
+  SetResult(std::make_unique<base::Value>(share_url.spec()));
   SendResponse(true);
 }
 
@@ -1081,7 +1125,7 @@ bool FileManagerPrivateInternalGetDownloadUrlFunction::RunAsync() {
     // |file_system| is NULL if Drive is disabled or not mounted.
     SetError("Drive is disabled or not mounted.");
     // Intentionally returns a blank.
-    SetResult(base::MakeUnique<base::Value>(std::string()));
+    SetResult(std::make_unique<base::Value>(std::string()));
     return false;
   }
 
@@ -1090,7 +1134,7 @@ bool FileManagerPrivateInternalGetDownloadUrlFunction::RunAsync() {
   if (!drive::util::IsUnderDriveMountPoint(path)) {
     SetError("The given file is not in Drive.");
     // Intentionally returns a blank.
-    SetResult(base::MakeUnique<base::Value>(std::string()));
+    SetResult(std::make_unique<base::Value>(std::string()));
     return false;
   }
   base::FilePath file_path = drive::util::ExtractDrivePath(path);
@@ -1111,7 +1155,7 @@ void FileManagerPrivateInternalGetDownloadUrlFunction::OnGetResourceEntry(
   if (error != drive::FILE_ERROR_OK) {
     SetError("Download Url for this item is not available.");
     // Intentionally returns a blank.
-    SetResult(base::MakeUnique<base::Value>(std::string()));
+    SetResult(std::make_unique<base::Value>(std::string()));
     SendResponse(false);
     return;
   }
@@ -1146,14 +1190,14 @@ void FileManagerPrivateInternalGetDownloadUrlFunction::OnTokenFetched(
   if (code != google_apis::HTTP_SUCCESS) {
     SetError("Not able to fetch the token.");
     // Intentionally returns a blank.
-    SetResult(base::MakeUnique<base::Value>(std::string()));
+    SetResult(std::make_unique<base::Value>(std::string()));
     SendResponse(false);
     return;
   }
 
   const std::string url =
       download_url_.Resolve("?alt=media&access_token=" + access_token).spec();
-  SetResult(base::MakeUnique<base::Value>(url));
+  SetResult(std::make_unique<base::Value>(url));
 
   SendResponse(true);
 }

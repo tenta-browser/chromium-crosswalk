@@ -11,10 +11,6 @@
       #inspected {
       }
       </style>
-      <p>
-      Verifies that cancelling property value editing doesn't affect
-      undo stack.
-      </p>
 
       <div id="inspected">Text</div>
     `);
@@ -32,8 +28,8 @@
       newProperty.nameElement.textContent = 'color';
       newProperty.nameElement.dispatchEvent(TestRunner.createKeyEvent('Enter'));
       newProperty.valueElement.textContent = 'blue';
+      ElementsTestRunner.waitForStyleCommitted(next);
       newProperty.valueElement.dispatchEvent(TestRunner.createKeyEvent('Enter'));
-      ElementsTestRunner.waitForStyleApplied(next);
     },
 
     function editProperty(next) {
@@ -45,8 +41,7 @@
 
       // Update incrementally, do not commit.
       treeElement.valueElement.textContent = 'red';
-      treeElement.kickFreeFlowStyleEditForTest();
-      ElementsTestRunner.waitForStyleApplied(next);
+      treeElement.kickFreeFlowStyleEditForTest().then(next);
     },
 
     function cancelEditing(next) {
@@ -56,7 +51,7 @@
 
     function undoStyles(next) {
       ElementsTestRunner.dumpSelectedElementStyles(true, false, true);
-      TestRunner.domModel.undo();
+      SDK.domModelUndoStack.undo();
       ElementsTestRunner.waitForStyles('inspected', next, true);
     },
 

@@ -258,6 +258,11 @@ def AddDeviceOptions(parser):
            'speed up local development and never on bots '
                      '(increases flakiness)')
   parser.add_argument(
+      '--recover-devices',
+      action='store_true',
+      help='Attempt to recover devices prior to the final retry. Warning: '
+           'this will cause all devices to reboot.')
+  parser.add_argument(
       '--tool',
       dest='tool',
       help='Run the test under a tool '
@@ -295,6 +300,9 @@ def AddGTestOptions(parser):
       help='Host directory to which app data files will be'
            ' saved. Used with --app-data-file.')
   parser.add_argument(
+      '--isolated-script-test-perf-output',
+      help='If present, store chartjson results on this path.')
+  parser.add_argument(
       '--delete-stale-data',
       dest='delete_stale_data', action='store_true',
       help='Delete stale test data on the device.')
@@ -314,6 +322,10 @@ def AddGTestOptions(parser):
            'device for the list of all tests. Speeds up local '
            'development, but is not safe to use on bots ('
            'http://crbug.com/549214')
+  parser.add_argument(
+      '--gs-test-artifacts-bucket',
+      help=('If present, test artifacts will be uploaded to this Google '
+            'Storage bucket.'))
   parser.add_argument(
       '--gtest_also_run_disabled_tests', '--gtest-also-run-disabled-tests',
       dest='run_disabled', action='store_true',
@@ -347,17 +359,16 @@ def AddGTestOptions(parser):
   filter_group.add_argument(
       '-f', '--gtest_filter', '--gtest-filter',
       dest='test_filter',
-      help='googletest-style filter string.')
+      help='googletest-style filter string.',
+      default=os.environ.get('GTEST_FILTER'))
   filter_group.add_argument(
+      # Deprecated argument.
       '--gtest-filter-file',
+      # New argument.
+      '--test-launcher-filter-file',
       dest='test_filter_file', type=os.path.realpath,
       help='Path to file that contains googletest-style filter strings. '
            'See also //testing/buildbot/filters/README.md.')
-
-  parser.add_argument(
-      '--gs-test-artifacts-bucket',
-      help=('If present, test artifacts will be uploaded to this Google '
-            'Storage bucket.'))
 
 
 def AddInstrumentationTestOptions(parser):
@@ -408,7 +419,8 @@ def AddInstrumentationTestOptions(parser):
   parser.add_argument(
       '-f', '--test-filter', '--gtest_filter', '--gtest-filter',
       dest='test_filter',
-      help='Test filter (if not fully qualified, will run all matches).')
+      help='Test filter (if not fully qualified, will run all matches).',
+      default=os.environ.get('GTEST_FILTER'))
   parser.add_argument(
       '--gtest_also_run_disabled_tests', '--gtest-also-run-disabled-tests',
       dest='run_disabled', action='store_true',
@@ -482,10 +494,6 @@ def AddInstrumentationTestOptions(parser):
       type=float,
       help='Factor by which timeouts should be scaled.')
   parser.add_argument(
-      '--ui-screenshot-directory',
-      dest='ui_screenshot_dir', type=os.path.realpath,
-      help='Destination for screenshots captured by the tests')
-  parser.add_argument(
       '-w', '--wait-for-java-debugger', action='store_true',
       help='Wait for java debugger to attach before running any application '
            'code. Also disables test timeouts and sets retries=0.')
@@ -554,7 +562,8 @@ def AddLinkerTestOptions(parser):
   parser.add_argument(
       '-f', '--gtest-filter',
       dest='test_filter',
-      help='googletest-style filter string.')
+      help='googletest-style filter string.',
+      default=os.environ.get('GTEST_FILTER'))
   parser.add_argument(
       '--test-apk',
       type=os.path.realpath,
@@ -927,6 +936,16 @@ def RunTestsInPlatformMode(args):
         results_detail_file.write(result_html_string)
         results_detail_file.flush()
       logging.critical('TEST RESULTS: %s', results_detail_file.Link())
+
+      ui_screenshots = test_results_presentation.ui_screenshot_set(
+          json_file.name)
+      if ui_screenshots:
+        with out_manager.ArchivedTempfile(
+            'ui_screenshots.json',
+            'ui_capture',
+            output_manager.Datatype.JSON) as ui_screenshot_file:
+          ui_screenshot_file.write(ui_screenshots)
+        logging.critical('UI Screenshots: %s', ui_screenshot_file.Link())
 
   if args.command == 'perf' and (args.steps or args.single_step):
     return 0

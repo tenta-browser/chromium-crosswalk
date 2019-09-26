@@ -7,10 +7,10 @@
 #include <memory>
 
 #include "base/bind_helpers.h"
+#include "base/command_line.h"
 #include "base/files/file_path.h"
 #include "base/location.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/utf_string_conversions.h"
@@ -37,6 +37,7 @@
 #include "content/public/test/browser_test_utils.h"
 #include "ipc/ipc_message_macros.h"
 #include "ui/base/l10n/l10n_util.h"
+#include "ui/base/ui_base_switches.h"
 #include "url/gurl.h"
 #include "url/origin.h"
 
@@ -94,7 +95,7 @@ class PrintPreviewDialogClonedObserver : public WebContentsObserver {
   void DidCloneToNewWebContents(WebContents* old_web_contents,
                                 WebContents* new_web_contents) override {
     request_preview_dialog_observer_ =
-        base::MakeUnique<RequestPrintPreviewObserver>(new_web_contents);
+        std::make_unique<RequestPrintPreviewObserver>(new_web_contents);
   }
 
   std::unique_ptr<RequestPrintPreviewObserver> request_preview_dialog_observer_;
@@ -182,6 +183,11 @@ class PrintPreviewDialogControllerBrowserTest : public InProcessBrowserTest {
 
  private:
   void SetUpOnMainThread() override {
+#if defined(OS_MACOSX)
+    base::CommandLine::ForCurrentProcess()->AppendSwitch(
+        switches::kDisableModalAnimations);
+#endif
+
     WebContents* first_tab =
         browser()->tab_strip_model()->GetActiveWebContents();
     ASSERT_TRUE(first_tab);
@@ -192,7 +198,7 @@ class PrintPreviewDialogControllerBrowserTest : public InProcessBrowserTest {
     // RequestPrintPreviewObserver to get messages first for the purposes of
     // this test.
     cloned_tab_observer_ =
-        base::MakeUnique<PrintPreviewDialogClonedObserver>(first_tab);
+        std::make_unique<PrintPreviewDialogClonedObserver>(first_tab);
     chrome::DuplicateTab(browser());
 
     initiator_ = browser()->tab_strip_model()->GetActiveWebContents();
@@ -322,12 +328,13 @@ IN_PROC_BROWSER_TEST_F(PrintPreviewDialogControllerBrowserTest,
 
     frame_count = 0;
     preview_dialog->ForEachFrame(
-        base::Bind(&CountFrames, base::Unretained(&frame_count)));
+        base::BindRepeating(&CountFrames, base::Unretained(&frame_count)));
   } while (frame_count < kExpectedFrameCount);
   ASSERT_EQ(kExpectedFrameCount, frame_count);
 
   // Make sure all the frames in the dialog has access to the PDF plugin.
-  preview_dialog->ForEachFrame(base::Bind(&CheckPdfPluginForRenderFrame));
+  preview_dialog->ForEachFrame(
+      base::BindRepeating(&CheckPdfPluginForRenderFrame));
 }
 
 namespace {

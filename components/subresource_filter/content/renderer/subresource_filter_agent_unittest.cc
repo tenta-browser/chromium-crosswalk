@@ -19,10 +19,10 @@
 #include "components/subresource_filter/core/common/test_ruleset_creator.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/WebKit/public/platform/WebDocumentSubresourceFilter.h"
-#include "third_party/WebKit/public/platform/WebURL.h"
-#include "third_party/WebKit/public/platform/WebURLError.h"
-#include "third_party/WebKit/public/platform/WebURLRequest.h"
+#include "third_party/blink/public/platform/web_document_subresource_filter.h"
+#include "third_party/blink/public/platform/web_url.h"
+#include "third_party/blink/public/platform/web_url_error.h"
+#include "third_party/blink/public/platform/web_url_request.h"
 #include "url/gurl.h"
 
 namespace subresource_filter {
@@ -57,6 +57,10 @@ class SubresourceFilterAgentUnderTest : public SubresourceFilterAgent {
       std::unique_ptr<blink::WebDocumentSubresourceFilter> filter) override {
     last_injected_filter_ = std::move(filter);
     OnSetSubresourceFilterForCommittedLoadCalled();
+  }
+
+  bool GetIsAssociatedWithAdSubframe() {
+    return last_injected_filter_->GetIsAssociatedWithAdSubframe();
   }
 
   blink::WebDocumentSubresourceFilter* filter() {
@@ -135,10 +139,12 @@ class SubresourceFilterAgentTest : public ::testing::Test {
     // No DidFinishLoad is called in this case.
   }
 
-  void StartLoadAndSetActivationState(ActivationState state) {
+  void StartLoadAndSetActivationState(ActivationState state,
+                                      bool is_ad_subframe = false) {
     agent_as_rfo()->DidStartProvisionalLoad(nullptr);
     EXPECT_TRUE(agent_as_rfo()->OnMessageReceived(
-        SubresourceFilterMsg_ActivateForNextCommittedLoad(0, state)));
+        SubresourceFilterMsg_ActivateForNextCommittedLoad(0, state,
+                                                          is_ad_subframe)));
     agent_as_rfo()->DidCommitProvisionalLoad(
         true /* is_new_navigation */, false /* is_same_document_navigation */);
   }
@@ -419,7 +425,8 @@ TEST_F(SubresourceFilterAgentTest,
   ActivationState state(ActivationLevel::ENABLED);
   state.measure_performance = true;
   EXPECT_TRUE(agent_as_rfo()->OnMessageReceived(
-      SubresourceFilterMsg_ActivateForNextCommittedLoad(0, state)));
+      SubresourceFilterMsg_ActivateForNextCommittedLoad(
+          0, state, false /* is_ad_subframe */)));
   agent_as_rfo()->DidFailProvisionalLoad(
       blink::WebURLError(net::ERR_FAILED, blink::WebURL()));
   agent_as_rfo()->DidStartProvisionalLoad(nullptr);
@@ -509,6 +516,23 @@ TEST_F(SubresourceFilterAgentTest,
   ExpectNoSignalAboutFirstSubresourceDisallowed();
 
   filter->ReportDisallowedLoad();
+}
+
+TEST_F(SubresourceFilterAgentTest,
+       DryRun_IsAssociatedWithAdSubframeforDocumentOrDedicatedWorker) {
+  ASSERT_NO_FATAL_FAILURE(
+      SetTestRulesetToDisallowURLsWithPathSuffix(kTestFirstURLPathSuffix));
+  ExpectSubresourceFilterGetsInjected();
+  StartLoadAndSetActivationState(ActivationState(ActivationLevel::DRYRUN),
+                                 true /* is_associated_with_ad_subframe */);
+  ASSERT_TRUE(::testing::Mock::VerifyAndClearExpectations(agent()));
+
+  // Test the ad subframe value that is set at the filter.
+  // This also represents the flag passed to a dedicated worker filter created.
+  // For testing the flag passed to the dedicated worker filter, the unit test
+  // is not able to test the implementation of WillCreateWorkerFetchContext as
+  // that will require setup of a WebWorkerFetchContextImpl.
+  EXPECT_TRUE(agent()->GetIsAssociatedWithAdSubframe());
 }
 
 }  // namespace subresource_filter

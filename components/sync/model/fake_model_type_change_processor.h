@@ -20,9 +20,7 @@ class ModelTypeSyncBridge;
 // A ModelTypeChangeProcessor implementation for tests.
 class FakeModelTypeChangeProcessor : public ModelTypeChangeProcessor {
  public:
-  static std::unique_ptr<ModelTypeChangeProcessor> Create(
-      ModelType type,
-      ModelTypeSyncBridge* bridge);
+  static std::unique_ptr<ModelTypeChangeProcessor> Create(ModelType type);
 
   FakeModelTypeChangeProcessor();
   ~FakeModelTypeChangeProcessor() override;
@@ -37,14 +35,13 @@ class FakeModelTypeChangeProcessor : public ModelTypeChangeProcessor {
                         const std::string& storage_key,
                         MetadataChangeList* metadata_change_list) override;
   void UntrackEntity(const EntityData& entity_data) override;
-  void ModelReadyToSync(std::unique_ptr<MetadataBatch> batch) override;
+  void ModelReadyToSync(ModelTypeSyncBridge* bridge,
+                        std::unique_ptr<MetadataBatch> batch) override;
   void OnSyncStarting(const ModelErrorHandler& error_handler,
                       const StartCallback& callback) override;
   void DisableSync() override;
   bool IsTrackingMetadata() override;
   void ReportError(const ModelError& error) override;
-  void ReportError(const base::Location& location,
-                   const std::string& message) override;
 
   // Indicates that ReportError should be called in the future.
   void ExpectError();

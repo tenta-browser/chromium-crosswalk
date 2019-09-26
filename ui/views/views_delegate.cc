@@ -5,7 +5,6 @@
 #include "ui/views/views_delegate.h"
 
 #include "base/command_line.h"
-#include "base/memory/ptr_util.h"
 #include "build/build_config.h"
 #include "ui/views/views_touch_selection_controller_factory.h"
 #include "ui/views/widget/native_widget_private.h"
@@ -61,8 +60,7 @@ bool ViewsDelegate::GetSavedWindowPlacement(
 }
 
 void ViewsDelegate::NotifyAccessibilityEvent(View* view,
-                                             ui::AXEvent event_type) {
-}
+                                             ax::mojom::Event event_type) {}
 
 void ViewsDelegate::NotifyMenuItemFocused(const base::string16& menu_name,
                                           const base::string16& menu_item_name,
@@ -135,5 +133,9 @@ int ViewsDelegate::GetAppbarAutohideEdges(HMONITOR monitor,
   return EDGE_BOTTOM;
 }
 #endif
+
+bool ViewsDelegate::ShouldMirrorArrowsInRTL() const {
+  return true;
+}
 
 }  // namespace views

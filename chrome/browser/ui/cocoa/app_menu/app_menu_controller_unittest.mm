@@ -6,7 +6,6 @@
 #include "base/command_line.h"
 #include "base/mac/scoped_nsobject.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/run_loop.h"
 #include "base/strings/sys_string_conversions.h"
 #include "base/strings/utf_string_conversions.h"
@@ -38,7 +37,6 @@
 #include "components/sync/driver/sync_client.h"
 #include "components/sync/model/fake_sync_change_processor.h"
 #include "components/sync/model/sync_error_factory_mock.h"
-#include "components/sync_sessions/fake_sync_sessions_client.h"
 #include "components/sync_sessions/sessions_sync_manager.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -79,15 +77,7 @@ class MockAppMenuModel : public AppMenuModel {
   MOCK_METHOD2(ExecuteCommand, void(int command_id, int event_flags));
 };
 
-class DummyRouter : public sync_sessions::LocalSessionEventRouter {
- public:
-  ~DummyRouter() override {}
-  void StartRoutingTo(
-      sync_sessions::LocalSessionEventHandler* handler) override {}
-  void Stop() override {}
-};
-
-class BrowserRemovedObserver : public chrome::BrowserListObserver {
+class BrowserRemovedObserver : public BrowserListObserver {
  public:
   BrowserRemovedObserver() { BrowserList::AddObserver(this); }
   ~BrowserRemovedObserver() override { BrowserList::RemoveObserver(this); }
@@ -117,25 +107,24 @@ class AppMenuControllerTest : public CocoaProfileTest {
     CocoaProfileTest::SetUp();
     ASSERT_TRUE(browser());
 
-    local_device_ = base::MakeUnique<syncer::LocalDeviceInfoProviderMock>(
+    local_device_ = std::make_unique<syncer::LocalDeviceInfoProviderMock>(
         "AppMenuControllerTest", "Test Machine", "Chromium 10k", "Chrome 10k",
         sync_pb::SyncEnums_DeviceType_TYPE_LINUX, "device_id");
 
     controller_.reset([[AppMenuController alloc] initWithBrowser:browser()]);
 
-    fake_model_ = base::MakeUnique<MockAppMenuModel>();
+    fake_model_ = std::make_unique<MockAppMenuModel>();
 
-    sync_prefs_ = base::MakeUnique<syncer::SyncPrefs>(profile()->GetPrefs());
+    sync_prefs_ = std::make_unique<syncer::SyncPrefs>(profile()->GetPrefs());
 
     mock_sync_service_ = static_cast<browser_sync::ProfileSyncServiceMock*>(
         ProfileSyncServiceFactory::GetInstance()->GetForProfile(profile()));
 
-    manager_ = base::MakeUnique<sync_sessions::SessionsSyncManager>(
+    manager_ = std::make_unique<sync_sessions::SessionsSyncManager>(
         ProfileSyncServiceFactory::GetForProfile(profile())
             ->GetSyncClient()
             ->GetSyncSessionsClient(),
-        sync_prefs_.get(), local_device_.get(), &dummy_router_, base::Closure(),
-        base::Closure());
+        sync_prefs_.get(), local_device_.get(), base::Closure());
 
     manager_->MergeDataAndStartSyncing(
         syncer::SESSIONS, syncer::SyncDataList(),
@@ -179,7 +168,7 @@ class AppMenuControllerTest : public CocoaProfileTest {
                 IsDataTypeControllerRunning(syncer::PROXY_TABS))
         .WillRepeatedly(Return(true));
     EXPECT_CALL(*mock_sync_service_, GetOpenTabsUIDelegateMock())
-        .WillRepeatedly(Return(manager_.get()));
+        .WillRepeatedly(Return(manager_->GetOpenTabsUIDelegate()));
   }
 
   AppMenuController* controller() {
@@ -192,7 +181,6 @@ class AppMenuControllerTest : public CocoaProfileTest {
 
  private:
   std::unique_ptr<syncer::LocalDeviceInfoProviderMock> local_device_;
-  DummyRouter dummy_router_;
   std::unique_ptr<syncer::SyncPrefs> sync_prefs_;
   browser_sync::ProfileSyncServiceMock* mock_sync_service_ = nullptr;
   std::unique_ptr<sync_sessions::SessionsSyncManager> manager_;

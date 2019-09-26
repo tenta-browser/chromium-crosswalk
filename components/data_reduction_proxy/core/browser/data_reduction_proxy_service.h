@@ -59,6 +59,7 @@ class DataReductionProxyService
       PrefService* prefs,
       net::URLRequestContextGetter* request_context_getter,
       std::unique_ptr<DataStore> store,
+      std::unique_ptr<DataReductionProxyPingbackClient> pingback_client,
       const scoped_refptr<base::SequencedTaskRunner>& ui_task_runner,
       const scoped_refptr<base::SingleThreadTaskRunner>& io_task_runner,
       const scoped_refptr<base::SequencedTaskRunner>& db_task_runner,
@@ -76,16 +77,18 @@ class DataReductionProxyService
   bool Initialized() const;
 
   // Records data usage per host.
-  void UpdateDataUseForHost(int64_t network_bytes,
-                            int64_t original_bytes,
-                            const std::string& host);
+  // Virtual for testing.
+  virtual void UpdateDataUseForHost(int64_t network_bytes,
+                                    int64_t original_bytes,
+                                    const std::string& host);
 
   // Records daily data savings statistics in |compression_stats_|.
-  void UpdateContentLengths(int64_t data_used,
-                            int64_t original_size,
-                            bool data_reduction_proxy_enabled,
-                            DataReductionProxyRequestType request_type,
-                            const std::string& mime_type);
+  // Virtual for testing.
+  virtual void UpdateContentLengths(int64_t data_used,
+                                    int64_t original_size,
+                                    bool data_reduction_proxy_enabled,
+                                    DataReductionProxyRequestType request_type,
+                                    const std::string& mime_type);
 
   // Overrides of DataReductionProxyEventStorageDelegate.
   void AddEvent(std::unique_ptr<base::Value> event) override;
@@ -123,6 +126,11 @@ class DataReductionProxyService
 
   // Sets the reporting fraction in the pingback client.
   void SetPingbackReportingFraction(float pingback_reporting_fraction);
+
+  // Notifies |this| that the user has requested to clear the browser
+  // cache. This method is not called if only a subset of site entries are
+  // cleared.
+  void OnCacheCleared(const base::Time start, const base::Time end);
 
   // Accessor methods.
   DataReductionProxyCompressionStats* compression_stats() const {

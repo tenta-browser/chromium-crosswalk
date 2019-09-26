@@ -4,6 +4,8 @@
 
 #include "chromecast/browser/cast_browser_context.h"
 
+#include <memory>
+
 #include "base/command_line.h"
 #include "base/files/file_util.h"
 #include "base/macros.h"
@@ -60,6 +62,7 @@ CastBrowserContext::CastBrowserContext(
 }
 
 CastBrowserContext::~CastBrowserContext() {
+  BrowserContext::NotifyWillBeDestroyed(this);
   ShutdownStoragePartitions();
   content::BrowserThread::DeleteSoon(
       content::BrowserThread::IO,
@@ -112,7 +115,7 @@ content::DownloadManagerDelegate*
 CastBrowserContext::GetDownloadManagerDelegate() {
   if (!GetUserData(kDownloadManagerDelegateKey)) {
     SetUserData(kDownloadManagerDelegateKey,
-                base::MakeUnique<CastDownloadManagerDelegate>());
+                std::make_unique<CastDownloadManagerDelegate>());
   }
   return static_cast<CastDownloadManagerDelegate*>(
       GetUserData(kDownloadManagerDelegateKey));

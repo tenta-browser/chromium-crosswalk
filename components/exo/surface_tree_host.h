@@ -49,10 +49,6 @@ class SurfaceTreeHost : public SurfaceDelegate,
   // surface tree.
   void GetHitTestMask(gfx::Path* mask) const;
 
-  // Returns the cursor for the given position. If no cursor provider is
-  // registered then CursorType::kNull is returned.
-  gfx::NativeCursor GetCursor(const gfx::Point& point) const;
-
   // Call this to indicate that the previous CompositorFrame is processed and
   // the surface is being scheduled for a draw.
   void DidReceiveCompositorFrameAck();
@@ -90,9 +86,13 @@ class SurfaceTreeHost : public SurfaceDelegate,
   // Overridden from SurfaceDelegate:
   void OnSurfaceCommit() override;
   bool IsSurfaceSynchronized() const override;
-  bool IsTouchEnabled(Surface* surface) const override;
+  bool IsInputEnabled(Surface* surface) const override;
   void OnSetFrame(SurfaceFrameType type) override {}
+  void OnSetFrameColors(SkColor active_color, SkColor inactive_color) override {
+  }
   void OnSetParent(Surface* parent, const gfx::Point& position) override {}
+  void OnSetStartupId(const char* startup_id) override {}
+  void OnSetApplicationId(const char* application_id) override {}
 
   // Overridden from cc::BeginFrameObserverBase:
   bool OnBeginFrameDerivedImpl(const viz::BeginFrameArgs& args) override;

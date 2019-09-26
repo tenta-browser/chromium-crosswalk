@@ -15,6 +15,7 @@
 #include "services/metrics/public/cpp/ukm_recorder.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
+using GlobalMemoryDump = memory_instrumentation::GlobalMemoryDump;
 using GlobalMemoryDumpPtr = memory_instrumentation::mojom::GlobalMemoryDumpPtr;
 using ProcessMemoryDumpPtr =
     memory_instrumentation::mojom::ProcessMemoryDumpPtr;
@@ -38,9 +39,8 @@ class ProcessMemoryMetricsEmitterFake : public ProcessMemoryMetricsEmitter {
     MarkServiceRequestsInProgress();
   }
 
-  void ReceivedMemoryDump(
-      bool success,
-      memory_instrumentation::mojom::GlobalMemoryDumpPtr ptr) override {
+  void ReceivedMemoryDump(bool success,
+                          std::unique_ptr<GlobalMemoryDump> ptr) override {
     ProcessMemoryMetricsEmitter::ReceivedMemoryDump(success, std::move(ptr));
   }
 
@@ -79,28 +79,41 @@ class ProcessMemoryMetricsEmitterFake : public ProcessMemoryMetricsEmitter {
   DISALLOW_COPY_AND_ASSIGN(ProcessMemoryMetricsEmitterFake);
 };
 
+void SetAllocatorDumpMetric(ProcessMemoryDumpPtr& pmd,
+                            const std::string& dump_name,
+                            const std::string& metric_name,
+                            uint64_t value) {
+  auto it = pmd->chrome_allocator_dumps.find(dump_name);
+  if (it == pmd->chrome_allocator_dumps.end()) {
+    memory_instrumentation::mojom::AllocatorMemDumpPtr amd(
+        memory_instrumentation::mojom::AllocatorMemDump::New());
+    amd->numeric_entries.insert(std::make_pair(metric_name, value));
+    pmd->chrome_allocator_dumps.insert(
+        std::make_pair(dump_name, std::move(amd)));
+  } else {
+    it->second->numeric_entries.insert(std::make_pair(metric_name, value));
+  }
+}
+
 OSMemDumpPtr GetFakeOSMemDump(uint32_t resident_set_kb,
                               uint32_t private_footprint_kb,
+#if defined(OS_LINUX) || defined(OS_ANDROID)
                               uint32_t shared_footprint_kb,
-                              uint32_t private_swap_footprint_kb) {
+                              uint32_t private_swap_footprint_kb
+#else
+                              uint32_t shared_footprint_kb
+#endif
+                              ) {
   using memory_instrumentation::mojom::VmRegion;
 
-  std::vector<memory_instrumentation::mojom::VmRegionPtr> vm_regions;
-  vm_regions.emplace_back(
-      VmRegion::New(0xdeadbeef,                      // start address
-                    0x4000,                          // size_in_bytes
-                    0x1234,                          // module_timestamp
-                    VmRegion::kProtectionFlagsRead,  // protection_flags
-                    "dummy_file",                    // mapped_file
-                    100,    // byte_stats_private_dirty_resident
-                    200,    // byte_stats_private_clean_resident
-                    300,    // byte_stats_shared_dirty_resident
-                    400,    // byte_stats_shared_clean_resident
-                    500,    // byte_stats_swapped,
-                    200));  // byte_stats_proportional_resident
+#if defined(OS_LINUX) || defined(OS_ANDROID)
   return memory_instrumentation::mojom::OSMemDump::New(
       resident_set_kb, private_footprint_kb, shared_footprint_kb,
-      std::move(vm_regions), private_swap_footprint_kb);
+      private_swap_footprint_kb);
+#else
+  return memory_instrumentation::mojom::OSMemDump::New(
+      resident_set_kb, private_footprint_kb, shared_footprint_kb);
+#endif
 }
 
 void PopulateBrowserMetrics(GlobalMemoryDumpPtr& global_dump,
@@ -108,21 +121,19 @@ void PopulateBrowserMetrics(GlobalMemoryDumpPtr& global_dump,
   ProcessMemoryDumpPtr pmd(
       memory_instrumentation::mojom::ProcessMemoryDump::New());
   pmd->process_type = ProcessType::BROWSER;
-  pmd->chrome_dump = memory_instrumentation::mojom::ChromeMemDump::New();
-#if !defined(OS_WIN)
-  pmd->chrome_dump->malloc_total_kb = metrics_mb["Malloc"] * 1024;
-#endif
+  SetAllocatorDumpMetric(pmd, "malloc", "effective_size",
+                         metrics_mb["Malloc"] * 1024 * 1024);
   OSMemDumpPtr os_dump =
       GetFakeOSMemDump(metrics_mb["Resident"] * 1024,
                        metrics_mb["PrivateMemoryFootprint"] * 1024,
-                       metrics_mb["SharedMemoryFootprint"] * 1024,
 #if defined(OS_LINUX) || defined(OS_ANDROID)
                        // accessing PrivateSwapFootprint on other OSes will
                        // modify metrics_mb to create the value, which leads to
                        // expectation failures.
+                       metrics_mb["SharedMemoryFootprint"] * 1024,
                        metrics_mb["PrivateSwapFootprint"] * 1024
 #else
-                       0
+                       metrics_mb["SharedMemoryFootprint"] * 1024
 #endif
                        );
   pmd->os_dump = std::move(os_dump);
@@ -134,9 +145,7 @@ base::flat_map<const char*, int64_t> GetExpectedBrowserMetrics() {
       {
         {"ProcessType", static_cast<int64_t>(ProcessType::BROWSER)},
             {"Resident", 10},
-#if !defined(OS_WIN)
             {"Malloc", 20},
-#endif
             {"PrivateMemoryFootprint", 30}, {"SharedMemoryFootprint", 35},
             {"Uptime", 42},
 #if defined(OS_LINUX) || defined(OS_ANDROID)
@@ -146,33 +155,48 @@ base::flat_map<const char*, int64_t> GetExpectedBrowserMetrics() {
       base::KEEP_FIRST_OF_DUPES);
 }
 
-void PopulateRendererMetrics(GlobalMemoryDumpPtr& global_dump,
-                             base::flat_map<const char*, int64_t>& metrics_mb,
-                             base::ProcessId pid) {
+void PopulateRendererMetrics(
+    GlobalMemoryDumpPtr& global_dump,
+    base::flat_map<const char*, int64_t>& metrics_mb_or_count,
+    base::ProcessId pid) {
   ProcessMemoryDumpPtr pmd(
       memory_instrumentation::mojom::ProcessMemoryDump::New());
   pmd->process_type = ProcessType::RENDERER;
-  pmd->chrome_dump = memory_instrumentation::mojom::ChromeMemDump::New();
-#if !defined(OS_WIN)
-  pmd->chrome_dump->malloc_total_kb = metrics_mb["Malloc"] * 1024;
-#endif
-  pmd->chrome_dump->partition_alloc_total_kb =
-      metrics_mb["PartitionAlloc"] * 1024;
-  pmd->chrome_dump->blink_gc_total_kb = metrics_mb["BlinkGC"] * 1024;
-  pmd->chrome_dump->v8_total_kb = metrics_mb["V8"] * 1024;
-  OSMemDumpPtr os_dump =
-      GetFakeOSMemDump(metrics_mb["Resident"] * 1024,
-                       metrics_mb["PrivateMemoryFootprint"] * 1024,
-                       metrics_mb["SharedMemoryFootprint"] * 1024,
+  SetAllocatorDumpMetric(pmd, "malloc", "effective_size",
+                         metrics_mb_or_count["Malloc"] * 1024 * 1024);
+  SetAllocatorDumpMetric(pmd, "partition_alloc", "effective_size",
+                         metrics_mb_or_count["PartitionAlloc"] * 1024 * 1024);
+  SetAllocatorDumpMetric(pmd, "blink_gc", "effective_size",
+                         metrics_mb_or_count["BlinkGC"] * 1024 * 1024);
+  SetAllocatorDumpMetric(pmd, "v8", "effective_size",
+                         metrics_mb_or_count["V8"] * 1024 * 1024);
+
+  SetAllocatorDumpMetric(pmd, "blink_objects/Document", "object_count",
+                         metrics_mb_or_count["NumberOfDocuments"]);
+  SetAllocatorDumpMetric(pmd, "blink_objects/Frame", "object_count",
+                         metrics_mb_or_count["NumberOfFrames"]);
+  SetAllocatorDumpMetric(pmd, "blink_objects/LayoutObject", "object_count",
+                         metrics_mb_or_count["NumberOfLayoutObjects"]);
+  SetAllocatorDumpMetric(pmd, "blink_objects/Node", "object_count",
+                         metrics_mb_or_count["NumberOfNodes"]);
+  SetAllocatorDumpMetric(
+      pmd, "partition_alloc/partitions/array_buffer", "effective_size",
+      metrics_mb_or_count["PartitionAlloc.Partitions.ArrayBuffer"] * 1024 *
+          1024);
+
+  OSMemDumpPtr os_dump = GetFakeOSMemDump(
+      metrics_mb_or_count["Resident"] * 1024,
+      metrics_mb_or_count["PrivateMemoryFootprint"] * 1024,
 #if defined(OS_LINUX) || defined(OS_ANDROID)
-                       // accessing PrivateSwapFootprint on other OSes will
-                       // modify metrics_mb to create the value, which leads to
-                       // expectation failures.
-                       metrics_mb["PrivateSwapFootprint"] * 1024
+      // accessing PrivateSwapFootprint on other OSes will
+      // modify metrics_mb_or_count to create the value, which leads to
+      // expectation failures.
+      metrics_mb_or_count["SharedMemoryFootprint"] * 1024,
+      metrics_mb_or_count["PrivateSwapFootprint"] * 1024
 #else
-                       0
+      metrics_mb_or_count["SharedMemoryFootprint"] * 1024
 #endif
-                       );
+      );
   pmd->os_dump = std::move(os_dump);
   pmd->pid = pid;
   global_dump->process_dumps.push_back(std::move(pmd));
@@ -182,16 +206,16 @@ base::flat_map<const char*, int64_t> GetExpectedRendererMetrics() {
   return base::flat_map<const char*, int64_t>(
       {
         {"ProcessType", static_cast<int64_t>(ProcessType::RENDERER)},
-            {"Resident", 110},
-#if !defined(OS_WIN)
-            {"Malloc", 120},
-#endif
-            {"PrivateMemoryFootprint", 130}, {"SharedMemoryFootprint", 135},
-            {"PartitionAlloc", 140}, {"BlinkGC", 150}, {"V8", 160},
-            {"NumberOfExtensions", 0}, {"Uptime", 42},
+            {"Resident", 110}, {"Malloc", 120}, {"PrivateMemoryFootprint", 130},
+            {"SharedMemoryFootprint", 135}, {"PartitionAlloc", 140},
+            {"BlinkGC", 150}, {"V8", 160}, {"NumberOfExtensions", 0},
+            {"Uptime", 42},
 #if defined(OS_LINUX) || defined(OS_ANDROID)
             {"PrivateSwapFootprint", 50},
 #endif
+            {"NumberOfDocuments", 1}, {"NumberOfFrames", 2},
+            {"NumberOfLayoutObjects", 5}, {"NumberOfNodes", 3},
+            {"PartitionAlloc.Partitions.ArrayBuffer", 10},
       },
       base::KEEP_FIRST_OF_DUPES);
 }
@@ -207,23 +231,21 @@ void PopulateGpuMetrics(GlobalMemoryDumpPtr& global_dump,
   ProcessMemoryDumpPtr pmd(
       memory_instrumentation::mojom::ProcessMemoryDump::New());
   pmd->process_type = ProcessType::GPU;
-  pmd->chrome_dump = memory_instrumentation::mojom::ChromeMemDump::New();
-#if !defined(OS_WIN)
-  pmd->chrome_dump->malloc_total_kb = metrics_mb["Malloc"] * 1024;
-#endif
-  pmd->chrome_dump->command_buffer_total_kb =
-      metrics_mb["CommandBuffer"] * 1024;
+  SetAllocatorDumpMetric(pmd, "malloc", "effective_size",
+                         metrics_mb["Malloc"] * 1024 * 1024);
+  SetAllocatorDumpMetric(pmd, "gpu/gl", "effective_size",
+                         metrics_mb["CommandBuffer"] * 1024 * 1024);
   OSMemDumpPtr os_dump =
       GetFakeOSMemDump(metrics_mb["Resident"] * 1024,
                        metrics_mb["PrivateMemoryFootprint"] * 1024,
-                       metrics_mb["SharedMemoryFootprint"] * 1024,
 #if defined(OS_LINUX) || defined(OS_ANDROID)
                        // accessing PrivateSwapFootprint on other OSes will
                        // modify metrics_mb to create the value, which leads to
                        // expectation failures.
+                       metrics_mb["SharedMemoryFootprint"] * 1024,
                        metrics_mb["PrivateSwapFootprint"] * 1024
 #else
-                       0
+                       metrics_mb["SharedMemoryFootprint"] * 1024
 #endif
                        );
   pmd->os_dump = std::move(os_dump);
@@ -235,9 +257,7 @@ base::flat_map<const char*, int64_t> GetExpectedGpuMetrics() {
       {
         {"ProcessType", static_cast<int64_t>(ProcessType::GPU)},
             {"Resident", 210},
-#if !defined(OS_WIN)
             {"Malloc", 220},
-#endif
             {"PrivateMemoryFootprint", 230}, {"SharedMemoryFootprint", 235},
             {"CommandBuffer", 240}, {"Uptime", 42},
 #if defined(OS_LINUX) || defined(OS_ANDROID)
@@ -290,7 +310,7 @@ base::flat_map<const char*, int64_t> GetExpectedProcessMetrics(
   return base::flat_map<const char*, int64_t>();
 }
 
-ProcessInfoVector GetProcessInfo(ukm::UkmRecorder& ukm_recorder) {
+ProcessInfoVector GetProcessInfo(ukm::TestUkmRecorder& ukm_recorder) {
   ProcessInfoVector process_infos;
 
   // Process 200 always has no URLs.
@@ -402,7 +422,8 @@ TEST_P(ProcessMemoryMetricsEmitterTest, CollectsSingleProcessUKMs) {
   scoped_refptr<ProcessMemoryMetricsEmitterFake> emitter(
       new ProcessMemoryMetricsEmitterFake(test_ukm_recorder_));
   emitter->ReceivedProcessInfos(ProcessInfoVector());
-  emitter->ReceivedMemoryDump(true, std::move(global_dump));
+  emitter->ReceivedMemoryDump(
+      true, GlobalMemoryDump::MoveFrom(std::move(global_dump)));
 
   std::vector<base::flat_map<const char*, int64_t>> expected_entries;
   expected_entries.push_back(expected_metrics);
@@ -428,7 +449,8 @@ TEST_F(ProcessMemoryMetricsEmitterTest, CollectsExtensionProcessUKMs) {
   scoped_refptr<ProcessMemoryMetricsEmitterFake> emitter(
       new ProcessMemoryMetricsEmitterFake(test_ukm_recorder_));
   emitter->ReceivedProcessInfos(ProcessInfoVector());
-  emitter->ReceivedMemoryDump(true, std::move(global_dump));
+  emitter->ReceivedMemoryDump(
+      true, GlobalMemoryDump::MoveFrom(std::move(global_dump)));
 
   std::vector<base::flat_map<const char*, int64_t>> expected_entries;
   expected_entries.push_back(expected_metrics);
@@ -453,7 +475,8 @@ TEST_F(ProcessMemoryMetricsEmitterTest, CollectsManyProcessUKMsSingleDump) {
   scoped_refptr<ProcessMemoryMetricsEmitterFake> emitter(
       new ProcessMemoryMetricsEmitterFake(test_ukm_recorder_));
   emitter->ReceivedProcessInfos(ProcessInfoVector());
-  emitter->ReceivedMemoryDump(true, std::move(global_dump));
+  emitter->ReceivedMemoryDump(
+      true, GlobalMemoryDump::MoveFrom(std::move(global_dump)));
 
   CheckMemoryUkmEntryMetrics(entries_metrics);
 }
@@ -477,7 +500,8 @@ TEST_F(ProcessMemoryMetricsEmitterTest, CollectsManyProcessUKMsManyDumps) {
       entries_metrics.push_back(expected_metrics);
     }
     emitter->ReceivedProcessInfos(ProcessInfoVector());
-    emitter->ReceivedMemoryDump(true, std::move(global_dump));
+    emitter->ReceivedMemoryDump(
+        true, GlobalMemoryDump::MoveFrom(std::move(global_dump)));
   }
 
   CheckMemoryUkmEntryMetrics(entries_metrics, 2u);
@@ -494,7 +518,8 @@ TEST_F(ProcessMemoryMetricsEmitterTest, ReceiveProcessInfoFirst) {
   scoped_refptr<ProcessMemoryMetricsEmitterFake> emitter(
       new ProcessMemoryMetricsEmitterFake(test_ukm_recorder_));
   emitter->ReceivedProcessInfos(GetProcessInfo(test_ukm_recorder_));
-  emitter->ReceivedMemoryDump(true, std::move(global_dump));
+  emitter->ReceivedMemoryDump(
+      true, GlobalMemoryDump::MoveFrom(std::move(global_dump)));
 
   auto entries = test_ukm_recorder_.GetEntriesByName(UkmEntry::kEntryName);
   ASSERT_EQ(entries.size(), 2u);
@@ -525,7 +550,8 @@ TEST_F(ProcessMemoryMetricsEmitterTest, ReceiveProcessInfoSecond) {
 
   scoped_refptr<ProcessMemoryMetricsEmitterFake> emitter(
       new ProcessMemoryMetricsEmitterFake(test_ukm_recorder_));
-  emitter->ReceivedMemoryDump(true, std::move(global_dump));
+  emitter->ReceivedMemoryDump(
+      true, GlobalMemoryDump::MoveFrom(std::move(global_dump)));
   emitter->ReceivedProcessInfos(GetProcessInfo(test_ukm_recorder_));
 
   auto entries = test_ukm_recorder_.GetEntriesByName(UkmEntry::kEntryName);
@@ -558,7 +584,8 @@ TEST_F(ProcessMemoryMetricsEmitterTest, ProcessInfoHasTwoURLs) {
 
   scoped_refptr<ProcessMemoryMetricsEmitterFake> emitter(
       new ProcessMemoryMetricsEmitterFake(test_ukm_recorder_));
-  emitter->ReceivedMemoryDump(true, std::move(global_dump));
+  emitter->ReceivedMemoryDump(
+      true, GlobalMemoryDump::MoveFrom(std::move(global_dump)));
   emitter->ReceivedProcessInfos(GetProcessInfo(test_ukm_recorder_));
 
   // Check that if there are two URLs, neither is emitted.

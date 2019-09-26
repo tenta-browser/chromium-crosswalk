@@ -3,37 +3,33 @@
     {
       "name": "LayoutView #document",
       "bounds": [800, 600],
+      "drawsContent": false,
+      "backgroundColor": "#FFFFFF"
+    },
+    {
+      "name": "Scrolling Layer",
+      "bounds": [800, 600],
+      "drawsContent": false
+    },
+    {
+      "name": "Scrolling Contents Layer",
+      "bounds": [800, 600],
       "contentsOpaque": true,
       "backgroundColor": "#FFFFFF",
       "paintInvalidations": [
         {
           "object": "LayoutSVGContainer g id='content'",
-          "rect": [16, 42, 784, 170],
-          "reason": "geometry"
+          "rect": [16, 40, 784, 173],
+          "reason": "appeared"
         },
         {
           "object": "LayoutSVGContainer g id='content'",
-          "rect": [16, 42, 784, 170],
-          "reason": "appeared"
-        },
-        {
-          "object": "LayoutSVGInlineText #text",
-          "rect": [16, 42, 784, 170],
-          "reason": "geometry"
-        },
-        {
-          "object": "LayoutSVGInlineText #text",
-          "rect": [16, 42, 784, 170],
-          "reason": "appeared"
+          "rect": [16, 40, 784, 173],
+          "reason": "disappeared"
         },
         {
           "object": "LayoutSVGText text",
-          "rect": [16, 42, 784, 170],
-          "reason": "style change"
-        },
-        {
-          "object": "LayoutSVGText text",
-          "rect": [16, 42, 784, 170],
+          "rect": [16, 40, 318, 173],
           "reason": "appeared"
         }
       ]
@@ -66,11 +62,11 @@
     },
     {
       "object": "LayoutSVGText text",
-      "reason": "style change"
+      "reason": "full"
     },
     {
       "object": "RootInlineBox",
-      "reason": "style change"
+      "reason": "full"
     },
     {
       "object": "LayoutSVGInlineText #text",

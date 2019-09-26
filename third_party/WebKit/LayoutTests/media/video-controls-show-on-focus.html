@@ -2,7 +2,6 @@
 <title>Test visibiblity of controls when focusing video.</title>
 <script src="../resources/testharness.js"></script>
 <script src="../resources/testharnessreport.js"></script>
-<script src="media-file.js"></script>
 <script src="media-controls.js"></script>
 <video controls autoplay></video>
 <script>
@@ -12,16 +11,16 @@ async_test(function(t) {
     video.onplaying = t.step_func(function() {
         runAfterHideMediaControlsTimerFired(t.step_func_done(function() {
             var controls = mediaControlsButton(video, "panel");
-            assert_equals(getComputedStyle(controls).opacity, "0");
+            assert_true(controls.classList.contains("transparent"));
             video.focus();
-            assert_equals(getComputedStyle(controls).opacity, "1");
+            assert_false(controls.classList.contains("transparent"));
 
             // We fade out when focus is lost, so the opacity is still 1
             video.blur();
-            assert_equals(getComputedStyle(controls).opacity, "1");
+            assert_false(controls.classList.contains("transparent"));
         }), video);
     });
 
-    video.src = findMediaFile("video", "content/test");
+    video.src = "content/test.ogv";
 });
 </script>

@@ -11,9 +11,6 @@
 #include "base/files/scoped_temp_dir.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/message_loop/message_loop.h"
-#include "base/test/sequenced_worker_pool_owner.h"
-#include "base/time/time.h"
 #include "components/browser_sync/profile_sync_service.h"
 #include "components/invalidation/impl/fake_invalidation_service.h"
 #include "components/signin/core/browser/account_tracker_service.h"
@@ -23,12 +20,8 @@
 #include "components/sync/driver/fake_sync_client.h"
 #include "components/sync/driver/sync_api_component_factory_mock.h"
 #include "components/sync_preferences/testing_pref_service_syncable.h"
-#include "components/sync_sessions/fake_sync_sessions_client.h"
-
-namespace base {
-class Time;
-class TimeDelta;
-}
+#include "components/sync_sessions/mock_sync_sessions_client.h"
+#include "services/identity/public/cpp/identity_manager.h"
 
 namespace history {
 class HistoryService;
@@ -43,12 +36,6 @@ class PrefRegistrySyncable;
 }
 
 namespace browser_sync {
-
-// An empty syncer::NetworkTimeUpdateCallback. Used in various tests to
-// instantiate ProfileSyncService.
-void EmptyNetworkTimeUpdate(const base::Time&,
-                            const base::TimeDelta&,
-                            const base::TimeDelta&);
 
 // Call this to register preferences needed for ProfileSyncService creation.
 void RegisterPrefsForProfileSyncService(
@@ -146,13 +133,15 @@ class ProfileSyncServiceBundle {
 
   FakeSigninManagerType* signin_manager() { return &signin_manager_; }
 
+  identity::IdentityManager* identity_manager() { return &identity_manager_; }
+
   AccountTrackerService* account_tracker() { return &account_tracker_; }
 
   syncer::SyncApiComponentFactoryMock* component_factory() {
     return &component_factory_;
   }
 
-  sync_sessions::FakeSyncSessionsClient* sync_sessions_client() {
+  sync_sessions::MockSyncSessionsClient* sync_sessions_client() {
     return &sync_sessions_client_;
   }
 
@@ -169,14 +158,15 @@ class ProfileSyncServiceBundle {
 
  private:
   scoped_refptr<base::SingleThreadTaskRunner> db_thread_;
-  base::SequencedWorkerPoolOwner worker_pool_owner_;
   sync_preferences::TestingPrefServiceSyncable pref_service_;
   TestSigninClient signin_client_;
   AccountTrackerService account_tracker_;
   FakeSigninManagerType signin_manager_;
   FakeProfileOAuth2TokenService auth_service_;
+  identity::IdentityManager identity_manager_;
   syncer::SyncApiComponentFactoryMock component_factory_;
-  sync_sessions::FakeSyncSessionsClient sync_sessions_client_;
+  testing::NiceMock<sync_sessions::MockSyncSessionsClient>
+      sync_sessions_client_;
   invalidation::FakeInvalidationService fake_invalidation_service_;
   scoped_refptr<net::URLRequestContextGetter> url_request_context_;
   base::ScopedTempDir base_directory_;

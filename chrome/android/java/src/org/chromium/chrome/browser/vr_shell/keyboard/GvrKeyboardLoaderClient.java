@@ -4,6 +4,7 @@
 
 package org.chromium.chrome.browser.vr_shell.keyboard;
 
+import android.annotation.SuppressLint;
 import android.content.Context;
 import android.content.ContextWrapper;
 import android.content.pm.PackageManager.NameNotFoundException;
@@ -20,7 +21,7 @@ import org.chromium.base.annotations.CalledByNative;
 import org.chromium.base.annotations.JNINamespace;
 
 /** Loads the GVR keyboard SDK dynamically using the Keyboard Service. */
-@JNINamespace("vr_shell")
+@JNINamespace("vr")
 public class GvrKeyboardLoaderClient {
     private static final String TAG = "ChromeGvrKbClient";
     private static final boolean DEBUG_LOGS = false;
@@ -30,6 +31,11 @@ public class GvrKeyboardLoaderClient {
 
     private static IGvrKeyboardLoader sLoader = null;
     private static ClassLoader sRemoteClassLoader = null;
+    // GVR doesn't support setting the context twice in the application's lifetime and crashes if we
+    // do so. Setting the same context wrapper is a no-op, so we keep a reference to the one we
+    // create and use it across re-initialization of the keyboard api.
+    @SuppressLint("StaticFieldLeak")
+    private static KeyboardContextWrapper sContextWrapper = null;
 
     @CalledByNative
     public static long loadKeyboardSDK() {
@@ -66,7 +72,7 @@ public class GvrKeyboardLoaderClient {
             ClassLoader remoteClassLoader = (ClassLoader) getRemoteClassLoader();
             if (remoteClassLoader != null) {
                 IBinder binder = newBinder(remoteClassLoader, LOADER_NAME);
-                sLoader = IGvrKeyboardLoader.Stub.asInterface(binder);
+                if (binder != null) sLoader = IGvrKeyboardLoader.Stub.asInterface(binder);
             }
         }
         return sLoader;
@@ -86,8 +92,10 @@ public class GvrKeyboardLoaderClient {
 
     @CalledByNative
     public static Context getContextWrapper() {
+        if (sContextWrapper != null) return sContextWrapper;
         Context context = ContextUtils.getApplicationContext();
-        return new KeyboardContextWrapper(getRemoteContext(context), context);
+        sContextWrapper = new KeyboardContextWrapper(getRemoteContext(context), context);
+        return sContextWrapper;
     }
 
     @CalledByNative
@@ -107,7 +115,10 @@ public class GvrKeyboardLoaderClient {
             Class<?> clazz = classLoader.loadClass(className);
             return (IBinder) clazz.getConstructor().newInstance();
         } catch (ClassNotFoundException e) {
-            throw new IllegalStateException("Unable to find dynamic class " + className);
+            // This could happen if the user has a really old version of the keyboard installed when
+            // dynamic loading was not supported.
+            Log.e(TAG, "Unable to find dynamic class " + className);
+            return null;
         } catch (InstantiationException e) {
             throw new IllegalStateException("Unable to instantiate the remote class " + className);
         } catch (IllegalAccessException e) {

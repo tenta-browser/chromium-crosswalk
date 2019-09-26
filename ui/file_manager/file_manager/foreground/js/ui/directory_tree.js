@@ -99,7 +99,7 @@ var MENU_TREE_ITEM_INNER_HTML =
  * @constructor
  */
 function DirectoryItem(label, tree) {
-  var item = new cr.ui.TreeItem();
+  var item = /** @type {DirectoryItem} */ (new cr.ui.TreeItem());
   item.__proto__ = DirectoryItem.prototype;
   item.parentTree_ = tree;
   item.directoryModel_ = tree.directoryModel;
@@ -526,7 +526,8 @@ SubDirectoryItem.prototype.updateSharedStatusIcon = function() {
  * @constructor
  */
 function VolumeItem(modelItem, tree) {
-  var item = new DirectoryItem(modelItem.volumeInfo.label, tree);
+  var item = /** @type {VolumeItem} */ (
+      new DirectoryItem(modelItem.volumeInfo.label, tree));
   item.__proto__ = VolumeItem.prototype;
 
   item.modelItem_ = modelItem;
@@ -632,12 +633,9 @@ VolumeItem.prototype.activate = function() {
  */
 VolumeItem.prototype.setupIcon_ = function(icon, volumeInfo) {
   icon.classList.add('item-icon');
-  if (volumeInfo.volumeType === VolumeManagerCommon.VolumeType.PROVIDED) {
-    var backgroundImage = '-webkit-image-set(' +
-        'url(chrome://extension-icon/' + volumeInfo.extensionId +
-            '/16/1) 1x, ' +
-        'url(chrome://extension-icon/' + volumeInfo.extensionId +
-            '/32/1) 2x);';
+  var backgroundImage =
+      util.iconSetToCSSBackgroundImageValue(volumeInfo.iconSet);
+  if (backgroundImage !== 'none') {
     // The icon div is not yet added to DOM, therefore it is impossible to
     // use style.backgroundImage.
     icon.setAttribute(
@@ -662,10 +660,12 @@ VolumeItem.prototype.setupIcon_ = function(icon, volumeInfo) {
 VolumeItem.prototype.setupEjectButton_ = function(rowElement) {
   var ejectButton = cr.doc.createElement('button');
   // Block other mouse handlers.
-  ejectButton.addEventListener(
-      'mouseup', function(event) { event.stopPropagation() });
-  ejectButton.addEventListener(
-      'mousedown', function(event) { event.stopPropagation() });
+  ejectButton.addEventListener('mouseup', function(event) {
+    event.stopPropagation();
+  });
+  ejectButton.addEventListener('mousedown', function(event) {
+    event.stopPropagation();
+  });
   ejectButton.className = 'root-eject';
   ejectButton.setAttribute('aria-label', str('UNMOUNT_DEVICE_BUTTON_LABEL'));
   ejectButton.setAttribute('tabindex', '0');
@@ -851,7 +851,7 @@ DriveVolumeItem.prototype.selectByEntry = function(entry) {
  * @constructor
  */
 function ShortcutItem(modelItem, tree) {
-  var item = new cr.ui.TreeItem();
+  var item = /** @type {ShortcutItem} */ (new cr.ui.TreeItem());
   item.__proto__ = ShortcutItem.prototype;
 
   item.parentTree_ = tree;

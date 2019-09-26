@@ -15,7 +15,7 @@
 #include "base/memory/weak_ptr.h"
 #include "content/common/content_export.h"
 #include "media/base/media_permission.h"
-#include "third_party/WebKit/public/platform/modules/permissions/permission.mojom.h"
+#include "third_party/blink/public/platform/modules/permissions/permission.mojom.h"
 
 namespace base {
 class SingleThreadTaskRunner;
@@ -42,11 +42,9 @@ class CONTENT_EXPORT MediaPermissionDispatcher : public media::MediaPermission {
   // Note: Can be called on any thread. The |permission_status_cb| will always
   // be fired on the thread where these methods are called.
   void HasPermission(Type type,
-                     const GURL& security_origin,
                      const PermissionStatusCB& permission_status_cb) override;
   void RequestPermission(
       Type type,
-      const GURL& security_origin,
       const PermissionStatusCB& permission_status_cb) override;
   bool IsEncryptedMediaEnabled() override;
 

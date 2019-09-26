@@ -6,7 +6,11 @@
 
 #include <stddef.h>
 
+#include "base/command_line.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/trace_event/trace_event.h"
+#include "ui/base/ui_base_features.h"
+#include "ui/base/ui_base_switches.h"
 #include "ui/ozone/common/gpu/ozone_gpu_message_params.h"
 #include "ui/ozone/common/gpu/ozone_gpu_messages.h"
 #include "ui/ozone/platform/drm/common/drm_util.h"
@@ -70,8 +74,8 @@ void CursorIPC::Move(gfx::AcceleratedWidget window, const gfx::Point& point) {
 void CursorIPC::InitializeOnEvdevIfNecessary() {}
 
 void CursorIPC::Send(IPC::Message* message) {
-  if (IsConnected() &&
-      send_runner_->PostTask(FROM_HERE, base::Bind(send_callback_, message)))
+  if (IsConnected() && send_runner_->PostTask(
+                           FROM_HERE, base::BindOnce(send_callback_, message)))
     return;
 
   // Drop disconnected updates. DrmWindowHost will call
@@ -83,7 +87,17 @@ void CursorIPC::Send(IPC::Message* message) {
 }  // namespace
 
 DrmGpuPlatformSupportHost::DrmGpuPlatformSupportHost(DrmCursor* cursor)
-    : cursor_(cursor), weak_ptr_factory_(this) {}
+    : ui_runner_(base::ThreadTaskRunnerHandle::IsSet()
+                     ? base::ThreadTaskRunnerHandle::Get()
+                     : nullptr),
+      cursor_(cursor),
+      weak_ptr_factory_(this) {
+  if (ui_runner_) {
+    weak_ptr_ = weak_ptr_factory_.GetWeakPtr();
+  } else {
+    DCHECK(!features::IsMusEnabled());
+  }
+}
 
 DrmGpuPlatformSupportHost::~DrmGpuPlatformSupportHost() {}
 
@@ -101,7 +115,16 @@ void DrmGpuPlatformSupportHost::RemoveGpuThreadObserver(
 }
 
 bool DrmGpuPlatformSupportHost::IsConnected() {
-  return host_id_ >= 0 && channel_established_;
+  base::AutoLock auto_lock(host_id_lock_);
+  return host_id_ >= 0;
+}
+
+void DrmGpuPlatformSupportHost::OnGpuServiceLaunched(
+    scoped_refptr<base::SingleThreadTaskRunner> ui_runner,
+    scoped_refptr<base::SingleThreadTaskRunner> io_runner,
+    GpuHostBindInterfaceCallback binder) {
+  NOTREACHED() << "DrmGpuPlatformSupportHost::OnGpuServiceLaunched shouldn't "
+                  "be used with pre-mojo IPC";
 }
 
 void DrmGpuPlatformSupportHost::OnGpuProcessLaunched(
@@ -109,30 +132,31 @@ void DrmGpuPlatformSupportHost::OnGpuProcessLaunched(
     scoped_refptr<base::SingleThreadTaskRunner> ui_runner,
     scoped_refptr<base::SingleThreadTaskRunner> send_runner,
     const base::Callback<void(IPC::Message*)>& send_callback) {
-  DCHECK(!ui_runner->BelongsToCurrentThread());
-  ui_runner_ = std::move(ui_runner);
+  // If there was a task runner set during construction, prefer using that.
+  if (!ui_runner_) {
+    ui_runner_ = std::move(ui_runner);
+    weak_ptr_ = weak_ptr_factory_.GetWeakPtr();
+  }
+  DCHECK(!ui_runner_->BelongsToCurrentThread());
   TRACE_EVENT1("drm", "DrmGpuPlatformSupportHost::OnGpuProcessLaunched",
                "host_id", host_id);
-  host_id_ = host_id;
-  send_runner_ = std::move(send_runner);
-  send_callback_ = send_callback;
-
-  for (GpuThreadObserver& observer : gpu_thread_observers_)
-    observer.OnGpuProcessLaunched();
 
   ui_runner_->PostTask(
-      FROM_HERE, base::Bind(&DrmGpuPlatformSupportHost::OnChannelEstablished,
-                            weak_ptr_factory_.GetWeakPtr()));
+      FROM_HERE,
+      base::BindOnce(&DrmGpuPlatformSupportHost::OnChannelEstablished,
+                     weak_ptr_, host_id, std::move(send_runner),
+                     std::move(send_callback)));
 }
 
 void DrmGpuPlatformSupportHost::OnChannelDestroyed(int host_id) {
   TRACE_EVENT1("drm", "DrmGpuPlatformSupportHost::OnChannelDestroyed",
                "host_id", host_id);
-
   if (host_id_ == host_id) {
+    {
+      base::AutoLock auto_lock(host_id_lock_);
+      host_id_ = -1;
+    }
     cursor_->ResetDrmCursorProxy();
-    host_id_ = -1;
-    channel_established_ = false;
     send_runner_ = nullptr;
     send_callback_.Reset();
     for (GpuThreadObserver& observer : gpu_thread_observers_)
@@ -141,18 +165,22 @@ void DrmGpuPlatformSupportHost::OnChannelDestroyed(int host_id) {
 
 }
 
-bool DrmGpuPlatformSupportHost::OnMessageReceived(const IPC::Message& message) {
-  if (OnMessageReceivedForDrmDisplayHostManager(message))
-    return true;
-  if (OnMessageReceivedForDrmOverlayManager(message))
-    return true;
-
-  return false;
+void DrmGpuPlatformSupportHost::OnMessageReceived(const IPC::Message& message) {
+  DCHECK(ui_runner_);
+  if (ui_runner_->BelongsToCurrentThread()) {
+    if (OnMessageReceivedForDrmDisplayHostManager(message))
+      return;
+    OnMessageReceivedForDrmOverlayManager(message);
+  } else {
+    ui_runner_->PostTask(
+        FROM_HERE, base::BindOnce(&DrmGpuPlatformSupportHost::OnMessageReceived,
+                                  weak_ptr_, message));
+  }
 }
 
 bool DrmGpuPlatformSupportHost::Send(IPC::Message* message) {
-  if (IsConnected() &&
-      send_runner_->PostTask(FROM_HERE, base::Bind(send_callback_, message)))
+  if (IsConnected() && send_runner_->PostTask(
+                           FROM_HERE, base::BindOnce(send_callback_, message)))
     return true;
 
   delete message;
@@ -169,9 +197,22 @@ void DrmGpuPlatformSupportHost::UnRegisterHandlerForDrmDisplayHostManager() {
   display_manager_ = nullptr;
 }
 
-void DrmGpuPlatformSupportHost::OnChannelEstablished() {
+void DrmGpuPlatformSupportHost::OnChannelEstablished(
+    int host_id,
+    scoped_refptr<base::SingleThreadTaskRunner> send_runner,
+    const base::Callback<void(IPC::Message*)>& send_callback) {
+  DCHECK(ui_runner_->BelongsToCurrentThread());
   TRACE_EVENT0("drm", "DrmGpuPlatformSupportHost::OnChannelEstablished");
-  channel_established_ = true;
+
+  send_runner_ = std::move(send_runner);
+  send_callback_ = send_callback;
+  {
+    base::AutoLock auto_lock(host_id_lock_);
+    host_id_ = host_id;
+  }
+
+  for (GpuThreadObserver& observer : gpu_thread_observers_)
+    observer.OnGpuProcessLaunched();
 
   for (GpuThreadObserver& observer : gpu_thread_observers_)
     observer.OnGpuThreadReady();
@@ -247,22 +288,8 @@ bool DrmGpuPlatformSupportHost::GpuRelinquishDisplayControl() {
 
 bool DrmGpuPlatformSupportHost::GpuAddGraphicsDevice(const base::FilePath& path,
                                                      base::ScopedFD fd) {
-  IPC::Message* message = new OzoneGpuMsg_AddGraphicsDevice(
-      path, base::FileDescriptor(std::move(fd)));
-
-  // This function may be called from two places:
-  // - DrmDisplayHostManager::OnGpuProcessLaunched() invoked synchronously
-  //   by GpuProcessHost::Init() on IO thread, which is the same thread as
-  //   |send_runner_|. In this case we can synchronously send the IPC;
-  // - DrmDisplayHostManager::OnAddGraphicsDevice() on UI thread. In this
-  //   case we need to post the send task to IO thread.
-  if (send_runner_ && send_runner_->BelongsToCurrentThread()) {
-    DCHECK(!send_callback_.is_null());
-    send_callback_.Run(message);
-    return true;
-  }
-
-  return Send(message);
+  return Send(new OzoneGpuMsg_AddGraphicsDevice(
+      path, base::FileDescriptor(std::move(fd))));
 }
 
 bool DrmGpuPlatformSupportHost::GpuRemoveGraphicsDevice(

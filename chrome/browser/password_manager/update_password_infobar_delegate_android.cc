@@ -31,13 +31,14 @@ void UpdatePasswordInfoBarDelegate::Create(
           ProfileSyncServiceFactory::GetForProfile(
               Profile::FromBrowserContext(web_contents->GetBrowserContext())));
   InfoBarService::FromWebContents(web_contents)
-      ->AddInfoBar(base::MakeUnique<UpdatePasswordInfoBar>(
+      ->AddInfoBar(std::make_unique<UpdatePasswordInfoBar>(
           base::WrapUnique(new UpdatePasswordInfoBarDelegate(
               web_contents, std::move(form_to_save),
               is_smartlock_branding_enabled))));
 }
 
 UpdatePasswordInfoBarDelegate::~UpdatePasswordInfoBarDelegate() {
+  password_manager::metrics_util::LogUpdateUIDismissalReason(infobar_response_);
   passwords_state_.form_manager()->metrics_recorder()->RecordUIDismissalReason(
       infobar_response_);
 }
@@ -88,7 +89,7 @@ UpdatePasswordInfoBarDelegate::UpdatePasswordInfoBarDelegate(
 
 infobars::InfoBarDelegate::InfoBarIdentifier
 UpdatePasswordInfoBarDelegate::GetIdentifier() const {
-  return UPDATE_PASSWORD_INFOBAR_DELEGATE;
+  return UPDATE_PASSWORD_INFOBAR_DELEGATE_MOBILE;
 }
 
 int UpdatePasswordInfoBarDelegate::GetButtons() const {

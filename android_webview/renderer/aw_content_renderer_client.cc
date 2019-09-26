@@ -4,6 +4,7 @@
 
 #include "android_webview/renderer/aw_content_renderer_client.h"
 
+#include <memory>
 #include <vector>
 
 #include "android_webview/common/aw_switches.h"
@@ -16,24 +17,21 @@
 #include "android_webview/renderer/aw_print_render_frame_helper_delegate.h"
 #include "android_webview/renderer/aw_render_frame_ext.h"
 #include "android_webview/renderer/aw_render_view_ext.h"
+#include "android_webview/renderer/aw_url_loader_throttle_provider.h"
 #include "android_webview/renderer/print_render_frame_observer.h"
 #include "base/command_line.h"
 #include "base/i18n/rtl.h"
-#include "base/memory/ptr_util.h"
 #include "base/message_loop/message_loop.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "components/printing/renderer/print_render_frame_helper.h"
-#include "components/safe_browsing/renderer/renderer_url_loader_throttle.h"
 #include "components/safe_browsing/renderer/websocket_sb_handshake_throttle.h"
-#include "components/spellcheck/spellcheck_build_features.h"
 #include "components/supervised_user_error_page/gin_wrapper.h"
 #include "components/supervised_user_error_page/supervised_user_error_page_android.h"
 #include "components/visitedlink/renderer/visitedlink_slave.h"
 #include "components/web_restrictions/interfaces/web_restrictions.mojom.h"
 #include "content/public/child/child_thread.h"
-#include "content/public/common/content_features.h"
 #include "content/public/common/service_manager_connection.h"
 #include "content/public/common/service_names.mojom.h"
 #include "content/public/common/simple_connection_filter.h"
@@ -45,15 +43,16 @@
 #include "content/public/renderer/render_view.h"
 #include "net/base/escape.h"
 #include "net/base/net_errors.h"
+#include "services/network/public/cpp/features.h"
 #include "services/service_manager/public/cpp/connector.h"
 #include "services/service_manager/public/cpp/interface_provider.h"
-#include "third_party/WebKit/public/platform/WebString.h"
-#include "third_party/WebKit/public/platform/WebURL.h"
-#include "third_party/WebKit/public/platform/WebURLError.h"
-#include "third_party/WebKit/public/platform/WebURLRequest.h"
-#include "third_party/WebKit/public/web/WebFrame.h"
-#include "third_party/WebKit/public/web/WebNavigationType.h"
-#include "third_party/WebKit/public/web/WebSecurityPolicy.h"
+#include "third_party/blink/public/platform/web_string.h"
+#include "third_party/blink/public/platform/web_url.h"
+#include "third_party/blink/public/platform/web_url_error.h"
+#include "third_party/blink/public/platform/web_url_request.h"
+#include "third_party/blink/public/web/web_frame.h"
+#include "third_party/blink/public/web/web_navigation_type.h"
+#include "third_party/blink/public/web/web_security_policy.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/resource/resource_bundle.h"
 #include "url/gurl.h"
@@ -85,19 +84,17 @@ void AwContentRendererClient::RenderThreadStarted() {
 
   visited_link_slave_.reset(new visitedlink::VisitedLinkSlave);
 
-  auto registry = base::MakeUnique<service_manager::BinderRegistry>();
+  auto registry = std::make_unique<service_manager::BinderRegistry>();
   registry->AddInterface(visited_link_slave_->GetBindCallback(),
                          base::ThreadTaskRunnerHandle::Get());
   content::ChildThread::Get()
       ->GetServiceManagerConnection()
-      ->AddConnectionFilter(base::MakeUnique<content::SimpleConnectionFilter>(
+      ->AddConnectionFilter(std::make_unique<content::SimpleConnectionFilter>(
           std::move(registry)));
 
 #if BUILDFLAG(ENABLE_SPELLCHECK)
-  if (!spellcheck_) {
-    spellcheck_ = base::MakeUnique<SpellCheck>(this);
-    thread->AddObserver(spellcheck_.get());
-  }
+  if (!spellcheck_)
+    spellcheck_ = std::make_unique<SpellCheck>(nullptr, this);
 #endif
 }
 
@@ -168,7 +165,7 @@ void AwContentRendererClient::RenderFrameCreated(
   new AwContentSettingsClient(render_frame);
   new PrintRenderFrameObserver(render_frame);
   new printing::PrintRenderFrameHelper(
-      render_frame, base::MakeUnique<AwPrintRenderFrameHelperDelegate>());
+      render_frame, std::make_unique<AwPrintRenderFrameHelperDelegate>());
   new AwRenderFrameExt(render_frame);
 
   // TODO(jam): when the frame tree moves into content and parent() works at
@@ -190,23 +187,13 @@ void AwContentRendererClient::RenderFrameCreated(
 void AwContentRendererClient::RenderViewCreated(
     content::RenderView* render_view) {
   AwRenderViewExt::RenderViewCreated(render_view);
-
-#if BUILDFLAG(ENABLE_SPELLCHECK)
-  // This is a workaround keeping the behavior that, the Blink side spellcheck
-  // enabled state is initialized on RenderView creation.
-  // TODO(xiaochengh): Design better way to sync between Chrome-side and
-  // Blink-side spellcheck enabled states.  See crbug.com/710097.
-  if (SpellCheckProvider* provider =
-          SpellCheckProvider::Get(render_view->GetMainRenderFrame()))
-    provider->EnableSpellcheck(spellcheck_->IsSpellcheckEnabled());
-#endif
 }
 
 bool AwContentRendererClient::HasErrorPage(int http_status_code) {
   return http_status_code >= 400;
 }
 
-void AwContentRendererClient::GetNavigationErrorStrings(
+void AwContentRendererClient::PrepareErrorPage(
     content::RenderFrame* render_frame,
     const blink::WebURLRequest& failed_request,
     const blink::WebURLError& error,
@@ -301,25 +288,8 @@ std::unique_ptr<blink::WebSocketHandshakeThrottle>
 AwContentRendererClient::CreateWebSocketHandshakeThrottle() {
   if (!UsingSafeBrowsingMojoService())
     return nullptr;
-  return base::MakeUnique<safe_browsing::WebSocketSBHandshakeThrottle>(
+  return std::make_unique<safe_browsing::WebSocketSBHandshakeThrottle>(
       safe_browsing_.get());
-}
-
-bool AwContentRendererClient::WillSendRequest(
-    blink::WebLocalFrame* frame,
-    ui::PageTransition transition_type,
-    const blink::WebURL& url,
-    std::vector<std::unique_ptr<content::URLLoaderThrottle>>* throttles,
-    GURL* new_url) {
-  if (UsingSafeBrowsingMojoService()) {
-    content::RenderFrame* render_frame =
-        content::RenderFrame::FromWebFrame(frame);
-    throttles->push_back(
-        base::MakeUnique<safe_browsing::RendererURLLoaderThrottle>(
-            safe_browsing_.get(), render_frame->GetRoutingID()));
-  }
-
-  return false;
 }
 
 bool AwContentRendererClient::ShouldUseMediaPlayerForURL(const GURL& url) {
@@ -368,14 +338,27 @@ bool AwContentRendererClient::ShouldUseMediaPlayerForURL(const GURL& url) {
   return false;
 }
 
+std::unique_ptr<content::URLLoaderThrottleProvider>
+AwContentRendererClient::CreateURLLoaderThrottleProvider(
+    content::URLLoaderThrottleProviderType provider_type) {
+  return std::make_unique<AwURLLoaderThrottleProvider>(provider_type);
+}
+
 void AwContentRendererClient::GetInterface(
     const std::string& interface_name,
-    mojo::ScopedMessagePipeHandle interface_pipe) {}
+    mojo::ScopedMessagePipeHandle interface_pipe) {
+  // A dirty hack to make SpellCheckHost requests work on WebView.
+  // TODO(crbug.com/806394): Use a WebView-specific service for SpellCheckHost
+  // and SafeBrowsing, instead of |content_browser|.
+  RenderThread::Get()->GetConnector()->BindInterface(
+      service_manager::Identity(content::mojom::kBrowserServiceName),
+      interface_name, std::move(interface_pipe));
+}
 
 bool AwContentRendererClient::UsingSafeBrowsingMojoService() {
   if (safe_browsing_)
     return true;
-  if (!base::FeatureList::IsEnabled(features::kNetworkService))
+  if (!base::FeatureList::IsEnabled(network::features::kNetworkService))
     return false;
   RenderThread::Get()->GetConnector()->BindInterface(
       content::mojom::kBrowserServiceName, &safe_browsing_);

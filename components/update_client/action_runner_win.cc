@@ -6,7 +6,6 @@
 
 #include <utility>
 #include "base/bind.h"
-#include "base/bind_helpers.h"
 #include "base/command_line.h"
 #include "base/files/file_util.h"
 #include "base/location.h"
@@ -14,6 +13,8 @@
 #include "base/process/process.h"
 #include "base/single_thread_task_runner.h"
 #include "base/task_scheduler/post_task.h"
+#include "components/update_client/component.h"
+#include "components/update_client/configurator.h"
 #include "components/update_client/task_traits.h"
 
 namespace {
@@ -49,7 +50,13 @@ void ActionRunner::WaitForCommand(base::Process process) {
 
 base::CommandLine ActionRunner::MakeCommandLine(
     const base::FilePath& unpack_path) const {
-  return base::CommandLine(unpack_path.Append(kRecoveryFileName));
+  base::CommandLine command_line(unpack_path.Append(kRecoveryFileName));
+  if (!component_.config()->IsPerUserInstall())
+    command_line.AppendSwitch("system");
+  command_line.AppendSwitchASCII(
+      "browser-version", component_.config()->GetBrowserVersion().GetString());
+  command_line.AppendSwitchASCII("sessionid", component_.session_id());
+  return command_line;
 }
 
 }  // namespace update_client

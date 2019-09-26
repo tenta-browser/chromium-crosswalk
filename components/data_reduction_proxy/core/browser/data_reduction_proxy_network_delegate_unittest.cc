@@ -15,7 +15,6 @@
 #include "base/command_line.h"
 #include "base/files/file_util.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/message_loop/message_loop.h"
 #include "base/metrics/field_trial.h"
 #include "base/numerics/safe_conversions.h"
@@ -46,21 +45,22 @@
 #include "components/data_reduction_proxy/core/common/data_reduction_proxy_switches.h"
 #include "components/data_reduction_proxy/core/common/lofi_decider.h"
 #include "components/data_reduction_proxy/proto/client_config.pb.h"
-#include "components/previews/core/previews_decider.h"
 #include "components/previews/core/previews_experiments.h"
+#include "components/previews/core/previews_features.h"
+#include "components/previews/core/test_previews_decider.h"
 #include "net/base/host_port_pair.h"
 #include "net/base/load_flags.h"
 #include "net/base/net_errors.h"
+#include "net/base/proxy_server.h"
 #include "net/http/http_request_headers.h"
 #include "net/http/http_response_headers.h"
 #include "net/http/http_util.h"
 #include "net/nqe/effective_connection_type.h"
 #include "net/nqe/network_quality_estimator_test_util.h"
-#include "net/proxy/proxy_config.h"
-#include "net/proxy/proxy_info.h"
-#include "net/proxy/proxy_retry_info.h"
-#include "net/proxy/proxy_server.h"
-#include "net/proxy/proxy_service.h"
+#include "net/proxy_resolution/proxy_config.h"
+#include "net/proxy_resolution/proxy_info.h"
+#include "net/proxy_resolution/proxy_resolution_service.h"
+#include "net/proxy_resolution/proxy_retry_info.h"
 #include "net/socket/socket_test_util.h"
 #include "net/test/cert_test_util.h"
 #include "net/test/gtest_util.h"
@@ -83,8 +83,6 @@ const char kOtherProxy[] = "testproxy:17";
 const char kTestURL[] = "http://www.google.com/";
 const char kSecureTestURL[] = "https://www.google.com/";
 
-const char kReceivedValidOCLHistogramName[] =
-    "Net.HttpContentLengthWithValidOCL";
 const char kOriginalValidOCLHistogramName[] =
     "Net.HttpOriginalContentLengthWithValidOCL";
 const char kDifferenceValidOCLHistogramName[] =
@@ -127,14 +125,6 @@ const char kOriginalVideoSecureBypassedHistogramName[] =
 const char kOriginalVideoSecureOtherHistogramName[] =
     "Net.HttpOriginalContentLengthV2.Https.Other.Video";
 
-// Lo-Fi histograms.
-const char kReceivedValidOCLLoFiOnHistogramName[] =
-    "Net.HttpContentLengthWithValidOCL.LoFiOn";
-const char kOriginalValidOCLLoFiOnHistogramName[] =
-    "Net.HttpOriginalContentLengthWithValidOCL.LoFiOn";
-const char kDifferenceValidOCLLoFiOnHistogramName[] =
-    "Net.HttpContentLengthDifferenceWithValidOCL.LoFiOn";
-
 const char kReceivedHistogramName[] = "Net.HttpContentLength";
 const char kReceivedInsecureDirectHistogramName[] =
     "Net.HttpContentLengthV2.Http.Direct";
@@ -172,11 +162,6 @@ const char kOriginalHistogramName[] = "Net.HttpOriginalContentLength";
 const char kDifferenceHistogramName[] = "Net.HttpContentLengthDifference";
 const char kFreshnessLifetimeHistogramName[] =
     "Net.HttpContentFreshnessLifetime";
-const char kCacheableHistogramName[] = "Net.HttpContentLengthCacheable";
-const char kCacheable4HoursHistogramName[] =
-    "Net.HttpContentLengthCacheable4Hours";
-const char kCacheable24HoursHistogramName[] =
-    "Net.HttpContentLengthCacheable24Hours";
 const int64_t kResponseContentLength = 100;
 const int64_t kOriginalContentLength = 200;
 
@@ -212,10 +197,6 @@ class TestLoFiDecider : public LoFiDecider {
         should_request_lofi_resource_(false),
         ignore_is_using_data_reduction_proxy_check_(false) {}
   ~TestLoFiDecider() override {}
-
-  bool IsUsingLoFi(const net::URLRequest& request) const override {
-    return should_request_lofi_resource_;
-  }
 
   void SetIsUsingLoFi(bool should_request_lofi_resource) {
     should_request_lofi_resource_ = should_request_lofi_resource;
@@ -314,28 +295,6 @@ class TestLoFiUIService : public LoFiUIService {
   bool on_lofi_response_;
 };
 
-class TestPreviewsDecider : public previews::PreviewsDecider {
- public:
-  TestPreviewsDecider() {}
-  ~TestPreviewsDecider() override {}
-  // previews::PreviewsDecider:
-  bool ShouldAllowPreviewAtECT(
-      const net::URLRequest& request,
-      previews::PreviewsType type,
-      net::EffectiveConnectionType effective_connection_type_threshold,
-      const std::vector<std::string>& host_blacklist_from_server)
-      const override {
-    return true;
-  }
-
-  // Same as ShouldAllowPreviewAtECT, but uses the previews default
-  // EffectiveConnectionType and no blacklisted hosts from the server.
-  bool ShouldAllowPreview(const net::URLRequest& request,
-                          previews::PreviewsType type) const override {
-    return true;
-  }
-};
-
 enum ProxyTestConfig { USE_SECURE_PROXY, USE_INSECURE_PROXY, BYPASS_PROXY };
 
 class DataReductionProxyNetworkDelegateTest : public testing::Test {
@@ -366,9 +325,11 @@ class DataReductionProxyNetworkDelegateTest : public testing::Test {
     }
     context_.reset(new net::TestURLRequestContext(true));
     context_storage_.reset(new net::URLRequestContextStorage(context_.get()));
-    proxy_service_ =
-        net::ProxyService::CreateFixedFromPacResult(proxy_server.ToPacString());
-    context_->set_proxy_service(proxy_service_.get());
+    proxy_resolution_service_ =
+        net::ProxyResolutionService::CreateFixedFromPacResult(
+            proxy_server.ToPacString(), TRAFFIC_ANNOTATION_FOR_TESTS);
+    context_->set_proxy_resolution_service(proxy_resolution_service_.get());
+    context_->set_network_quality_estimator(&test_network_quality_estimator_);
 
     mock_socket_factory_.reset(new net::MockClientSocketFactory());
 
@@ -396,7 +357,6 @@ class DataReductionProxyNetworkDelegateTest : public testing::Test {
     test_context_->io_data()->set_lofi_ui_service(std::move(lofi_ui_service));
 
     context_->set_enable_brotli(enable_brotli_globally);
-    context_->set_network_quality_estimator(&test_network_quality_estimator_);
     context_->Init();
 
     test_context_->DisableWarmupURLFetch();
@@ -470,7 +430,7 @@ class DataReductionProxyNetworkDelegateTest : public testing::Test {
     }
 
     EXPECT_FALSE(socket_);
-    socket_ = base::MakeUnique<net::StaticSocketDataProvider>(
+    socket_ = std::make_unique<net::StaticSocketDataProvider>(
         reads_list->data(), reads_list->size(), writes_list->data(),
         writes_list->size());
     mock_socket_factory_->AddSocketDataProvider(socket_.get());
@@ -693,7 +653,7 @@ class DataReductionProxyNetworkDelegateTest : public testing::Test {
         "HTTP/1.1 200 OK\r\n"
         "Content-Length: 140\r\n"
         "Via: 1.1 Chrome-Compression-Proxy\r\n"
-        "x-original-content-length: 200\r\n"
+        "Chrome-Proxy: ofcl=200\r\n"
         "Cache-Control: max-age=1200\r\n"
         "Vary: accept-encoding\r\n\r\n";
 
@@ -747,10 +707,10 @@ class DataReductionProxyNetworkDelegateTest : public testing::Test {
 
     std::unique_ptr<net::StaticSocketDataProvider> socket;
     if (!redirect_once) {
-      socket = base::MakeUnique<net::StaticSocketDataProvider>(
+      socket = std::make_unique<net::StaticSocketDataProvider>(
           reads, arraysize(reads), writes, arraysize(writes));
     } else {
-      socket = base::MakeUnique<net::StaticSocketDataProvider>(
+      socket = std::make_unique<net::StaticSocketDataProvider>(
           redirect_reads, arraysize(redirect_reads), redirect_writes,
           arraysize(redirect_writes));
     }
@@ -869,7 +829,7 @@ class DataReductionProxyNetworkDelegateTest : public testing::Test {
  private:
   base::MessageLoopForIO message_loop_;
   std::unique_ptr<net::MockClientSocketFactory> mock_socket_factory_;
-  std::unique_ptr<net::ProxyService> proxy_service_;
+  std::unique_ptr<net::ProxyResolutionService> proxy_resolution_service_;
   std::unique_ptr<net::TestURLRequestContext> context_;
   std::unique_ptr<net::URLRequestContextStorage> context_storage_;
 
@@ -919,49 +879,18 @@ TEST_F(DataReductionProxyNetworkDelegateTest, AuthenticationTest) {
 TEST_F(DataReductionProxyNetworkDelegateTest, LoFiTransitions) {
   Init(USE_INSECURE_PROXY, false);
   base::test::ScopedFeatureList scoped_feature_list;
-  scoped_feature_list.InitAndEnableFeature(
-      features::kDataReductionProxyDecidesTransform);
+  scoped_feature_list.InitWithFeatures(
+      {previews::features::kPreviews,
+       features::kDataReductionProxyDecidesTransform},
+      {});
 
   // Enable Lo-Fi.
-  const struct {
-    bool lofi_switch_enabled;
-    bool auto_lofi_enabled;
-    bool is_data_reduction_proxy;
-  } tests[] = {
-      {
-          // Lo-Fi enabled through switch and not using a Data Reduction Proxy.
-          true, false, false,
-      },
-      {
-          // Lo-Fi enabled through switch and using a Data Reduction Proxy.
-          true, false, true,
-      },
-      {
-          // Lo-Fi enabled through field trial and not using a Data Reduction
-          // Proxy.
-          false, true, false,
-      },
-      {
-          // Lo-Fi enabled through field trial and using a Data Reduction Proxy.
-          false, true, true,
-      },
-  };
+  bool is_data_reduction_proxy_enabled[] = {false, true};
 
-  for (size_t i = 0; i < arraysize(tests); ++i) {
-    if (tests[i].lofi_switch_enabled) {
-      base::CommandLine::ForCurrentProcess()->AppendSwitchASCII(
-          switches::kDataReductionProxyLoFi,
-          switches::kDataReductionProxyLoFiValueAlwaysOn);
-    }
-    base::FieldTrialList field_trial_list(nullptr);
-    if (tests[i].auto_lofi_enabled) {
-      base::FieldTrialList::CreateFieldTrial(params::GetLoFiFieldTrialName(),
-                                             "Enabled");
-    }
-
+  for (size_t i = 0; i < arraysize(is_data_reduction_proxy_enabled); ++i) {
     net::ProxyInfo data_reduction_proxy_info;
     std::string proxy;
-    if (tests[i].is_data_reduction_proxy) {
+    if (is_data_reduction_proxy_enabled[i]) {
       data_reduction_proxy_info.UseProxyServer(
           params()->proxies_for_http().front().proxy_server());
     } else {
@@ -970,7 +899,7 @@ TEST_F(DataReductionProxyNetworkDelegateTest, LoFiTransitions) {
     }
 
     // Needed as a parameter, but functionality is not tested.
-    TestPreviewsDecider test_previews_decider;
+    previews::TestPreviewsDecider test_previews_decider(true);
 
     {
       // Main frame loaded. Lo-Fi should be used.
@@ -981,16 +910,16 @@ TEST_F(DataReductionProxyNetworkDelegateTest, LoFiTransitions) {
       std::unique_ptr<net::URLRequest> fake_request = context()->CreateRequest(
           GURL(kTestURL), net::IDLE, &delegate, TRAFFIC_ANNOTATION_FOR_TESTS);
       fake_request->SetLoadFlags(net::LOAD_MAIN_FRAME_DEPRECATED);
-      lofi_decider()->SetIsUsingLoFi(config()->ShouldEnableLoFi(
+      lofi_decider()->SetIsUsingLoFi(config()->ShouldAcceptServerPreview(
           *fake_request.get(), test_previews_decider));
       NotifyNetworkDelegate(fake_request.get(), data_reduction_proxy_info,
                             proxy_retry_info, &headers);
 
-      VerifyHeaders(tests[i].is_data_reduction_proxy, true, headers);
+      VerifyHeaders(is_data_reduction_proxy_enabled[i], true, headers);
       VerifyDataReductionProxyData(
-          *fake_request, tests[i].is_data_reduction_proxy,
-          config()->ShouldEnableLoFi(*fake_request.get(),
-                                     test_previews_decider));
+          *fake_request, is_data_reduction_proxy_enabled[i],
+          config()->ShouldAcceptServerPreview(*fake_request.get(),
+                                              test_previews_decider));
     }
 
     {
@@ -1003,9 +932,9 @@ TEST_F(DataReductionProxyNetworkDelegateTest, LoFiTransitions) {
       lofi_decider()->SetIsUsingLoFi(false);
       NotifyNetworkDelegate(fake_request.get(), data_reduction_proxy_info,
                             proxy_retry_info, &headers);
-      VerifyHeaders(tests[i].is_data_reduction_proxy, false, headers);
+      VerifyHeaders(is_data_reduction_proxy_enabled[i], false, headers);
       VerifyDataReductionProxyData(*fake_request,
-                                   tests[i].is_data_reduction_proxy, false);
+                                   is_data_reduction_proxy_enabled[i], false);
     }
 
     {
@@ -1019,9 +948,9 @@ TEST_F(DataReductionProxyNetworkDelegateTest, LoFiTransitions) {
       lofi_decider()->SetIsUsingLoFi(true);
       NotifyNetworkDelegate(fake_request.get(), data_reduction_proxy_info,
                             proxy_retry_info, &headers);
-      VerifyHeaders(tests[i].is_data_reduction_proxy, true, headers);
+      VerifyHeaders(is_data_reduction_proxy_enabled[i], true, headers);
       VerifyDataReductionProxyData(*fake_request,
-                                   tests[i].is_data_reduction_proxy, true);
+                                   is_data_reduction_proxy_enabled[i], true);
     }
 
     {
@@ -1036,9 +965,9 @@ TEST_F(DataReductionProxyNetworkDelegateTest, LoFiTransitions) {
       lofi_decider()->SetIsUsingLoFi(false);
       NotifyNetworkDelegate(fake_request.get(), data_reduction_proxy_info,
                             proxy_retry_info, &headers);
-      VerifyHeaders(tests[i].is_data_reduction_proxy, false, headers);
+      VerifyHeaders(is_data_reduction_proxy_enabled[i], false, headers);
       VerifyDataReductionProxyData(*fake_request,
-                                   tests[i].is_data_reduction_proxy, false);
+                                   is_data_reduction_proxy_enabled[i], false);
     }
 
     {
@@ -1051,9 +980,9 @@ TEST_F(DataReductionProxyNetworkDelegateTest, LoFiTransitions) {
       lofi_decider()->SetIsUsingLoFi(false);
       NotifyNetworkDelegate(fake_request.get(), data_reduction_proxy_info,
                             proxy_retry_info, &headers);
-      VerifyHeaders(tests[i].is_data_reduction_proxy, false, headers);
+      VerifyHeaders(is_data_reduction_proxy_enabled[i], false, headers);
       VerifyDataReductionProxyData(*fake_request,
-                                   tests[i].is_data_reduction_proxy, false);
+                                   is_data_reduction_proxy_enabled[i], false);
     }
 
     {
@@ -1064,14 +993,14 @@ TEST_F(DataReductionProxyNetworkDelegateTest, LoFiTransitions) {
       std::unique_ptr<net::URLRequest> fake_request = context()->CreateRequest(
           GURL(kTestURL), net::IDLE, &delegate, TRAFFIC_ANNOTATION_FOR_TESTS);
       fake_request->SetLoadFlags(net::LOAD_MAIN_FRAME_DEPRECATED);
-      lofi_decider()->SetIsUsingLoFi(config()->ShouldEnableLoFi(
+      lofi_decider()->SetIsUsingLoFi(config()->ShouldAcceptServerPreview(
           *fake_request.get(), test_previews_decider));
       NotifyNetworkDelegate(fake_request.get(), data_reduction_proxy_info,
                             proxy_retry_info, &headers);
       VerifyDataReductionProxyData(
-          *fake_request, tests[i].is_data_reduction_proxy,
-          config()->ShouldEnableLoFi(*fake_request.get(),
-                                     test_previews_decider));
+          *fake_request, is_data_reduction_proxy_enabled[i],
+          config()->ShouldAcceptServerPreview(*fake_request.get(),
+                                              test_previews_decider));
     }
   }
 }
@@ -1280,6 +1209,11 @@ TEST_F(DataReductionProxyNetworkDelegateTest, RedirectRequestDataCleared) {
 
 TEST_F(DataReductionProxyNetworkDelegateTest, NetHistograms) {
   Init(USE_INSECURE_PROXY, false);
+  base::test::ScopedFeatureList scoped_feature_list;
+  scoped_feature_list.InitWithFeatures(
+      {previews::features::kPreviews,
+       features::kDataReductionProxyDecidesTransform},
+      {});
 
   base::HistogramTester histogram_tester;
 
@@ -1288,7 +1222,7 @@ TEST_F(DataReductionProxyNetworkDelegateTest, NetHistograms) {
       "Date: Wed, 28 Nov 2007 09:40:09 GMT\r\n"
       "Expires: Mon, 24 Nov 2014 12:45:26 GMT\r\n"
       "Via: 1.1 Chrome-Compression-Proxy\r\n"
-      "x-original-content-length: " +
+      "Chrome-Proxy: ofcl=" +
       base::Int64ToString(kOriginalContentLength) + "\r\n\r\n";
 
   std::unique_ptr<net::URLRequest> fake_request(FetchURLRequest(
@@ -1300,8 +1234,6 @@ TEST_F(DataReductionProxyNetworkDelegateTest, NetHistograms) {
       fake_request->response_info().headers->GetFreshnessLifetimes(
           fake_request->response_info().response_time).freshness;
 
-  histogram_tester.ExpectUniqueSample(kReceivedValidOCLHistogramName,
-                                      kResponseContentLength, 1);
   histogram_tester.ExpectUniqueSample(kOriginalValidOCLHistogramName,
                                       kOriginalContentLength, 1);
   histogram_tester.ExpectUniqueSample(kOriginalInsecureViaDRPHistogramName,
@@ -1326,73 +1258,6 @@ TEST_F(DataReductionProxyNetworkDelegateTest, NetHistograms) {
       kOriginalContentLength - kResponseContentLength, 1);
   histogram_tester.ExpectUniqueSample(kFreshnessLifetimeHistogramName,
                                       freshness_lifetime.InSeconds(), 1);
-  histogram_tester.ExpectUniqueSample(kCacheableHistogramName,
-                                      kResponseContentLength, 1);
-  histogram_tester.ExpectUniqueSample(kCacheable4HoursHistogramName,
-                                      kResponseContentLength, 1);
-  histogram_tester.ExpectUniqueSample(kCacheable24HoursHistogramName,
-                                      kResponseContentLength, 1);
-
-  // Check Lo-Fi histograms.
-  const struct {
-    bool lofi_enabled;
-    int expected_count;
-  } tests[] = {
-      {
-          // Lo-Fi disabled.
-          false, 0,
-      },
-      {
-          // Lo-Fi enabled so should populate Lo-Fi content length histogram.
-          true, 1,
-      },
-  };
-
-  for (size_t i = 0; i < arraysize(tests); ++i) {
-
-    base::test::ScopedFeatureList scoped_feature_list;
-    if (tests[i].lofi_enabled) {
-      scoped_feature_list.InitAndEnableFeature(
-          features::kDataReductionProxyDecidesTransform);
-    } else {
-      scoped_feature_list.InitAndDisableFeature(
-          features::kDataReductionProxyDecidesTransform);
-    }
-
-    // Needed as a parameter, but functionality is not tested.
-    TestPreviewsDecider test_previews_decider;
-    lofi_decider()->SetIsUsingLoFi(
-        config()->ShouldEnableLoFi(*fake_request.get(), test_previews_decider));
-
-    fake_request = (FetchURLRequest(GURL(kTestURL), nullptr, response_headers,
-                                    kResponseContentLength, 0));
-    fake_request->SetLoadFlags(fake_request->load_flags() |
-                               net::LOAD_MAIN_FRAME_DEPRECATED);
-
-    // Histograms are accumulative, so get the sum of all the tests so far.
-    int expected_count = 0;
-    for (size_t j = 0; j <= i; ++j)
-      expected_count += tests[j].expected_count;
-
-    if (expected_count == 0) {
-      histogram_tester.ExpectTotalCount(kReceivedValidOCLLoFiOnHistogramName,
-                                        expected_count);
-      histogram_tester.ExpectTotalCount(kOriginalValidOCLLoFiOnHistogramName,
-                                        expected_count);
-      histogram_tester.ExpectTotalCount(kDifferenceValidOCLLoFiOnHistogramName,
-                                        expected_count);
-    } else {
-      histogram_tester.ExpectUniqueSample(kReceivedValidOCLLoFiOnHistogramName,
-                                          kResponseContentLength,
-                                          expected_count);
-      histogram_tester.ExpectUniqueSample(kOriginalValidOCLLoFiOnHistogramName,
-                                          kOriginalContentLength,
-                                          expected_count);
-      histogram_tester.ExpectUniqueSample(
-          kDifferenceValidOCLLoFiOnHistogramName,
-          kOriginalContentLength - kResponseContentLength, expected_count);
-    }
-  }
 }
 
 TEST_F(DataReductionProxyNetworkDelegateTest, NetVideoHistograms) {
@@ -1407,7 +1272,7 @@ TEST_F(DataReductionProxyNetworkDelegateTest, NetVideoHistograms) {
       "Expires: Mon, 24 Nov 2014 12:45:26 GMT\r\n"
       "Content-Type: video/mp4\r\n"
       "Via: 1.1 Chrome-Compression-Proxy\r\n"
-      "x-original-content-length: " +
+      "Chrome-Proxy: ofcl=" +
       base::Int64ToString(kOriginalContentLength) + "\r\n\r\n";
 
   FetchURLRequest(GURL(kTestURL), nullptr, video_response_headers,
@@ -1587,7 +1452,7 @@ TEST_F(DataReductionProxyNetworkDelegateTest, DetailedNetHistograms) {
 
     if (test.proxy_config == USE_INSECURE_PROXY) {
       via_header = "Via: 1.1 Chrome-Compression-Proxy\r\n";
-      ocl_header = "x-original-content-length: " +
+      ocl_header = "Chrome-Proxy: ofcl=" +
                    base::Int64ToString(kOriginalContentLength) + "\r\n";
     }
     if (test.is_video) {
@@ -1636,7 +1501,7 @@ TEST_F(DataReductionProxyNetworkDelegateTest,
       "Date: Wed, 28 Nov 2007 09:40:09 GMT\r\n"
       "Expires: Mon, 24 Nov 2014 12:45:26 GMT\r\n"
       "Via: 1.1 Chrome-Compression-Proxy\r\n"
-      "x-original-content-length: 200\r\n\r\n";
+      "Chrome-Proxy: ofcl=200\r\n\r\n";
 
   auto request =
       FetchURLRequest(GURL(kTestURL), nullptr, response_headers, 140, 0);
@@ -1656,7 +1521,7 @@ TEST_F(DataReductionProxyNetworkDelegateTest,
       "Date: Wed, 28 Nov 2007 09:40:09 GMT\r\n"
       "Expires: Mon, 24 Nov 2014 12:45:26 GMT\r\n"
       "Via: 1.1 Chrome-Compression-Proxy\r\n"
-      "x-original-content-length: 200\r\n"
+      "Chrome-Proxy: ofcl=200\r\n"
       "Chrome-Proxy-Content-Transform: empty-image\r\n\r\n";
 
   auto request =
@@ -1751,7 +1616,7 @@ TEST_F(DataReductionProxyNetworkDelegateTest,
       "HTTP/1.1 200 OK\r\n"
       "Content-Length: 140\r\n"
       "Via: 1.1 Chrome-Compression-Proxy\r\n"
-      "x-original-content-length: 200\r\n"
+      "Chrome-Proxy: ofcl=200\r\n"
       "Cache-Control: max-age=0\r\n"
       "Vary: accept-encoding\r\n\r\n";
 
@@ -1774,7 +1639,7 @@ TEST_F(DataReductionProxyNetworkDelegateTest,
       "Date: Wed, 28 Nov 2007 09:40:09 GMT\r\n"
       "Expires: Mon, 24 Nov 2014 12:45:26 GMT\r\n"
       "Via: 1.1 Chrome-Compression-Proxy\r\n"
-      "x-original-content-length: 200\r\n";
+      "Chrome-Proxy: ofcl=200\r\n";
 
   response_headers += "\r\n";
   auto request =
@@ -1797,7 +1662,7 @@ TEST_F(DataReductionProxyNetworkDelegateTest,
       "HTTP/1.1 200 OK\r\n"
       "Content-Length: 140\r\n"
       "Via: 1.1 Chrome-Compression-Proxy\r\n"
-      "x-original-content-length: 200\r\n"
+      "Chrome-Proxy: ofcl=200\r\n"
       "Cache-Control: max-age=1200\r\n"
       "Vary: accept-encoding\r\n";
   response_headers += "\r\n";
@@ -1816,7 +1681,7 @@ TEST_F(DataReductionProxyNetworkDelegateTest,
       "HTTP/1.1 200 OK\r\n"
       "Content-Length: 140\r\n"
       "Via: 1.1 Chrome-Compression-Proxy\r\n"
-      "x-original-content-length: 200\r\n"
+      "Chrome-Proxy: ofcl=200\r\n"
       "Cache-Control: max-age=1200\r\n"
       "Vary: accept-encoding\r\n";
   response_headers += "\r\n";
@@ -1847,7 +1712,7 @@ TEST_F(DataReductionProxyNetworkDelegateTest,
       "HTTP/1.1 200 OK\r\n"
       "Content-Length: 140\r\n"
       "Via: 1.1 Chrome-Compression-Proxy\r\n"
-      "x-original-content-length: 200\r\n"
+      "Chrome-Proxy: ofcl=200\r\n"
       "Cache-Control: max-age=1200\r\n"
       "Vary: accept-encoding\r\n";
   response_headers += "\r\n";
@@ -1864,7 +1729,7 @@ TEST_F(DataReductionProxyNetworkDelegateTest, BrotliAdvertisement) {
   std::string response_headers =
       "HTTP/1.1 200 OK\r\n"
       "Via: 1.1 Chrome-Compression-Proxy\r\n"
-      "x-original-content-length: 200\r\n"
+      "Chrome-Proxy: ofcl=200\r\n"
       "Cache-Control: max-age=1200\r\n"
       "Content-Encoding: br\r\n"
       "Vary: accept-encoding\r\n";
@@ -1999,7 +1864,7 @@ TEST_F(DataReductionProxyNetworkDelegateTest, ECTHeaderEnabledWithVary) {
       "Via: 1.1 Chrome-Compression-Proxy\r\n"
       "Cache-Control: max-age=1200\r\n"
       "Vary: chrome-proxy-ect\r\n"
-      "x-original-content-length: 200\r\n\r\n";
+      "Chrome-Proxy: ofcl=200\r\n\r\n";
 
   int response_body_size = 140;
   std::string response_body(base::checked_cast<size_t>(response_body_size),
@@ -2040,7 +1905,7 @@ TEST_F(DataReductionProxyNetworkDelegateTest, ECTHeaderEnabledWithoutVary) {
       "Content-Length: 140\r\n"
       "Via: 1.1 Chrome-Compression-Proxy\r\n"
       "Cache-Control: max-age=1200\r\n"
-      "x-original-content-length: 200\r\n\r\n";
+      "Chrome-Proxy: ofcl=200\r\n\r\n";
 
   int response_body_size = 140;
   std::string response_body(base::checked_cast<size_t>(response_body_size),
@@ -2085,10 +1950,20 @@ class DataReductionProxyNetworkDelegateClientLoFiTest : public testing::Test {
     mock_socket_factory_.reset(new net::MockClientSocketFactory());
     context_->set_client_socket_factory(mock_socket_factory_.get());
 
+    net::ProxyServer proxy_server = net::ProxyServer::FromURI(
+        "http://origin.net:80", net::ProxyServer::SCHEME_HTTP);
+
+    proxy_resolution_service_ =
+        net::ProxyResolutionService::CreateFixedFromPacResult(
+            proxy_server.ToPacString(), TRAFFIC_ANNOTATION_FOR_TESTS);
+    context_->set_proxy_resolution_service(proxy_resolution_service_.get());
+
     drp_test_context_ =
         DataReductionProxyTestContext::Builder()
             .WithURLRequestContext(context_.get())
             .WithMockClientSocketFactory(mock_socket_factory_.get())
+            .WithProxiesForHttp({DataReductionProxyServer(
+                proxy_server, ProxyServer::UNSPECIFIED_TYPE)})
             .Build();
 
     drp_test_context_->AttachToURLRequestContext(context_storage_.get());
@@ -2126,6 +2001,7 @@ class DataReductionProxyNetworkDelegateClientLoFiTest : public testing::Test {
   std::unique_ptr<net::TestURLRequestContext> context_;
   std::unique_ptr<net::URLRequestContextStorage> context_storage_;
   std::unique_ptr<net::MockClientSocketFactory> mock_socket_factory_;
+  std::unique_ptr<net::ProxyResolutionService> proxy_resolution_service_;
   std::unique_ptr<DataReductionProxyTestContext> drp_test_context_;
   int64_t baseline_savings_;
 };
@@ -2209,6 +2085,8 @@ TEST_F(DataReductionProxyNetworkDelegateClientLoFiTest, DataSavingsNonDRP) {
         GURL("http://example.com"), net::RequestPriority::IDLE, &test_delegate,
         TRAFFIC_ANNOTATION_FOR_TESTS);
 
+    request->SetLoadFlags(request->load_flags() | net::LOAD_BYPASS_PROXY);
+
     request->Start();
     base::RunLoop().RunUntilIdle();
 
@@ -2227,7 +2105,7 @@ TEST_F(DataReductionProxyNetworkDelegateClientLoFiTest, DataSavingsThroughDRP) {
       "Content-Range: bytes 0-2047/10000\r\n"
       "Content-Length: 2048\r\n"
       "Via: 1.1 Chrome-Compression-Proxy\r\n"
-      "X-Original-Content-Length: 3000\r\n\r\n";
+      "Chrome-Proxy: ofcl=3000\r\n\r\n";
 
   std::string response_body(2048, 'a');
   net::MockRead reads[] = {net::MockRead(kHeaders),
@@ -2261,7 +2139,7 @@ TEST_F(DataReductionProxyNetworkDelegateTest, TestAcceptTransformHistogram) {
       "HTTP/1.1 200 OK\r\n"
       "Content-Length: 140\r\n"
       "Via: 1.1 Chrome-Compression-Proxy\r\n"
-      "x-original-content-length: 200\r\n"
+      "Chrome-Proxy: ofcl=200\r\n"
       "Cache-Control: max-age=0\r\n"
       "Vary: accept-encoding\r\n\r\n";
 
@@ -2271,7 +2149,7 @@ TEST_F(DataReductionProxyNetworkDelegateTest, TestAcceptTransformHistogram) {
       "Date: Wed, 28 Nov 2007 09:40:09 GMT\r\n"
       "Expires: Mon, 24 Nov 2014 12:45:26 GMT\r\n"
       "Via: 1.1 Chrome-Compression-Proxy\r\n"
-      "x-original-content-length: 200\r\n"
+      "Chrome-Proxy: ofcl=200\r\n"
       "\r\n";
 
   // Verify lite page request.
@@ -2320,7 +2198,7 @@ TEST_F(DataReductionProxyNetworkDelegateTest, TestAcceptTransformHistogram) {
       "Date: Wed, 28 Nov 2007 09:40:09 GMT\r\n"
       "Expires: Mon, 24 Nov 2014 12:45:26 GMT\r\n"
       "Via: 1.1 Chrome-Compression-Proxy\r\n"
-      "x-original-content-length: 200\r\n"
+      "Chrome-Proxy: ofcl=200\r\n"
       "\r\n";
   request = FetchURLRequest(GURL(kTestURL), nullptr, response_headers, 140, 0);
   EXPECT_FALSE(DataReductionProxyData::GetData(*request)->lite_page_received());

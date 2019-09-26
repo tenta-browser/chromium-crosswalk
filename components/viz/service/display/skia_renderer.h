@@ -8,7 +8,9 @@
 #include "base/macros.h"
 #include "cc/cc_export.h"
 #include "components/viz/service/display/direct_renderer.h"
+#include "components/viz/service/display/sync_query_collection.h"
 #include "components/viz/service/viz_service_export.h"
+#include "gpu/vulkan/buildflags.h"
 #include "ui/latency/latency_info.h"
 
 class SkNWayCanvas;
@@ -16,8 +18,6 @@ class SkNWayCanvas;
 namespace cc {
 class OutputSurface;
 class RenderPassDrawQuad;
-class ResourceProvider;
-class ScopedResource;
 }  // namespace cc
 
 namespace viz {
@@ -41,24 +41,19 @@ class VIZ_SERVICE_EXPORT SkiaRenderer : public DirectRenderer {
     disable_picture_quad_image_filtering_ = disable;
   }
 
-  bool HasAllocatedResourcesForTesting(
-      const RenderPassId render_pass_id) const override;
-
  protected:
   bool CanPartialSwap() override;
-  ResourceFormat BackbufferFormat() const override;
   void UpdateRenderPassTextures(
       const RenderPassList& render_passes_in_draw_order,
       const base::flat_map<RenderPassId, RenderPassRequirements>&
           render_passes_in_frame) override;
   void AllocateRenderPassResourceIfNeeded(
-      const RenderPassId render_pass_id,
-      const gfx::Size& enlarged_size,
-      ResourceTextureHint texturehint) override;
+      const RenderPassId& render_pass_id,
+      const RenderPassRequirements& requirements) override;
   bool IsRenderPassResourceAllocated(
-      const RenderPassId render_pass_id) const override;
-  const gfx::Size& GetRenderPassTextureSize(
-      const RenderPassId render_pass_id) override;
+      const RenderPassId& render_pass_id) const override;
+  gfx::Size GetRenderPassBackingPixelSize(
+      const RenderPassId& render_pass_id) override;
   void BindFramebufferToOutputSurface() override;
   void BindFramebufferToTexture(const RenderPassId render_pass_id) override;
   void SetScissorTestRect(const gfx::Rect& scissor_rect) override;
@@ -77,10 +72,11 @@ class VIZ_SERVICE_EXPORT SkiaRenderer : public DirectRenderer {
   void GenerateMipmap() override;
 
  private:
+  struct DrawRenderPassDrawQuadParams;
+
   void ClearCanvas(SkColor color);
   void ClearFramebuffer();
   void SetClipRect(const gfx::Rect& rect);
-  bool IsSoftwareResource(ResourceId resource_id) const;
 
   void DrawDebugBorderQuad(const DebugBorderDrawQuad* quad);
   void DrawPictureQuad(const PictureDrawQuad* quad);
@@ -89,13 +85,13 @@ class VIZ_SERVICE_EXPORT SkiaRenderer : public DirectRenderer {
   void DrawTextureQuad(const TextureDrawQuad* quad);
   void DrawTileQuad(const TileDrawQuad* quad);
   void DrawUnsupportedQuad(const DrawQuad* quad);
+  bool CalculateRPDQParams(sk_sp<SkImage> src_image,
+                           const RenderPassDrawQuad* quad,
+                           DrawRenderPassDrawQuadParams* params);
+
   bool ShouldApplyBackgroundFilters(
       const RenderPassDrawQuad* quad,
       const cc::FilterOperations* background_filters) const;
-  sk_sp<SkImage> ApplyImageFilter(SkImageFilter* filter,
-                                  const RenderPassDrawQuad* quad,
-                                  const SkBitmap& to_filter,
-                                  SkIRect* auto_bounds) const;
   gfx::Rect GetBackdropBoundingBoxForRenderPassQuad(
       const RenderPassDrawQuad* quad,
       const gfx::Transform& contents_device_transform,
@@ -106,8 +102,20 @@ class VIZ_SERVICE_EXPORT SkiaRenderer : public DirectRenderer {
       SkShader::TileMode content_tile_mode) const;
 
   // A map from RenderPass id to the texture used to draw the RenderPass from.
-  base::flat_map<RenderPassId, std::unique_ptr<cc::ScopedResource>>
-      render_pass_textures_;
+  struct RenderPassBacking {
+    sk_sp<SkSurface> render_pass_surface;
+    bool mipmap;
+    gfx::ColorSpace color_space;
+    RenderPassBacking(GrContext* gr_context,
+                      const gfx::Size& size,
+                      bool mipmap,
+                      bool capability_bgra8888,
+                      const gfx::ColorSpace& color_space);
+    ~RenderPassBacking();
+    RenderPassBacking(RenderPassBacking&&);
+    RenderPassBacking& operator=(RenderPassBacking&&);
+  };
+  base::flat_map<RenderPassId, RenderPassBacking> render_pass_backings_;
 
   bool disable_picture_quad_image_filtering_ = false;
 
@@ -115,17 +123,16 @@ class VIZ_SERVICE_EXPORT SkiaRenderer : public DirectRenderer {
   gfx::Rect scissor_rect_;
 
   sk_sp<SkSurface> root_surface_;
+  sk_sp<SkSurface> non_root_surface_;
   sk_sp<SkSurface> overdraw_surface_;
   std::unique_ptr<SkCanvas> overdraw_canvas_;
   std::unique_ptr<SkNWayCanvas> nway_canvas_;
   SkCanvas* root_canvas_ = nullptr;
   SkCanvas* current_canvas_ = nullptr;
+  SkSurface* current_surface_ = nullptr;
   SkPaint current_paint_;
-  std::unique_ptr<cc::ResourceProvider::ScopedWriteLockGL>
-      current_framebuffer_lock_;
-  std::unique_ptr<cc::ResourceProvider::ScopedSkSurface>
-      current_framebuffer_surface_lock_;
 
+  base::Optional<SyncQueryCollection> sync_queries_;
   bool use_swap_with_bounds_ = false;
 
   gfx::Rect swap_buffer_rect_;

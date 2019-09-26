@@ -4,7 +4,7 @@
 
 #include "services/service_manager/embedder/main.h"
 
-#include "base/allocator/features.h"
+#include "base/allocator/buildflags.h"
 #include "base/at_exit.h"
 #include "base/base_switches.h"
 #include "base/command_line.h"
@@ -13,7 +13,6 @@
 #include "base/debug/stack_trace.h"
 #include "base/i18n/icu_util.h"
 #include "base/logging.h"
-#include "base/memory/ptr_util.h"
 #include "base/message_loop/message_loop.h"
 #include "base/optional.h"
 #include "base/process/launch.h"
@@ -21,7 +20,6 @@
 #include "base/process/process.h"
 #include "base/run_loop.h"
 #include "base/task_scheduler/task_scheduler.h"
-#include "base/threading/sequenced_worker_pool.h"
 #include "base/threading/thread.h"
 #include "base/trace_event/trace_config.h"
 #include "base/trace_event/trace_log.h"
@@ -226,8 +224,6 @@ int RunServiceManager(MainDelegate* delegate) {
   NonEmbedderProcessInit();
 
   base::MessageLoop message_loop(base::MessageLoop::TYPE_UI);
-
-  base::SequencedWorkerPool::EnableWithRedirectionToTaskSchedulerForProcess();
 
   base::Thread ipc_thread("IPC thread");
   ipc_thread.StartWithOptions(

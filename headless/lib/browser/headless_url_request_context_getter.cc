@@ -8,7 +8,6 @@
 #include <utility>
 #include <vector>
 
-#include "base/memory/ptr_util.h"
 #include "base/task_scheduler/post_task.h"
 #include "build/build_config.h"
 #include "components/cookie_config/cookie_store_util.h"
@@ -19,13 +18,18 @@
 #include "headless/lib/browser/headless_browser_context_impl.h"
 #include "headless/lib/browser/headless_browser_context_options.h"
 #include "headless/lib/browser/headless_network_delegate.h"
+#include "headless/lib/browser/headless_network_transaction_factory.h"
 #include "net/cookies/cookie_store.h"
 #include "net/dns/mapped_host_resolver.h"
+#include "net/http/http_auth_handler_factory.h"
+#include "net/http/http_auth_preferences.h"
+#include "net/http/http_auth_scheme.h"
 #include "net/http/http_transaction_factory.h"
 #include "net/http/http_util.h"
-#include "net/proxy/proxy_service.h"
+#include "net/proxy_resolution/proxy_resolution_service.h"
 #include "net/ssl/channel_id_service.h"
 #include "net/ssl/default_channel_id_store.h"
+#include "net/traffic_annotation/network_traffic_annotation.h"
 #include "net/url_request/url_request_context.h"
 #include "net/url_request/url_request_context_builder.h"
 
@@ -40,7 +44,7 @@ namespace headless {
 HeadlessURLRequestContextGetter::HeadlessURLRequestContextGetter(
     scoped_refptr<base::SingleThreadTaskRunner> io_task_runner,
     content::ProtocolHandlerMap* protocol_handlers,
-    ProtocolHandlerMap context_protocol_handlers,
+    content::ProtocolHandlerMap context_protocol_handlers,
     content::URLRequestInterceptorScopedVector request_interceptors,
     HeadlessBrowserContextOptions* options,
     net::NetLog* net_log,
@@ -52,25 +56,23 @@ HeadlessURLRequestContextGetter::HeadlessURLRequestContextGetter(
       proxy_config_(options->proxy_config()),
       request_interceptors_(std::move(request_interceptors)),
       net_log_(net_log),
+      capture_resource_metadata_(options->capture_resource_metadata()),
       headless_browser_context_(headless_browser_context) {
   // Must first be created on the UI thread.
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
 
   std::swap(protocol_handlers_, *protocol_handlers);
-
   for (auto& pair : context_protocol_handlers) {
-    protocol_handlers_[pair.first] =
-        linked_ptr<net::URLRequestJobFactory::ProtocolHandler>(
-            pair.second.release());
+    protocol_handlers_[pair.first] = std::move(pair.second);
   }
-  context_protocol_handlers.clear();
 
   // We must create the proxy config service on the UI loop on Linux because it
   // must synchronously run on the glib message loop. This will be passed to
   // the URLRequestContextStorage on the IO thread in GetURLRequestContext().
   if (!proxy_config_) {
     proxy_config_service_ =
-        net::ProxyService::CreateSystemProxyConfigService(io_task_runner_);
+        net::ProxyResolutionService::CreateSystemProxyConfigService(
+            io_task_runner_);
   }
   base::AutoLock lock(lock_);
   headless_browser_context_->AddObserver(this);
@@ -85,6 +87,10 @@ HeadlessURLRequestContextGetter::~HeadlessURLRequestContextGetter() {
 net::URLRequestContext*
 HeadlessURLRequestContextGetter::GetURLRequestContext() {
   DCHECK_CURRENTLY_ON(content::BrowserThread::IO);
+
+  if (shut_down_)
+    return nullptr;
+
   if (!url_request_context_) {
     net::URLRequestContextBuilder builder;
 
@@ -117,13 +123,13 @@ HeadlessURLRequestContextGetter::GetURLRequestContext() {
         content::CookieStoreConfig cookie_config(
             headless_browser_context_->GetPath().Append(
                 FILE_PATH_LITERAL("Cookies")),
-            content::CookieStoreConfig::PERSISTANT_SESSION_COOKIES, NULL);
+            false, true, NULL);
         cookie_config.crypto_delegate =
             cookie_config::GetCookieCryptoDelegate();
         std::unique_ptr<net::CookieStore> cookie_store =
             CreateCookieStore(cookie_config);
         std::unique_ptr<net::ChannelIDService> channel_id_service =
-            base::MakeUnique<net::ChannelIDService>(
+            std::make_unique<net::ChannelIDService>(
                 new net::DefaultChannelIDStore(nullptr));
 
         cookie_store->SetChannelIDServiceID(channel_id_service->GetUniqueID());
@@ -139,7 +145,33 @@ HeadlessURLRequestContextGetter::GetURLRequestContext() {
     builder.set_data_enabled(true);
     builder.set_file_enabled(true);
     if (proxy_config_) {
-      builder.set_proxy_service(net::ProxyService::CreateFixed(*proxy_config_));
+      net::NetworkTrafficAnnotationTag traffic_annotation =
+          net::DefineNetworkTrafficAnnotation("proxy_config_headless", R"(
+        semantics {
+          sender: "Proxy Config"
+          description:
+            "Creates a proxy based on configuration received from headless "
+            "command prompt."
+          trigger:
+            "User starts headless with proxy config."
+          data:
+            "Proxy configurations."
+          destination: OTHER
+          destination_other:
+            "The proxy server specified in the configuration."
+        }
+        policy {
+          cookies_allowed: NO
+          setting:
+            "This config is only used for headless mode and provided by user."
+          policy_exception_justification:
+            "This config is only used for headless mode and provided by user."
+        })");
+
+      builder.set_proxy_resolution_service(
+          net::ProxyResolutionService::CreateFixed(
+              net::ProxyConfigWithAnnotation(*proxy_config_,
+                                             traffic_annotation)));
     } else {
       builder.set_proxy_config_service(std::move(proxy_config_service_));
     }
@@ -147,17 +179,29 @@ HeadlessURLRequestContextGetter::GetURLRequestContext() {
     {
       base::AutoLock lock(lock_);
       builder.set_network_delegate(
-          base::MakeUnique<HeadlessNetworkDelegate>(headless_browser_context_));
+          std::make_unique<HeadlessNetworkDelegate>(headless_browser_context_));
     }
 
+    std::unique_ptr<net::HostResolver> host_resolver(
+        net::HostResolver::CreateDefaultResolver(net_log_));
+
     if (!host_resolver_rules_.empty()) {
-      std::unique_ptr<net::HostResolver> host_resolver(
-          net::HostResolver::CreateDefaultResolver(net_log_));
       std::unique_ptr<net::MappedHostResolver> mapped_host_resolver(
           new net::MappedHostResolver(std::move(host_resolver)));
       mapped_host_resolver->SetRulesFromString(host_resolver_rules_);
-      builder.set_host_resolver(std::move(mapped_host_resolver));
+      host_resolver = std::move(mapped_host_resolver);
     }
+
+    net::HttpAuthPreferences* prefs(new net::HttpAuthPreferences());
+    base::CommandLine* command_line = base::CommandLine::ForCurrentProcess();
+    prefs->SetServerWhitelist(
+        command_line->GetSwitchValueASCII(switches::kAuthServerWhitelist));
+    std::unique_ptr<net::HttpAuthHandlerRegistryFactory> factory =
+        net::HttpAuthHandlerRegistryFactory::CreateDefault(host_resolver.get());
+    factory->SetHttpAuthPreferences(net::kNegotiateAuthScheme,
+                                    std::move(prefs));
+    builder.SetHttpAuthHandlerFactory(std::move(factory));
+    builder.set_host_resolver(std::move(host_resolver));
 
     // Extra headers are required for network emulation and are removed in
     // DevToolsNetworkTransaction. If a protocol handler is set for http or
@@ -179,6 +223,13 @@ HeadlessURLRequestContextGetter::GetURLRequestContext() {
       builder.SetCreateHttpTransactionFactoryCallback(
           base::BindOnce(&content::CreateDevToolsNetworkTransactionFactory));
     }
+    if (capture_resource_metadata_) {
+      builder.SetCreateHttpTransactionFactoryCallback(
+          base::BindOnce(&HeadlessNetworkTransactionFactory::Create,
+                         headless_browser_context_));
+      // We want to use the http cache inside HeadlessNetworkTransactionFactory.
+      builder.DisableHttpCache();
+    }
 
     url_request_context_ = builder.Build();
     url_request_context_->set_net_log(net_log_);
@@ -199,6 +250,13 @@ net::HostResolver* HeadlessURLRequestContextGetter::host_resolver() const {
 void HeadlessURLRequestContextGetter::OnHeadlessBrowserContextDestruct() {
   base::AutoLock lock(lock_);
   headless_browser_context_ = nullptr;
+}
+
+void HeadlessURLRequestContextGetter::NotifyContextShuttingDown() {
+  DCHECK_CURRENTLY_ON(content::BrowserThread::IO);
+  shut_down_ = true;
+  net::URLRequestContextGetter::NotifyContextShuttingDown();
+  url_request_context_ = nullptr;  // deletes it
 }
 
 }  // namespace headless

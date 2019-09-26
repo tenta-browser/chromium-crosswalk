@@ -56,12 +56,18 @@ class PixelExpectations(GpuTestExpectations):
     self.Flaky('*', ['linux', 'intel', 'debug'], bug=648369)
 
     self.Flaky('Pixel_Video_MP4', ['android', 'nvidia'], bug=716564)
+    self.Fail('Pixel_Video_MP4',
+        ['android', ('qualcomm', 'Adreno (TM) 418')], bug=820240)
+    self.Flaky('Pixel_Video_MP4', ['linux', 'nvidia'], bug=819635)
 
     # TODO(junov); validate new test results
     self.Fail('Pixel_CanvasLowLatency2D',
         ['mac', 'linux', 'win', 'android', 'chromeos'], bug=788439)
     self.Fail('Pixel_CanvasUnacceleratedLowLatency2D',
         ['mac', 'linux', 'win', 'android', 'chromeos'], bug=788439)
+
+    # Rebaseline Pixel_CSS3DBlueBox
+    self.Fail('Pixel_CSS3DBlueBox', bug=796558)
 
     # Flaky for unknown reasons only on macOS. Not planning to investigate
     # further.
@@ -75,6 +81,8 @@ class PixelExpectations(GpuTestExpectations):
               ['mac', 'linux', 'win', 'android'], bug=735228)
     self.Flaky('Pixel_OffscreenCanvasTransferAfterStyleResize',
               ['mac', 'linux', 'win', 'android'], bug=735171)
+    self.Flaky('Pixel_OffscreenCanvasTransferToImageBitmap',
+              ['linux', 'win', 'android'], bug=807742)
 
     self.Flaky('Pixel_OffscreenCanvasWebGLSoftwareCompositingWorker',
         ['mac', ('nvidia', 0xfe9), 'debug'], bug=751328)
@@ -92,3 +100,21 @@ class PixelExpectations(GpuTestExpectations):
         ['highsierra', ('intel', 0xa2e)], bug=774809)
     self.Fail('Pixel_WebGLGreenTriangle_NonChromiumImage_NoAA_NoAlpha',
         ['highsierra', ('intel', 0xa2e)], bug=774809)
+
+    # Failing on NVIDIA Shield TV; not sure why yet.
+    self.Fail('Pixel_WebGL_PremultipliedAlpha_False',
+              ['android', 'nvidia'], bug=791733)
+
+    # TODO(zmo): temporarily suppress these two tests until new
+    # reference images with new names are generated.
+    self.Fail('Pixel_Canvas2DRedBox_NoGpuProcess',
+              ['linux', 'mac', 'win'], bug=744658)
+    self.Fail('Pixel_CSS3DBlueBox_NoGpuProcess',
+              ['linux', 'mac', 'win'], bug=744658)
+
+    # TODO(hubbe): Temporary supressions for rebaseline
+    self.Fail('Pixel_Video_VP9', bug=754986)
+    self.Fail('Pixel_DirectComposition_Video_VP9', bug=754986)
+
+    # TODO(kbr): temporary suppression for new test.
+    self.Fail('Pixel_WebGLSadCanvas', bug=575305)

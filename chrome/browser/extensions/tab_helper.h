@@ -16,6 +16,7 @@
 #include "base/scoped_observer.h"
 #include "chrome/browser/extensions/active_tab_permission_granter.h"
 #include "chrome/browser/extensions/extension_reenabler.h"
+#include "chrome/common/chrome_render_frame.mojom.h"
 #include "chrome/common/extensions/mojom/inline_install.mojom.h"
 #include "chrome/common/extensions/webstore_install_result.h"
 #include "chrome/common/web_application_info.h"
@@ -113,7 +114,7 @@ class TabHelper : public content::WebContentsObserver,
   void InvokeForContentRulesRegistries(const Func& func);
 
   // Different types of action when web app info is available.
-  // OnDidGetApplicationInfo uses this to dispatch calls.
+  // OnDidGetWebApplicationInfo uses this to dispatch calls.
   enum WebAppAction {
     NONE,               // No action at all.
     CREATE_HOSTED_APP,  // Create and install a hosted app.
@@ -154,8 +155,9 @@ class TabHelper : public content::WebContentsObserver,
       DoInlineInstallCallback callback) override;
 
   // Message handlers.
-  void OnDidGetWebApplicationInfo(content::RenderFrameHost* sender,
-                                  const WebApplicationInfo& info);
+  void OnDidGetWebApplicationInfo(
+      chrome::mojom::ChromeRenderFrameAssociatedPtr chrome_render_frame,
+      const WebApplicationInfo& info);
   void OnGetAppInstallState(content::RenderFrameHost* host,
                             const GURL& requestor_url,
                             int return_route_id,
@@ -186,7 +188,7 @@ class TabHelper : public content::WebContentsObserver,
                           ExtensionReenabler::ReenableResult result);
 
   // Requests application info for the specified page. This is an asynchronous
-  // request. The delegate is notified by way of OnDidGetApplicationInfo when
+  // request. The delegate is notified by way of OnDidGetWebApplicationInfo when
   // the data is available.
   void GetApplicationInfo(WebAppAction action);
 
@@ -210,8 +212,8 @@ class TabHelper : public content::WebContentsObserver,
   // Cached web app info data.
   WebApplicationInfo web_app_info_;
 
-  // Which deferred action to perform when OnDidGetApplicationInfo is notified
-  // from a WebContents.
+  // Which deferred action to perform when OnDidGetWebApplicationInfo is
+  // notified from a WebContents.
   WebAppAction pending_web_app_action_;
 
   // Which navigation entry was active when the GetApplicationInfo request was

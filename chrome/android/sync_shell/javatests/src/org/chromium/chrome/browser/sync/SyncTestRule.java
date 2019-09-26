@@ -146,7 +146,7 @@ public class SyncTestRule extends ChromeActivityTestRule<ChromeActivity> {
         ThreadUtils.runOnUiThreadBlocking(new Runnable() {
             @Override
             public void run() {
-                SigninManager.get(mContext).signIn(account, null, null);
+                SigninManager.get().signIn(account, null, null);
             }
         });
         SyncTestUtil.waitForSyncActive();
@@ -159,7 +159,7 @@ public class SyncTestRule extends ChromeActivityTestRule<ChromeActivity> {
         ThreadUtils.runOnUiThreadBlocking(new Runnable() {
             @Override
             public void run() {
-                SigninManager.get(mContext).signOut(new Runnable() {
+                SigninManager.get().signOut(new Runnable() {
                     @Override
                     public void run() {
                         s.release();
@@ -181,6 +181,19 @@ public class SyncTestRule extends ChromeActivityTestRule<ChromeActivity> {
                 return !ProfileSyncService.get().isSyncRequested();
             }
         }, SyncTestUtil.TIMEOUT_MS, SyncTestUtil.INTERVAL_MS);
+    }
+
+    /*
+     * Enable the |modelType| Sync data type. This also forces all types to be
+     * USER_SELECTABLE_TYPES.
+     */
+    public void enableDataType(final int modelType) {
+        ThreadUtils.runOnUiThreadBlocking(() -> {
+            Set<Integer> preferredTypes = mProfileSyncService.getPreferredDataTypes();
+            preferredTypes.retainAll(USER_SELECTABLE_TYPES);
+            preferredTypes.add(modelType);
+            mProfileSyncService.setPreferredDataTypes(false, preferredTypes);
+        });
     }
 
     public void disableDataType(final int modelType) {

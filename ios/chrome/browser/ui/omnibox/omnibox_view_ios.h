@@ -8,12 +8,11 @@
 #import <UIKit/UIKit.h>
 
 #include <memory>
-#include "base/mac/scoped_nsobject.h"
 #include "components/omnibox/browser/omnibox_view.h"
 #include "components/toolbar/toolbar_model.h"
-#include "ios/chrome/browser/ui/omnibox/omnibox_popup_provider.h"
-#import "ios/chrome/browser/ui/omnibox/omnibox_popup_view_suggestions_delegate.h"
 #import "ios/chrome/browser/ui/omnibox/omnibox_text_field_ios.h"
+#include "ios/chrome/browser/ui/omnibox/popup/omnibox_popup_provider.h"
+#import "ios/chrome/browser/ui/omnibox/popup/omnibox_popup_view_suggestions_delegate.h"
 
 struct AutocompleteMatch;
 class AutocompleteResult;
@@ -22,6 +21,7 @@ class GURL;
 @class OmniboxTextFieldIOS;
 @class OmniboxTextFieldPasteDelegate;
 class WebOmniboxEditController;
+@class OmniboxClearButtonBridge;
 
 namespace ios {
 class ChromeBrowserState;
@@ -85,7 +85,6 @@ class OmniboxViewIOS : public OmniboxView,
   void Update() override {}
   void EnterKeywordModeForDefaultSearchProvider() override {}
   bool IsSelectAll() const override;
-  bool DeleteAtEndPressed() override;
   void GetSelectionBounds(base::string16::size_type* start,
                           base::string16::size_type* end) const override;
   void SelectAll(bool reversed) override {}
@@ -158,6 +157,13 @@ class OmniboxViewIOS : public OmniboxView,
   void EmphasizeURLComponents() override;
 
  private:
+  // Creates the clear text UIButton to be used as a right view of |field_|.
+  void CreateClearTextIcon(bool is_incognito);
+
+  // Updates the view to show the appropriate button (e.g. clear text or voice
+  // search) on the right side of |field_|.
+  void UpdateRightDecorations();
+
   // Calculates text attributes according to |display_text| and
   // returns them in an autoreleased object.
   NSAttributedString* ApplyTextAttributes(const base::string16& text);
@@ -178,13 +184,17 @@ class OmniboxViewIOS : public OmniboxView,
 
   ios::ChromeBrowserState* browser_state_;
 
-  base::scoped_nsobject<OmniboxTextFieldIOS> field_;
-  base::scoped_nsobject<OmniboxTextFieldPasteDelegate> paste_delegate_;
+  OmniboxTextFieldIOS* field_;
+  __strong UIButton* clear_text_button_;
+
+  __strong OmniboxClearButtonBridge* clear_button_bridge_;
+
+  OmniboxTextFieldPasteDelegate* paste_delegate_;
   WebOmniboxEditController* controller_;  // weak, owns us
   LeftImageProvider* left_image_provider_;  // weak
 
   State state_before_change_;
-  base::scoped_nsobject<NSString> marked_text_before_change_;
+  NSString* marked_text_before_change_;
   NSRange current_selection_;
   NSRange old_selection_;
 
@@ -199,7 +209,7 @@ class OmniboxViewIOS : public OmniboxView,
   BOOL use_strikethrough_workaround_;
 
   // Bridges delegate method calls from |field_| to C++ land.
-  base::scoped_nsobject<AutocompleteTextFieldDelegate> field_delegate_;
+  AutocompleteTextFieldDelegate* field_delegate_;
 
   // Temporary pointer to the attributed display string, stored as color and
   // other emphasis attributes are applied by the superclass.

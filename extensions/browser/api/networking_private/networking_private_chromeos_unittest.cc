@@ -221,7 +221,7 @@ class NetworkingPrivateApiTest : public ApiUnitTest {
     device_test_->SetDeviceProperty(kCellularDevicePath, shill::kMinProperty,
                                     base::Value("test_min"));
     device_test_->SetDeviceProperty(kCellularDevicePath,
-                                    shill::kModelIDProperty,
+                                    shill::kModelIdProperty,
                                     base::Value("test_model_id"));
     std::unique_ptr<base::DictionaryValue> apn =
         DictionaryBuilder()
@@ -1093,6 +1093,7 @@ TEST_F(NetworkingPrivateApiTest, GetCellularProperties) {
                    .Set("ModelID", "test_model_id")
                    .Set("NetworkTechnology", "GSM")
                    .Set("RoamingState", "Home")
+                   .SetBoolean("Scanning", false)
                    .Build())
           .Set("ConnectionState", "Connected")
           .Set("GUID", "cellular_guid")
@@ -1146,6 +1147,7 @@ TEST_F(NetworkingPrivateApiTest, GetCellularPropertiesFromWebUi) {
                    .Set("MIN", "test_min")
                    .Set("NetworkTechnology", "GSM")
                    .Set("RoamingState", "Home")
+                   .SetBoolean("Scanning", false)
                    .Set("APNList", ListBuilder()
                                        .Append(expected_apn->CreateDeepCopy())
                                        .Build())

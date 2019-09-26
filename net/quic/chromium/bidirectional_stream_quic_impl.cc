@@ -12,6 +12,7 @@
 #include "base/threading/thread_task_runner_handle.h"
 #include "base/timer/timer.h"
 #include "net/http/bidirectional_stream_request_info.h"
+#include "net/http/http_util.h"
 #include "net/quic/core/quic_connection.h"
 #include "net/quic/platform/api/quic_string_piece.h"
 #include "net/socket/next_proto.h"
@@ -68,7 +69,8 @@ void BidirectionalStreamQuicImpl::Start(
     const NetLogWithSource& net_log,
     bool send_request_headers_automatically,
     BidirectionalStreamImpl::Delegate* delegate,
-    std::unique_ptr<base::Timer> /* timer */) {
+    std::unique_ptr<base::Timer> timer,
+    const NetworkTrafficAnnotationTag& traffic_annotation) {
   ScopedBoolSaver saver(&may_invoke_callbacks_, false);
   DCHECK(!stream_);
   CHECK(delegate);
@@ -80,9 +82,10 @@ void BidirectionalStreamQuicImpl::Start(
   request_info_ = request_info;
 
   int rv = session_->RequestStream(
-      request_info_->method == "POST",
+      !HttpUtil::IsMethodSafe(request_info_->method),
       base::Bind(&BidirectionalStreamQuicImpl::OnStreamReady,
-                 weak_factory_.GetWeakPtr()));
+                 weak_factory_.GetWeakPtr()),
+      traffic_annotation);
   if (rv == ERR_IO_PENDING)
     return;
 
@@ -120,8 +123,8 @@ int BidirectionalStreamQuicImpl::WriteHeaders() {
   http_request_info.method = request_info_->method;
   http_request_info.extra_headers = request_info_->extra_headers;
 
-  CreateSpdyHeadersFromHttpRequest(
-      http_request_info, http_request_info.extra_headers, true, &headers);
+  CreateSpdyHeadersFromHttpRequest(http_request_info,
+                                   http_request_info.extra_headers, &headers);
   int rv = stream_->WriteHeaders(std::move(headers),
                                  request_info_->end_stream_on_headers, nullptr);
   if (rv >= 0) {

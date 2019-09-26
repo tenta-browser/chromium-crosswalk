@@ -22,8 +22,8 @@
 #include "net/test/embedded_test_server/embedded_test_server.h"
 #include "net/test/embedded_test_server/http_request.h"
 #include "net/test/embedded_test_server/http_response.h"
-#include "third_party/WebKit/common/associated_interfaces/associated_interface_provider.h"
-#include "third_party/WebKit/public/platform/modules/manifest/manifest_manager.mojom.h"
+#include "third_party/blink/public/common/associated_interfaces/associated_interface_provider.h"
+#include "third_party/blink/public/platform/modules/manifest/manifest_manager.mojom.h"
 
 namespace content {
 
@@ -73,9 +73,8 @@ class ManifestBrowserTest : public ContentBrowserTest,
   }
 
   void GetManifestAndWait() {
-    shell()->web_contents()->GetManifest(
-        base::Bind(&ManifestBrowserTest::OnGetManifest,
-                   base::Unretained(this)));
+    shell()->web_contents()->GetManifest(base::BindOnce(
+        &ManifestBrowserTest::OnGetManifest, base::Unretained(this)));
 
     message_loop_runner_ = new MessageLoopRunner();
     message_loop_runner_->Run();
@@ -657,6 +656,36 @@ IN_PROC_BROWSER_TEST_F(ManifestBrowserTest, NoUseCredentialsNoCookies) {
   // The custom embedded test server will fill set the name to 'no cookies' if
   // it did not find cookies.
   EXPECT_TRUE(base::EqualsASCII(manifest().name.string(), "no cookies"));
+}
+
+// This tests that fetching a Manifest from a unique origin always fails,
+// regardless of the CORS headers on the manifest. It also tests that no
+// manifest change notifications are reported when the origin is unique.
+IN_PROC_BROWSER_TEST_F(ManifestBrowserTest, UniqueOrigin) {
+  GURL test_url = embedded_test_server()->GetURL("/manifest/sandboxed.html");
+
+  ASSERT_TRUE(NavigateToURL(shell(), test_url));
+  std::string manifest_link =
+      embedded_test_server()->GetURL("/manifest/dummy-manifest.json").spec();
+  ASSERT_TRUE(ExecuteScript(shell(), "setManifestTo('" + manifest_link + "')"));
+
+  // Same-origin manifest will not be fetched from a unique origin, regardless
+  // of CORS headers.
+  GetManifestAndWait();
+  EXPECT_TRUE(manifest().IsEmpty());
+  EXPECT_TRUE(manifest_url().is_empty());
+  EXPECT_EQ(0, GetConsoleErrorCount());
+  EXPECT_EQ(0u, reported_manifest_urls().size());
+
+  manifest_link =
+      embedded_test_server()->GetURL("/manifest/manifest-cors.json").spec();
+  ASSERT_TRUE(ExecuteScript(shell(), "setManifestTo('" + manifest_link + "')"));
+
+  GetManifestAndWait();
+  EXPECT_TRUE(manifest().IsEmpty());
+  EXPECT_TRUE(manifest_url().is_empty());
+  EXPECT_EQ(0, GetConsoleErrorCount());
+  EXPECT_EQ(0u, reported_manifest_urls().size());
 }
 
 } // namespace content

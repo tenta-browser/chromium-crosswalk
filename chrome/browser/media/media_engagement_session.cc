@@ -4,15 +4,46 @@
 
 #include "chrome/browser/media/media_engagement_session.h"
 
+#include "base/metrics/histogram_macros.h"
+#include "chrome/browser/media/media_engagement_preloaded_list.h"
 #include "chrome/browser/media/media_engagement_score.h"
 #include "chrome/browser/media/media_engagement_service.h"
+#include "media/base/media_switches.h"
 #include "services/metrics/public/cpp/ukm_builders.h"
 #include "services/metrics/public/cpp/ukm_entry_builder.h"
 #include "services/metrics/public/cpp/ukm_recorder.h"
 
+namespace {
+
+// This is used for histograms. Do not re-order or change values.
+enum class SessionStatus {
+  kCreated = 0,
+  kSignificantPlayback = 1,
+  // Leave at the end.
+  kSize,
+};
+
+void RecordSessionStatus(SessionStatus status) {
+  static const char kSessionStatus[] = "Media.Engagement.Session";
+  UMA_HISTOGRAM_ENUMERATION(kSessionStatus, status, SessionStatus::kSize);
+}
+
+void RecordRestoredSessionStatus(SessionStatus status) {
+  static const char kSessionRestoredStatus[] =
+      "Media.Engagement.Session.Restored";
+  UMA_HISTOGRAM_ENUMERATION(kSessionRestoredStatus, status,
+                            SessionStatus::kSize);
+}
+
+}  // anonymous namespace
+
 MediaEngagementSession::MediaEngagementSession(MediaEngagementService* service,
-                                               const url::Origin& origin)
-    : service_(service), origin_(origin) {}
+                                               const url::Origin& origin,
+                                               RestoreType restore_status)
+    : service_(service), origin_(origin), restore_status_(restore_status) {
+  if (restore_status_ == RestoreType::kRestored)
+    pending_data_to_commit_.visit = false;
+}
 
 bool MediaEngagementSession::IsSameOriginWith(const url::Origin& origin) const {
   return origin_.IsSameOriginWith(origin);
@@ -23,6 +54,12 @@ void MediaEngagementSession::RecordSignificantPlayback() {
 
   significant_playback_recorded_ = true;
   pending_data_to_commit_.playback = true;
+
+  // When a session was restored, visits are only recorded when there was a
+  // playback. Add back the visit now as this code can only be executed once
+  // per session.
+  if (restore_status_ == RestoreType::kRestored)
+    pending_data_to_commit_.visit = true;
 
   // When playback has happened, the visit can be recorded as there will be no
   // further changes.
@@ -64,8 +101,12 @@ MediaEngagementSession::~MediaEngagementSession() {
   // The destructor is called when all the tabs associated te the MEI session
   // are closed. Metrics and data related to "visits" need to be recorded now.
 
-  if (HasPendingDataToCommit())
+  if (HasPendingDataToCommit()) {
     CommitPendingData();
+  } else if ((restore_status_ == RestoreType::kRestored) &&
+             !significant_playback_recorded_) {
+    RecordStatusHistograms();
+  }
 
   RecordUkmMetrics();
 }
@@ -88,6 +129,13 @@ void MediaEngagementSession::RecordUkmMetrics() {
   if (!ukm_recorder)
     return;
 
+  bool is_preloaded = false;
+  if (base::FeatureList::IsEnabled(media::kPreloadMediaEngagementData)) {
+    is_preloaded =
+        MediaEngagementPreloadedList::GetInstance()->CheckOriginIsPresent(
+            origin_);
+  }
+
   MediaEngagementScore score =
       service_->CreateEngagementScore(origin_.GetURL());
   ukm::builders::Media_Engagement_SessionFinished(ukm_source_id_)
@@ -96,6 +144,9 @@ void MediaEngagementSession::RecordUkmMetrics() {
       .SetEngagement_Score(round(score.actual_score() * 100))
       .SetPlaybacks_Delta(significant_playback_recorded_)
       .SetEngagement_IsHigh(score.high_score())
+      .SetEngagement_IsHigh_Changed(high_score_changed_)
+      .SetEngagement_IsHigh_Changes(score.high_score_changes())
+      .SetEngagement_IsPreloaded(is_preloaded)
       .SetPlayer_Audible_Delta(audible_players_total_)
       .SetPlayer_Audible_Total(score.audible_playbacks())
       .SetPlayer_Significant_Delta(significant_players_total_)
@@ -109,11 +160,29 @@ bool MediaEngagementSession::HasPendingDataToCommit() const {
          pending_data_to_commit_.players;
 }
 
+void MediaEngagementSession::RecordStatusHistograms() const {
+  DCHECK(HasPendingDataToCommit() ||
+         (restore_status_ == RestoreType::kRestored));
+
+  RecordSessionStatus(SessionStatus::kCreated);
+  if (pending_data_to_commit_.playback)
+    RecordSessionStatus(SessionStatus::kSignificantPlayback);
+
+  if (restore_status_ == RestoreType::kRestored) {
+    RecordRestoredSessionStatus(SessionStatus::kCreated);
+    if (pending_data_to_commit_.playback)
+      RecordRestoredSessionStatus(SessionStatus::kSignificantPlayback);
+  }
+}
+
 void MediaEngagementSession::CommitPendingData() {
   DCHECK(HasPendingDataToCommit());
 
+  RecordStatusHistograms();
+
   MediaEngagementScore score =
       service_->CreateEngagementScore(origin_.GetURL());
+  bool previous_high_value = score.high_score();
 
   if (pending_data_to_commit_.visit)
     score.IncrementVisits();
@@ -148,6 +217,9 @@ void MediaEngagementSession::CommitPendingData() {
   }
 
   score.Commit();
+
+  // If the high state has changed store that in a bool.
+  high_score_changed_ = previous_high_value != score.high_score();
 
   pending_data_to_commit_.visit = pending_data_to_commit_.playback =
       pending_data_to_commit_.players = false;

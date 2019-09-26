@@ -11,6 +11,7 @@
 #include <vector>
 
 #include "base/bind.h"
+#include "base/compiler_specific.h"
 #include "base/containers/flat_map.h"
 #include "base/strings/string_util.h"
 #include "base/threading/thread_checker.h"
@@ -23,12 +24,12 @@
 #include "cc/layers/touch_action_region.h"
 #include "cc/trees/element_id.h"
 #include "cc/trees/layer_tree_host.h"
-#include "third_party/WebKit/public/platform/WebFloatPoint.h"
-#include "third_party/WebKit/public/platform/WebFloatRect.h"
-#include "third_party/WebKit/public/platform/WebLayerPositionConstraint.h"
-#include "third_party/WebKit/public/platform/WebLayerScrollClient.h"
-#include "third_party/WebKit/public/platform/WebLayerStickyPositionConstraint.h"
-#include "third_party/WebKit/public/platform/WebSize.h"
+#include "third_party/blink/public/platform/web_float_point.h"
+#include "third_party/blink/public/platform/web_float_rect.h"
+#include "third_party/blink/public/platform/web_layer_position_constraint.h"
+#include "third_party/blink/public/platform/web_layer_scroll_client.h"
+#include "third_party/blink/public/platform/web_layer_sticky_position_constraint.h"
+#include "third_party/blink/public/platform/web_size.h"
 #include "third_party/skia/include/core/SkMatrix44.h"
 #include "ui/gfx/geometry/rect_conversions.h"
 #include "ui/gfx/geometry/vector2d_conversions.h"
@@ -290,17 +291,15 @@ void WebLayerImpl::SetNonFastScrollableRegion(const WebVector<WebRect>& rects) {
 
 WebVector<WebRect> WebLayerImpl::NonFastScrollableRegion() const {
   size_t num_rects = 0;
-  for (cc::Region::Iterator region_rects(layer_->non_fast_scrollable_region());
-       region_rects.has_rect();
-       region_rects.next())
+  for (gfx::Rect rect : layer_->non_fast_scrollable_region()) {
+    ALLOW_UNUSED_LOCAL(rect);
     ++num_rects;
+  }
 
   WebVector<WebRect> result(num_rects);
   size_t i = 0;
-  for (cc::Region::Iterator region_rects(layer_->non_fast_scrollable_region());
-       region_rects.has_rect();
-       region_rects.next()) {
-    result[i] = region_rects.rect();
+  for (gfx::Rect rect : layer_->non_fast_scrollable_region()) {
+    result[i] = rect;
     ++i;
   }
   return result;
@@ -316,17 +315,15 @@ void WebLayerImpl::SetTouchEventHandlerRegion(
 
 WebVector<WebRect> WebLayerImpl::TouchEventHandlerRegion() const {
   size_t num_rects = 0;
-  for (cc::Region::Iterator region_rects(
-           layer_->touch_action_region().region());
-       region_rects.has_rect(); region_rects.next())
+  for (gfx::Rect rect : layer_->touch_action_region().region()) {
+    ALLOW_UNUSED_LOCAL(rect);
     ++num_rects;
+  }
 
   WebVector<WebRect> result(num_rects);
   size_t i = 0;
-  for (cc::Region::Iterator region_rects(
-           layer_->touch_action_region().region());
-       region_rects.has_rect(); region_rects.next()) {
-    result[i] = region_rects.rect();
+  for (gfx::Rect rect : layer_->touch_action_region().region()) {
+    result[i] = rect;
     ++i;
   }
   return result;
@@ -336,17 +333,17 @@ WebVector<WebRect>
 WebLayerImpl::TouchEventHandlerRegionForTouchActionForTesting(
     cc::TouchAction touch_action) const {
   size_t num_rects = 0;
-  for (cc::Region::Iterator region_rects(
-           layer_->touch_action_region().GetRegionForTouchAction(touch_action));
-       region_rects.has_rect(); region_rects.next())
+  for (gfx::Rect rect :
+       layer_->touch_action_region().GetRegionForTouchAction(touch_action)) {
+    ALLOW_UNUSED_LOCAL(rect);
     ++num_rects;
+  }
 
   WebVector<WebRect> result(num_rects);
   size_t i = 0;
-  for (cc::Region::Iterator region_rects(
-           layer_->touch_action_region().GetRegionForTouchAction(touch_action));
-       region_rects.has_rect(); region_rects.next()) {
-    result[i] = region_rects.rect();
+  for (gfx::Rect rect :
+       layer_->touch_action_region().GetRegionForTouchAction(touch_action)) {
+    result[i] = rect;
     ++i;
   }
   return result;
@@ -463,8 +460,8 @@ void WebLayerImpl::SetScrollOffsetFromImplSideForTesting(
   layer_->SetScrollOffsetFromImplSide(offset);
 }
 
-void WebLayerImpl::SetLayerClient(cc::LayerClient* client) {
-  layer_->SetLayerClient(client);
+void WebLayerImpl::SetLayerClient(base::WeakPtr<cc::LayerClient> client) {
+  layer_->SetLayerClient(std::move(client));
 }
 
 const cc::Layer* WebLayerImpl::CcLayer() const {
@@ -516,6 +513,11 @@ void WebLayerImpl::ShowScrollbars() {
 void WebLayerImpl::SetOverscrollBehavior(
     const blink::WebOverscrollBehavior& behavior) {
   layer_->SetOverscrollBehavior(static_cast<cc::OverscrollBehavior>(behavior));
+}
+
+void WebLayerImpl::SetSnapContainerData(
+    base::Optional<cc::SnapContainerData> data) {
+  layer_->SetSnapContainerData(std::move(data));
 }
 
 }  // namespace cc_blink

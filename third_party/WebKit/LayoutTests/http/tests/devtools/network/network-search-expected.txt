@@ -1,0 +1,40 @@
+Tests search in network requests
+
+Ignore case, regexp
+  echo-payload.php—127.0.0.1:8000/devtools/network/resources/echo-payload.php?n=01
+  1request0-dosearch-doSearch-d.Search
+  echo-payload.php—127.0.0.1:8000/devtools/network/resources/echo-payload.php?n=21
+  1request2-doSearch
+  echo-payload.php—127.0.0.1:8000/devtools/network/resources/echo-payload.php?n=31
+  1request3-dosearch
+  echo-payload.php—127.0.0.1:8000/devtools/network/resources/echo-payload.php?n=41
+  1request4-doSearch
+  echo-payload.php—127.0.0.1:8000/devtools/network/resources/echo-payload.php?n=51
+  1request5-d.Search
+  echo-payload.php—127.0.0.1:8000/devtools/network/resources/echo-payload.php?n=61
+  1request6-dosearch-doSearch
+  echo-payload.php—127.0.0.1:8000/devtools/network/resources/echo-payload.php?n=81
+  1request8-doSearch
+  echo-payload.php—127.0.0.1:8000/devtools/network/resources/echo-payload.php?n=91
+  1request9-dosearch
+
+Ignore case, No regexp
+  echo-payload.php—127.0.0.1:8000/devtools/network/resources/echo-payload.php?n=01
+  1…ch-doSearch-d.Search
+  echo-payload.php—127.0.0.1:8000/devtools/network/resources/echo-payload.php?n=51
+  1request5-d.Search
+
+Case sensitive, regexp
+  echo-payload.php—127.0.0.1:8000/devtools/network/resources/echo-payload.php?n=01
+  1request0-dosearch-doSearch-d.Search
+  echo-payload.php—127.0.0.1:8000/devtools/network/resources/echo-payload.php?n=31
+  1request3-dosearch
+  echo-payload.php—127.0.0.1:8000/devtools/network/resources/echo-payload.php?n=61
+  1request6-dosearch-doSearch
+  echo-payload.php—127.0.0.1:8000/devtools/network/resources/echo-payload.php?n=91
+  1request9-dosearch
+
+Clicking on search result
+Selected tab: response, URL: http://127.0.0.1:8000/devtools/network/resources/echo-payload.php?n=9
+Line number: 0
+

@@ -10,14 +10,12 @@
 #include <utility>
 
 #include "base/files/file_util.h"
-#include "base/memory/ptr_util.h"
 #include "base/posix/eintr_wrapper.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/sys_info.h"
 #include "base/task_runner_util.h"
 #include "base/task_scheduler/post_task.h"
-#include "base/threading/sequenced_worker_pool.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/chromeos/drive/file_system_util.h"
 #include "chrome/browser/chromeos/extensions/file_manager/event_router.h"
@@ -39,6 +37,7 @@
 #include "components/drive/event_logger.h"
 #include "components/storage_monitor/storage_info.h"
 #include "components/storage_monitor/storage_monitor.h"
+#include "content/public/browser/browser_thread.h"
 #include "content/public/browser/child_process_security_policy.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/render_process_host.h"
@@ -325,7 +324,7 @@ void PostNotificationCallbackTaskToUIThread(
 void FileWatchFunctionBase::Respond(bool success) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
 
-  SetResult(base::MakeUnique<base::Value>(success));
+  SetResult(std::make_unique<base::Value>(success));
   SendResponse(success);
 }
 
@@ -523,7 +522,7 @@ void FileManagerPrivateGetSizeStatsFunction::OnGetDriveAvailableSpace(
 }
 
 void FileManagerPrivateGetSizeStatsFunction::OnGetMtpAvailableSpace(
-    const MtpStorageInfo& mtp_storage_info,
+    const device::mojom::MtpStorageInfo& mtp_storage_info,
     const bool error) {
   if (error) {
     // If stats couldn't be gotten from MTP volume, result should be left
@@ -532,8 +531,8 @@ void FileManagerPrivateGetSizeStatsFunction::OnGetMtpAvailableSpace(
     return;
   }
 
-  const uint64_t max_capacity = mtp_storage_info.max_capacity();
-  const uint64_t free_space_in_bytes = mtp_storage_info.free_space_in_bytes();
+  const uint64_t max_capacity = mtp_storage_info.max_capacity;
+  const uint64_t free_space_in_bytes = mtp_storage_info.free_space_in_bytes;
   OnGetSizeStats(&max_capacity, &free_space_in_bytes);
 }
 
@@ -566,7 +565,7 @@ bool FileManagerPrivateInternalValidatePathNameLengthFunction::RunAsync() {
 
   // No explicit limit on the length of Drive file names.
   if (file_system_url.type() == storage::kFileSystemTypeDrive) {
-    SetResult(base::MakeUnique<base::Value>(true));
+    SetResult(std::make_unique<base::Value>(true));
     SendResponse(true);
     return true;
   }
@@ -583,7 +582,7 @@ bool FileManagerPrivateInternalValidatePathNameLengthFunction::RunAsync() {
 
 void FileManagerPrivateInternalValidatePathNameLengthFunction::
     OnFilePathLimitRetrieved(size_t current_length, size_t max_length) {
-  SetResult(base::MakeUnique<base::Value>(current_length <= max_length));
+  SetResult(std::make_unique<base::Value>(current_length <= max_length));
   SendResponse(true);
 }
 
@@ -766,7 +765,7 @@ void FileManagerPrivateInternalStartCopyFunction::RunAfterStartCopy(
     int operation_id) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
 
-  SetResult(base::MakeUnique<base::Value>(operation_id));
+  SetResult(std::make_unique<base::Value>(operation_id));
   SendResponse(true);
 }
 
@@ -808,7 +807,9 @@ bool FileManagerPrivateInternalResolveIsolatedEntriesFunction::RunAsync() {
   for (size_t i = 0; i < params->urls.size(); ++i) {
     const FileSystemURL file_system_url =
         file_system_context->CrackURL(GURL(params->urls[i]));
-    DCHECK(external_backend->CanHandleType(file_system_url.type()));
+    DCHECK(external_backend->CanHandleType(file_system_url.type()))
+        << "GURL: " << file_system_url.ToGURL()
+        << "type: " << file_system_url.type();
     FileDefinition file_definition;
     const bool result =
         file_manager::util::ConvertAbsoluteFilePathToRelativeFileSystemPath(
@@ -907,7 +908,7 @@ bool FileManagerPrivateInternalComputeChecksumFunction::RunAsync() {
 void FileManagerPrivateInternalComputeChecksumFunction::Respond(
     const std::string& hash) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
-  SetResult(base::MakeUnique<base::Value>(hash));
+  SetResult(std::make_unique<base::Value>(hash));
   SendResponse(true);
 }
 
@@ -957,7 +958,7 @@ void FileManagerPrivateSearchFilesByHashesFunction::OnSearchByHashes(
 
   std::unique_ptr<base::DictionaryValue> result(new base::DictionaryValue());
   for (const auto& hash : hashes) {
-    result->SetWithoutPathExpansion(hash, base::MakeUnique<base::ListValue>());
+    result->SetWithoutPathExpansion(hash, std::make_unique<base::ListValue>());
   }
 
   for (const auto& hashAndPath : search_results) {
@@ -974,7 +975,7 @@ void FileManagerPrivateSearchFilesByHashesFunction::OnSearchByHashes(
 
 ExtensionFunction::ResponseAction
 FileManagerPrivateIsUMAEnabledFunction::Run() {
-  return RespondNow(OneArgument(base::MakeUnique<base::Value>(
+  return RespondNow(OneArgument(std::make_unique<base::Value>(
       ChromeMetricsServiceAccessor::IsMetricsAndCrashReportingEnabled())));
 }
 
@@ -1071,7 +1072,7 @@ bool FileManagerPrivateInternalGetDirectorySizeFunction::RunAsync() {
 
 void FileManagerPrivateInternalGetDirectorySizeFunction::
     OnDirectorySizeRetrieved(int64_t size) {
-  SetResult(base::MakeUnique<base::Value>(static_cast<double>(size)));
+  SetResult(std::make_unique<base::Value>(static_cast<double>(size)));
   SendResponse(true);
 }
 

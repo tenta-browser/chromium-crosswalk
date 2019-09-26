@@ -4,7 +4,6 @@
 
 #include "services/service_manager/public/cpp/connector.h"
 
-#include "base/memory/ptr_util.h"
 #include "services/service_manager/public/cpp/identity.h"
 
 namespace service_manager {
@@ -69,10 +68,7 @@ void Connector::QueryService(const Identity& identity,
 void Connector::BindInterface(const Identity& target,
                               const std::string& interface_name,
                               mojo::ScopedMessagePipeHandle interface_pipe) {
-  if (!BindConnectorIfNecessary())
-    return;
-
-  auto service_overrides_iter = local_binder_overrides_.find(target.name());
+  auto service_overrides_iter = local_binder_overrides_.find(target);
   if (service_overrides_iter != local_binder_overrides_.end()) {
     auto override_iter = service_overrides_iter->second.find(interface_name);
     if (override_iter != service_overrides_iter->second.end()) {
@@ -81,18 +77,24 @@ void Connector::BindInterface(const Identity& target,
     }
   }
 
+  if (!BindConnectorIfNecessary())
+    return;
+
   connector_->BindInterface(target, interface_name, std::move(interface_pipe),
                             base::Bind(&Connector::RunStartServiceCallback,
                                        weak_factory_.GetWeakPtr()));
 }
 
 std::unique_ptr<Connector> Connector::Clone() {
-  if (!BindConnectorIfNecessary())
-    return nullptr;
+  mojom::ConnectorPtrInfo connector;
+  auto request = mojo::MakeRequest(&connector);
+  if (BindConnectorIfNecessary())
+    connector_->Clone(std::move(request));
+  return std::make_unique<Connector>(std::move(connector));
+}
 
-  mojom::ConnectorPtr connector;
-  connector_->Clone(mojo::MakeRequest(&connector));
-  return std::make_unique<Connector>(connector.PassInterface());
+bool Connector::IsBound() const {
+  return connector_.is_bound();
 }
 
 void Connector::FilterInterfaces(const std::string& spec,
@@ -123,24 +125,25 @@ void Connector::OnConnectionError() {
   connector_.reset();
 }
 
-void Connector::OverrideBinderForTesting(const std::string& service_name,
-                                         const std::string& interface_name,
-                                         const TestApi::Binder& binder) {
-  local_binder_overrides_[service_name][interface_name] = binder;
+void Connector::OverrideBinderForTesting(
+    const service_manager::Identity& identity,
+    const std::string& interface_name,
+    const TestApi::Binder& binder) {
+  local_binder_overrides_[identity][interface_name] = binder;
 }
 
-bool Connector::HasBinderOverride(const std::string& service_name,
+bool Connector::HasBinderOverride(const service_manager::Identity& identity,
                                   const std::string& interface_name) {
-  auto service_overrides = local_binder_overrides_.find(service_name);
+  auto service_overrides = local_binder_overrides_.find(identity);
   if (service_overrides == local_binder_overrides_.end())
     return false;
 
   return base::ContainsKey(service_overrides->second, interface_name);
 }
 
-void Connector::ClearBinderOverride(const std::string& service_name,
+void Connector::ClearBinderOverride(const service_manager::Identity& identity,
                                     const std::string& interface_name) {
-  auto service_overrides = local_binder_overrides_.find(service_name);
+  auto service_overrides = local_binder_overrides_.find(identity);
   if (service_overrides == local_binder_overrides_.end())
     return;
 

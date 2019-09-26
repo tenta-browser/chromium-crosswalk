@@ -14,9 +14,25 @@
  *   removable: boolean,
  *   spellCheckEnabled: boolean,
  *   translateEnabled: boolean,
+ *   isManaged: boolean,
+ *   downloadDictionaryFailureCount: number,
+ *   downloadDictionaryStatus:
+ *       ?chrome.languageSettingsPrivate.SpellcheckDictionaryStatus,
  * }}
  */
-var LanguageState;
+let LanguageState;
+
+/**
+ * Settings and state for a policy-enforced spellcheck language.
+ * @typedef {{
+ *   language: !chrome.languageSettingsPrivate.Language,
+ *   isManaged: boolean,
+ *   downloadDictionaryFailureCount: number,
+ *   downloadDictionaryStatus:
+ *       ?chrome.languageSettingsPrivate.SpellcheckDictionaryStatus,
+ * }}
+ */
+let ForcedLanguageState;
 
 /**
  * Input method data to expose to consumers (Chrome OS only).
@@ -29,7 +45,7 @@ var LanguageState;
  *   currentId: string,
  * }}
  */
-var InputMethodsModel;
+let InputMethodsModel;
 
 /**
  * Languages data to expose to consumers.
@@ -43,21 +59,24 @@ var InputMethodsModel;
  *     from the actually used language (navigator.language). Chrome OS and
  *     Windows only.
  * inputMethods: the InputMethodsModel (Chrome OS only).
+ * forcedSpellCheckLanguages: an array of spellcheck languages that are not in
+ *     |enabled|.
  * @typedef {{
  *   supported: !Array<!chrome.languageSettingsPrivate.Language>,
  *   enabled: !Array<!LanguageState>,
  *   translateTarget: string,
  *   prospectiveUILanguage: (string|undefined),
  *   inputMethods: (!InputMethodsModel|undefined),
+ *   forcedSpellCheckLanguages: !Array<!ForcedLanguageState>,
  * }}
  */
-var LanguagesModel;
+let LanguagesModel;
 
 /**
  * Helper methods for reading and writing language settings.
  * @interface
  */
-var LanguageHelper = function() {};
+const LanguageHelper = function() {};
 
 LanguageHelper.prototype = {
 
@@ -160,6 +179,9 @@ LanguageHelper.prototype = {
    * @return {!chrome.languageSettingsPrivate.Language|undefined}
    */
   getLanguage: assertNotReached,
+
+  /** @param {string} languageCode */
+  retryDownloadDictionary: assertNotReached,
 
   // <if expr="chromeos">
   /** @param {string} id */

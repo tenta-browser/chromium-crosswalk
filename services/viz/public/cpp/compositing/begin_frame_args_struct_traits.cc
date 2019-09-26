@@ -4,7 +4,7 @@
 
 #include "services/viz/public/cpp/compositing/begin_frame_args_struct_traits.h"
 
-#include "mojo/common/time_struct_traits.h"
+#include "mojo/public/cpp/base/time_mojom_traits.h"
 
 namespace mojo {
 
@@ -21,6 +21,7 @@ bool StructTraits<viz::mojom::BeginFrameArgsDataView, viz::BeginFrameArgs>::
   // TODO(eseckler): Use EnumTraits for |type|.
   out->type = static_cast<viz::BeginFrameArgs::BeginFrameArgsType>(data.type());
   out->on_critical_path = data.on_critical_path();
+  out->animate_only = data.animate_only();
   return true;
 }
 
@@ -32,6 +33,7 @@ bool StructTraits<viz::mojom::BeginFrameAckDataView, viz::BeginFrameAck>::Read(
     return false;
   out->source_id = data.source_id();
   out->sequence_number = data.sequence_number();
+  out->has_damage = data.has_damage();
   return true;
 }
 

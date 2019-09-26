@@ -19,8 +19,6 @@
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/zlib/google/zip_reader.h"
 
-namespace chrome {
-
 namespace {
 
 void TestCallback(bool* out_success, const base::Closure& quit, bool success) {
@@ -118,7 +116,9 @@ IN_PROC_BROWSER_TEST_F(ZipFileCreatorTest, SomeFilesZip) {
       EXPECT_EQ(kRandomDataSize, entry->original_size());
 
       const base::FilePath out = dir_.GetPath().AppendASCII("archived_content");
-      EXPECT_TRUE(reader.ExtractCurrentEntryToFilePath(out));
+      zip::FilePathWriterDelegate writer(out);
+      EXPECT_TRUE(reader.ExtractCurrentEntry(
+          &writer, std::numeric_limits<uint64_t>::max()));
       EXPECT_TRUE(base::ContentsEqual(zip_base_dir().Append(kFile2), out));
     } else {
       ADD_FAILURE();
@@ -219,5 +219,3 @@ IN_PROC_BROWSER_TEST_F(ZipFileCreatorTest, ZipDirectoryWithManyFiles) {
   }
   EXPECT_TRUE(file_tree_content.empty());
 }
-
-}  // namespace chrome

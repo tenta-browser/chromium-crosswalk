@@ -21,7 +21,6 @@
 #include "extensions/renderer/request_sender.h"
 #include "extensions/renderer/safe_builtins.h"
 #include "extensions/renderer/script_injection_callback.h"
-#include "gin/runner.h"
 #include "url/gurl.h"
 #include "v8/include/v8.h"
 
@@ -62,6 +61,9 @@ class ScriptContext : public RequestSender::Source {
   // See comment in HasAccessOrThrowError.
   static bool IsSandboxedPage(const GURL& url);
 
+  // Initializes |module_system| and associates it with this context.
+  void SetModuleSystem(std::unique_ptr<ModuleSystem> module_system);
+
   // Clears the WebLocalFrame for this contexts and invalidates the associated
   // ModuleSystem.
   void Invalidate();
@@ -93,10 +95,6 @@ class ScriptContext : public RequestSender::Source {
   }
 
   const base::UnguessableToken& context_id() const { return context_id_; }
-
-  void set_module_system(std::unique_ptr<ModuleSystem> module_system) {
-    module_system_ = std::move(module_system);
-  }
 
   ModuleSystem* module_system() { return module_system_.get(); }
 
@@ -235,8 +233,6 @@ class ScriptContext : public RequestSender::Source {
                                     int argc,
                                     v8::Local<v8::Value> argv[]) const;
 
-  class Runner;
-
   // Whether this context is valid.
   bool is_valid_;
 
@@ -283,8 +279,6 @@ class ScriptContext : public RequestSender::Source {
   GURL url_;
 
   GURL service_worker_scope_;
-
-  std::unique_ptr<Runner> runner_;
 
   base::ThreadChecker thread_checker_;
 

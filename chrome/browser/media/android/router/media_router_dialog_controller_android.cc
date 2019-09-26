@@ -9,6 +9,7 @@
 #include "base/android/jni_string.h"
 #include "base/strings/string16.h"
 #include "base/strings/utf_string_conversions.h"
+#include "chrome/browser/android/chrome_feature_list.h"
 #include "chrome/browser/media/android/router/media_router_android.h"
 #include "chrome/browser/media/router/media_router.h"
 #include "chrome/browser/media/router/media_router_factory.h"
@@ -20,7 +21,7 @@
 #include "content/public/browser/presentation_request.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_contents_delegate.h"
-#include "device/vr/features/features.h"
+#include "device/vr/buildflags/buildflags.h"
 #include "jni/ChromeMediaRouterDialogController_jni.h"
 
 DEFINE_WEB_CONTENTS_USER_DATA_KEY(
@@ -140,7 +141,9 @@ MediaRouterDialogControllerAndroid::~MediaRouterDialogControllerAndroid() {
 
 void MediaRouterDialogControllerAndroid::CreateMediaRouterDialog() {
   // TODO(crbug.com/736568): Re-enable dialog in VR.
-  if (vr::VrTabHelper::IsInVr(initiator())) {
+  if (vr::VrTabHelper::IsUiSuppressedInVr(
+          initiator(),
+          vr::UiSuppressedElement::kMediaRouterPresentationRequest)) {
     CancelPresentationRequest();
     return;
   }

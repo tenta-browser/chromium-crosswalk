@@ -237,16 +237,16 @@ class AwContents : public FindHelper::Listener,
   // AwBrowserPermissionRequestDelegate implementation.
   void RequestProtectedMediaIdentifierPermission(
       const GURL& origin,
-      const base::Callback<void(bool)>& callback) override;
+      base::OnceCallback<void(bool)> callback) override;
   void CancelProtectedMediaIdentifierPermissionRequests(
       const GURL& origin) override;
   void RequestGeolocationPermission(
       const GURL& origin,
-      const base::Callback<void(bool)>& callback) override;
+      base::OnceCallback<void(bool)> callback) override;
   void CancelGeolocationPermissionRequests(const GURL& origin) override;
   void RequestMIDISysexPermission(
       const GURL& origin,
-      const base::Callback<void(bool)>& callback) override;
+      base::OnceCallback<void(bool)> callback) override;
   void CancelMIDISysexPermissionRequests(const GURL& origin) override;
 
   // Find-in-page API and related methods.
@@ -281,7 +281,10 @@ class AwContents : public FindHelper::Listener,
   void PostInvalidate() override;
   void OnNewPicture() override;
   gfx::Point GetLocationOnScreen() override;
+
+  // |new_value| is in physical pixel scale.
   void ScrollContainerViewTo(const gfx::Vector2d& new_value) override;
+
   void UpdateScrollState(const gfx::Vector2d& max_scroll_offset,
                          const gfx::SizeF& contents_size_dip,
                          float page_scale_factor,
@@ -363,7 +366,8 @@ class AwContents : public FindHelper::Listener,
   void InitAutofillIfNecessary(bool autocomplete_enabled);
 
   // Geolocation API support
-  void ShowGeolocationPrompt(const GURL& origin, base::Callback<void(bool)>);
+  void ShowGeolocationPrompt(const GURL& origin,
+                             base::OnceCallback<void(bool)>);
   void HideGeolocationPrompt(const GURL& origin);
 
   void SetDipScaleInternal(float dip_scale);
@@ -387,7 +391,7 @@ class AwContents : public FindHelper::Listener,
   // GURL is supplied by the content layer as requesting frame.
   // Callback is supplied by the content layer, and is invoked with the result
   // from the permission prompt.
-  typedef std::pair<const GURL, base::Callback<void(bool)>> OriginCallback;
+  typedef std::pair<const GURL, base::OnceCallback<void(bool)>> OriginCallback;
   // The first element in the list is always the currently pending request.
   std::list<OriginCallback> pending_geolocation_prompts_;
 

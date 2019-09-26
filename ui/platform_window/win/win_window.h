@@ -11,6 +11,8 @@
 #include "ui/platform_window/platform_window.h"
 #include "ui/platform_window/win/win_window_export.h"
 
+#include <windows.h>
+
 namespace ui {
 
 class PlatformWindowDelegate;
@@ -34,6 +36,7 @@ class WIN_WINDOW_EXPORT WinWindow : public PlatformWindow,
   void SetTitle(const base::string16& title) override;
   void SetCapture() override;
   void ReleaseCapture() override;
+  bool HasCapture() const override;
   void ToggleFullscreen() override;
   void Maximize() override;
   void Minimize() override;

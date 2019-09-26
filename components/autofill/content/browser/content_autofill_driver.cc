@@ -42,16 +42,13 @@ ContentAutofillDriver::ContentAutofillDriver(
   // AutofillManager isn't used if provider is valid, Autofill provider is
   // currently used by Android WebView only.
   if (provider) {
-    autofill_handler_ = base::MakeUnique<AutofillHandlerProxy>(this, provider);
-    GetAutofillAgent()->SetUserGestureRequired(false);
-    GetAutofillAgent()->SetSecureContextRequired(true);
-    GetAutofillAgent()->SetFocusRequiresScroll(false);
+    SetAutofillProvider(provider);
   } else {
-    autofill_handler_ = base::MakeUnique<AutofillManager>(
+    autofill_handler_ = std::make_unique<AutofillManager>(
         this, client, app_locale, enable_download_manager);
     autofill_manager_ = static_cast<AutofillManager*>(autofill_handler_.get());
     autofill_external_delegate_ =
-        base::MakeUnique<AutofillExternalDelegate>(autofill_manager_, this);
+        std::make_unique<AutofillExternalDelegate>(autofill_manager_, this);
     autofill_manager_->SetExternalDelegate(autofill_external_delegate_.get());
   }
 }
@@ -166,9 +163,9 @@ gfx::RectF ContentAutofillDriver::TransformBoundingBoxToViewportCoordinates(
   if (!view)
     return bounding_box;
 
-  gfx::Point orig_point(bounding_box.x(), bounding_box.y());
-  gfx::Point transformed_point =
-      view->TransformPointToRootCoordSpace(orig_point);
+  gfx::PointF orig_point(bounding_box.x(), bounding_box.y());
+  gfx::PointF transformed_point =
+      view->TransformPointToRootCoordSpaceF(orig_point);
   return gfx::RectF(transformed_point.x(), transformed_point.y(),
                     bounding_box.width(), bounding_box.height());
 }
@@ -191,13 +188,11 @@ void ContentAutofillDriver::FormsSeen(const std::vector<FormData>& forms,
   autofill_handler_->OnFormsSeen(forms, timestamp);
 }
 
-void ContentAutofillDriver::WillSubmitForm(const FormData& form,
-                                           base::TimeTicks timestamp) {
-  autofill_handler_->OnWillSubmitForm(form, timestamp);
-}
-
-void ContentAutofillDriver::FormSubmitted(const FormData& form) {
-  autofill_handler_->OnFormSubmitted(form);
+void ContentAutofillDriver::FormSubmitted(const FormData& form,
+                                          bool known_success,
+                                          SubmissionSource source,
+                                          base::TimeTicks timestamp) {
+  autofill_handler_->OnFormSubmitted(form, known_success, source, timestamp);
 }
 
 void ContentAutofillDriver::TextFieldDidChange(const FormData& form,
@@ -211,6 +206,13 @@ void ContentAutofillDriver::TextFieldDidScroll(const FormData& form,
                                                const FormFieldData& field,
                                                const gfx::RectF& bounding_box) {
   autofill_handler_->OnTextFieldDidScroll(form, field, bounding_box);
+}
+
+void ContentAutofillDriver::SelectControlDidChange(
+    const FormData& form,
+    const FormFieldData& field,
+    const gfx::RectF& bounding_box) {
+  autofill_handler_->OnSelectControlDidChange(form, field, bounding_box);
 }
 
 void ContentAutofillDriver::QueryFormFieldAutofill(
@@ -252,6 +254,10 @@ void ContentAutofillDriver::SetDataList(
     const std::vector<base::string16>& values,
     const std::vector<base::string16>& labels) {
   autofill_handler_->OnSetDataList(values, labels);
+}
+
+void ContentAutofillDriver::SelectFieldOptionsDidChange(const FormData& form) {
+  autofill_handler_->SelectFieldOptionsDidChange(form);
 }
 
 void ContentAutofillDriver::DidNavigateMainFrame(
@@ -303,6 +309,19 @@ void ContentAutofillDriver::RemoveHandler(
   if (!view)
     return;
   view->GetRenderWidgetHost()->RemoveKeyPressEventCallback(handler);
+}
+
+void ContentAutofillDriver::SetAutofillProvider(AutofillProvider* provider) {
+  autofill_handler_ = std::make_unique<AutofillHandlerProxy>(this, provider);
+  GetAutofillAgent()->SetUserGestureRequired(false);
+  GetAutofillAgent()->SetSecureContextRequired(true);
+  GetAutofillAgent()->SetFocusRequiresScroll(false);
+  GetAutofillAgent()->SetQueryPasswordSuggestion(true);
+}
+
+void ContentAutofillDriver::SetAutofillProviderForTesting(
+    AutofillProvider* provider) {
+  SetAutofillProvider(provider);
 }
 
 }  // namespace autofill

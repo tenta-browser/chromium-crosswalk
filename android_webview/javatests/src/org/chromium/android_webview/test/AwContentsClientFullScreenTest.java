@@ -24,11 +24,11 @@ import org.chromium.android_webview.test.util.JavascriptEventObserver;
 import org.chromium.base.ThreadUtils;
 import org.chromium.base.test.util.DisabledTest;
 import org.chromium.base.test.util.Feature;
-import org.chromium.content.browser.ContentViewCore;
 import org.chromium.content.browser.test.util.Criteria;
 import org.chromium.content.browser.test.util.CriteriaHelper;
 import org.chromium.content.browser.test.util.DOMUtils;
 import org.chromium.content.browser.test.util.TouchCommon;
+import org.chromium.content_public.browser.ContentViewCore;
 import org.chromium.content_public.browser.WebContents;
 
 import java.util.concurrent.TimeoutException;
@@ -69,7 +69,7 @@ public class AwContentsClientFullScreenTest {
                 mActivityTestRule.getActivity(), mActivityTestRule.isHardwareAcceleratedTest());
         mTestContainerView = mActivityTestRule.createAwTestContainerViewOnMainSync(mContentsClient);
         mContentViewCore = mTestContainerView.getContentViewCore();
-        mActivityTestRule.enableJavaScriptOnUiThread(mTestContainerView.getAwContents());
+        AwActivityTestRule.enableJavaScriptOnUiThread(mTestContainerView.getAwContents());
         mTestContainerView.getAwContents().getSettings().setFullscreenSupported(true);
     }
 
@@ -90,10 +90,13 @@ public class AwContentsClientFullScreenTest {
         mContentsClient.waitForCustomViewHidden();
     }
 
-    @Test
+    /*
     @MediumTest
     @Feature({"AndroidWebView"})
     @DisableHardwareAccelerationForTest
+    */
+    @Test
+    @DisabledTest(message = "crbug.com/618749")
     public void testFullscreenForNonVideoElementIsSupportedInSoftwareMode() throws Throwable {
         // Fullscreen for non-video elements is supported and works as expected. Note that
         // this test is the same as testOnShowAndHideCustomViewWithCallback_videoInsideDiv below.
@@ -188,8 +191,9 @@ public class AwContentsClientFullScreenTest {
     }
 
     @Test
-    @MediumTest
-    @Feature({"AndroidWebView"})
+    //@MediumTest
+    //@Feature({"AndroidWebView"})
+    @DisabledTest(message = "crbug.com/789306")
     public void testExitFullscreenEndsIfAppInvokesCallbackFromOnHideCustomView() throws Throwable {
         mContentsClient.setOnHideCustomViewRunnable(
                 () -> mContentsClient.getExitCallback().onCustomViewHidden());
@@ -295,9 +299,12 @@ public class AwContentsClientFullScreenTest {
         assertWaitForKeepScreenOnActive(mTestContainerView, false);
     }
 
-    @Test
+    /*
     @MediumTest
     @Feature({"AndroidWebView"})
+    */
+    @Test
+    @DisabledTest(message = "crbug.com/808444")
     public void testPowerSaveBlockerIsTransferredToFullscreen() throws Throwable {
         Assert.assertFalse(DOMUtils.isFullscreen(getWebContentsOnUiThread()));
         loadTestPage(VIDEO_INSIDE_DIV_TEST_URL);

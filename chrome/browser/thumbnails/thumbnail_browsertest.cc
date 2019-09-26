@@ -10,7 +10,6 @@
 #include "base/memory/scoped_refptr.h"
 #include "base/run_loop.h"
 #include "base/strings/stringprintf.h"
-#include "base/test/scoped_feature_list.h"
 #include "build/build_config.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/thumbnails/thumbnail_service.h"
@@ -18,15 +17,13 @@
 #include "chrome/browser/thumbnails/thumbnailing_context.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
-#include "chrome/common/chrome_features.h"
-#include "chrome/common/chrome_switches.h"
 #include "chrome/test/base/in_process_browser_test.h"
 #include "chrome/test/base/ui_test_utils.h"
 #include "components/keyed_service/content/browser_context_dependency_manager.h"
 #include "content/public/browser/navigation_handle.h"
 #include "content/public/browser/web_contents_observer.h"
 #include "content/public/common/content_switches.h"
-#include "content/public/test/controllable_http_response.h"
+#include "net/test/embedded_test_server/controllable_http_response.h"
 #include "net/test/embedded_test_server/embedded_test_server.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -173,9 +170,6 @@ class ThumbnailTest : public InProcessBrowserTest {
   }
 
   void SetUpInProcessBrowserTestFixture() override {
-    feature_list_.InitAndEnableFeature(
-        features::kCaptureThumbnailOnNavigatingAway);
-
     will_create_browser_context_services_subscription_ =
         BrowserContextDependencyManager::GetInstance()
             ->RegisterWillCreateBrowserContextServicesCallbackForTesting(
@@ -194,8 +188,6 @@ class ThumbnailTest : public InProcessBrowserTest {
         context, &ThumbnailTest::CreateThumbnailService);
   }
 
-  base::test::ScopedFeatureList feature_list_;
-
   std::unique_ptr<
       base::CallbackList<void(content::BrowserContext*)>::Subscription>
       will_create_browser_context_services_subscription_;
@@ -203,12 +195,12 @@ class ThumbnailTest : public InProcessBrowserTest {
 
 IN_PROC_BROWSER_TEST_F(ThumbnailTest,
                        ShouldCaptureOnNavigatingAwayExplicitWait) {
-  content::ControllableHttpResponse response_red(embedded_test_server(),
-                                                 "/red.html");
-  content::ControllableHttpResponse response_yellow(embedded_test_server(),
-                                                    "/yellow.html");
-  content::ControllableHttpResponse response_green(embedded_test_server(),
-                                                   "/green.html");
+  net::test_server::ControllableHttpResponse response_red(
+      embedded_test_server(), "/red.html");
+  net::test_server::ControllableHttpResponse response_yellow(
+      embedded_test_server(), "/yellow.html");
+  net::test_server::ControllableHttpResponse response_green(
+      embedded_test_server(), "/green.html");
   ASSERT_TRUE(embedded_test_server()->Start());
 
   const GURL about_blank_url("about:blank");

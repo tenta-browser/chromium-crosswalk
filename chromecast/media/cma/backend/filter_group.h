@@ -12,10 +12,11 @@
 #include <unordered_set>
 #include <vector>
 
+#include "base/containers/flat_set.h"
 #include "base/macros.h"
 #include "base/memory/aligned_memory.h"
 #include "base/values.h"
-#include "chromecast/media/cma/backend/stream_mixer.h"
+#include "chromecast/public/media/media_pipeline_backend.h"
 #include "chromecast/public/volume_control.h"
 
 namespace media {
@@ -24,11 +25,11 @@ class AudioBus;
 
 namespace chromecast {
 namespace media {
-
+class MixerInput;
 class PostProcessingPipeline;
 
-// FilterGroup mixes StreamMixer::InputQueues and/or FilterGroups,
-// mixes their outputs, and applies DSP to them.
+// FilterGroup mixes MixerInputs and/or FilterGroups, mixes their outputs, and
+// applies DSP to them.
 
 // FilterGroups are added at construction. These cannot be removed.
 
@@ -68,28 +69,30 @@ class FilterGroup {
   // Sets the sample rate of the post-processors.
   void Initialize(int output_samples_per_second);
 
-  // Returns |true| if this FilterGroup is appropriate to process |input|.
-  bool CanProcessInput(StreamMixer::InputQueue* input);
+  // Returns |true| if this FilterGroup is appropriate to process an input with
+  // the given |input_device_id|.
+  bool CanProcessInput(const std::string& input_device_id);
 
-  // Adds |input| to |active_inputs_|.
-  void AddActiveInput(StreamMixer::InputQueue* input);
+  // Adds/removes |input| from |active_inputs_|.
+  void AddInput(MixerInput* input);
+  void RemoveInput(MixerInput* input);
 
   // Mixes all active inputs and passes them through the audio filter.
   // Returns the largest volume of all streams with data.
   //         return value will be zero IFF there is no data and
   //         the PostProcessingPipeline is not ringing.
-  float MixAndFilter(int chunk_size);
+  float MixAndFilter(
+      int num_frames,
+      MediaPipelineBackend::AudioDecoder::RenderingDelay rendering_delay);
 
   // Gets the current delay of this filter group's AudioPostProcessors.
   // (Not recursive).
   int64_t GetRenderingDelayMicroseconds();
 
-  // Clear all |active_inputs_|. This should be called before AddActiveInputs
-  // on each mixing iteration.
-  void ClearActiveInputs();
-
-  // Retrieves a pointer to the output buffer.
-  float* interleaved() { return interleaved_.get(); }
+  // Retrieves a pointer to the output buffer. This will crash if called before
+  // MixAndFilter(), and the data & memory location may change each time
+  // MixAndFilter() is called.
+  float* GetOutputBuffer();
 
   // Get the last used volume.
   float last_volume() const { return last_volume_; }
@@ -97,7 +100,7 @@ class FilterGroup {
   std::string name() const { return name_; }
 
   // Returns number of audio output channels from the filter group.
-  int GetOutputChannelCount() const;
+  int GetOutputChannelCount();
 
   // Sends configuration string |config| to all post processors with the given
   // |name|.
@@ -110,13 +113,14 @@ class FilterGroup {
   // Sets the active channel.
   void UpdatePlayoutChannel(int playout_channel);
 
-  // Get loudest content type
-  AudioContentType loudest_content_type() const {
-    return loudest_content_type_;
-  }
+  // Get content type
+  AudioContentType content_type() const { return content_type_; }
 
  private:
-  void ResizeBuffersIfNecessary(int chunk_size);
+  // Resizes temp_ and mixed_ if they are too small to hold |num_frames| frames.
+  // Returns |true| if |num_frames| is larger than all previous |num_frames|.
+  bool ResizeBuffersIfNecessary(int num_frames);
+  void AddTempBuffer(int num_channels, int num_frames);
 
   const int num_channels_;
   const GroupType type_;
@@ -125,18 +129,18 @@ class FilterGroup {
   const std::string name_;
   const std::unordered_set<std::string> device_ids_;
   std::vector<FilterGroup*> mixed_inputs_;
-  std::vector<StreamMixer::InputQueue*> active_inputs_;
+  base::flat_set<MixerInput*> active_inputs_;
 
   int output_samples_per_second_;
   int frames_zeroed_;
   float last_volume_;
   int64_t delay_frames_;
-  AudioContentType loudest_content_type_;
+  AudioContentType content_type_;
 
   // Buffers that hold audio data while it is mixed.
   // These are kept as members of this class to minimize copies and
   // allocations.
-  std::unique_ptr<::media::AudioBus> temp_;
+  std::vector<std::unique_ptr<::media::AudioBus>> temp_buffers_;
   std::unique_ptr<::media::AudioBus> mixed_;
 
   // Interleaved data must be aligned to 16 bytes.

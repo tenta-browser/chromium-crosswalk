@@ -18,6 +18,9 @@
 #include "ios/web/public/web_state/web_state_observer.h"
 #include "url/gurl.h"
 
+@class NSURLRequest;
+@class NSURLResponse;
+
 namespace web {
 
 // Minimal implementation of WebState, to be used in tests.
@@ -76,15 +79,14 @@ class TestWebState : public WebState {
 
   void RemoveObserver(WebStateObserver* observer) override;
 
-  void AddPolicyDecider(WebStatePolicyDecider* decider) override {}
-  void RemovePolicyDecider(WebStatePolicyDecider* decider) override {}
+  void AddPolicyDecider(WebStatePolicyDecider* decider) override;
+  void RemovePolicyDecider(WebStatePolicyDecider* decider) override;
   WebStateInterfaceProvider* GetWebStateInterfaceProvider() override;
   void DidChangeVisibleSecurityState() override {}
   bool HasOpener() const override;
   void SetHasOpener(bool has_opener) override;
   void TakeSnapshot(const SnapshotCallback& callback,
                     CGSize target_size) const override;
-  base::WeakPtr<WebState> AsWeakPtr() override;
 
   // Setters for test data.
   void SetBrowserState(BrowserState* browser_state);
@@ -103,6 +105,12 @@ class TestWebState : public WebState {
 
   // Getters for test data.
   CRWContentView* GetTransientContentView();
+  // Uses |policy_deciders| to return whether the navigation corresponding to
+  // |request| should be allowed. Defaults to true.
+  bool ShouldAllowRequest(NSURLRequest* request, ui::PageTransition transition);
+  // Uses |policy_deciders| to return whether the navigation corresponding to
+  // |response| should be allowed. Defaults to true.
+  bool ShouldAllowResponse(NSURLResponse* response, bool for_main_frame);
 
   // Notifier for tests.
   void OnPageLoaded(PageLoadCompletionStatus load_completion_status);
@@ -110,7 +118,10 @@ class TestWebState : public WebState {
   void OnNavigationFinished(NavigationContext* navigation_context);
   void OnRenderProcessGone();
   void OnFormActivity(const FormActivityParams& params);
-  void OnDocumentSubmitted(const std::string& form_name, bool user_initiated);
+  void OnDocumentSubmitted(const std::string& form_name,
+                           bool user_initiated,
+                           bool is_main_frame);
+  void OnBackForwardStateChanged();
   void OnVisibleSecurityStateChanged();
 
  private:
@@ -134,6 +145,9 @@ class TestWebState : public WebState {
 
   // A list of observers notified when page state changes. Weak references.
   base::ObserverList<WebStateObserver, true> observers_;
+  // All the WebStatePolicyDeciders asked for navigation decision. Weak
+  // references.
+  base::ObserverList<WebStatePolicyDecider, true> policy_deciders_;
 };
 
 }  // namespace web

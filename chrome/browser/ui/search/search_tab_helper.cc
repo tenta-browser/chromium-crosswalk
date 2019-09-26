@@ -6,7 +6,6 @@
 
 #include <memory>
 
-#include "base/memory/ptr_util.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/strings/string_util.h"
 #include "build/build_config.h"
@@ -42,7 +41,6 @@
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/render_process_host.h"
 #include "content/public/browser/web_contents.h"
-#include "content/public/common/browser_side_navigation_policy.h"
 #include "google_apis/gaia/gaia_auth_util.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "url/gurl.h"
@@ -110,10 +108,9 @@ SearchTabHelper::SearchTabHelper(content::WebContents* web_contents)
       web_contents_(web_contents),
       ipc_router_(web_contents,
                   this,
-                  base::MakeUnique<SearchIPCRouterPolicyImpl>(web_contents)),
+                  std::make_unique<SearchIPCRouterPolicyImpl>(web_contents)),
       instant_service_(nullptr) {
-  if (!search::IsInstantExtendedAPIEnabled())
-    return;
+  DCHECK(search::IsInstantExtendedAPIEnabled());
 
   instant_service_ = InstantServiceFactory::GetForProfile(profile());
   if (instant_service_)
@@ -126,9 +123,6 @@ SearchTabHelper::~SearchTabHelper() {
 }
 
 void SearchTabHelper::OmniboxInputStateChanged() {
-  if (!search::IsInstantExtendedAPIEnabled())
-    return;
-
   ipc_router_.SetInputInProgress(IsInputInProgress());
 }
 
@@ -167,35 +161,8 @@ void SearchTabHelper::OnTabDeactivated() {
   ipc_router_.OnTabDeactivated();
 }
 
-void SearchTabHelper::DidStartNavigationToPendingEntry(
-    const GURL& url,
-    content::ReloadType reload_type) {
-  // TODO(jam): delete this method once PlzNavigate is turned on by default.
-  // When PlzNavigate is enabled, DidStartNavigation is called early enough such
-  // that there's no flickering. However when PlzNavigate is disabled,
-  // DidStartNavigation is called too late and "Untitled" shows up momentarily.
-  // The fix is to override this deprecated callback for the non-PlzNavigate
-  // case.
-  if (content::IsBrowserSideNavigationEnabled())
-    return;
-
-  if (search::IsNTPURL(url, profile())) {
-    // Set the title on any pending entry corresponding to the NTP. This
-    // prevents any flickering of the tab title.
-    content::NavigationEntry* entry =
-        web_contents_->GetController().GetPendingEntry();
-    if (entry) {
-      web_contents_->UpdateTitleForEntry(
-          entry, l10n_util::GetStringUTF16(IDS_NEW_TAB_TITLE));
-    }
-  }
-}
-
 void SearchTabHelper::DidStartNavigation(
     content::NavigationHandle* navigation_handle) {
-  if (!content::IsBrowserSideNavigationEnabled())
-    return;
-
   if (!navigation_handle->IsInMainFrame() ||
       navigation_handle->IsSameDocument()) {
     return;
@@ -258,9 +225,6 @@ void SearchTabHelper::DidFinishLoad(content::RenderFrameHost* render_frame_host,
 
 void SearchTabHelper::NavigationEntryCommitted(
     const content::LoadCommittedDetails& load_details) {
-  if (!search::IsInstantExtendedAPIEnabled())
-    return;
-
   if (!load_details.is_main_frame)
     return;
 
@@ -281,8 +245,6 @@ void SearchTabHelper::MostVisitedItemsChanged(
 }
 
 void SearchTabHelper::FocusOmnibox(OmniboxFocusState state) {
-// TODO(kmadhusu): Move platform specific code from here and get rid of #ifdef.
-#if !defined(OS_ANDROID)
   OmniboxView* omnibox_view = GetOmniboxView();
   if (!omnibox_view)
     return;
@@ -318,7 +280,6 @@ void SearchTabHelper::FocusOmnibox(OmniboxFocusState state) {
         web_contents()->Focus();
       break;
   }
-#endif
 }
 
 void SearchTabHelper::OnDeleteMostVisitedItem(const GURL& url) {
@@ -340,34 +301,23 @@ void SearchTabHelper::OnUndoAllMostVisitedDeletions() {
 
 void SearchTabHelper::OnLogEvent(NTPLoggingEventType event,
                                  base::TimeDelta time) {
-// TODO(kmadhusu): Move platform specific code from here and get rid of #ifdef.
-#if !defined(OS_ANDROID)
   NTPUserDataLogger::GetOrCreateFromWebContents(web_contents())
       ->LogEvent(event, time);
-#endif
 }
 
 void SearchTabHelper::OnLogMostVisitedImpression(
     const ntp_tiles::NTPTileImpression& impression) {
-// TODO(kmadhusu): Move platform specific code from here and get rid of #ifdef.
-#if !defined(OS_ANDROID)
   NTPUserDataLogger::GetOrCreateFromWebContents(web_contents())
       ->LogMostVisitedImpression(impression);
-#endif
 }
 
 void SearchTabHelper::OnLogMostVisitedNavigation(
     const ntp_tiles::NTPTileImpression& impression) {
-// TODO(kmadhusu): Move platform specific code from here and get rid of #ifdef.
-#if !defined(OS_ANDROID)
   NTPUserDataLogger::GetOrCreateFromWebContents(web_contents())
       ->LogMostVisitedNavigation(impression);
-#endif
 }
 
 void SearchTabHelper::PasteIntoOmnibox(const base::string16& text) {
-// TODO(kmadhusu): Move platform specific code from here and get rid of #ifdef.
-#if !defined(OS_ANDROID)
   OmniboxView* omnibox_view = GetOmniboxView();
   if (!omnibox_view)
     return;
@@ -389,7 +339,6 @@ void SearchTabHelper::PasteIntoOmnibox(const base::string16& text) {
   omnibox_view->model()->OnPaste();
   omnibox_view->SetUserText(text_to_paste);
   omnibox_view->OnAfterPossibleChange(true);
-#endif
 }
 
 bool SearchTabHelper::ChromeIdentityCheck(const base::string16& identity) {
@@ -404,15 +353,11 @@ bool SearchTabHelper::HistorySyncCheck() {
 }
 
 const OmniboxView* SearchTabHelper::GetOmniboxView() const {
-#if defined(OS_ANDROID)
-  return nullptr;
-#else
   Browser* browser = chrome::FindBrowserWithWebContents(web_contents_);
   if (!browser)
     return nullptr;
 
   return browser->window()->GetLocationBar()->GetOmniboxView();
-#endif  // OS_ANDROID
 }
 
 OmniboxView* SearchTabHelper::GetOmniboxView() {

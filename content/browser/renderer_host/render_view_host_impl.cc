@@ -43,6 +43,7 @@
 #include "content/browser/renderer_host/render_view_host_delegate_view.h"
 #include "content/browser/renderer_host/render_widget_host_delegate.h"
 #include "content/browser/renderer_host/render_widget_host_view_base.h"
+#include "content/browser/scoped_active_url.h"
 #include "content/common/browser_plugin/browser_plugin_messages.h"
 #include "content/common/content_switches_internal.h"
 #include "content/common/frame_messages.h"
@@ -50,7 +51,6 @@
 #include "content/common/inter_process_time_ticks_converter.h"
 #include "content/common/render_message_filter.mojom.h"
 #include "content/common/renderer.mojom.h"
-#include "content/common/site_isolation_policy.h"
 #include "content/common/speech_recognition_messages.h"
 #include "content/common/swapped_out_messages.h"
 #include "content/common/view_messages.h"
@@ -58,6 +58,7 @@
 #include "content/public/browser/browser_accessibility_state.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/browser_message_filter.h"
+#include "content/public/browser/browser_thread.h"
 #include "content/public/browser/content_browser_client.h"
 #include "content/public/browser/native_web_keyboard_event.h"
 #include "content/public/browser/notification_details.h"
@@ -94,6 +95,7 @@
 #include "url/url_constants.h"
 
 #if defined(OS_WIN)
+#include "base/win/win_client_metrics.h"
 #include "ui/display/win/screen_win.h"
 #include "ui/gfx/geometry/dip_util.h"
 #include "ui/gfx/platform_font_win.h"
@@ -227,6 +229,9 @@ RenderViewHostImpl::RenderViewHostImpl(
   // make their way to the new renderer once its restarted.
   GetProcess()->EnableSendQueue();
 
+  if (!is_active_)
+    GetWidget()->UpdatePriority();
+
   if (ResourceDispatcherHostImpl::Get()) {
     BrowserThread::PostTask(
         BrowserThread::IO, FROM_HERE,
@@ -295,6 +300,13 @@ bool RenderViewHostImpl::CreateRenderView(
     base::debug::DumpWithoutCrashing();
   }
 
+  RenderFrameHostImpl* main_rfh = nullptr;
+  if (main_frame_routing_id_ != MSG_ROUTING_NONE) {
+    main_rfh = RenderFrameHostImpl::FromID(GetProcess()->GetID(),
+                                           main_frame_routing_id_);
+    DCHECK(main_rfh);
+  }
+
   GetWidget()->set_renderer_initialized(true);
 
   mojom::CreateViewParamsPtr params = mojom::CreateViewParams::New();
@@ -304,10 +316,7 @@ bool RenderViewHostImpl::CreateRenderView(
   params->web_preferences = GetWebkitPreferences();
   params->view_id = GetRoutingID();
   params->main_frame_routing_id = main_frame_routing_id_;
-  if (main_frame_routing_id_ != MSG_ROUTING_NONE) {
-    RenderFrameHostImpl* main_rfh = RenderFrameHostImpl::FromID(
-        GetProcess()->GetID(), main_frame_routing_id_);
-    DCHECK(main_rfh);
+  if (main_rfh) {
     main_rfh->BindInterfaceProviderRequest(
         mojo::MakeRequest(&params->main_frame_interface_provider));
     RenderWidgetHostImpl* main_rwh = main_rfh->GetRenderWidgetHost();
@@ -324,11 +333,18 @@ bool RenderViewHostImpl::CreateRenderView(
                               : GetWidget()->delegate()->IsHidden();
   params->never_visible = delegate_->IsNeverVisible();
   params->window_was_created_with_opener = window_was_created_with_opener;
+  if (main_rfh) {
+    params->has_committed_real_load =
+        main_rfh->frame_tree_node()->has_committed_real_load();
+  }
   params->enable_auto_resize = GetWidget()->auto_resize_enabled();
   params->min_size = GetWidget()->min_size_for_auto_resize();
   params->max_size = GetWidget()->max_size_for_auto_resize();
   params->page_zoom_level = delegate_->GetPendingPageZoomLevel();
   params->devtools_main_frame_token = devtools_frame_token;
+  // GuestViews in the same StoragePartition need to find each other's frames.
+  params->renderer_wide_named_frame_lookup =
+      GetSiteInstance()->GetSiteURL().SchemeIs(kGuestScheme);
 
   GetWidget()->GetResizeParams(&params->initial_size);
   GetWidget()->SetInitialRenderSizeParams(params->initial_size);
@@ -340,14 +356,19 @@ bool RenderViewHostImpl::CreateRenderView(
 
   // Since this method can create the main RenderFrame in the renderer process,
   // set the proper state on its corresponding RenderFrameHost.
-  if (main_frame_routing_id_ != MSG_ROUTING_NONE) {
-    RenderFrameHostImpl::FromID(GetProcess()->GetID(), main_frame_routing_id_)
-        ->SetRenderFrameCreated(true);
-  }
+  if (main_rfh)
+    main_rfh->SetRenderFrameCreated(true);
   GetWidget()->delegate()->SendScreenRects();
   PostRenderViewReady();
 
   return true;
+}
+
+void RenderViewHostImpl::SetIsActive(bool is_active) {
+  if (is_active_ == is_active)
+    return;
+  is_active_ = is_active;
+  GetWidget()->UpdatePriority();
 }
 
 bool RenderViewHostImpl::IsRenderViewLive() const {
@@ -415,13 +436,17 @@ WebPreferences RenderViewHostImpl::ComputeWebkitPrefs() {
   prefs.history_entry_requires_user_gesture =
       command_line.HasSwitch(switches::kHistoryEntryRequiresUserGesture);
 
-#if defined(OS_ANDROID)
-  prefs.progress_bar_completion = GetProgressBarCompletionPolicy();
+  prefs.disable_pushstate_throttle =
+      command_line.HasSwitch(switches::kDisablePushStateThrottle);
 
+#if defined(OS_ANDROID)
   prefs.use_solid_color_scrollbars = true;
 #endif  // defined(OS_ANDROID)
 
   prefs.save_previous_document_resources = GetSavePreviousDocumentResources();
+
+  prefs.accelerated_video_decode_enabled =
+      !command_line.HasSwitch(switches::kDisableAcceleratedVideoDecode);
 
   std::string autoplay_policy = media::GetEffectiveAutoplayPolicy(command_line);
   if (autoplay_policy == switches::autoplay::kNoUserGestureRequiredPolicy) {
@@ -484,9 +509,6 @@ WebPreferences RenderViewHostImpl::ComputeWebkitPrefs() {
       (!command_line.HasSwitch(switches::kDisableSmoothScrolling) &&
       gfx::Animation::ScrollAnimationsEnabledBySystem());
 
-  // Certain GPU features might have been blacklisted.
-  GpuDataManagerImpl::GetInstance()->UpdateRendererWebPrefs(&prefs);
-
   if (ChildProcessSecurityPolicyImpl::GetInstance()->HasWebUIBindings(
           GetProcess()->GetID())) {
     prefs.loads_images_automatically = true;
@@ -539,6 +561,11 @@ WebPreferences RenderViewHostImpl::ComputeWebkitPrefs() {
 
   prefs.background_video_track_optimization_enabled =
       base::FeatureList::IsEnabled(media::kBackgroundVideoTrackOptimization);
+
+  if (base::FeatureList::IsEnabled(media::kUseSurfaceLayerForVideo) &&
+      base::FeatureList::IsEnabled(media::kPictureInPicture)) {
+    prefs.picture_in_picture_enabled = true;
+  }
 
   GetContentClient()->browser()->OverrideWebkitPrefs(this, &prefs);
   return prefs;
@@ -650,13 +677,10 @@ void RenderViewHostImpl::SetWebUIProperty(const std::string& name,
   // It could lie and send the corresponding IPC messages anyway, but we will
   // not act on them if enabled_bindings_ doesn't agree. If we get here without
   // WebUI bindings, kill the renderer process.
-  if (GetMainFrame()->GetEnabledBindings() & BINDINGS_POLICY_WEB_UI) {
+  if (GetMainFrame()->GetEnabledBindings() & BINDINGS_POLICY_WEB_UI)
     Send(new ViewMsg_SetWebUIProperty(GetRoutingID(), name, value));
-  } else {
-    RecordAction(
-        base::UserMetricsAction("BindingsMismatchTerminate_RVH_WebUI"));
-    GetProcess()->Shutdown(content::RESULT_CODE_KILLED, false);
-  }
+  else
+    ReceivedBadMessage(GetProcess(), bad_message::RVH_WEB_UI_BINDINGS_MISMATCH);
 }
 
 void RenderViewHostImpl::RenderWidgetGotFocus() {
@@ -725,6 +749,10 @@ bool RenderViewHostImpl::OnMessageReceived(const IPC::Message& msg) {
       return true;
     }
   }
+
+  // Crash reports trigerred by the IPC messages below should be associated
+  // with URL of the main frame.
+  ScopedActiveURL scoped_active_url(this);
 
   if (delegate_->OnMessageReceived(this, msg))
     return true;
@@ -803,8 +831,7 @@ void RenderViewHostImpl::OnRenderProcessGone(int status, int exit_code) {
 }
 
 void RenderViewHostImpl::OnUpdateTargetURL(const GURL& url) {
-  if (is_active_)
-    delegate_->UpdateTargetURL(this, url);
+  delegate_->UpdateTargetURL(this, url);
 
   // Send a notification back to the renderer that we are ready to
   // receive more target urls.
@@ -883,6 +910,10 @@ bool RenderViewHostImpl::MayRenderWidgetForwardKeyboardEvent(
   return true;
 }
 
+bool RenderViewHostImpl::ShouldContributePriorityToProcess() {
+  return is_active_;
+}
+
 WebPreferences RenderViewHostImpl::GetWebkitPreferences() {
   if (!web_preferences_.get()) {
     OnWebkitPreferencesChanged();
@@ -915,23 +946,6 @@ void RenderViewHostImpl::DisableScrollbarsForThreshold(const gfx::Size& size) {
 
 void RenderViewHostImpl::EnablePreferredSizeMode() {
   Send(new ViewMsg_EnablePreferredSizeChangedMode(GetRoutingID()));
-}
-
-void RenderViewHostImpl::EnableAutoResize(const gfx::Size& min_size,
-                                          const gfx::Size& max_size) {
-  GetWidget()->SetAutoResize(true, min_size, max_size);
-  Send(new ViewMsg_EnableAutoResize(GetRoutingID(), min_size, max_size));
-}
-
-void RenderViewHostImpl::DisableAutoResize(const gfx::Size& new_size) {
-  GetWidget()->SetAutoResize(false, gfx::Size(), gfx::Size());
-  Send(new ViewMsg_DisableAutoResize(GetRoutingID(), new_size));
-  if (!new_size.IsEmpty())
-    GetWidget()->GetView()->SetSize(new_size);
-  // This clears the cached value in the WebContents, so that OOPIFs will
-  // stop using it.
-  if (GetWidget()->delegate())
-    GetWidget()->delegate()->ResetAutoResizeSize();
 }
 
 void RenderViewHostImpl::ExecuteMediaPlayerActionAtLocation(

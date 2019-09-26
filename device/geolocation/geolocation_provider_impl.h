@@ -16,7 +16,9 @@
 #include "device/geolocation/geolocation_export.h"
 #include "device/geolocation/geolocation_provider.h"
 #include "device/geolocation/public/cpp/location_provider.h"
-#include "device/geolocation/public/interfaces/geoposition.mojom.h"
+#include "mojo/public/cpp/bindings/binding.h"
+#include "services/device/public/mojom/geolocation_control.mojom.h"
+#include "services/device/public/mojom/geoposition.mojom.h"
 
 namespace base {
 template <typename Type>
@@ -33,13 +35,13 @@ using CustomLocationProviderCallback =
 
 class DEVICE_GEOLOCATION_EXPORT GeolocationProviderImpl
     : public GeolocationProvider,
+      public mojom::GeolocationControl,
       public base::Thread {
  public:
   // GeolocationProvider implementation:
   std::unique_ptr<GeolocationProvider::Subscription> AddLocationUpdateCallback(
       const LocationUpdateCallback& callback,
       bool enable_high_accuracy) override;
-  void UserDidOptIntoLocationServices() override;
   bool HighAccuracyLocationInUse() override;
   void OverrideLocationForTesting(const mojom::Geoposition& position) override;
 
@@ -53,11 +55,20 @@ class DEVICE_GEOLOCATION_EXPORT GeolocationProviderImpl
   // instantiated on the same thread. Ownership is NOT returned.
   static GeolocationProviderImpl* GetInstance();
 
-  // Optional: provide a callback which can return a custom location provider
-  // from embedder. Call before using Init() on the singleton GetInstance(),
-  // and call no more than once.
-  static void SetCustomLocationProviderCallback(
+  // Optional: Provide a callback to produce a request context for network
+  // geolocation requests. Provide a Google API key for network geolocation
+  // requests. Provide a callback which can return a custom location provider
+  // from embedder. Call before using Init() on the singleton GetInstance().
+  static void SetGeolocationGlobals(
+      const GeolocationProvider::RequestContextProducer
+          request_context_producer,
+      const std::string& api_key,
       const CustomLocationProviderCallback& callback);
+
+  void BindGeolocationControlRequest(mojom::GeolocationControlRequest request);
+
+  // mojom::GeolocationControl implementation:
+  void UserDidOptIntoLocationServices() override;
 
   bool user_did_opt_into_location_services_for_testing() {
     return user_did_opt_into_location_services_;
@@ -110,6 +121,8 @@ class DEVICE_GEOLOCATION_EXPORT GeolocationProviderImpl
 
   // Only to be used on the geolocation thread.
   std::unique_ptr<LocationProvider> arbitrator_;
+
+  mojo::Binding<mojom::GeolocationControl> binding_;
 
   DISALLOW_COPY_AND_ASSIGN(GeolocationProviderImpl);
 };

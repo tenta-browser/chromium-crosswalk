@@ -6,11 +6,11 @@
 
 #import <objc/runtime.h>
 
+#include <memory>
+
 #include "base/auto_reset.h"
 #import "base/ios/crb_protocol_observers.h"
 #include "base/mac/foundation_util.h"
-#import "base/mac/scoped_nsobject.h"
-#include "base/memory/ptr_util.h"
 
 #if !defined(__has_feature) || !__has_feature(objc_arc)
 #error "This file requires ARC support."
@@ -18,9 +18,10 @@
 
 @interface CRWWebViewScrollViewProxy () {
   __weak UIScrollView* _scrollView;
-  base::scoped_nsobject<id> _observers;
+  id _observers;
   std::unique_ptr<UIScrollViewContentInsetAdjustmentBehavior>
       _pendingContentInsetAdjustmentBehavior API_AVAILABLE(ios(11.0));
+  std::unique_ptr<BOOL> _pendingClipsToBounds;
 }
 
 // Returns the key paths that need to be observed for UIScrollView.
@@ -39,7 +40,7 @@
   self = [super init];
   if (self) {
     Protocol* protocol = @protocol(CRWWebViewScrollViewProxyObserver);
-    _observers.reset([CRBProtocolObservers observersWithProtocol:protocol]);
+    _observers = [CRBProtocolObservers observersWithProtocol:protocol];
   }
   return self;
 }
@@ -73,6 +74,10 @@
   scrollView.delegate = self;
   [self startObservingScrollView:scrollView];
   _scrollView = scrollView;
+  if (_pendingClipsToBounds) {
+    scrollView.clipsToBounds = *_pendingClipsToBounds;
+    _pendingClipsToBounds.reset();
+  }
 
   // Assigns |contentInsetAdjustmentBehavior| which was set before setting the
   // scroll view.
@@ -105,6 +110,21 @@
 
 - (void)setBounces:(BOOL)bounces {
   [_scrollView setBounces:bounces];
+}
+
+- (BOOL)clipsToBounds {
+  if (_pendingClipsToBounds) {
+    return *_pendingClipsToBounds;
+  }
+  return _scrollView.clipsToBounds;
+}
+
+- (void)setClipsToBounds:(BOOL)clipsToBounds {
+  if (_scrollView) {
+    _scrollView.clipsToBounds = clipsToBounds;
+  } else {
+    _pendingClipsToBounds = std::make_unique<BOOL>(clipsToBounds);
+  }
 }
 
 - (BOOL)isDecelerating {
@@ -190,7 +210,7 @@
         setContentInsetAdjustmentBehavior:contentInsetAdjustmentBehavior];
   } else {
     _pendingContentInsetAdjustmentBehavior =
-        base::MakeUnique<UIScrollViewContentInsetAdjustmentBehavior>(
+        std::make_unique<UIScrollViewContentInsetAdjustmentBehavior>(
             contentInsetAdjustmentBehavior);
   }
 }
@@ -269,10 +289,17 @@
   [_observers webViewScrollViewWillBeginZooming:self];
 }
 
+- (void)scrollViewDidEndZooming:(UIScrollView*)scrollView
+                       withView:(UIView*)view
+                        atScale:(CGFloat)scale {
+  DCHECK_EQ(_scrollView, scrollView);
+  [_observers webViewScrollViewDidEndZooming:self atScale:scale];
+}
+
 #pragma mark -
 
 + (NSArray*)scrollViewObserverKeyPaths {
-  return @[ @"contentSize" ];
+  return @[ @"frame", @"contentSize", @"contentInset" ];
 }
 
 - (void)startObservingScrollView:(UIScrollView*)scrollView {
@@ -290,8 +317,12 @@
                         change:(NSDictionary*)change
                        context:(void*)context {
   DCHECK_EQ(object, _scrollView);
+  if ([keyPath isEqualToString:@"frame"])
+    [_observers webViewScrollViewFrameDidChange:self];
   if ([keyPath isEqualToString:@"contentSize"])
     [_observers webViewScrollViewDidResetContentSize:self];
+  if ([keyPath isEqualToString:@"contentInset"])
+    [_observers webViewScrollViewDidResetContentInset:self];
 }
 
 @end

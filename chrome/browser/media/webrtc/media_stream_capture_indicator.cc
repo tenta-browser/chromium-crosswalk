@@ -12,7 +12,6 @@
 
 #include "base/logging.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "build/build_config.h"
 #include "chrome/app/chrome_command_ids.h"
 #include "chrome/browser/browser_process.h"
@@ -25,7 +24,7 @@
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_contents_delegate.h"
 #include "content/public/browser/web_contents_observer.h"
-#include "extensions/features/features.h"
+#include "extensions/buildflags/buildflags.h"
 #include "ui/gfx/image/image_skia.h"
 
 #if !defined(OS_ANDROID)
@@ -172,7 +171,7 @@ class MediaStreamCaptureIndicator::UIDelegate : public content::MediaStreamUI {
 std::unique_ptr<content::MediaStreamUI>
 MediaStreamCaptureIndicator::WebContentsDeviceUsage::RegisterMediaStream(
     const content::MediaStreamDevices& devices) {
-  return base::MakeUnique<UIDelegate>(weak_factory_.GetWeakPtr(), devices);
+  return std::make_unique<UIDelegate>(weak_factory_.GetWeakPtr(), devices);
 }
 
 void MediaStreamCaptureIndicator::WebContentsDeviceUsage::AddDevices(
@@ -239,7 +238,7 @@ MediaStreamCaptureIndicator::~MediaStreamCaptureIndicator() {
   // invoke DoDevicesClosedOnUIThread().  In this case, usage_map_ won't be
   // empty like it should.
   DCHECK(usage_map_.empty() ||
-         !BrowserThread::IsMessageLoopValid(BrowserThread::UI));
+         !BrowserThread::IsThreadInitialized(BrowserThread::UI));
 }
 
 std::unique_ptr<content::MediaStreamUI>
@@ -248,7 +247,7 @@ MediaStreamCaptureIndicator::RegisterMediaStream(
     const content::MediaStreamDevices& devices) {
   auto& usage = usage_map_[web_contents];
   if (!usage)
-    usage = base::MakeUnique<WebContentsDeviceUsage>(this, web_contents);
+    usage = std::make_unique<WebContentsDeviceUsage>(this, web_contents);
 
   return usage->RegisterMediaStream(devices);
 }
@@ -429,7 +428,7 @@ void MediaStreamCaptureIndicator::GetStatusTrayIconInfo(
     icon = &vector_icons::kVideocamIcon;
   } else if (audio && !video) {
     message_id = IDS_MEDIA_STREAM_STATUS_TRAY_TEXT_AUDIO_ONLY;
-    icon = &vector_icons::kMicrophoneIcon;
+    icon = &vector_icons::kMicIcon;
   } else if (!audio && video) {
     message_id = IDS_MEDIA_STREAM_STATUS_TRAY_TEXT_VIDEO_ONLY;
     icon = &vector_icons::kVideocamIcon;

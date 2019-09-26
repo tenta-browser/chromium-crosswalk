@@ -4,12 +4,13 @@
 
 #include "chrome/browser/ui/page_info/page_info.h"
 
+#include <memory>
+#include <set>
 #include <string>
 #include <vector>
 
 #include "base/at_exit.h"
 #include "base/bind.h"
-#include "base/memory/ptr_util.h"
 #include "base/message_loop/message_loop.h"
 #include "base/strings/string16.h"
 #include "base/strings/utf_string_conversions.h"
@@ -17,7 +18,7 @@
 #include "base/test/scoped_feature_list.h"
 #include "build/build_config.h"
 #include "chrome/browser/content_settings/host_content_settings_map_factory.h"
-#include "chrome/browser/infobars/infobar_service.h"
+#include "chrome/browser/infobars/mock_infobar_service.h"
 #include "chrome/browser/ui/page_info/page_info_ui.h"
 #include "chrome/browser/usb/usb_chooser_context.h"
 #include "chrome/browser/usb/usb_chooser_context_factory.h"
@@ -28,6 +29,7 @@
 #include "components/content_settings/core/common/content_settings.h"
 #include "components/content_settings/core/common/content_settings_types.h"
 #include "components/infobars/core/infobar.h"
+#include "components/strings/grit/components_strings.h"
 #include "components/subresource_filter/core/browser/subresource_filter_features.h"
 #include "content/public/browser/ssl_host_state_delegate.h"
 #include "content/public/browser/ssl_status.h"
@@ -41,9 +43,10 @@
 #include "net/test/cert_test_util.h"
 #include "net/test/test_certificate_data.h"
 #include "net/test/test_data_directory.h"
-#include "ppapi/features/features.h"
+#include "ppapi/buildflags/buildflags.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "ui/base/l10n/l10n_util.h"
 
 #if defined(OS_ANDROID)
 #include "chrome/browser/android/android_theme_resources.h"
@@ -93,6 +96,20 @@ class MockPageInfoUI : public PageInfoUI {
     }
   }
 
+#if defined(SAFE_BROWSING_DB_LOCAL)
+  std::unique_ptr<PageInfoUI::SecurityDescription>
+  CreateSecurityDescriptionForPasswordReuse() const override {
+    std::unique_ptr<PageInfoUI::SecurityDescription> security_description(
+        new PageInfoUI::SecurityDescription());
+    security_description->summary_style = SecuritySummaryColor::RED;
+    security_description->summary =
+        l10n_util::GetStringUTF16(IDS_PAGE_INFO_CHANGE_PASSWORD_SUMMARY_SOFTER);
+    security_description->details =
+        l10n_util::GetStringUTF16(IDS_PAGE_INFO_CHANGE_PASSWORD_DETAILS);
+    return security_description;
+  }
+#endif
+
   base::Callback<void(const PermissionInfoList& permission_info_list,
                       ChosenObjectInfoList chosen_object_info_list)>
       set_permission_info_callback_;
@@ -116,7 +133,7 @@ class PageInfoTest : public ChromeRenderViewHostTestHarness {
     ASSERT_TRUE(cert_);
 
     TabSpecificContentSettings::CreateForWebContents(web_contents());
-    InfoBarService::CreateForWebContents(web_contents());
+    MockInfoBarService::CreateForWebContents(web_contents());
 
     // Setup mock ui.
     ResetMockUI();
@@ -211,80 +228,73 @@ bool PermissionInfoListContainsPermission(const PermissionInfoList& permissions,
 
 }  // namespace
 
-TEST_F(PageInfoTest, NonFactoryDefaultPermissionsShown) {
+TEST_F(PageInfoTest, NonFactoryDefaultAndRecentlyChangedPermissionsShown) {
   page_info()->PresentSitePermissions();
-  std::vector<ContentSettingsType> expected_visible_permissions;
+  std::set<ContentSettingsType> expected_visible_permissions;
 
 #if defined(OS_ANDROID)
   // Geolocation is always allowed to pass through to Android-specific logic to
   // check for DSE settings (so expect 1 item), but isn't actually shown later
   // on because this test isn't testing with a default search engine origin.
-  EXPECT_EQ(1uL, last_permission_info_list().size());
-  EXPECT_EQ(CONTENT_SETTINGS_TYPE_GEOLOCATION,
-            last_permission_info_list().back().type);
-#else
-  expected_visible_permissions.push_back(CONTENT_SETTINGS_TYPE_PLUGINS);
-  // Flash is always visible on desktop - see https://crbug.com/791142.
+  expected_visible_permissions.insert(CONTENT_SETTINGS_TYPE_GEOLOCATION);
+#endif
   EXPECT_EQ(expected_visible_permissions.size(),
             last_permission_info_list().size());
-  EXPECT_EQ(CONTENT_SETTINGS_TYPE_PLUGINS,
-            last_permission_info_list().back().type);
-#endif
 
   // Change some default-ask settings away from the default.
   page_info()->OnSitePermissionChanged(CONTENT_SETTINGS_TYPE_GEOLOCATION,
                                        CONTENT_SETTING_ALLOW);
-  expected_visible_permissions.push_back(CONTENT_SETTINGS_TYPE_GEOLOCATION);
+  expected_visible_permissions.insert(CONTENT_SETTINGS_TYPE_GEOLOCATION);
   page_info()->OnSitePermissionChanged(CONTENT_SETTINGS_TYPE_NOTIFICATIONS,
                                        CONTENT_SETTING_ALLOW);
-  expected_visible_permissions.push_back(CONTENT_SETTINGS_TYPE_NOTIFICATIONS);
+  expected_visible_permissions.insert(CONTENT_SETTINGS_TYPE_NOTIFICATIONS);
   page_info()->OnSitePermissionChanged(CONTENT_SETTINGS_TYPE_MEDIASTREAM_MIC,
                                        CONTENT_SETTING_ALLOW);
-  expected_visible_permissions.push_back(CONTENT_SETTINGS_TYPE_MEDIASTREAM_MIC);
+  expected_visible_permissions.insert(CONTENT_SETTINGS_TYPE_MEDIASTREAM_MIC);
   EXPECT_EQ(expected_visible_permissions.size(),
             last_permission_info_list().size());
 
-  expected_visible_permissions.push_back(CONTENT_SETTINGS_TYPE_POPUPS);
+  expected_visible_permissions.insert(CONTENT_SETTINGS_TYPE_POPUPS);
   // Change a default-block setting to a user-preference block instead.
   page_info()->OnSitePermissionChanged(CONTENT_SETTINGS_TYPE_POPUPS,
                                        CONTENT_SETTING_BLOCK);
   EXPECT_EQ(expected_visible_permissions.size(),
-      last_permission_info_list().size());
+            last_permission_info_list().size());
 
-  expected_visible_permissions.push_back(CONTENT_SETTINGS_TYPE_JAVASCRIPT);
+  expected_visible_permissions.insert(CONTENT_SETTINGS_TYPE_JAVASCRIPT);
   // Change a default-allow setting away from the default.
   page_info()->OnSitePermissionChanged(CONTENT_SETTINGS_TYPE_JAVASCRIPT,
                                        CONTENT_SETTING_BLOCK);
   EXPECT_EQ(expected_visible_permissions.size(),
-      last_permission_info_list().size());
+            last_permission_info_list().size());
 
-  // Make sure setting a default setting to the default doesn't do anything.
+  // Make sure changing a setting to its default causes it to show up, since it
+  // has been recently changed.
+  expected_visible_permissions.insert(CONTENT_SETTINGS_TYPE_MEDIASTREAM_CAMERA);
   page_info()->OnSitePermissionChanged(CONTENT_SETTINGS_TYPE_MEDIASTREAM_CAMERA,
                                        CONTENT_SETTING_DEFAULT);
   EXPECT_EQ(expected_visible_permissions.size(),
-      last_permission_info_list().size());
+            last_permission_info_list().size());
 
-  expected_visible_permissions.pop_back();
-  // Clear the Javascript setting.
+  // Set the Javascript setting to default should keep it shown.
   page_info()->OnSitePermissionChanged(CONTENT_SETTINGS_TYPE_JAVASCRIPT,
                                        CONTENT_SETTING_DEFAULT);
   EXPECT_EQ(expected_visible_permissions.size(),
-      last_permission_info_list().size());
+            last_permission_info_list().size());
 
-  expected_visible_permissions.push_back(CONTENT_SETTINGS_TYPE_JAVASCRIPT);
   // Change the default setting for Javascript away from the factory default.
   page_info()->content_settings_->SetDefaultContentSetting(
       CONTENT_SETTINGS_TYPE_JAVASCRIPT, CONTENT_SETTING_BLOCK);
   page_info()->PresentSitePermissions();
   EXPECT_EQ(expected_visible_permissions.size(),
-      last_permission_info_list().size());
+            last_permission_info_list().size());
 
   // Change it back to ALLOW, which is its factory default, but has a source
   // from the user preference (i.e. it counts as non-factory default).
   page_info()->OnSitePermissionChanged(CONTENT_SETTINGS_TYPE_JAVASCRIPT,
                                        CONTENT_SETTING_ALLOW);
   EXPECT_EQ(expected_visible_permissions.size(),
-      last_permission_info_list().size());
+            last_permission_info_list().size());
 
   // Sanity check the correct permissions are being shown.
   for (ContentSettingsType type : expected_visible_permissions) {
@@ -921,9 +931,9 @@ TEST_F(PageInfoTest, SecurityLevelMetrics) {
 
   const TestCase kTestCases[] = {
       {"https://example.test", security_state::SECURE,
-       "Security.PageInfo.Action.HttpsUrl.Valid"},
+       "Security.PageInfo.Action.HttpsUrl.ValidNonEV"},
       {"https://example.test", security_state::EV_SECURE,
-       "Security.PageInfo.Action.HttpsUrl.Valid"},
+       "Security.PageInfo.Action.HttpsUrl.ValidEV"},
       {"https://example2.test", security_state::NONE,
        "Security.PageInfo.Action.HttpsUrl.Downgraded"},
       {"https://example.test", security_state::DANGEROUS,
@@ -990,7 +1000,7 @@ TEST_F(PageInfoTest, SubresourceFilterSetting_MatchesActivation) {
       HostContentSettingsMapFactory::GetForProfile(profile());
   content_settings->SetWebsiteSettingDefaultScope(
       url(), GURL(), CONTENT_SETTINGS_TYPE_ADS_DATA, std::string(),
-      base::MakeUnique<base::DictionaryValue>());
+      std::make_unique<base::DictionaryValue>());
   page_info();
   EXPECT_TRUE(showing_setting(last_permission_info_list()));
 }

@@ -25,19 +25,21 @@
  * @param {!{displayName:string, isCurrentProfile:boolean}} profile Profile
  *     information.
  * @param {string} label Label of the volume.
- * @param {(string|undefined)} extensionId Id of the extension providing this
- *     volume. Empty for native volumes.
+ * @param {(string|undefined)} providerId Id of the provider for this volume.
+ *     Undefined for non-FSP volumes.
  * @param {boolean} hasMedia When true the volume has been identified
  *     as containing media such as photos or videos.
  * @param {boolean} configurable When true, then the volume can be configured.
+ * @param {boolean} watchable When true, then the volume can be watched.
  * @param {VolumeManagerCommon.Source} source Source of the volume's data.
  * @param {VolumeManagerCommon.FileSystemType} diskFileSystemType File system
  *     type indentifier.
+ * @param {!IconSet} iconSet Set of icons for this volume.
  */
 function VolumeInfoImpl(
     volumeType, volumeId, fileSystem, error, deviceType, devicePath, isReadOnly,
-    isReadOnlyRemovableDevice, profile, label, extensionId, hasMedia,
-    configurable, watchable, source, diskFileSystemType) {
+    isReadOnlyRemovableDevice, profile, label, providerId, hasMedia,
+    configurable, watchable, source, diskFileSystemType, iconSet) {
   this.volumeType_ = volumeType;
   this.volumeId_ = volumeId;
   this.fileSystem_ = fileSystem;
@@ -81,12 +83,13 @@ function VolumeInfoImpl(
   this.isReadOnly_ = isReadOnly;
   this.isReadOnlyRemovableDevice_ = isReadOnlyRemovableDevice;
   this.profile_ = Object.freeze(profile);
-  this.extensionId_ = extensionId;
+  this.providerId_ = providerId;
   this.hasMedia_ = hasMedia;
   this.configurable_ = configurable;
   this.watchable_ = watchable;
   this.source_ = source;
   this.diskFileSystemType_ = diskFileSystemType;
+  this.iconSet_ = iconSet;
 }
 
 VolumeInfoImpl.prototype = /** @struct */ {
@@ -172,10 +175,10 @@ VolumeInfoImpl.prototype = /** @struct */ {
     return this.label_;
   },
   /**
-   * @return {(string|undefined)} Id of an extennsion providing this volume.
+   * @return {(string|undefined)} Id of a provider for this volume.
    */
-  get extensionId() {
-    return this.extensionId_;
+  get providerId() {
+    return this.providerId_;
   },
   /**
    * @return {boolean} True if the volume contains media.
@@ -206,6 +209,12 @@ VolumeInfoImpl.prototype = /** @struct */ {
    */
   get diskFileSystemType() {
     return this.diskFileSystemType_;
+  },
+  /**
+   * @return {IconSet} Set of icons for this volume.
+   */
+  get iconSet() {
+    return this.iconSet_;
   }
 };
 
@@ -226,7 +235,7 @@ VolumeInfoImpl.prototype.resolveDisplayRoot = function(opt_onSuccess,
             Promise.reject(this.error));
     } else {
       // For Drive, we need to resolve.
-      var displayRootURL = this.fileSystem_.root.toURL() + '/root';
+      var displayRootURL = this.fileSystem_.root.toURL() + 'root';
       this.displayRootPromise_ = new Promise(
           window.webkitResolveLocalFileSystemURL.bind(null, displayRootURL));
       if (this.isTeamDrivesEnabled_) {
@@ -239,7 +248,7 @@ VolumeInfoImpl.prototype.resolveDisplayRoot = function(opt_onSuccess,
                   new Promise(window.webkitResolveLocalFileSystemURL.bind(
                       null,
                       this.fileSystem_.root.toURL() +
-                          VolumeManagerCommon.TEAM_DRIVES_DIRECTORY_PATH))
+                          VolumeManagerCommon.TEAM_DRIVES_DIRECTORY_NAME))
                 ])
                 .then(function(displayRoots) {
                   this.teamDriveDisplayRoot_ = displayRoots[1];

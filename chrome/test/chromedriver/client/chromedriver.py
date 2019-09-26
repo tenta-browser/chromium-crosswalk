@@ -131,7 +131,8 @@ class ChromeDriver(object):
                download_dir=None, network_connection=None,
                send_w3c_capability=None, send_w3c_request=None,
                page_load_strategy=None, unexpected_alert_behaviour=None,
-               devtools_events_to_log=None):
+               devtools_events_to_log=None, accept_insecure_certs=None,
+               test_name=None):
     self._executor = command_executor.CommandExecutor(server_url)
     self.w3c_compliant = False
 
@@ -152,7 +153,7 @@ class ChromeDriver(object):
     elif chrome_binary:
       options['binary'] = chrome_binary
 
-    if sys.platform.startswith('linux') and not util.Is64Bit():
+    if sys.platform.startswith('linux') and android_package is None:
       if chrome_switches is None:
         chrome_switches = []
       # Workaround for crbug.com/611886.
@@ -221,6 +222,12 @@ class ChromeDriver(object):
 
     if network_connection:
       params['networkConnectionEnabled'] = network_connection
+
+    if accept_insecure_certs is not None:
+      params['acceptInsecureCerts'] = accept_insecure_certs
+
+    if test_name is not None:
+      params['goog:testName'] = test_name
 
     if send_w3c_request:
       params = {'capabilities': {'alwaysMatch': params}}
@@ -476,6 +483,9 @@ class ChromeDriver(object):
 
   def MaximizeWindow(self):
     self.ExecuteCommand(Command.MAXIMIZE_WINDOW, {'windowHandle': 'current'})
+
+  def MinimizeWindow(self):
+    return self.ExecuteCommand(Command.MINIMIZE_WINDOW, {'windowHandle': 'current'})
 
   def FullScreenWindow(self):
     self.ExecuteCommand(Command.FULLSCREEN_WINDOW)

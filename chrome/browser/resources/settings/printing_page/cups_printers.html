@@ -13,21 +13,6 @@
 <dom-module id="settings-cups-printers">
   <template>
     <style include="cups-printer-shared action-link">
-      .settings-box .start .secondary {
-        color: var(--paper-grey-800);
-        font-size: 92.31%;  /* 12px / 13px */
-      }
-
-      .settings-box .primary-button {
-        --paper-button-disabled: {
-          background: none;
-          color: black;
-          opacity: 0.26;
-        };
-        -webkit-margin-end: 0;
-        -webkit-margin-start: auto;
-      }
-
       #message {
         display: flex;
         justify-content: center;
@@ -44,6 +29,14 @@
         padding-top: 15px;
         text-align: center;
         width: 350px;
+      }
+
+      #noSearchResultsMessage {
+        color: var(--md-loading-message-color);
+        font-size: 16px;
+        font-weight: 500;
+        margin-top: 80px;
+        text-align: center;
       }
 
       #addPrinterErrorMessage {
@@ -68,7 +61,7 @@
         </div>
       </div>
       <paper-button class="primary-button" id="addPrinter"
-          on-tap="onAddPrinterTap_" disabled="[[!canAddPrinter_]]">
+          on-click="onAddPrinterTap_" disabled="[[!canAddPrinter_]]">
         $i18n{addCupsPrinter}
       </paper-button>
     </div>
@@ -87,6 +80,11 @@
         active-printer="{{activePrinter}}"
         search-term="[[searchTerm]]">
     </settings-cups-printers-list>
+
+    <div id="noSearchResultsMessage"
+        hidden="[[!showNoSearchResultsMessage_(searchTerm)]]">
+      $i18n{noSearchResults}
+    </div>
 
     <div id="message">
       <div class="center" id="addPrinterDoneMessage" hidden>

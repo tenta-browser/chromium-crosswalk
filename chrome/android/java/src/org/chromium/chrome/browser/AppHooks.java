@@ -19,7 +19,11 @@ import org.chromium.chrome.browser.banners.AppDetailsDelegate;
 import org.chromium.chrome.browser.customtabs.CustomTabsConnection;
 import org.chromium.chrome.browser.datausage.ExternalDataUseObserver;
 import org.chromium.chrome.browser.externalauth.ExternalAuthUtils;
+import org.chromium.chrome.browser.feedback.AsyncFeedbackSource;
+import org.chromium.chrome.browser.feedback.FeedbackCollector;
 import org.chromium.chrome.browser.feedback.FeedbackReporter;
+import org.chromium.chrome.browser.feedback.FeedbackSource;
+import org.chromium.chrome.browser.feedback.FeedbackSourceProvider;
 import org.chromium.chrome.browser.gsa.GSAHelper;
 import org.chromium.chrome.browser.help.HelpAndFeedback;
 import org.chromium.chrome.browser.historyreport.AppIndexingReporter;
@@ -28,7 +32,6 @@ import org.chromium.chrome.browser.instantapps.InstantAppsHandler;
 import org.chromium.chrome.browser.locale.LocaleManager;
 import org.chromium.chrome.browser.metrics.VariationsSession;
 import org.chromium.chrome.browser.multiwindow.MultiWindowUtils;
-import org.chromium.chrome.browser.net.qualityprovider.ExternalEstimateProviderAndroid;
 import org.chromium.chrome.browser.offlinepages.CCTRequestStatus;
 import org.chromium.chrome.browser.omaha.RequestGenerator;
 import org.chromium.chrome.browser.partnerbookmarks.PartnerBookmark;
@@ -45,6 +48,7 @@ import org.chromium.chrome.browser.sync.GmsCoreSyncListener;
 import org.chromium.chrome.browser.tab.AuthenticatorNavigationInterceptor;
 import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.chrome.browser.webapps.GooglePlayWebApkInstallDelegate;
+import org.chromium.chrome.browser.webauth.U2fApiHandler;
 import org.chromium.components.signin.AccountManagerDelegate;
 import org.chromium.components.signin.SystemAccountManagerDelegate;
 import org.chromium.policy.AppRestrictionsProvider;
@@ -146,14 +150,6 @@ public abstract class AppHooks {
      */
     public ExternalDataUseObserver createExternalDataUseObserver(long nativePtr) {
         return new ExternalDataUseObserver(nativePtr);
-    }
-
-    /**
-     * @return A provider of external estimates.
-     * @param nativePtr Pointer to the native ExternalEstimateProviderAndroid object.
-     */
-    public ExternalEstimateProviderAndroid createExternalEstimateProviderAndroid(long nativePtr) {
-        return new ExternalEstimateProviderAndroid(nativePtr) {};
     }
 
     /**
@@ -317,6 +313,14 @@ public abstract class AppHooks {
     }
 
     /**
+     * @return A list of whitelisted app package names whose completed notifications
+     * we should suppress.
+     */
+    public List<String> getOfflinePagesSuppressNotificationPackages() {
+        return Collections.emptyList();
+    }
+
+    /**
      * @return An iterator of partner bookmarks.
      */
     @Nullable
@@ -330,5 +334,20 @@ public abstract class AppHooks {
      */
     public PartnerBrowserCustomizations.Provider getCustomizationProvider() {
         return new PartnerBrowserCustomizations.ProviderPackage();
+    }
+
+    /**
+     * @return A {@link FeedbackSourceProvider} that can provide additional {@link FeedbackSource}s
+     * and {@link AsyncFeedbackSource}s to be used by a {@link FeedbackCollector}.
+     */
+    public FeedbackSourceProvider getAdditionalFeedbackSources() {
+        return new FeedbackSourceProvider() {};
+    }
+
+    /**
+     * @return a new {@link U2fApiHandler} instance.
+     */
+    public U2fApiHandler createU2fApiHandler() {
+        return new U2fApiHandler();
     }
 }

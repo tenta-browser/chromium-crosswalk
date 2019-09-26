@@ -30,6 +30,7 @@
 #include "chrome/test/base/testing_profile_manager.h"
 #include "chromeos/chromeos_switches.h"
 #include "chromeos/cryptohome/cryptohome_parameters.h"
+#include "chromeos/cryptohome/cryptohome_util.h"
 #include "chromeos/cryptohome/homedir_methods.h"
 #include "chromeos/cryptohome/mock_async_method_caller.h"
 #include "chromeos/cryptohome/system_salt_getter.h"
@@ -168,6 +169,17 @@ class TestCryptohomeClient : public ::chromeos::FakeCryptohomeClient {
         FROM_HERE, base::BindOnce(std::move(callback), reply));
   }
 
+  void CheckKeyEx(const cryptohome::Identification& cryptohome_id,
+                  const cryptohome::AuthorizationRequest& auth,
+                  const cryptohome::CheckKeyRequest& request,
+                  DBusMethodCallback<cryptohome::BaseReply> callback) override {
+    EXPECT_EQ(expected_id_, cryptohome_id);
+    EXPECT_EQ(expected_authorization_secret_, auth.key().secret());
+    cryptohome::BaseReply reply;
+    base::ThreadTaskRunnerHandle::Get()->PostTask(
+        FROM_HERE, base::BindOnce(std::move(callback), reply));
+  }
+
  private:
   cryptohome::Identification expected_id_;
   std::string expected_authorization_secret_;
@@ -299,9 +311,9 @@ class CryptohomeAuthenticatorTest : public testing::Test {
 
   void ExpectGetKeyDataExCall(std::unique_ptr<int64_t> key_type,
                               std::unique_ptr<std::string> salt) {
-    cryptohome::KeyDefinition key_definition(std::string() /* secret */,
-                                             kCryptohomeGAIAKeyLabel,
-                                             cryptohome::PRIV_DEFAULT);
+    auto key_definition = cryptohome::KeyDefinition::CreateForPassword(
+        std::string() /* secret */, kCryptohomeGAIAKeyLabel,
+        cryptohome::PRIV_DEFAULT);
     key_definition.revision = 1;
     if (key_type) {
       key_definition.provider_data.push_back(
@@ -316,7 +328,7 @@ class CryptohomeAuthenticatorTest : public testing::Test {
 
     // Add the key to the fake.
     cryptohome::AddKeyRequest request;
-    KeyDefinitionToKey(key_definition, request.mutable_key());
+    cryptohome::KeyDefinitionToKey(key_definition, request.mutable_key());
     fake_cryptohome_client_->AddKeyEx(
         cryptohome::Identification(user_context_.GetAccountId()),
         cryptohome::AuthorizationRequest(), request,
@@ -333,6 +345,13 @@ class CryptohomeAuthenticatorTest : public testing::Test {
         transformed_key_.GetSecret());
     fake_cryptohome_client_->set_is_create_attempt_expected(
         expect_create_attempt);
+  }
+
+  void ExpectCheckKeyExCall() {
+    fake_cryptohome_client_->set_expected_id(
+        cryptohome::Identification(user_context_.GetAccountId()));
+    fake_cryptohome_client_->set_expected_authorization_secret(
+        transformed_key_.GetSecret());
   }
 
   void RunResolve(CryptohomeAuthenticator* auth) {
@@ -405,7 +424,7 @@ TEST_F(CryptohomeAuthenticatorTest, ResolveNothingDone) {
 TEST_F(CryptohomeAuthenticatorTest, ResolvePossiblePwChangeToFailedMount) {
   // Set up state as though a cryptohome mount attempt has occurred
   // and been rejected.
-  state_->PresetCryptohomeStatus(false, cryptohome::MOUNT_ERROR_KEY_FAILURE);
+  state_->PresetCryptohomeStatus(cryptohome::MOUNT_ERROR_KEY_FAILURE);
 
   // When there is no online attempt and online results, POSSIBLE_PW_CHANGE
   EXPECT_EQ(CryptohomeAuthenticator::FAILED_MOUNT,
@@ -416,7 +435,7 @@ TEST_F(CryptohomeAuthenticatorTest, ResolveNeedOldPw) {
   // Set up state as though a cryptohome mount attempt has occurred
   // and been rejected because of unmatched key; additionally,
   // an online auth attempt has completed successfully.
-  state_->PresetCryptohomeStatus(false, cryptohome::MOUNT_ERROR_KEY_FAILURE);
+  state_->PresetCryptohomeStatus(cryptohome::MOUNT_ERROR_KEY_FAILURE);
   state_->PresetOnlineLoginStatus(AuthFailure::AuthFailureNone());
 
   EXPECT_EQ(CryptohomeAuthenticator::NEED_OLD_PW,
@@ -429,7 +448,7 @@ TEST_F(CryptohomeAuthenticatorTest, ResolveOwnerNeededDirectFailedMount) {
   // This is a high level test to verify the proper transitioning in this mode
   // only. It is not testing that we properly verify that the user is an owner
   // or that we really are in "safe-mode".
-  state_->PresetCryptohomeStatus(true, cryptohome::MOUNT_ERROR_NONE);
+  state_->PresetCryptohomeStatus(cryptohome::MOUNT_ERROR_NONE);
   SetOwnerState(true, false);
 
   EXPECT_EQ(CryptohomeAuthenticator::OWNER_REQUIRED,
@@ -441,7 +460,7 @@ TEST_F(CryptohomeAuthenticatorTest, ResolveOwnerNeededMount) {
   // and succeeded but we are in safe mode and the current user is not owner.
   // This test will check that the "safe-mode" policy is not set and will let
   // the mount finish successfully.
-  state_->PresetCryptohomeStatus(true, cryptohome::MOUNT_ERROR_NONE);
+  state_->PresetCryptohomeStatus(cryptohome::MOUNT_ERROR_NONE);
   SetOwnerState(false, false);
   EXPECT_EQ(CryptohomeAuthenticator::OFFLINE_LOGIN,
             SetAndResolveState(auth_.get(), state_.release()));
@@ -464,7 +483,7 @@ TEST_F(CryptohomeAuthenticatorTest, ResolveOwnerNeededFailedMount) {
 
   // Set up state as though a cryptohome mount attempt has occurred
   // and succeeded but we are in safe mode and the current user is not owner.
-  state_->PresetCryptohomeStatus(true, cryptohome::MOUNT_ERROR_NONE);
+  state_->PresetCryptohomeStatus(cryptohome::MOUNT_ERROR_NONE);
   SetOwnerState(false, false);
   ScopedCrosSettingsTestHelper settings_helper(false);
   settings_helper.ReplaceProvider(kPolicyMissingMitigationMode);
@@ -483,7 +502,7 @@ TEST_F(CryptohomeAuthenticatorTest, ResolveOwnerNeededFailedMount) {
   content::RunAllTasksUntilIdle();
 
   state_.reset(new TestAttemptState(user_context_, false));
-  state_->PresetCryptohomeStatus(true, cryptohome::MOUNT_ERROR_NONE);
+  state_->PresetCryptohomeStatus(cryptohome::MOUNT_ERROR_NONE);
 
   // The owner key util should not have found the owner key, so login should
   // not be allowed.
@@ -514,7 +533,7 @@ TEST_F(CryptohomeAuthenticatorTest, ResolveOwnerNeededSuccess) {
 
   // Set up state as though a cryptohome mount attempt has occurred
   // and succeeded but we are in safe mode and the current user is not owner.
-  state_->PresetCryptohomeStatus(true, cryptohome::MOUNT_ERROR_NONE);
+  state_->PresetCryptohomeStatus(cryptohome::MOUNT_ERROR_NONE);
   SetOwnerState(false, false);
   ScopedCrosSettingsTestHelper settings_helper(false);
   settings_helper.ReplaceProvider(kPolicyMissingMitigationMode);
@@ -533,7 +552,7 @@ TEST_F(CryptohomeAuthenticatorTest, ResolveOwnerNeededSuccess) {
   content::RunAllTasksUntilIdle();
 
   state_.reset(new TestAttemptState(user_context_, false));
-  state_->PresetCryptohomeStatus(true, cryptohome::MOUNT_ERROR_NONE);
+  state_->PresetCryptohomeStatus(cryptohome::MOUNT_ERROR_NONE);
 
   // The owner key util should find the owner key, so login should succeed.
   EXPECT_EQ(CryptohomeAuthenticator::OFFLINE_LOGIN,
@@ -551,7 +570,7 @@ TEST_F(CryptohomeAuthenticatorTest, DriveFailedMount) {
 
   // Set up state as though a cryptohome mount attempt has occurred
   // and failed.
-  state_->PresetCryptohomeStatus(false, cryptohome::MOUNT_ERROR_NONE);
+  state_->PresetCryptohomeStatus(cryptohome::MOUNT_ERROR_FATAL);
   SetAttemptState(auth_.get(), state_.release());
 
   RunResolve(auth_.get());
@@ -576,7 +595,7 @@ TEST_F(CryptohomeAuthenticatorTest, DriveGuestLoginButFail) {
 
   // Set up mock async method caller to respond as though a tmpfs mount
   // attempt has occurred and failed.
-  mock_caller_->SetUp(false, cryptohome::MOUNT_ERROR_NONE);
+  mock_caller_->SetUp(false, cryptohome::MOUNT_ERROR_FATAL);
   EXPECT_CALL(*mock_caller_, AsyncMountGuest(_)).Times(1).RetiresOnSaturation();
 
   auth_->LoginOffTheRecord();
@@ -617,7 +636,7 @@ TEST_F(CryptohomeAuthenticatorTest, DriveResyncFail) {
   ExpectLoginFailure(AuthFailure(AuthFailure::DATA_REMOVAL_FAILED));
 
   // Set up mock async method caller to fail a cryptohome remove attempt.
-  mock_caller_->SetUp(false, cryptohome::MOUNT_ERROR_NONE);
+  mock_caller_->SetUp(false, cryptohome::MOUNT_ERROR_FATAL);
   EXPECT_CALL(
       *mock_caller_,
       AsyncRemove(cryptohome::Identification(user_context_.GetAccountId()), _))
@@ -634,7 +653,7 @@ TEST_F(CryptohomeAuthenticatorTest, DriveRequestOldPassword) {
   FailOnLoginSuccess();
   ExpectPasswordChange();
 
-  state_->PresetCryptohomeStatus(false, cryptohome::MOUNT_ERROR_KEY_FAILURE);
+  state_->PresetCryptohomeStatus(cryptohome::MOUNT_ERROR_KEY_FAILURE);
   state_->PresetOnlineLoginStatus(AuthFailure::AuthFailureNone());
   SetAttemptState(auth_.get(), state_.release());
 
@@ -693,8 +712,7 @@ TEST_F(CryptohomeAuthenticatorTest, DriveDataRecoverButFail) {
 TEST_F(CryptohomeAuthenticatorTest, ResolveNoMountToFailedMount) {
   // Set up state as though a cryptohome mount attempt has occurred
   // and been rejected because the user doesn't exist.
-  state_->PresetCryptohomeStatus(false,
-                                 cryptohome::MOUNT_ERROR_USER_DOES_NOT_EXIST);
+  state_->PresetCryptohomeStatus(cryptohome::MOUNT_ERROR_USER_DOES_NOT_EXIST);
 
   // When there is no online attempt and online results, NO_MOUNT will be
   // resolved to FAILED_MOUNT.
@@ -706,8 +724,7 @@ TEST_F(CryptohomeAuthenticatorTest, ResolveCreateNew) {
   // Set up state as though a cryptohome mount attempt has occurred
   // and been rejected because the user doesn't exist; additionally,
   // an online auth attempt has completed successfully.
-  state_->PresetCryptohomeStatus(false,
-                                 cryptohome::MOUNT_ERROR_USER_DOES_NOT_EXIST);
+  state_->PresetCryptohomeStatus(cryptohome::MOUNT_ERROR_USER_DOES_NOT_EXIST);
   state_->PresetOnlineLoginStatus(AuthFailure::AuthFailureNone());
 
   EXPECT_EQ(CryptohomeAuthenticator::CREATE_NEW,
@@ -730,8 +747,7 @@ TEST_F(CryptohomeAuthenticatorTest, DriveCreateForNewUser) {
   // Set up state as though a cryptohome mount attempt has occurred
   // and been rejected because the user doesn't exist; additionally,
   // an online auth attempt has completed successfully.
-  state_->PresetCryptohomeStatus(false,
-                                 cryptohome::MOUNT_ERROR_USER_DOES_NOT_EXIST);
+  state_->PresetCryptohomeStatus(cryptohome::MOUNT_ERROR_USER_DOES_NOT_EXIST);
   state_->PresetOnlineLoginStatus(AuthFailure::AuthFailureNone());
   SetAttemptState(auth_.get(), state_.release());
 
@@ -744,7 +760,7 @@ TEST_F(CryptohomeAuthenticatorTest, DriveOfflineLogin) {
 
   // Set up state as though a cryptohome mount attempt has occurred and
   // succeeded.
-  state_->PresetCryptohomeStatus(true, cryptohome::MOUNT_ERROR_NONE);
+  state_->PresetCryptohomeStatus(cryptohome::MOUNT_ERROR_NONE);
   SetAttemptState(auth_.get(), state_.release());
 
   RunResolve(auth_.get());
@@ -756,7 +772,7 @@ TEST_F(CryptohomeAuthenticatorTest, DriveOnlineLogin) {
 
   // Set up state as though a cryptohome mount attempt has occurred and
   // succeeded.
-  state_->PresetCryptohomeStatus(true, cryptohome::MOUNT_ERROR_NONE);
+  state_->PresetCryptohomeStatus(cryptohome::MOUNT_ERROR_NONE);
   state_->PresetOnlineLoginStatus(AuthFailure::AuthFailureNone());
   SetAttemptState(auth_.get(), state_.release());
 
@@ -767,15 +783,9 @@ TEST_F(CryptohomeAuthenticatorTest, DriveUnlock) {
   ExpectLoginSuccess(user_context_);
   FailOnLoginFailure();
 
-  // Set up mock async method caller to respond successfully to a cryptohome
+  // Set up fake cryptohome client to respond successfully to a cryptohome
   // key-check attempt.
-  mock_caller_->SetUp(true, cryptohome::MOUNT_ERROR_NONE);
-  EXPECT_CALL(
-      *mock_caller_,
-      AsyncCheckKey(cryptohome::Identification(user_context_.GetAccountId()), _,
-                    _))
-      .Times(1)
-      .RetiresOnSaturation();
+  ExpectCheckKeyExCall();
 
   auth_->AuthenticateToUnlock(user_context_);
   base::RunLoop().Run();
@@ -794,8 +804,8 @@ TEST_F(CryptohomeAuthenticatorTest, DriveLoginWithPreHashedPassword) {
   // pre-hashed key was used to create the cryptohome and allow a successful
   // mount when this pre-hashed key is used.
 
-  ExpectGetKeyDataExCall(base::MakeUnique<int64_t>(Key::KEY_TYPE_SALTED_SHA256),
-                         base::MakeUnique<std::string>(kSalt));
+  ExpectGetKeyDataExCall(std::make_unique<int64_t>(Key::KEY_TYPE_SALTED_SHA256),
+                         std::make_unique<std::string>(kSalt));
   ExpectMountExCall(false /* expect_create_attempt */);
 
   auth_->AuthenticateToLogin(NULL, user_context_);
@@ -811,7 +821,7 @@ TEST_F(CryptohomeAuthenticatorTest, FailLoginWithMissingSalt) {
   // Set up mock homedir methods to respond with key metadata indicating that a
   // pre-hashed key was used to create the cryptohome but without the required
   // salt.
-  ExpectGetKeyDataExCall(base::MakeUnique<int64_t>(Key::KEY_TYPE_SALTED_SHA256),
+  ExpectGetKeyDataExCall(std::make_unique<int64_t>(Key::KEY_TYPE_SALTED_SHA256),
                          std::unique_ptr<std::string>());
 
   auth_->AuthenticateToLogin(NULL, user_context_);

@@ -4,6 +4,8 @@
 
 #include "headless/app/shell_navigation_request.h"
 
+#include <memory>
+
 #include "content/public/browser/browser_thread.h"
 #include "headless/app/headless_shell.h"
 
@@ -13,7 +15,7 @@ ShellNavigationRequest::ShellNavigationRequest(
     base::WeakPtr<HeadlessShell> headless_shell,
     const std::string& interception_id)
     : headless_shell_(
-          base::MakeUnique<base::WeakPtr<HeadlessShell>>(headless_shell)),
+          std::make_unique<base::WeakPtr<HeadlessShell>>(headless_shell)),
       interception_id_(interception_id) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
 }
@@ -26,9 +28,9 @@ void ShellNavigationRequest::StartProcessing(base::Closure done_callback) {
   // The devtools bindings can only be called on the UI thread.
   content::BrowserThread::PostTask(
       content::BrowserThread::UI, FROM_HERE,
-      base::Bind(&ShellNavigationRequest::StartProcessingOnUiThread,
-                 base::Passed(std::move(headless_shell_)), interception_id_,
-                 std::move(done_callback)));
+      base::BindOnce(&ShellNavigationRequest::StartProcessingOnUiThread,
+                     std::move(headless_shell_), interception_id_,
+                     std::move(done_callback)));
 }
 
 // static
@@ -49,8 +51,9 @@ void ShellNavigationRequest::StartProcessingOnUiThread(
           network::ContinueInterceptedRequestParams::Builder()
               .SetInterceptionId(interception_id)
               .Build(),
-          base::Bind(&ShellNavigationRequest::ContinueInterceptedRequestResult,
-                     std::move(done_callback)));
+          base::BindOnce(
+              &ShellNavigationRequest::ContinueInterceptedRequestResult,
+              std::move(done_callback)));
 }
 
 // static
@@ -62,7 +65,7 @@ void ShellNavigationRequest::ContinueInterceptedRequestResult(
   // The |done_callback| must be fired on the IO thread.
   content::BrowserThread::PostTask(
       content::BrowserThread::IO, FROM_HERE,
-      base::Bind(
+      base::BindOnce(
           &ShellNavigationRequest::ContinueInterceptedRequestResultOnIoThread,
           std::move(done_callback)));
 }

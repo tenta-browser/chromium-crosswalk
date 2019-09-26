@@ -10,10 +10,10 @@
 #include "base/containers/id_map.h"
 #include "base/macros.h"
 #include "components/spellcheck/common/spellcheck.mojom.h"
-#include "components/spellcheck/spellcheck_build_features.h"
+#include "components/spellcheck/spellcheck_buildflags.h"
 #include "content/public/renderer/render_frame_observer.h"
 #include "content/public/renderer/render_frame_observer_tracker.h"
-#include "third_party/WebKit/public/web/WebTextCheckClient.h"
+#include "third_party/blink/public/web/web_text_check_client.h"
 
 class SpellCheck;
 struct SpellCheckResult;
@@ -58,11 +58,7 @@ class SpellCheckProvider
   // Replace shared spellcheck data.
   void set_spellcheck(SpellCheck* spellcheck) { spellcheck_ = spellcheck; }
 
-  // Enables document-wide spellchecking.
-  void EnableSpellcheck(bool enabled);
-
   // content::RenderFrameObserver:
-  bool OnMessageReceived(const IPC::Message& message) override;
   void FocusedNodeChanged(const blink::WebNode& node) override;
 
  private:
@@ -86,6 +82,7 @@ class SpellCheckProvider
   void OnDestruct() override;
 
   // blink::WebTextCheckClient:
+  bool IsSpellCheckingEnabled() const override;
   void CheckSpelling(
       const blink::WebString& text,
       int& offset,
@@ -126,10 +123,13 @@ class SpellCheckProvider
   // Weak pointer to shared (per renderer) spellcheck data.
   SpellCheck* spellcheck_;
 
+  // Not owned. |embedder_provider_| should outlive SpellCheckProvider.
   service_manager::LocalInterfaceProvider* embedder_provider_;
 
   // Interface to the SpellCheckHost.
   spellcheck::mojom::SpellCheckHostPtr spell_check_host_;
+
+  base::WeakPtrFactory<SpellCheckProvider> weak_factory_;
 
   DISALLOW_COPY_AND_ASSIGN(SpellCheckProvider);
 };

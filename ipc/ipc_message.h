@@ -15,7 +15,7 @@
 #include "base/pickle.h"
 #include "base/trace_event/trace_event.h"
 #include "build/build_config.h"
-#include "ipc/ipc_features.h"
+#include "ipc/ipc_buildflags.h"
 #include "ipc/ipc_message_support_export.h"
 
 namespace mojo {
@@ -71,6 +71,8 @@ class IPC_MESSAGE_SUPPORT_EXPORT Message : public base::Pickle {
 
   Message(const Message& other);
   Message& operator=(const Message& other);
+
+  bool IsValid() const { return header_size() == sizeof(Header) && header(); }
 
   PriorityValue priority() const {
     return static_cast<PriorityValue>(header()->flags & PRIORITY_MASK);

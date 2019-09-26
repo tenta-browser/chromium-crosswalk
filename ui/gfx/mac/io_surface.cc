@@ -37,6 +37,7 @@ int32_t BytesPerElement(gfx::BufferFormat format, int plane) {
     case gfx::BufferFormat::BGRA_8888:
     case gfx::BufferFormat::BGRX_8888:
     case gfx::BufferFormat::RGBA_8888:
+    case gfx::BufferFormat::BGRX_1010102:
       DCHECK_EQ(plane, 0);
       return 4;
     case gfx::BufferFormat::RGBA_F16:
@@ -59,7 +60,7 @@ int32_t BytesPerElement(gfx::BufferFormat format, int plane) {
     case gfx::BufferFormat::BGR_565:
     case gfx::BufferFormat::RGBA_4444:
     case gfx::BufferFormat::RGBX_8888:
-    case gfx::BufferFormat::BGRX_1010102:
+    case gfx::BufferFormat::RGBX_1010102:
     case gfx::BufferFormat::YVU_420:
       NOTREACHED();
       return 0;
@@ -73,6 +74,8 @@ int32_t PixelFormat(gfx::BufferFormat format) {
   switch (format) {
     case gfx::BufferFormat::R_8:
       return 'L008';
+    case gfx::BufferFormat::BGRX_1010102:
+      return 'l10r';  // little-endian ARGB2101010 full-range ARGB
     case gfx::BufferFormat::BGRA_8888:
     case gfx::BufferFormat::BGRX_8888:
     case gfx::BufferFormat::RGBA_8888:
@@ -93,7 +96,9 @@ int32_t PixelFormat(gfx::BufferFormat format) {
     case gfx::BufferFormat::BGR_565:
     case gfx::BufferFormat::RGBA_4444:
     case gfx::BufferFormat::RGBX_8888:
-    case gfx::BufferFormat::BGRX_1010102:
+    case gfx::BufferFormat::RGBX_1010102:
+    // Technically RGBX_1010102 should be accepted as 'R10k', but then it won't
+    // be supported by CGLTexImageIOSurface2D(), so it's best to reject it here.
     case gfx::BufferFormat::YVU_420:
       NOTREACHED();
       return 0;
@@ -126,7 +131,9 @@ void IOSurfaceMachPortTraits::Release(mach_port_t port) {
 
 }  // namespace internal
 
-IOSurfaceRef CreateIOSurface(const gfx::Size& size, gfx::BufferFormat format) {
+IOSurfaceRef CreateIOSurface(const gfx::Size& size,
+                             gfx::BufferFormat format,
+                             bool should_clear) {
   TRACE_EVENT0("ui", "CreateIOSurface");
   base::TimeTicks start_time = base::TimeTicks::Now();
 
@@ -182,7 +189,8 @@ IOSurfaceRef CreateIOSurface(const gfx::Size& size, gfx::BufferFormat format) {
   // https://crbug.com/594343.
   // IOSurface clearing causes significant performance regression on about half
   // of all devices running Yosemite. https://crbug.com/606850#c22.
-  bool should_clear = !base::mac::IsOS10_9() && !base::mac::IsOS10_10();
+  if (base::mac::IsOS10_9() || base::mac::IsOS10_10())
+    should_clear = false;
 
   if (should_clear) {
     // Zero-initialize the IOSurface. Calling IOSurfaceLock/IOSurfaceUnlock
@@ -192,24 +200,6 @@ IOSurfaceRef CreateIOSurface(const gfx::Size& size, gfx::BufferFormat format) {
     r = IOSurfaceUnlock(surface, 0, nullptr);
     DCHECK_EQ(kIOReturnSuccess, r);
   }
-
-  bool force_color_space = false;
-
-  // Displaying an IOSurface that does not have a color space using an
-  // AVSampleBufferDisplayLayer can result in a black screen. Ensure that
-  // a color space always be specified.
-  // https://crbug.com/608879
-  if (format == gfx::BufferFormat::YUV_420_BIPLANAR)
-    force_color_space = true;
-
-  // On Sierra, all IOSurfaces are color corrected as though they are in sRGB
-  // color space by default. Prior to Sierra, IOSurfaces were not color
-  // corrected (they were treated as though they were in the display color
-  // space). Override this by defaulting IOSurfaces to be in the main display
-  // color space.
-  // https://crbug.com/654488
-  if (base::mac::IsAtLeastOS10_12())
-    force_color_space = true;
 
   // Ensure that all IOSurfaces start as sRGB.
   CGColorSpaceRef color_space = base::mac::GetSRGBColorSpace();
@@ -223,7 +213,7 @@ IOSurfaceRef CreateIOSurface(const gfx::Size& size, gfx::BufferFormat format) {
 }
 
 void IOSurfaceSetColorSpace(IOSurfaceRef io_surface,
-                            const gfx::ColorSpace& color_space) {
+                            const ColorSpace& color_space) {
   // Retrieve the ICC profile data that created this profile, if it exists.
   ICCProfile icc_profile = ICCProfile::FromCacheMac(color_space);
 
@@ -232,9 +222,25 @@ void IOSurfaceSetColorSpace(IOSurfaceRef io_surface,
     icc_profile =
         ICCProfile::FromParametricColorSpace(color_space.GetAsFullRangeRGB());
   }
-
-  // If that fails, we can't use this color space.
   if (!icc_profile.IsValid()) {
+    if (__builtin_available(macos 10.12, *)) {
+      static const ColorSpace kBt2020(ColorSpace::PrimaryID::BT2020,
+                                      ColorSpace::TransferID::SMPTEST2084,
+                                      ColorSpace::MatrixID::BT2020_NCL,
+                                      ColorSpace::RangeID::LIMITED);
+      if (color_space == kBt2020) {
+        base::ScopedCFTypeRef<CGColorSpaceRef> cg_color_space(
+            CGColorSpaceCreateWithName(kCGColorSpaceITUR_2020));
+        DCHECK(cg_color_space);
+
+        base::ScopedCFTypeRef<CFDataRef> cf_data_icc_profile(
+            CGColorSpaceCopyICCData(cg_color_space));
+        DCHECK(cf_data_icc_profile);
+        IOSurfaceSetValue(io_surface, CFSTR("IOSurfaceColorSpace"),
+                          cf_data_icc_profile);
+        return;
+      }
+    }
     DLOG(ERROR) << "Failed to set color space for IOSurface: no ICC profile: "
                 << color_space.ToString();
     return;

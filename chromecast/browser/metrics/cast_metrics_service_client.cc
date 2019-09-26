@@ -8,7 +8,6 @@
 #include "base/guid.h"
 #include "base/i18n/rtl.h"
 #include "base/logging.h"
-#include "base/memory/ptr_util.h"
 #include "base/strings/string16.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/threading/thread_task_runner_handle.h"
@@ -253,15 +252,16 @@ base::TimeDelta CastMetricsServiceClient::GetStandardUploadInterval() {
   return base::TimeDelta::FromMinutes(kStandardUploadIntervalMinutes);
 }
 
-bool CastMetricsServiceClient::IsConsentGiven() {
+bool CastMetricsServiceClient::IsConsentGiven() const {
   return pref_service_->GetBoolean(prefs::kOptInStats);
 }
 
 void CastMetricsServiceClient::EnableMetricsService(bool enabled) {
   if (!task_runner_->BelongsToCurrentThread()) {
     task_runner_->PostTask(
-        FROM_HERE, base::Bind(&CastMetricsServiceClient::EnableMetricsService,
-                              base::Unretained(this), enabled));
+        FROM_HERE,
+        base::BindOnce(&CastMetricsServiceClient::EnableMetricsService,
+                       base::Unretained(this), enabled));
     return;
   }
 
@@ -276,7 +276,6 @@ CastMetricsServiceClient::CastMetricsServiceClient(
     PrefService* pref_service,
     net::URLRequestContextGetter* request_context)
     : pref_service_(pref_service),
-      cast_service_(nullptr),
       client_info_loaded_(false),
 #if defined(OS_LINUX)
       external_metrics_(nullptr),
@@ -315,11 +314,8 @@ void CastMetricsServiceClient::SetForceClientId(
   force_client_id_ = client_id;
 }
 
-void CastMetricsServiceClient::Initialize(CastService* cast_service) {
-  DCHECK(cast_service);
-  DCHECK(!cast_service_);
-  cast_service_ = cast_service;
-
+void CastMetricsServiceClient::Initialize() {
+  DCHECK(!metrics_state_manager_);
   metrics_state_manager_ = ::metrics::MetricsStateManager::Create(
       pref_service_, this, base::string16(),
       base::Bind(&CastMetricsServiceClient::StoreClientInfo,
@@ -358,7 +354,7 @@ void CastMetricsServiceClient::Initialize(CastService* cast_service) {
             new ::metrics::ScreenInfoMetricsProvider));
   }
   metrics_service_->RegisterMetricsProvider(
-      base::MakeUnique<::metrics::NetworkMetricsProvider>());
+      std::make_unique<::metrics::NetworkMetricsProvider>());
   shell::CastBrowserProcess::GetInstance()->browser_client()->
       RegisterMetricsProviders(metrics_service_.get());
 

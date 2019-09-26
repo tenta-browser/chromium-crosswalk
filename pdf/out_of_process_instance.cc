@@ -41,6 +41,7 @@
 #include "ppapi/cpp/var_array.h"
 #include "ppapi/cpp/var_dictionary.h"
 #include "ui/events/keycodes/keyboard_codes.h"
+#include "ui/gfx/geometry/point_f.h"
 
 namespace chrome_pdf {
 
@@ -52,6 +53,7 @@ const char kChromeExtension[] =
 
 // Constants used in handling postMessage() messages.
 const char kType[] = "type";
+const char kJSId[] = "id";
 // Viewport message arguments. (Page -> Plugin).
 const char kJSViewportType[] = "viewport";
 const char kJSUserInitiated[] = "userInitiated";
@@ -110,6 +112,8 @@ const char kJSPreviewPageIndex[] = "index";
 const char kJSSetScrollPositionType[] = "setScrollPosition";
 const char kJSPositionX[] = "x";
 const char kJSPositionY[] = "y";
+// Scroll by (Plugin -> Page)
+const char kJSScrollByType[] = "scrollBy";
 // Cancel the stream URL request (Plugin -> Page)
 const char kJSCancelStreamUrlType[] = "cancelStreamUrl";
 // Navigate to the given URL (Plugin -> Page)
@@ -135,11 +139,14 @@ const char kJSGetSelectedTextReplyType[] = "getSelectedTextReply";
 const char kJSSelectedText[] = "selectedText";
 
 // Get the named destination with the given name (Page -> Plugin)
-const char KJSGetNamedDestinationType[] = "getNamedDestination";
-const char KJSGetNamedDestination[] = "namedDestination";
+const char kJSGetNamedDestinationType[] = "getNamedDestination";
+const char kJSGetNamedDestination[] = "namedDestination";
 // Reply with the page number of the named destination (Plugin -> Page)
 const char kJSGetNamedDestinationReplyType[] = "getNamedDestinationReply";
 const char kJSNamedDestinationPageNumber[] = "pageNumber";
+
+const char kJSTransformPagePointType[] = "transformPagePoint";
+const char kJSTransformPagePointReplyType[] = "transformPagePointReply";
 
 // Selecting text in document (Plugin -> Page)
 const char kJSSetIsSelectingType[] = "setIsSelecting";
@@ -316,24 +323,6 @@ void ScaleRect(float scale, pp::Rect* rect) {
   int right = static_cast<int>(ceilf((rect->x() + rect->width()) * scale));
   int bottom = static_cast<int>(ceilf((rect->y() + rect->height()) * scale));
   rect->SetRect(left, top, right - left, bottom - top);
-}
-
-// TODO(raymes): Remove this dependency on VarPrivate/InstancePrivate. It's
-// needed right now to do a synchronous call to JavaScript, but we could easily
-// replace this with a custom PPB_PDF function.
-pp::Var ModalDialog(const pp::Instance* instance,
-                    const std::string& type,
-                    const std::string& message,
-                    const std::string& default_answer) {
-  const PPB_Instance_Private* interface =
-      reinterpret_cast<const PPB_Instance_Private*>(
-          pp::Module::Get()->GetBrowserInterface(
-              PPB_INSTANCE_PRIVATE_INTERFACE));
-  pp::VarPrivate window(pp::PASS_REF,
-                        interface->GetWindowObject(instance->pp_instance()));
-  if (default_answer.empty())
-    return window.Call(type, message);
-  return window.Call(type, message, default_answer);
 }
 
 }  // namespace
@@ -664,14 +653,32 @@ void OutOfProcessInstance::HandleMessage(const pp::Var& message) {
     reply.Set(pp::Var(kType), pp::Var(kJSGetSelectedTextReplyType));
     reply.Set(pp::Var(kJSSelectedText), selected_text);
     PostMessage(reply);
-  } else if (type == KJSGetNamedDestinationType &&
-             dict.Get(pp::Var(KJSGetNamedDestination)).is_string()) {
-    int page_number = engine_->GetNamedDestinationPage(
-        dict.Get(pp::Var(KJSGetNamedDestination)).AsString());
+  } else if (type == kJSGetNamedDestinationType &&
+             dict.Get(pp::Var(kJSGetNamedDestination)).is_string()) {
+    base::Optional<PDFEngine::NamedDestination> named_destination =
+        engine_->GetNamedDestination(
+            dict.Get(pp::Var(kJSGetNamedDestination)).AsString());
     pp::VarDictionary reply;
     reply.Set(pp::Var(kType), pp::Var(kJSGetNamedDestinationReplyType));
-    if (page_number >= 0)
-      reply.Set(pp::Var(kJSNamedDestinationPageNumber), page_number);
+    reply.Set(
+        pp::Var(kJSNamedDestinationPageNumber),
+        named_destination ? static_cast<int>(named_destination->page) : -1);
+    PostMessage(reply);
+  } else if (type == kJSTransformPagePointType &&
+             dict.Get(pp::Var(kJSPageNumber)).is_int() &&
+             dict.Get(pp::Var(kJSPageX)).is_int() &&
+             dict.Get(pp::Var(kJSPageY)).is_int() &&
+             dict.Get(pp::Var(kJSId)).is_int()) {
+    gfx::PointF page_xy(dict.Get(pp::Var(kJSPageX)).AsInt(),
+                        dict.Get(pp::Var(kJSPageY)).AsInt());
+    gfx::PointF device_xy = engine_->TransformPagePoint(
+        dict.Get(pp::Var(kJSPageNumber)).AsInt(), page_xy);
+
+    pp::VarDictionary reply;
+    reply.Set(pp::Var(kType), pp::Var(kJSTransformPagePointReplyType));
+    reply.Set(pp::Var(kJSPositionX), device_xy.x());
+    reply.Set(pp::Var(kJSPositionY), device_xy.y());
+    reply.Set(pp::Var(kJSId), dict.Get(pp::Var(kJSId)).AsInt());
     PostMessage(reply);
   } else {
     NOTREACHED();
@@ -909,6 +916,12 @@ void OutOfProcessInstance::SendAccessibilityViewportInfo() {
       -top_toolbar_height_in_viewport_coords_ * device_scale_;
   viewport_info.offset = available_area_.point();
   viewport_info.zoom = zoom_ * device_scale_;
+
+  engine_->GetSelection(&viewport_info.selection_start_page_index,
+                        &viewport_info.selection_start_char_index,
+                        &viewport_info.selection_end_page_index,
+                        &viewport_info.selection_end_char_index);
+
   pp::PDF::SetAccessibilityViewportInfo(GetPluginInstance(), &viewport_info);
 }
 
@@ -924,6 +937,8 @@ void OutOfProcessInstance::SelectionChanged(const pp::Rect& left,
   pp::PDF::SelectionChanged(GetPluginInstance(),
                             PP_MakeFloatPoint(l.x(), l.y()), left.height(),
                             PP_MakeFloatPoint(r.x(), r.y()), right.height());
+  if (accessibility_state_ == ACCESSIBILITY_STATE_LOADED)
+    SendAccessibilityViewportInfo();
 }
 
 void OutOfProcessInstance::SetCaretPosition(const pp::FloatPoint& position) {
@@ -1203,11 +1218,9 @@ void OutOfProcessInstance::Invalidate(const pp::Rect& rect) {
   paint_manager_.InvalidateRect(offset_rect);
 }
 
-void OutOfProcessInstance::Scroll(const pp::Point& point) {
-  if (!image_data_.is_null()) {
+void OutOfProcessInstance::DidScroll(const pp::Point& point) {
+  if (!image_data_.is_null())
     paint_manager_.ScrollRect(available_area_, point);
-    pp::PDF::DidScroll(GetPluginInstance());
-  }
 }
 
 void OutOfProcessInstance::ScrollToX(int x_in_screen_coords) {
@@ -1226,6 +1239,14 @@ void OutOfProcessInstance::ScrollToY(int y_in_screen_coords,
     new_y_viewport_coords -= top_toolbar_height_in_viewport_coords_;
   }
   position.Set(kJSPositionY, pp::Var(new_y_viewport_coords));
+  PostMessage(position);
+}
+
+void OutOfProcessInstance::ScrollBy(const pp::Point& point) {
+  pp::VarDictionary position;
+  position.Set(kType, kJSScrollByType);
+  position.Set(kJSPositionX, pp::Var(point.x() / device_scale_));
+  position.Set(kJSPositionY, pp::Var(point.y() / device_scale_));
   PostMessage(position);
 }
 
@@ -1344,17 +1365,17 @@ void OutOfProcessInstance::GetDocumentPassword(
 }
 
 void OutOfProcessInstance::Alert(const std::string& message) {
-  ModalDialog(this, "alert", message, std::string());
+  pp::PDF::ShowAlertDialog(this, message.c_str());
 }
 
 bool OutOfProcessInstance::Confirm(const std::string& message) {
-  pp::Var result = ModalDialog(this, "confirm", message, std::string());
-  return result.is_bool() ? result.AsBool() : false;
+  return pp::PDF::ShowConfirmDialog(this, message.c_str());
 }
 
 std::string OutOfProcessInstance::Prompt(const std::string& question,
                                          const std::string& default_answer) {
-  pp::Var result = ModalDialog(this, "prompt", question, default_answer);
+  pp::Var result =
+      pp::PDF::ShowPromptDialog(this, question.c_str(), default_answer.c_str());
   return result.is_string() ? result.AsString() : std::string();
 }
 
@@ -1477,7 +1498,8 @@ OutOfProcessInstance::SearchString(const base::char16* string,
 void OutOfProcessInstance::DocumentPaintOccurred() {}
 
 void OutOfProcessInstance::DocumentLoadComplete(
-    const PDFEngine::DocumentFeatures& document_features) {
+    const PDFEngine::DocumentFeatures& document_features,
+    uint32_t file_size) {
   // Clear focus state for OSK.
   FormTextFieldFocusChange(false);
 
@@ -1542,6 +1564,9 @@ void OutOfProcessInstance::DocumentLoadComplete(
   }
 
   pp::PDF::SetContentRestriction(this, content_restrictions);
+  static const int32_t kMaxFileSizeInKB = 12 * 1024 * 1024;
+  HistogramCustomCounts("PDF.FileSizeInKB", file_size / 1024, 0,
+                        kMaxFileSizeInKB, 50);
   HistogramCustomCounts("PDF.PageCount", document_features.page_count, 1,
                         1000000, 50);
   HistogramEnumeration("PDF.HasAttachment",
@@ -1788,6 +1813,10 @@ void OutOfProcessInstance::IsEditModeChanged(bool is_edit_mode) {
   message.Set(kType, kJSSetIsEditModeType);
   message.Set(kJSIsEditMode, pp::Var(is_edit_mode));
   PostMessage(message);
+}
+
+float OutOfProcessInstance::GetToolbarHeightInScreenCoords() {
+  return top_toolbar_height_in_viewport_coords_ * device_scale_;
 }
 
 void OutOfProcessInstance::ProcessPreviewPageInfo(const std::string& url,

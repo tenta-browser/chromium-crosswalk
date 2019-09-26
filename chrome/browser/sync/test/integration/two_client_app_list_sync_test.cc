@@ -53,9 +53,7 @@ const app_list::AppListSyncableService::SyncItem* GetSyncItem(
 
 class TwoClientAppListSyncTest : public SyncTest {
  public:
-  TwoClientAppListSyncTest() : SyncTest(TWO_CLIENT_LEGACY) {
-    DisableVerifier();
-  }
+  TwoClientAppListSyncTest() : SyncTest(TWO_CLIENT) { DisableVerifier(); }
 
   ~TwoClientAppListSyncTest() override {}
 
@@ -128,9 +126,7 @@ IN_PROC_BROWSER_TEST_F(TwoClientAppListSyncTest, StartWithSameApps) {
 // Install some apps on both clients, some on only one client, some on only the
 // other, and sync.  Both clients should end up with all apps, and the app and
 // page ordinals should be identical.
-// Disabled, see http://crbug.com/434438 for details.
-IN_PROC_BROWSER_TEST_F(TwoClientAppListSyncTest,
-                       DISABLED_StartWithDifferentApps) {
+IN_PROC_BROWSER_TEST_F(TwoClientAppListSyncTest, StartWithDifferentApps) {
   ASSERT_TRUE(SetupClients());
 
   int i = 0;
@@ -369,14 +365,6 @@ IN_PROC_BROWSER_TEST_F(TwoClientAppListSyncTest, Move) {
   AwaitQuiescenceAndInstallAppsPendingForSync();
 
   ASSERT_TRUE(AllProfilesHaveSameAppList());
-
-  size_t first = kNumDefaultApps;
-  SyncAppListHelper::GetInstance()->MoveApp(
-      GetProfile(0), first + 1, first + 2);
-
-  ASSERT_TRUE(AwaitQuiescence());
-
-  ASSERT_TRUE(AllProfilesHaveSameAppList());
 }
 
 // Install a Default App on both clients, then sync. Remove the app on one
@@ -440,8 +428,9 @@ IN_PROC_BROWSER_TEST_F(TwoClientAppListSyncTest, MoveToFolder) {
   ASSERT_TRUE(AllProfilesHaveSameAppList());
 
   const int kNumApps = 5;
+  std::vector<std::string> app_ids;
   for (int i = 0; i < kNumApps; ++i) {
-    InstallApp(GetProfile(0), i);
+    app_ids.push_back(InstallApp(GetProfile(0), i));
     InstallApp(GetProfile(1), i);
   }
   ASSERT_TRUE(AwaitQuiescence());
@@ -449,8 +438,8 @@ IN_PROC_BROWSER_TEST_F(TwoClientAppListSyncTest, MoveToFolder) {
 
   size_t index = 2u;
   std::string folder_id = "Folder 0";
-  SyncAppListHelper::GetInstance()->MoveAppToFolder(
-      GetProfile(0), index, folder_id);
+  SyncAppListHelper::GetInstance()->MoveAppToFolder(GetProfile(0),
+                                                    app_ids[index], folder_id);
 
   ASSERT_TRUE(AwaitQuiescence());
   ASSERT_TRUE(AllProfilesHaveSameAppList());
@@ -461,8 +450,9 @@ IN_PROC_BROWSER_TEST_F(TwoClientAppListSyncTest, FolderAddRemove) {
   ASSERT_TRUE(AllProfilesHaveSameAppList());
 
   const int kNumApps = 10;
+  std::vector<std::string> app_ids;
   for (int i = 0; i < kNumApps; ++i) {
-    InstallApp(GetProfile(0), i);
+    app_ids.push_back(InstallApp(GetProfile(0), i));
     InstallApp(GetProfile(1), i);
   }
   ASSERT_TRUE(AwaitQuiescence());
@@ -472,26 +462,30 @@ IN_PROC_BROWSER_TEST_F(TwoClientAppListSyncTest, FolderAddRemove) {
   const size_t kNumAppsToMove = 3;
   std::string folder_id = "Folder 0";
   // The folder will be created at the end of the list; always move the
-  // first non default item in the list.
+  // non default items in the list.
+  // Note: We don't care about the order of items in Chrome, so when we
+  //       changes a file's folder, its index in the list remains unchanged.
+  //       The |kNumAppsToMove| items to move are
+  //       app_ids[item_index..(item_index+kNumAppsToMove-1)].
   size_t item_index = kNumDefaultApps;
   for (size_t i = 0; i < kNumAppsToMove; ++i) {
     SyncAppListHelper::GetInstance()->MoveAppToFolder(
-        GetProfile(0), item_index, folder_id);
+        GetProfile(0), app_ids[item_index + i], folder_id);
   }
   ASSERT_TRUE(AwaitQuiescence());
   ASSERT_TRUE(AllProfilesHaveSameAppList());
 
   // Remove one app from the folder.
-  SyncAppListHelper::GetInstance()->MoveAppFromFolder(
-      GetProfile(0), 0, folder_id);
+  SyncAppListHelper::GetInstance()->MoveAppFromFolder(GetProfile(0), app_ids[0],
+                                                      folder_id);
 
   ASSERT_TRUE(AwaitQuiescence());
   ASSERT_TRUE(AllProfilesHaveSameAppList());
 
   // Remove remaining apps from the folder (deletes folder).
   for (size_t i = 1; i < kNumAppsToMove; ++i) {
-    SyncAppListHelper::GetInstance()->MoveAppFromFolder(
-        GetProfile(0), 0, folder_id);
+    SyncAppListHelper::GetInstance()->MoveAppFromFolder(GetProfile(0),
+                                                        app_ids[0], folder_id);
   }
 
   ASSERT_TRUE(AwaitQuiescence());
@@ -500,7 +494,7 @@ IN_PROC_BROWSER_TEST_F(TwoClientAppListSyncTest, FolderAddRemove) {
   // Move apps back to a (new) folder.
   for (size_t i = 0; i < kNumAppsToMove; ++i) {
     SyncAppListHelper::GetInstance()->MoveAppToFolder(
-        GetProfile(0), item_index, folder_id);
+        GetProfile(0), app_ids[item_index], folder_id);
   }
 
   ASSERT_TRUE(AwaitQuiescence());

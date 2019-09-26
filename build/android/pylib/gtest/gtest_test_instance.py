@@ -31,9 +31,8 @@ RUN_IN_SUB_THREAD_TEST_SUITES = [
   'base_unittests',  # file_locking_unittest.cc uses a child process.
   'ipc_perftests',
   'ipc_tests',
-  'mojo_message_pipe_perftests',
-  'mojo_public_bindings_perftests',
-  'mojo_system_unittests',
+  'mojo_perftests',
+  'mojo_unittests',
   'net_unittests'
 ]
 
@@ -194,6 +193,9 @@ def ParseGTestOutput(output, symbolizer, device_abi):
         log.append(l)
 
     if result_type and test_name:
+      # Don't bother symbolizing output if the test passed.
+      if result_type == base_test_result.ResultType.PASS:
+        stack = []
       results.append(base_test_result.BaseTestResult(
           TestNameWithoutDisabledPrefix(test_name), result_type, duration,
           log=symbolize_stack_and_merge_with_log()))
@@ -282,16 +284,18 @@ class GtestTestInstance(test_instance.TestInstance):
     # TODO(jbudorick): Support multiple test suites.
     if len(args.suite_name) > 1:
       raise ValueError('Platform mode currently supports only 1 gtest suite')
+    self._isolated_script_test_perf_output = (
+        args.isolated_script_test_perf_output)
     self._exe_dist_dir = None
     self._external_shard_index = args.test_launcher_shard_index
     self._extract_test_list_from_filter = args.extract_test_list_from_filter
     self._filter_tests_lock = threading.Lock()
+    self._gs_test_artifacts_bucket = args.gs_test_artifacts_bucket
     self._shard_timeout = args.shard_timeout
     self._store_tombstones = args.store_tombstones
-    self._total_external_shards = args.test_launcher_total_shards
     self._suite = args.suite_name[0]
     self._symbolizer = stack_symbolizer.Symbolizer(None, False)
-    self._gs_test_artifacts_bucket = args.gs_test_artifacts_bucket
+    self._total_external_shards = args.test_launcher_total_shards
     self._wait_for_java_debugger = args.wait_for_java_debugger
 
     # GYP:
@@ -428,6 +432,10 @@ class GtestTestInstance(test_instance.TestInstance):
   @property
   def gtest_filter(self):
     return self._gtest_filter
+
+  @property
+  def isolated_script_test_perf_output(self):
+    return self._isolated_script_test_perf_output
 
   @property
   def package(self):

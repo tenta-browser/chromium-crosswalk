@@ -90,13 +90,22 @@ void FakeArcBridgeHost::OnProcessInstanceReady(
 void FakeArcBridgeHost::OnRotationLockInstanceReady(
     mojom::RotationLockInstancePtr rotation_lock_ptr) {}
 
+void FakeArcBridgeHost::OnScreenCaptureInstanceReady(
+    mojom::ScreenCaptureInstancePtr screen_capture_ptr) {}
+
 void FakeArcBridgeHost::OnStorageManagerInstanceReady(
     mojom::StorageManagerInstancePtr storage_manager_ptr) {}
+
+void FakeArcBridgeHost::OnTimerInstanceReady(
+    mojom::TimerInstancePtr timer_ptr) {}
 
 void FakeArcBridgeHost::OnTracingInstanceReady(
     mojom::TracingInstancePtr trace_ptr) {}
 
 void FakeArcBridgeHost::OnTtsInstanceReady(mojom::TtsInstancePtr tts_ptr) {}
+
+void FakeArcBridgeHost::OnUsbHostInstanceReady(
+    mojom::UsbHostInstancePtr usb_ptr) {}
 
 void FakeArcBridgeHost::OnVideoInstanceReady(
     mojom::VideoInstancePtr video_ptr) {}
@@ -109,6 +118,9 @@ void FakeArcBridgeHost::OnVoiceInteractionFrameworkInstanceReady(
 
 void FakeArcBridgeHost::OnVolumeMounterInstanceReady(
     mojom::VolumeMounterInstancePtr volume_mounter_ptr) {}
+
+void FakeArcBridgeHost::OnWakeLockInstanceReady(
+    mojom::WakeLockInstancePtr wakelock_ptr) {}
 
 void FakeArcBridgeHost::OnWallpaperInstanceReady(
     mojom::WallpaperInstancePtr wallpaper_ptr) {}

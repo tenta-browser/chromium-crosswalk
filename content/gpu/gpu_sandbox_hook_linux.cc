@@ -18,8 +18,9 @@
 #include "build/build_config.h"
 #include "build/buildflag.h"
 #include "content/public/common/content_switches.h"
-#include "media/gpu/features.h"
+#include "media/gpu/buildflags.h"
 #include "sandbox/linux/bpf_dsl/policy.h"
+#include "sandbox/linux/syscall_broker/broker_command.h"
 #include "sandbox/linux/syscall_broker/broker_file_permission.h"
 #include "sandbox/linux/syscall_broker/broker_process.h"
 #include "services/service_manager/embedder/set_process_title.h"
@@ -27,10 +28,6 @@
 #include "services/service_manager/sandbox/linux/bpf_cros_arm_gpu_policy_linux.h"
 #include "services/service_manager/sandbox/linux/bpf_gpu_policy_linux.h"
 #include "services/service_manager/sandbox/linux/sandbox_linux.h"
-
-#if BUILDFLAG(USE_VAAPI)
-#include <va/va_version.h>
-#endif
 
 using sandbox::bpf_dsl::Policy;
 using sandbox::syscall_broker::BrokerFilePermission;
@@ -41,22 +38,6 @@ namespace {
 
 inline bool IsChromeOS() {
 #if defined(OS_CHROMEOS)
-  return true;
-#else
-  return false;
-#endif
-}
-
-inline bool IsArchitectureX86_64() {
-#if defined(__x86_64__)
-  return true;
-#else
-  return false;
-#endif
-}
-
-inline bool IsArchitectureI386() {
-#if defined(__i386__)
   return true;
 #else
   return false;
@@ -87,14 +68,6 @@ inline bool UseLibV4L2() {
 #endif
 }
 
-inline bool IsLibVAVersion2() {
-#if BUILDFLAG(USE_VAAPI) && VA_MAJOR_VERSION == 1
-  return true;
-#else
-  return false;
-#endif
-}
-
 constexpr int dlopen_flag = RTLD_NOW | RTLD_GLOBAL | RTLD_NODELETE;
 
 void AddV4L2GpuWhitelist(
@@ -113,9 +86,11 @@ void AddV4L2GpuWhitelist(
       permissions->push_back(BrokerFilePermission::ReadWrite(name.value()));
   }
 
-  // Device node for V4L2 video encode accelerator drivers.
-  static const char kDevVideoEncPath[] = "/dev/video-enc";
-  permissions->push_back(BrokerFilePermission::ReadWrite(kDevVideoEncPath));
+  if (options.accelerated_video_encode_enabled) {
+    // Device node for V4L2 video encode accelerator drivers.
+    static const char kDevVideoEncPath[] = "/dev/video-enc";
+    permissions->push_back(BrokerFilePermission::ReadWrite(kDevVideoEncPath));
+  }
 
   // Device node for V4L2 JPEG decode accelerator drivers.
   static const char kDevJpegDecPath[] = "/dev/jpeg-dec";
@@ -178,6 +153,7 @@ void AddStandardGpuWhiteList(std::vector<BrokerFilePermission>* permissions) {
   static const char kDriCardBasePath[] = "/dev/dri/card";
   static const char kNvidiaCtlPath[] = "/dev/nvidiactl";
   static const char kNvidiaDeviceBasePath[] = "/dev/nvidia";
+  static const char kNvidiaDeviceModeSetPath[] = "/dev/nvidia-modeset";
   static const char kNvidiaParamsPath[] = "/proc/driver/nvidia/params";
   static const char kDevShm[] = "/dev/shm/";
 
@@ -197,16 +173,17 @@ void AddStandardGpuWhiteList(std::vector<BrokerFilePermission>* permissions) {
     permissions->push_back(BrokerFilePermission::ReadWrite(
         base::StringPrintf("%s%d", kNvidiaDeviceBasePath, i)));
   }
+  permissions->push_back(
+      BrokerFilePermission::ReadWrite(kNvidiaDeviceModeSetPath));
   permissions->push_back(BrokerFilePermission::ReadOnly(kNvidiaParamsPath));
 }
 
 std::vector<BrokerFilePermission> FilePermissionsForGpu(
     const service_manager::SandboxSeccompBPF::Options& options) {
-  std::vector<BrokerFilePermission> permissions;
-
   // All GPU process policies need this file brokered out.
   static const char kDriRcPath[] = "/etc/drirc";
-  permissions.push_back(BrokerFilePermission::ReadOnly(kDriRcPath));
+  std::vector<BrokerFilePermission> permissions = {
+      BrokerFilePermission::ReadOnly(kDriRcPath)};
 
   if (IsChromeOS()) {
     if (UseV4L2Codec())
@@ -250,56 +227,20 @@ bool LoadAmdGpuLibraries() {
   return true;
 }
 
-void LoadV4L2Libraries() {
-  if (UseLibV4L2()) {
-    dlopen("/usr/lib/libv4l2.so", dlopen_flag);
-
-    // This is a device-specific encoder plugin.
-    dlopen("/usr/lib/libv4l/plugins/libv4l-encplugin.so", dlopen_flag);
-  }
+bool IsAcceleratedVideoEnabled(
+    const service_manager::SandboxSeccompBPF::Options& options) {
+  return options.accelerated_video_encode_enabled ||
+         options.accelerated_video_decode_enabled;
 }
 
-void LoadStandardLibraries(
+void LoadV4L2Libraries(
     const service_manager::SandboxSeccompBPF::Options& options) {
-  if (IsArchitectureX86_64() || IsArchitectureI386()) {
-    // Accelerated video dlopen()'s some shared objects
-    // inside the sandbox, so preload them now.
-    if (options.vaapi_accelerated_video_encode_enabled ||
-        options.accelerated_video_decode_enabled) {
-      if (IsLibVAVersion2()) {
-        if (IsArchitectureX86_64()) {
-          dlopen("/usr/lib64/va/drivers/i965_drv_video.so", dlopen_flag);
-          dlopen("/usr/lib64/va/drivers/hybrid_drv_video.so", dlopen_flag);
-        } else if (IsArchitectureI386()) {
-          dlopen("/usr/lib/va/drivers/i965_drv_video.so", dlopen_flag);
-        }
-        dlopen("libva.so.2", dlopen_flag);
-#if defined(USE_OZONE)
-        dlopen("libva-drm.so.2", dlopen_flag);
-#endif
-      } else {
-        // If we are linked against libva 1, we have two cases to handle:
-        // - the sysroot includes both libva 1 and 2, in which case the drivers
-        //   are in /usr/lib{64}/va1/
-        // - the sysroot only includes libva 1, in which case the drivers are
-        //   are in /usr/lib{64}/va/
-        // This is ugly, but temporary until all builds have switched to libva 2.
-        if (IsArchitectureX86_64()) {
-          if (!dlopen("/usr/lib64/va1/drivers/i965_drv_video.so", dlopen_flag))
-            dlopen("/usr/lib64/va/drivers/i965_drv_video.so", dlopen_flag);
-          if (!dlopen("/usr/lib64/va1/drivers/hybrid_drv_video.so", dlopen_flag))
-            dlopen("/usr/lib64/va/drivers/hybrid_drv_video.so", dlopen_flag);
-        } else if (IsArchitectureI386()) {
-          if (!dlopen("/usr/lib/va1/drivers/i965_drv_video.so", dlopen_flag))
-            dlopen("/usr/lib/va/drivers/i965_drv_video.so", dlopen_flag);
-        }
-        dlopen("libva.so.1", dlopen_flag);
-#if defined(USE_OZONE)
-        dlopen("libva-drm.so.1", dlopen_flag);
-#elif defined(USE_X11)
-        dlopen("libva-x11.so.1", dlopen_flag);
-#endif
-      }
+  if (IsAcceleratedVideoEnabled(options) && UseLibV4L2()) {
+    dlopen("/usr/lib/libv4l2.so", dlopen_flag);
+
+    if (options.accelerated_video_encode_enabled) {
+      // This is a device-specific encoder plugin.
+      dlopen("/usr/lib/libv4l/plugins/libv4l-encplugin.so", dlopen_flag);
     }
   }
 }
@@ -308,7 +249,7 @@ bool LoadLibrariesForGpu(
     const service_manager::SandboxSeccompBPF::Options& options) {
   if (IsChromeOS()) {
     if (UseV4L2Codec())
-      LoadV4L2Libraries();
+      LoadV4L2Libraries(options);
     if (IsArchitectureArm()) {
       LoadArmGpuLibraries();
       return true;
@@ -316,12 +257,22 @@ bool LoadLibrariesForGpu(
     if (options.use_amd_specific_policies)
       return LoadAmdGpuLibraries();
   }
-  LoadStandardLibraries(options);
   return true;
 }
 
+sandbox::syscall_broker::BrokerCommandSet CommandSetForGPU(
+    const service_manager::SandboxLinux::Options& options) {
+  sandbox::syscall_broker::BrokerCommandSet command_set;
+  command_set.set(sandbox::syscall_broker::COMMAND_ACCESS);
+  command_set.set(sandbox::syscall_broker::COMMAND_OPEN);
+  command_set.set(sandbox::syscall_broker::COMMAND_STAT);
+  if (IsChromeOS() && options.use_amd_specific_policies) {
+    command_set.set(sandbox::syscall_broker::COMMAND_READLINK);
+  }
+  return command_set;
+}
+
 bool BrokerProcessPreSandboxHook(
-    service_manager::BPFBasePolicy* policy,
     service_manager::SandboxLinux::Options options) {
   // Oddly enough, we call back into gpu to invoke this service manager
   // method, since it is part of the embedder component, and the service
@@ -332,12 +283,10 @@ bool BrokerProcessPreSandboxHook(
 
 }  // namespace
 
-bool GpuProcessPreSandboxHook(service_manager::BPFBasePolicy* policy,
-                              service_manager::SandboxLinux::Options options) {
-  auto* instance = service_manager::SandboxLinux::GetInstance();
-  instance->StartBrokerProcess(policy, FilePermissionsForGpu(options),
-                               base::BindOnce(BrokerProcessPreSandboxHook),
-                               options);
+bool GpuProcessPreSandboxHook(service_manager::SandboxLinux::Options options) {
+  service_manager::SandboxLinux::GetInstance()->StartBrokerProcess(
+      CommandSetForGPU(options), FilePermissionsForGpu(options),
+      base::BindOnce(BrokerProcessPreSandboxHook), options);
 
   if (!LoadLibrariesForGpu(options))
     return false;

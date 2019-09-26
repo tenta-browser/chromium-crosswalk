@@ -54,13 +54,9 @@ namespace gles2 {
 using namespace cmds;
 
 void GLES2DecoderRGBBackbufferTest::SetUp() {
-  // Test codepath with workaround clear_alpha_in_readpixels because
-  // ReadPixelsEmulator emulates the incorrect driver behavior.
-  gpu::GpuDriverBugWorkarounds workarounds;
-  workarounds.clear_alpha_in_readpixels = true;
   InitState init;
   init.bind_generates_resource = true;
-  InitDecoderWithWorkarounds(init, workarounds);
+  InitDecoder(init);
   SetupDefaultProgram();
 }
 
@@ -200,6 +196,9 @@ TEST_P(GLES2DecoderTest, IsBuffer) {
   EXPECT_FALSE(DoIsBuffer(client_buffer_id_));
   DoBindBuffer(GL_ARRAY_BUFFER, client_buffer_id_, kServiceBufferId);
   EXPECT_TRUE(DoIsBuffer(client_buffer_id_));
+  EXPECT_CALL(*gl_, BindBuffer(GL_ARRAY_BUFFER, 0))
+      .Times(1)
+      .RetiresOnSaturation();
   DoDeleteBuffer(client_buffer_id_, kServiceBufferId);
   EXPECT_FALSE(DoIsBuffer(client_buffer_id_));
 }
@@ -1101,7 +1100,7 @@ class SizeOnlyMemoryTracker : public MemoryTracker {
   uint64_t ShareGroupTracingGUID() const override { return 0; }
 
  private:
-  virtual ~SizeOnlyMemoryTracker() {}
+  virtual ~SizeOnlyMemoryTracker() = default;
   struct PoolInfo {
     PoolInfo() : initial_size(0), size(0) {}
     size_t initial_size;
@@ -1411,6 +1410,9 @@ TEST_P(GLES3DecoderTest, BindTransformFeedbackValidArgs) {
   SpecializedSetup<BindTransformFeedback, 0>(true);
   BindTransformFeedback cmd;
   cmd.Init(GL_TRANSFORM_FEEDBACK, client_transformfeedback_id_);
+  EXPECT_CALL(*gl_, BindBuffer(GL_TRANSFORM_FEEDBACK_BUFFER, 0))
+      .Times(1)
+      .RetiresOnSaturation();
   EXPECT_EQ(error::kNoError, ExecuteCmd(cmd));
   EXPECT_EQ(GL_NO_ERROR, GetGLError());
 }
@@ -1483,6 +1485,9 @@ TEST_P(GLES3DecoderTest, GetTransformFeedbackBinding) {
   const GLuint kServiceID = 1012;
   const GLenum kTarget = GL_TRANSFORM_FEEDBACK;
   DoCreateTransformFeedback(kClientID, kServiceID);
+  EXPECT_CALL(*gl_, BindBuffer(GL_TRANSFORM_FEEDBACK_BUFFER, 0))
+      .Times(1)
+      .RetiresOnSaturation();
   DoBindTransformFeedback(kTarget, kClientID, kServiceID);
 
   EXPECT_CALL(*gl_, GetError())
@@ -1500,6 +1505,9 @@ TEST_P(GLES3DecoderTest, GetTransformFeedbackBinding) {
   EXPECT_EQ(1, result->GetNumResults());
   EXPECT_EQ(kClientID, static_cast<GLuint>(result->GetData()[0]));
 
+  EXPECT_CALL(*gl_, BindBuffer(GL_TRANSFORM_FEEDBACK_BUFFER, 0))
+      .Times(1)
+      .RetiresOnSaturation();
   DoBindTransformFeedback(kTarget, 0, kServiceDefaultTransformFeedbackId);
   DoDeleteTransformFeedback(kClientID, kServiceID);
   EXPECT_EQ(GL_NO_ERROR, GetGLError());
@@ -1581,13 +1589,16 @@ TEST_P(GLES2DecoderDoCommandsTest, DoCommandsBadArgSize) {
             decoder_->DoCommands(
                 2, &cmds_, entries_per_cmd_ * 2 + 1, &num_processed));
   EXPECT_EQ(GL_NO_ERROR, GetGLError());
-  EXPECT_EQ(entries_per_cmd_ + cmds_[1].header.size, num_processed);
+  // gpu::CommandHeader::size is a 21-bit field, so casting it to int is safe.
+  // Without the explicit cast, Visual Studio ends up promoting the left hand
+  // side to unsigned, and emits a sign mismatch warning.
+  EXPECT_EQ(entries_per_cmd_ + static_cast<int>(cmds_[1].header.size),
+            num_processed);
 }
 
 class GLES2DecoderDescheduleUntilFinishedTest : public GLES2DecoderTest {
  public:
-  GLES2DecoderDescheduleUntilFinishedTest() {
-  }
+  GLES2DecoderDescheduleUntilFinishedTest() = default;
 
   void SetUp() override {
     InitState init;
@@ -1684,13 +1695,11 @@ void GLES3DecoderWithShaderTest::SetUp() {
 }
 
 void GLES3DecoderRGBBackbufferTest::SetUp() {
-  gpu::GpuDriverBugWorkarounds workarounds;
-  workarounds.clear_alpha_in_readpixels = true;
   InitState init;
   init.gl_version = "OpenGL ES 3.0";
   init.bind_generates_resource = true;
   init.context_type = CONTEXT_TYPE_OPENGLES3;
-  InitDecoderWithWorkarounds(init, workarounds);
+  InitDecoder(init);
   SetupDefaultProgram();
 }
 

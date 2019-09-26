@@ -695,6 +695,24 @@ public class ContextualSearchUma {
     }
 
     /**
+     * Logs whether search results were seen for a Tap gesture.  Recorded for all users.
+     * @param wasPanelSeen Whether the panel was seen.
+     */
+    public static void logTapResultsSeen(boolean wasPanelSeen) {
+        RecordHistogram.recordBooleanHistogram(
+                "Search.ContextualSearch.Tap.ResultsSeen", wasPanelSeen);
+    }
+
+    /**
+     * Logs whether search results were seen for all gestures.  Recorded for all users.
+     * @param wasPanelSeen Whether the panel was seen.
+     */
+    public static void logAllResultsSeen(boolean wasPanelSeen) {
+        RecordHistogram.recordBooleanHistogram(
+                "Search.ContextualSearch.All.ResultsSeen", wasPanelSeen);
+    }
+
+    /**
      * Logs the whether the panel was seen and the type of the trigger and if Bar nearly overlapped.
      * If the panel was seen, logs the duration of the panel view into a BarOverlap or BarNoOverlap
      * duration histogram.
@@ -1293,7 +1311,7 @@ public class ContextualSearchUma {
     }
 
     /**
-     * Logs Ranker's prediction and whether the panel was actually seen when not suppressed.
+     * Logs results-seen when we have a useful Ranker prediction inference.
      * @param wasPanelSeen Whether the panel was seen.
      * @param predictionKind An integer reflecting the Ranker prediction, e.g. that this is a good
      *        time to suppress triggering because the likelihood of opening the panel is relatively
@@ -1301,8 +1319,6 @@ public class ContextualSearchUma {
      */
     public static void logRankerInference(
             boolean wasPanelSeen, @AssistRankerPrediction int predictionKind) {
-        RecordHistogram.recordBooleanHistogram("Search.ContextualSearch.Ranker.Suppressed",
-                predictionKind == AssistRankerPrediction.SUPPRESS);
         if (predictionKind == AssistRankerPrediction.SHOW) {
             RecordHistogram.recordEnumeratedHistogram(
                     "Search.ContextualSearch.Ranker.NotSuppressed.ResultsSeen",
@@ -1312,6 +1328,48 @@ public class ContextualSearchUma {
                     "Search.ContextualSearch.Ranker.WouldSuppress.ResultsSeen",
                     wasPanelSeen ? RESULTS_SEEN : RESULTS_NOT_SEEN, RESULTS_SEEN_BOUNDARY);
         }
+    }
+
+    /**
+     * Logs Ranker's prediction of whether or not to suppress.
+     * @param predictionKind An integer reflecting the Ranker prediction, e.g. that this is a good
+     *        time to suppress triggering because the likelihood of opening the panel is relatively
+     *        low.
+     */
+    public static void logRankerPrediction(@AssistRankerPrediction int predictionKind) {
+        // For now we just log whether or not suppression is predicted.
+        RecordHistogram.recordBooleanHistogram("Search.ContextualSearch.Ranker.Suppressed",
+                predictionKind == AssistRankerPrediction.SUPPRESS);
+    }
+
+    /** Logs that Ranker recorded a set of features for training or inference. */
+    public static void logRecordedFeaturesToRanker() {
+        logRecordedToRanker(false);
+    }
+
+    /** Logs that Ranker recorded a set of outcomes for training or inference. */
+    public static void logRecordedOutcomesToRanker() {
+        logRecordedToRanker(true);
+    }
+
+    /**
+     * Logs that Ranker recorded some data for training or inference.
+     * @param areOutcomes Whether the data are outcomes.
+     */
+    private static void logRecordedToRanker(boolean areOutcomes) {
+        RecordHistogram.recordBooleanHistogram(
+                "Search.ContextualSearch.Ranker.Recorded", areOutcomes);
+    }
+
+    /**
+     * Logs that features or outcomes are available to record to Ranker.
+     * This data can be used to correlate with #logRecordedToRanker to validate that everything that
+     * should be recorded is actually being recorded.
+     * @param areOutcomes Whether the features available are outcomes.
+     */
+    static void logRankerFeaturesAvailable(boolean areOutcomes) {
+        RecordHistogram.recordBooleanHistogram(
+                "Search.ContextualSearch.Ranker.FeaturesAvailable", areOutcomes);
     }
 
     /**

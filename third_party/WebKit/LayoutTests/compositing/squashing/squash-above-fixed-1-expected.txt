@@ -7,6 +7,17 @@ CASE 1, original layer tree:
   "layers": [
     {
       "name": "LayoutView #document",
+      "bounds": [800, 600],
+      "drawsContent": false,
+      "backgroundColor": "#FFFFFF"
+    },
+    {
+      "name": "Scrolling Layer",
+      "bounds": [785, 600],
+      "drawsContent": false
+    },
+    {
+      "name": "Scrolling Contents Layer",
       "bounds": [785, 1400],
       "contentsOpaque": true,
       "backgroundColor": "#FFFFFF"
@@ -52,6 +63,17 @@ CASE 2, scrolling y to 80, new layers will be squashed, so things repaint:
   "layers": [
     {
       "name": "LayoutView #document",
+      "bounds": [800, 600],
+      "drawsContent": false,
+      "backgroundColor": "#FFFFFF"
+    },
+    {
+      "name": "Scrolling Layer",
+      "bounds": [785, 600],
+      "drawsContent": false
+    },
+    {
+      "name": "Scrolling Contents Layer",
       "bounds": [785, 1400],
       "contentsOpaque": true,
       "backgroundColor": "#FFFFFF",
@@ -59,27 +81,12 @@ CASE 2, scrolling y to 80, new layers will be squashed, so things repaint:
         {
           "object": "LayoutBlockFlow (relative positioned) DIV id='paragraph-f' class='overlapping lime'",
           "rect": [0, 500, 200, 100],
-          "reason": "subtree"
-        },
-        {
-          "object": "LayoutBlockFlow (relative positioned) DIV id='paragraph-e' class='overlapping cyan'",
-          "rect": [0, 200, 200, 100],
-          "reason": "subtree"
+          "reason": "disappeared"
         },
         {
           "object": "LayoutBlockFlow (relative positioned) DIV id='paragraph-b' class='overlapping lime'",
           "rect": [0, 100, 200, 100],
-          "reason": "compositing update"
-        },
-        {
-          "object": "LayoutBlockFlow (relative positioned) DIV id='paragraph-d' class='overlapping lime'",
-          "rect": [0, 100, 200, 100],
-          "reason": "subtree"
-        },
-        {
-          "object": "LayoutBlockFlow (relative positioned) DIV id='paragraph-c' class='overlapping cyan'",
-          "rect": [0, 0, 200, 100],
-          "reason": "subtree"
+          "reason": "appeared"
         }
       ],
       "transform": 1
@@ -107,11 +114,6 @@ CASE 2, scrolling y to 80, new layers will be squashed, so things repaint:
           "object": "LayoutBlockFlow (relative positioned) DIV id='paragraph-c' class='overlapping cyan'",
           "rect": [0, 0, 200, 100],
           "reason": "full"
-        },
-        {
-          "object": "LayoutBlockFlow (relative positioned) DIV id='paragraph-c' class='overlapping cyan'",
-          "rect": [0, 0, 200, 100],
-          "reason": "compositing update"
         }
       ],
       "transform": 1
@@ -120,23 +122,6 @@ CASE 2, scrolling y to 80, new layers will be squashed, so things repaint:
       "name": "Squashing Layer (first squashed layer: LayoutBlockFlow (relative positioned) DIV id='paragraph-d' class='overlapping lime')",
       "position": [0, 300],
       "bounds": [200, 300],
-      "paintInvalidations": [
-        {
-          "object": "LayoutBlockFlow (relative positioned) DIV id='paragraph-f' class='overlapping lime'",
-          "rect": [0, 200, 200, 100],
-          "reason": "compositing update"
-        },
-        {
-          "object": "LayoutBlockFlow (relative positioned) DIV id='paragraph-e' class='overlapping cyan'",
-          "rect": [0, 100, 200, 100],
-          "reason": "compositing update"
-        },
-        {
-          "object": "LayoutBlockFlow (relative positioned) DIV id='paragraph-d' class='overlapping lime'",
-          "rect": [0, 0, 200, 100],
-          "reason": "compositing update"
-        }
-      ],
       "transform": 1
     }
   ],
@@ -148,7 +133,8 @@ CASE 2, scrolling y to 80, new layers will be squashed, so things repaint:
         [0, 1, 0, 0],
         [0, 0, 1, 0],
         [0, -80, 0, 1]
-      ]
+      ],
+      "flattenInheritedTransform": false
     },
     {
       "id": 2,
@@ -162,22 +148,6 @@ CASE 2, scrolling y to 80, new layers will be squashed, so things repaint:
     }
   ],
   "objectPaintInvalidations": [
-    {
-      "object": "LayoutBlockFlow (relative positioned) DIV id='paragraph-c' class='overlapping cyan'",
-      "reason": "subtree"
-    },
-    {
-      "object": "LayoutBlockFlow (relative positioned) DIV id='paragraph-d' class='overlapping lime'",
-      "reason": "subtree"
-    },
-    {
-      "object": "LayoutBlockFlow (relative positioned) DIV id='paragraph-e' class='overlapping cyan'",
-      "reason": "subtree"
-    },
-    {
-      "object": "LayoutBlockFlow (relative positioned) DIV id='paragraph-f' class='overlapping lime'",
-      "reason": "subtree"
-    },
     {
       "object": "LayoutBlockFlow (relative positioned) DIV id='paragraph-b' class='overlapping lime'",
       "reason": "compositing update"
@@ -205,6 +175,17 @@ CASE 3, scrolling y to 120, no repaints expected:
   "layers": [
     {
       "name": "LayoutView #document",
+      "bounds": [800, 600],
+      "drawsContent": false,
+      "backgroundColor": "#FFFFFF"
+    },
+    {
+      "name": "Scrolling Layer",
+      "bounds": [785, 600],
+      "drawsContent": false
+    },
+    {
+      "name": "Scrolling Contents Layer",
       "bounds": [785, 1400],
       "contentsOpaque": true,
       "backgroundColor": "#FFFFFF",
@@ -245,7 +226,8 @@ CASE 3, scrolling y to 120, no repaints expected:
         [0, 1, 0, 0],
         [0, 0, 1, 0],
         [0, -120, 0, 1]
-      ]
+      ],
+      "flattenInheritedTransform": false
     },
     {
       "id": 2,
@@ -264,6 +246,17 @@ CASE 4, scrolling y to 170 new layers will be squashed, so things repaint:
   "layers": [
     {
       "name": "LayoutView #document",
+      "bounds": [800, 600],
+      "drawsContent": false,
+      "backgroundColor": "#FFFFFF"
+    },
+    {
+      "name": "Scrolling Layer",
+      "bounds": [785, 600],
+      "drawsContent": false
+    },
+    {
+      "name": "Scrolling Contents Layer",
       "bounds": [785, 1400],
       "contentsOpaque": true,
       "backgroundColor": "#FFFFFF",
@@ -271,27 +264,12 @@ CASE 4, scrolling y to 170 new layers will be squashed, so things repaint:
         {
           "object": "LayoutBlockFlow (relative positioned) DIV id='paragraph-g' class='overlapping cyan'",
           "rect": [0, 600, 200, 100],
-          "reason": "subtree"
+          "reason": "disappeared"
         },
         {
           "object": "LayoutBlockFlow (relative positioned) DIV id='paragraph-c' class='overlapping cyan'",
           "rect": [0, 200, 200, 100],
-          "reason": "compositing update"
-        },
-        {
-          "object": "LayoutBlockFlow (relative positioned) DIV id='paragraph-f' class='overlapping lime'",
-          "rect": [0, 200, 200, 100],
-          "reason": "subtree"
-        },
-        {
-          "object": "LayoutBlockFlow (relative positioned) DIV id='paragraph-e' class='overlapping cyan'",
-          "rect": [0, 100, 200, 100],
-          "reason": "subtree"
-        },
-        {
-          "object": "LayoutBlockFlow (relative positioned) DIV id='paragraph-d' class='overlapping lime'",
-          "rect": [0, 0, 200, 100],
-          "reason": "subtree"
+          "reason": "appeared"
         }
       ],
       "transform": 1
@@ -319,11 +297,6 @@ CASE 4, scrolling y to 170 new layers will be squashed, so things repaint:
           "object": "LayoutBlockFlow (relative positioned) DIV id='paragraph-d' class='overlapping lime'",
           "rect": [0, 0, 200, 100],
           "reason": "full"
-        },
-        {
-          "object": "LayoutBlockFlow (relative positioned) DIV id='paragraph-d' class='overlapping lime'",
-          "rect": [0, 0, 200, 100],
-          "reason": "compositing update"
         }
       ],
       "transform": 1
@@ -332,23 +305,6 @@ CASE 4, scrolling y to 170 new layers will be squashed, so things repaint:
       "name": "Squashing Layer (first squashed layer: LayoutBlockFlow (relative positioned) DIV id='paragraph-e' class='overlapping cyan')",
       "position": [0, 400],
       "bounds": [200, 300],
-      "paintInvalidations": [
-        {
-          "object": "LayoutBlockFlow (relative positioned) DIV id='paragraph-g' class='overlapping cyan'",
-          "rect": [0, 200, 200, 100],
-          "reason": "compositing update"
-        },
-        {
-          "object": "LayoutBlockFlow (relative positioned) DIV id='paragraph-f' class='overlapping lime'",
-          "rect": [0, 100, 200, 100],
-          "reason": "compositing update"
-        },
-        {
-          "object": "LayoutBlockFlow (relative positioned) DIV id='paragraph-e' class='overlapping cyan'",
-          "rect": [0, 0, 200, 100],
-          "reason": "compositing update"
-        }
-      ],
       "transform": 1
     }
   ],
@@ -360,7 +316,8 @@ CASE 4, scrolling y to 170 new layers will be squashed, so things repaint:
         [0, 1, 0, 0],
         [0, 0, 1, 0],
         [0, -170, 0, 1]
-      ]
+      ],
+      "flattenInheritedTransform": false
     },
     {
       "id": 2,
@@ -374,22 +331,6 @@ CASE 4, scrolling y to 170 new layers will be squashed, so things repaint:
     }
   ],
   "objectPaintInvalidations": [
-    {
-      "object": "LayoutBlockFlow (relative positioned) DIV id='paragraph-d' class='overlapping lime'",
-      "reason": "subtree"
-    },
-    {
-      "object": "LayoutBlockFlow (relative positioned) DIV id='paragraph-e' class='overlapping cyan'",
-      "reason": "subtree"
-    },
-    {
-      "object": "LayoutBlockFlow (relative positioned) DIV id='paragraph-f' class='overlapping lime'",
-      "reason": "subtree"
-    },
-    {
-      "object": "LayoutBlockFlow (relative positioned) DIV id='paragraph-g' class='overlapping cyan'",
-      "reason": "subtree"
-    },
     {
       "object": "LayoutBlockFlow (relative positioned) DIV id='paragraph-c' class='overlapping cyan'",
       "reason": "compositing update"

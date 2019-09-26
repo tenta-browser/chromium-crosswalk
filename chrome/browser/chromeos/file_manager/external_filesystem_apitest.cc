@@ -14,13 +14,14 @@
 #include "chrome/browser/chromeos/file_manager/volume_manager.h"
 #include "chrome/browser/chromeos/profiles/profile_helper.h"
 #include "chrome/browser/extensions/extension_apitest.h"
-#include "chrome/browser/media/router/mock_media_router.h"
+#include "chrome/browser/media/router/test/mock_media_router.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/ui/ash/cast_config_client_media_router.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/common/chrome_constants.h"
 #include "chrome/common/chrome_paths.h"
+#include "chromeos/chromeos_switches.h"
 #include "components/drive/service/fake_drive_service.h"
 #include "components/session_manager/core/session_manager.h"
 #include "content/public/browser/browser_context.h"
@@ -331,8 +332,10 @@ class FileSystemExtensionApiTestBase : public ExtensionApiTest {
       BackgroundObserver page_complete;
       const Extension* file_handler =
           LoadExtension(test_data_dir_.AppendASCII(filehandler_path));
-      if (!file_handler)
+      if (!file_handler) {
+        message_ = "Error loading file handler extension";
         return false;
+      }
 
       if (flags & FLAGS_LAZY_FILE_HANDLER) {
         page_complete.WaitUntilClosed();
@@ -346,8 +349,10 @@ class FileSystemExtensionApiTestBase : public ExtensionApiTest {
     const Extension* file_browser = LoadExtensionAsComponentWithManifest(
         test_data_dir_.AppendASCII(filebrowser_path),
         filebrowser_manifest);
-    if (!file_browser)
+    if (!file_browser) {
+      message_ = "Could not create file browser";
       return false;
+    }
 
     if (!catcher.GetNextResult()) {
       message_ = catcher.message();
@@ -499,6 +504,15 @@ class MultiProfileDriveFileSystemExtensionApiTest :
     public FileSystemExtensionApiTestBase {
  public:
   MultiProfileDriveFileSystemExtensionApiTest() {}
+
+  void SetUpCommandLine(base::CommandLine* command_line) override {
+    FileSystemExtensionApiTestBase::SetUpCommandLine(command_line);
+    // Don't require policy for our sessions - this is required because
+    // this test creates a secondary profile synchronously, so we need to
+    // let the policy code know not to expect cached policy.
+    command_line->AppendSwitchASCII(chromeos::switches::kProfileRequiresPolicy,
+                                    "false");
+  }
 
   void SetUpOnMainThread() override {
     base::FilePath user_data_directory;

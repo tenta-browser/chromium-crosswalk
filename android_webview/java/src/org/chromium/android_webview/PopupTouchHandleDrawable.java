@@ -23,11 +23,13 @@ import android.widget.PopupWindow;
 import org.chromium.base.ObserverList;
 import org.chromium.base.annotations.CalledByNative;
 import org.chromium.base.annotations.JNINamespace;
-import org.chromium.content.browser.ContentViewCore;
 import org.chromium.content.browser.PositionObserver;
 import org.chromium.content.browser.ViewPositionObserver;
-import org.chromium.content.browser.input.HandleViewResources;
+import org.chromium.content.browser.selection.HandleViewResources;
+import org.chromium.content_public.browser.ContentViewCore;
+import org.chromium.content_public.browser.GestureListenerManager;
 import org.chromium.content_public.browser.GestureStateListener;
+import org.chromium.content_public.browser.WebContents;
 import org.chromium.ui.base.WindowAndroid;
 import org.chromium.ui.display.DisplayAndroid.DisplayAndroidObserver;
 import org.chromium.ui.touch_selection.TouchHandleOrientation;
@@ -44,22 +46,11 @@ import java.lang.reflect.Method;
  */
 @JNINamespace("android_webview")
 public class PopupTouchHandleDrawable extends View implements DisplayAndroidObserver {
-    @Override
-    public void onRotationChanged(int rotation) {}
-
-    @Override
-    public void onDIPScaleChanged(float dipScale) {
-        if (mDeviceScale != dipScale) {
-            mDeviceScale = dipScale;
-
-            // Postpone update till onConfigurationChanged()
-            mNeedsUpdateDrawable = true;
-        }
-    }
 
     private final PopupWindow mContainer;
     private final PositionObserver.Listener mParentPositionListener;
     private ContentViewCore mContentViewCore;
+    private WebContents mWebContents;
     private PositionObserver mParentPositionObserver;
     private Drawable mDrawable;
 
@@ -100,6 +91,7 @@ public class PopupTouchHandleDrawable extends View implements DisplayAndroidObse
     private boolean mAttachedToWindow;
     // This should be set only from onVisibilityInputChanged.
     private boolean mWasShowingAllowed;
+    private boolean mRotationChanged;
 
     // Gesture accounting for handle hiding while scrolling.
     private final GestureStateListener mGestureStateListener;
@@ -128,8 +120,9 @@ public class PopupTouchHandleDrawable extends View implements DisplayAndroidObse
         mDrawableObserverList.addObserver(this);
 
         mContentViewCore = contentViewCore;
+        mWebContents = mContentViewCore.getWebContents();
 
-        WindowAndroid windowAndroid = mContentViewCore.getWindowAndroid();
+        WindowAndroid windowAndroid = mWebContents.getTopLevelNativeWindow();
         mDeviceScale = windowAndroid.getDisplay().getDipScale();
 
         mContainer = new PopupWindow(
@@ -147,8 +140,9 @@ public class PopupTouchHandleDrawable extends View implements DisplayAndroidObse
         mContainer.setWidth(ViewGroup.LayoutParams.WRAP_CONTENT);
         mContainer.setHeight(ViewGroup.LayoutParams.WRAP_CONTENT);
 
-        mAlpha = 1.f;
-        mVisible = getVisibility() == VISIBLE;
+        mAlpha = 0.f;
+        mVisible = false;
+        setVisibility(INVISIBLE);
         mFocused = mContentViewCore.getContainerView().hasWindowFocus();
 
         mParentPositionObserver = new ViewPositionObserver(mContentViewCore.getContainerView());
@@ -183,7 +177,7 @@ public class PopupTouchHandleDrawable extends View implements DisplayAndroidObse
                 destroy();
             }
         };
-        mContentViewCore.addGestureStateListener(mGestureStateListener);
+        GestureListenerManager.fromWebContents(mWebContents).addListener(mGestureStateListener);
         mNativeDrawable = nativeInit(HandleViewResources.getHandleHorizontalPaddingRatio());
     }
 
@@ -203,6 +197,9 @@ public class PopupTouchHandleDrawable extends View implements DisplayAndroidObse
             return;
         }
 
+        // Android doc says PopupWindow#setWindowLayoutType() was added since API level 23, however,
+        // it was introduced long time before M as a hidden API. Using reflection here to access it
+        // on blew M.
         try {
             Method setWindowLayoutTypeMethod =
                     PopupWindow.class.getMethod("setWindowLayoutType", int.class);
@@ -230,6 +227,23 @@ public class PopupTouchHandleDrawable extends View implements DisplayAndroidObse
             default:
                 assert false;
                 return HandleViewResources.getCenterHandleDrawable(context);
+        }
+    }
+
+    // Implements DisplayAndroidObserver
+    @Override
+    public void onRotationChanged(int rotation) {
+        mRotationChanged = true;
+    }
+
+    // Implements DisplayAndroidObserver
+    @Override
+    public void onDIPScaleChanged(float dipScale) {
+        if (mDeviceScale != dipScale) {
+            mDeviceScale = dipScale;
+
+            // Postpone update till onConfigurationChanged()
+            mNeedsUpdateDrawable = true;
         }
     }
 
@@ -504,7 +518,7 @@ public class PopupTouchHandleDrawable extends View implements DisplayAndroidObse
         mAttachedToWindow = true;
         onVisibilityInputChanged();
 
-        WindowAndroid windowAndroid = mContentViewCore.getWindowAndroid();
+        WindowAndroid windowAndroid = mWebContents.getTopLevelNativeWindow();
         if (windowAndroid != null) {
             windowAndroid.getDisplay().addObserver(this);
             mDeviceScale = windowAndroid.getDisplay().getDipScale();
@@ -516,7 +530,7 @@ public class PopupTouchHandleDrawable extends View implements DisplayAndroidObse
     protected void onDetachedFromWindow() {
         super.onDetachedFromWindow();
 
-        WindowAndroid windowAndroid = mContentViewCore.getWindowAndroid();
+        WindowAndroid windowAndroid = mWebContents.getTopLevelNativeWindow();
         if (windowAndroid != null) windowAndroid.getDisplay().removeObserver(this);
 
         mAttachedToWindow = false;
@@ -526,10 +540,15 @@ public class PopupTouchHandleDrawable extends View implements DisplayAndroidObse
     @CalledByNative
     private void destroy() {
         mDrawableObserverList.removeObserver(this);
-        if (mContentViewCore == null) return;
+        if (mWebContents == null) return;
         hide();
-        mContentViewCore.removeGestureStateListener(mGestureStateListener);
+
+        GestureListenerManager gestureManager =
+                GestureListenerManager.fromWebContents(mWebContents);
+        if (gestureManager != null) gestureManager.removeListener(mGestureStateListener);
+
         mContentViewCore = null;
+        mWebContents = null;
     }
 
     @CalledByNative
@@ -568,10 +587,15 @@ public class PopupTouchHandleDrawable extends View implements DisplayAndroidObse
 
     @CalledByNative
     private void setOrigin(float originXDip, float originYDip) {
-        if (mOriginXDip == originXDip && mOriginYDip == originYDip) return;
+        // If rotation has changed, then we always need to scheduleInvalidate() regardless of the
+        // current visibility.
+        if (mOriginXDip == originXDip && mOriginYDip == originYDip && !mRotationChanged) return;
         mOriginXDip = originXDip;
         mOriginYDip = originYDip;
-        if (getVisibility() == VISIBLE) scheduleInvalidate();
+        if (getVisibility() == VISIBLE || mRotationChanged) {
+            if (mRotationChanged) mRotationChanged = false;
+            scheduleInvalidate();
+        }
     }
 
     @CalledByNative

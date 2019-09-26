@@ -64,6 +64,14 @@ class QuicConnectionPeer {
   static void SetPeerAddress(QuicConnection* connection,
                              const QuicSocketAddress& peer_address);
 
+  static void SetDirectPeerAddress(
+      QuicConnection* connection,
+      const QuicSocketAddress& direct_peer_address);
+
+  static void SetEffectivePeerAddress(
+      QuicConnection* connection,
+      const QuicSocketAddress& effective_peer_address);
+
   static bool IsSilentCloseEnabled(QuicConnection* connection);
 
   static void SwapCrypters(QuicConnection* connection, QuicFramer* framer);
@@ -84,6 +92,8 @@ class QuicConnectionPeer {
   static QuicAlarm* GetSendAlarm(QuicConnection* connection);
   static QuicAlarm* GetTimeoutAlarm(QuicConnection* connection);
   static QuicAlarm* GetMtuDiscoveryAlarm(QuicConnection* connection);
+  static QuicAlarm* GetRetransmittableOnWireAlarm(QuicConnection* connection);
+  static QuicAlarm* GetPathDegradingAlarm(QuicConnection* connection);
 
   static QuicPacketWriter* GetWriter(QuicConnection* connection);
   // If |owns_writer| is true, takes ownership of |writer|.
@@ -112,6 +122,9 @@ class QuicConnectionPeer {
                                        QuicPacketNumber packet_number);
   static void SetNoStopWaitingFrames(QuicConnection* connection,
                                      bool no_stop_waiting_frames);
+  static void SetMaxTrackedPackets(QuicConnection* connection,
+                                   QuicPacketCount max_tracked_packets);
+  static void SetSessionDecidesWhatToWrite(QuicConnection* connection);
 
  private:
   DISALLOW_COPY_AND_ASSIGN(QuicConnectionPeer);

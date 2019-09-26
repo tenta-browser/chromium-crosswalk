@@ -32,17 +32,16 @@ StarView::~StarView() {}
 
 void StarView::SetToggled(bool on) {
   BubbleIconView::SetActiveInternal(on);
-  SetTooltipText(l10n_util::GetStringUTF16(
-      on ? IDS_TOOLTIP_STARRED : IDS_TOOLTIP_STAR));
 }
 
 void StarView::ShowPromo() {
   BookmarkPromoBubbleView* bookmark_promo_bubble =
       BookmarkPromoBubbleView::CreateOwned(this);
+
+  OnBubbleWidgetCreated(bookmark_promo_bubble->GetWidget());
   if (!bookmark_promo_observer_.IsObserving(
           bookmark_promo_bubble->GetWidget())) {
     bookmark_promo_observer_.Add(bookmark_promo_bubble->GetWidget());
-    AnimateInkDrop(views::InkDropState::ACTIVATED, nullptr);
     SetActiveInternal(false);
     UpdateIcon();
   }
@@ -84,6 +83,11 @@ const gfx::VectorIcon& StarView::GetVectorIcon() const {
   return active() ? toolbar::kStarActiveIcon : toolbar::kStarIcon;
 }
 
+base::string16 StarView::GetTextForTooltipAndAccessibleName() const {
+  return l10n_util::GetStringUTF16(active() ? IDS_TOOLTIP_STARRED
+                                            : IDS_TOOLTIP_STAR);
+}
+
 SkColor StarView::GetInkDropBaseColor() const {
   return bookmark_promo_observer_.IsObservingSources()
              ? GetNativeTheme()->GetSystemColor(
@@ -94,7 +98,6 @@ SkColor StarView::GetInkDropBaseColor() const {
 void StarView::OnWidgetDestroying(views::Widget* widget) {
   if (bookmark_promo_observer_.IsObserving(widget)) {
     bookmark_promo_observer_.Remove(widget);
-    AnimateInkDrop(views::InkDropState::DEACTIVATED, nullptr);
     SetActiveInternal(false);
     UpdateIcon();
   }

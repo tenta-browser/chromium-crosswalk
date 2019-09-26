@@ -4,8 +4,6 @@
 
 #import "ios/chrome/browser/ui/toolbar/keyboard_assist/toolbar_keyboard_accessory_view.h"
 
-#import <NotificationCenter/NotificationCenter.h>
-
 #include "base/mac/foundation_util.h"
 #include "ios/chrome/browser/experimental_flags.h"
 #include "ios/chrome/browser/ui/rtl_geometry.h"
@@ -88,7 +86,7 @@
   [self addSubview:searchStackView];
 
   // Position the stack views.
-  UILayoutGuide* layoutGuide = SafeAreaLayoutGuideForView(self);
+  id<LayoutGuideProvider> layoutGuide = SafeAreaLayoutGuideForView(self);
   [NSLayoutConstraint activateConstraints:@[
     [searchStackView.leadingAnchor
         constraintEqualToAnchor:layoutGuide.leadingAnchor

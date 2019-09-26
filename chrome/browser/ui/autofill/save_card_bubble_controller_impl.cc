@@ -137,27 +137,21 @@ SaveCardBubbleView* SaveCardBubbleControllerImpl::save_card_bubble_view()
 
 base::string16 SaveCardBubbleControllerImpl::GetWindowTitle() const {
   if (is_uploading_) {
-    if (is_currently_requesting_cvc_) {
-      return l10n_util::GetStringUTF16(
-          IDS_AUTOFILL_SAVE_CARD_PROMPT_ENTER_CVC_TITLE);
-    }
-    if (IsAutofillUpstreamShowNewUiExperimentEnabled()) {
-      return l10n_util::GetStringUTF16(
-          IDS_AUTOFILL_SAVE_CARD_PROMPT_TITLE_TO_CLOUD_V2);
-    }
     return l10n_util::GetStringUTF16(
-        IDS_AUTOFILL_SAVE_CARD_PROMPT_TITLE_TO_CLOUD);
+        is_currently_requesting_cvc_
+            ? IDS_AUTOFILL_SAVE_CARD_PROMPT_ENTER_CVC_TITLE
+            : IDS_AUTOFILL_SAVE_CARD_PROMPT_TITLE_TO_CLOUD_V3);
   }
   return l10n_util::GetStringUTF16(IDS_AUTOFILL_SAVE_CARD_PROMPT_TITLE_LOCAL);
 }
 
 base::string16 SaveCardBubbleControllerImpl::GetExplanatoryMessage() const {
   if (is_uploading_) {
-    return IsAutofillUpstreamShowNewUiExperimentEnabled()
+    return IsAutofillUpstreamUpdatePromptExplanationExperimentEnabled()
                ? l10n_util::GetStringUTF16(
-                     IDS_AUTOFILL_SAVE_CARD_PROMPT_UPLOAD_EXPLANATION_V2)
+                     IDS_AUTOFILL_SAVE_CARD_PROMPT_UPLOAD_EXPLANATION_V3)
                : l10n_util::GetStringUTF16(
-                     IDS_AUTOFILL_SAVE_CARD_PROMPT_UPLOAD_EXPLANATION);
+                     IDS_AUTOFILL_SAVE_CARD_PROMPT_UPLOAD_EXPLANATION_V2);
   }
   return base::string16();
 }
@@ -327,8 +321,10 @@ void SaveCardBubbleControllerImpl::DidFinishNavigation(
   }
 }
 
-void SaveCardBubbleControllerImpl::WasHidden() {
-  HideBubble();
+void SaveCardBubbleControllerImpl::OnVisibilityChanged(
+    content::Visibility visibility) {
+  if (visibility == content::Visibility::HIDDEN)
+    HideBubble();
 }
 
 void SaveCardBubbleControllerImpl::WebContentsDestroyed() {

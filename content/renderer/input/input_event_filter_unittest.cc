@@ -11,7 +11,6 @@
 
 #include "base/bind.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/run_loop.h"
 #include "base/test/scoped_task_environment.h"
 #include "base/test/test_simple_task_runner.h"
@@ -27,7 +26,7 @@
 #include "ipc/ipc_test_sink.h"
 #include "ipc/message_filter.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/WebKit/public/platform/scheduler/test/mock_renderer_scheduler.h"
+#include "third_party/blink/public/platform/scheduler/test/mock_renderer_scheduler.h"
 #include "ui/events/blink/web_input_event_traits.h"
 
 using blink::WebInputEvent;
@@ -312,7 +311,8 @@ TEST_F(InputEventFilterTest, Basic) {
   for (size_t i = 0; i < arraysize(kEvents); ++i) {
     const IPC::Message* message = ipc_sink_.GetMessageAt(i);
     EXPECT_EQ(kTestRoutingID, message->routing_id());
-    EXPECT_EQ(InputHostMsg_HandleInputEvent_ACK::ID, message->type());
+    EXPECT_EQ(static_cast<uint32_t>(InputHostMsg_HandleInputEvent_ACK::ID),
+              message->type());
 
     InputHostMsg_HandleInputEvent_ACK::Param params;
     EXPECT_TRUE(InputHostMsg_HandleInputEvent_ACK::Read(message, &params));
@@ -358,7 +358,8 @@ TEST_F(InputEventFilterTest, Basic) {
   for (size_t i = 0; i < arraysize(kEvents); ++i) {
     const IPC::Message* message = ipc_sink_.GetMessageAt(i);
     EXPECT_EQ(kTestRoutingID, message->routing_id());
-    EXPECT_EQ(InputHostMsg_HandleInputEvent_ACK::ID, message->type());
+    EXPECT_EQ(static_cast<uint32_t>(InputHostMsg_HandleInputEvent_ACK::ID),
+              message->type());
 
     InputHostMsg_HandleInputEvent_ACK::Param params;
     EXPECT_TRUE(InputHostMsg_HandleInputEvent_ACK::Read(message, &params));

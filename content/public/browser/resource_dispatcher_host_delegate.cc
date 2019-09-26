@@ -7,9 +7,10 @@
 #include "content/public/browser/navigation_data.h"
 #include "content/public/browser/resource_request_info.h"
 #include "content/public/browser/stream_info.h"
-#include "net/ssl/client_cert_store.h"
 
 namespace content {
+
+ResourceDispatcherHostDelegate::~ResourceDispatcherHostDelegate() {}
 
 bool ResourceDispatcherHostDelegate::ShouldBeginRequest(
     const std::string& method,
@@ -34,28 +35,8 @@ void ResourceDispatcherHostDelegate::DownloadStarting(
     bool is_new_request,
     std::vector<std::unique_ptr<ResourceThrottle>>* throttles) {}
 
-ResourceDispatcherHostLoginDelegate*
-    ResourceDispatcherHostDelegate::CreateLoginDelegate(
-        net::AuthChallengeInfo* auth_info,
-        net::URLRequest* request) {
-  return nullptr;
-}
-
-bool ResourceDispatcherHostDelegate::HandleExternalProtocol(
-    const GURL& url,
-    ResourceRequestInfo* info) {
-  return true;
-}
-
-bool ResourceDispatcherHostDelegate::ShouldForceDownloadResource(
-    const GURL& url,
-    const std::string& mime_type) {
-  return false;
-}
-
 bool ResourceDispatcherHostDelegate::ShouldInterceptResourceAsStream(
     net::URLRequest* request,
-    const base::FilePath& plugin_path,
     const std::string& mime_type,
     GURL* origin,
     std::string* payload) {
@@ -69,14 +50,13 @@ void ResourceDispatcherHostDelegate::OnStreamCreated(
 void ResourceDispatcherHostDelegate::OnResponseStarted(
     net::URLRequest* request,
     ResourceContext* resource_context,
-    ResourceResponse* response) {}
+    network::ResourceResponse* response) {}
 
 void ResourceDispatcherHostDelegate::OnRequestRedirected(
     const GURL& redirect_url,
     net::URLRequest* request,
     ResourceContext* resource_context,
-    ResourceResponse* response) {
-}
+    network::ResourceResponse* response) {}
 
 void ResourceDispatcherHostDelegate::RequestComplete(
     net::URLRequest* url_request,
@@ -86,7 +66,7 @@ void ResourceDispatcherHostDelegate::RequestComplete(
 void ResourceDispatcherHostDelegate::RequestComplete(
     net::URLRequest* url_request) {}
 
-PreviewsState ResourceDispatcherHostDelegate::DeterminePreviewsState(
+PreviewsState ResourceDispatcherHostDelegate::DetermineEnabledPreviews(
     net::URLRequest* url_request,
     content::ResourceContext* resource_context,
     PreviewsState previews_to_allow) {
@@ -96,20 +76,6 @@ PreviewsState ResourceDispatcherHostDelegate::DeterminePreviewsState(
 NavigationData* ResourceDispatcherHostDelegate::GetNavigationData(
     net::URLRequest* request) const {
   return nullptr;
-}
-
-std::unique_ptr<net::ClientCertStore>
-ResourceDispatcherHostDelegate::CreateClientCertStore(
-    ResourceContext* resource_context) {
-  return std::unique_ptr<net::ClientCertStore>();
-}
-
-bool ResourceDispatcherHostDelegate::AllowRenderingMhtmlOverHttp(
-    net::URLRequest* request) const {
-  return false;
-}
-
-ResourceDispatcherHostDelegate::~ResourceDispatcherHostDelegate() {
 }
 
 }  // namespace content

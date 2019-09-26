@@ -6,10 +6,13 @@
 #define NET_REPORTING_REPORTING_TEST_UTIL_H_
 
 #include <memory>
+#include <set>
 #include <string>
 #include <vector>
 
 #include "base/macros.h"
+#include "base/test/simple_test_clock.h"
+#include "base/test/simple_test_tick_clock.h"
 #include "net/reporting/reporting_context.h"
 #include "net/reporting/reporting_delegate.h"
 #include "net/reporting/reporting_uploader.h"
@@ -33,6 +36,7 @@ namespace net {
 class ReportingCache;
 struct ReportingClient;
 class ReportingGarbageCollector;
+class TestURLRequestContext;
 
 // Finds a particular client (by origin and endpoint) in the cache and returns
 // it (or nullptr if not found).
@@ -66,9 +70,13 @@ class TestReportingUploader : public ReportingUploader {
   }
 
   // ReportingUploader implementation:
+
   void StartUpload(const GURL& url,
                    const std::string& json,
-                   const Callback& callback) override;
+                   int max_depth,
+                   UploadCallback callback) override;
+
+  int GetUploadDepth(const URLRequest& request) override;
 
  private:
   std::vector<std::unique_ptr<PendingUpload>> pending_uploads_;
@@ -76,6 +84,9 @@ class TestReportingUploader : public ReportingUploader {
   DISALLOW_COPY_AND_ASSIGN(TestReportingUploader);
 };
 
+// Allows all permissions unless set_disallow_report_uploads is called; uses
+// the real ReportingDelegate for JSON parsing to exercise depth and size
+// limits.
 class TestReportingDelegate : public ReportingDelegate {
  public:
   TestReportingDelegate();
@@ -84,9 +95,22 @@ class TestReportingDelegate : public ReportingDelegate {
 
   ~TestReportingDelegate() override;
 
+  void set_disallow_report_uploads(bool disallow_report_uploads) {
+    disallow_report_uploads_ = disallow_report_uploads;
+  }
+
+  void set_pause_permissions_check(bool pause_permissions_check) {
+    pause_permissions_check_ = pause_permissions_check;
+  }
+
   bool CanQueueReport(const url::Origin& origin) const override;
 
-  bool CanSendReport(const url::Origin& origin) const override;
+  void CanSendReports(std::set<url::Origin> origins,
+                      base::OnceCallback<void(std::set<url::Origin>)>
+                          result_callback) const override;
+
+  bool PermissionsCheckPaused() const;
+  void ResumePermissionsCheck();
 
   bool CanSetClient(const url::Origin& origin,
                     const GURL& endpoint) const override;
@@ -94,7 +118,20 @@ class TestReportingDelegate : public ReportingDelegate {
   bool CanUseClient(const url::Origin& origin,
                     const GURL& endpoint) const override;
 
+  void ParseJson(const std::string& unsafe_json,
+                 const JsonSuccessCallback& success_callback,
+                 const JsonFailureCallback& failure_callback) const override;
+
  private:
+  std::unique_ptr<TestURLRequestContext> test_request_context_;
+  std::unique_ptr<ReportingDelegate> real_delegate_;
+  bool disallow_report_uploads_ = false;
+  bool pause_permissions_check_ = false;
+
+  mutable std::set<url::Origin> saved_origins_;
+  mutable base::OnceCallback<void(std::set<url::Origin>)>
+      permissions_check_callback_;
+
   DISALLOW_COPY_AND_ASSIGN(TestReportingDelegate);
 };
 
@@ -102,15 +139,11 @@ class TestReportingDelegate : public ReportingDelegate {
 // Clock, TickClock, Timer, and ReportingUploader.
 class TestReportingContext : public ReportingContext {
  public:
-  TestReportingContext(const ReportingPolicy& policy);
+  TestReportingContext(base::Clock* clock,
+                       const base::TickClock* tick_clock,
+                       const ReportingPolicy& policy);
   ~TestReportingContext();
 
-  base::SimpleTestClock* test_clock() {
-    return reinterpret_cast<base::SimpleTestClock*>(clock());
-  }
-  base::SimpleTestTickClock* test_tick_clock() {
-    return reinterpret_cast<base::SimpleTestTickClock*>(tick_clock());
-  }
   base::MockTimer* test_delivery_timer() { return delivery_timer_; }
   base::MockTimer* test_garbage_collection_timer() {
     return garbage_collection_timer_;
@@ -123,8 +156,12 @@ class TestReportingContext : public ReportingContext {
   }
 
  private:
-  // Owned by the Persister and GarbageCollector, respectively, but referenced
-  // here to preserve type:
+  int RandIntCallback(int min, int max);
+
+  int rand_counter_;
+
+  // Owned by the DeliveryAgent and GarbageCollector, respectively, but
+  // referenced here to preserve type:
 
   base::MockTimer* delivery_timer_;
   base::MockTimer* garbage_collection_timer_;
@@ -151,10 +188,8 @@ class ReportingTestBase : public ::testing::Test {
 
   const ReportingPolicy& policy() { return context_->policy(); }
 
-  base::SimpleTestClock* clock() { return context_->test_clock(); }
-  base::SimpleTestTickClock* tick_clock() {
-    return context_->test_tick_clock();
-  }
+  base::SimpleTestClock* clock() { return &clock_; }
+  base::SimpleTestTickClock* tick_clock() { return &tick_clock_; }
   base::MockTimer* delivery_timer() { return context_->test_delivery_timer(); }
   base::MockTimer* garbage_collection_timer() {
     return context_->test_garbage_collection_timer();
@@ -172,8 +207,6 @@ class ReportingTestBase : public ::testing::Test {
     return context_->garbage_collector();
   }
 
-  ReportingPersister* persister() { return context_->persister(); }
-
   base::TimeTicks yesterday();
   base::TimeTicks now();
   base::TimeTicks tomorrow();
@@ -188,6 +221,8 @@ class ReportingTestBase : public ::testing::Test {
                      base::Time now,
                      base::TimeTicks now_ticks);
 
+  base::SimpleTestClock clock_;
+  base::SimpleTestTickClock tick_clock_;
   std::unique_ptr<TestReportingContext> context_;
 
   DISALLOW_COPY_AND_ASSIGN(ReportingTestBase);

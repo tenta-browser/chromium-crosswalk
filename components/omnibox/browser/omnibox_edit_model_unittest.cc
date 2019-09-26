@@ -5,83 +5,157 @@
 #include "components/omnibox/browser/omnibox_edit_model.h"
 
 #include <stddef.h>
+
 #include <memory>
 
-#include "base/memory/ptr_util.h"
+#include "base/test/scoped_task_environment.h"
 #include "components/omnibox/browser/autocomplete_match.h"
 #include "components/omnibox/browser/omnibox_view.h"
 #include "components/omnibox/browser/search_provider.h"
 #include "components/omnibox/browser/test_omnibox_client.h"
 #include "components/omnibox/browser/test_omnibox_edit_controller.h"
 #include "components/omnibox/browser/test_omnibox_view.h"
+#include "components/toolbar/test_toolbar_model.h"
 #include "testing/gtest/include/gtest/gtest.h"
+
+namespace {
+
+class TestOmniboxEditModel : public OmniboxEditModel {
+ public:
+  TestOmniboxEditModel(OmniboxView* view, OmniboxEditController* controller)
+      : OmniboxEditModel(view,
+                         controller,
+                         std::make_unique<TestOmniboxClient>()),
+        popup_is_open_(false) {}
+
+  bool PopupIsOpen() const override { return popup_is_open_; };
+
+  AutocompleteMatch CurrentMatch(GURL*) const override {
+    return current_match_;
+  };
+
+  void SetPopupIsOpen(bool open) { popup_is_open_ = open; }
+
+  void SetCurrentMatch(const AutocompleteMatch& match) {
+    current_match_ = match;
+  }
+
+ private:
+  bool popup_is_open_;
+  AutocompleteMatch current_match_;
+
+  DISALLOW_COPY_AND_ASSIGN(TestOmniboxEditModel);
+};
+
+}  // namespace
 
 class OmniboxEditModelTest : public testing::Test {
  public:
   void SetUp() override {
-    controller_ = base::MakeUnique<TestOmniboxEditController>();
-    view_ = base::MakeUnique<TestOmniboxView>(controller_.get());
-    model_ = base::MakeUnique<OmniboxEditModel>(
-        view_.get(), controller_.get(), base::MakeUnique<TestOmniboxClient>());
+    controller_ = std::make_unique<TestOmniboxEditController>();
+    view_ = std::make_unique<TestOmniboxView>(controller_.get());
+    model_ =
+        std::make_unique<TestOmniboxEditModel>(view_.get(), controller_.get());
   }
 
   const TestOmniboxView& view() { return *view_; }
-  OmniboxEditModel* model() { return model_.get(); }
+  TestToolbarModel* toolbar_model() { return controller_->GetToolbarModel(); }
+  TestOmniboxEditModel* model() { return model_.get(); }
 
  private:
+  base::test::ScopedTaskEnvironment task_environment_;
   std::unique_ptr<TestOmniboxEditController> controller_;
   std::unique_ptr<TestOmniboxView> view_;
-  std::unique_ptr<OmniboxEditModel> model_;
+  std::unique_ptr<TestOmniboxEditModel> model_;
 };
 
 // Tests various permutations of AutocompleteModel::AdjustTextForCopy.
 TEST_F(OmniboxEditModelTest, AdjustTextForCopy) {
   struct Data {
-    const char* perm_text;
+    const char* url_for_editing;
     const int sel_start;
     const bool is_all_selected;
+
+    const char* match_destination_url;
+    const bool is_match_selected_in_popup;
+
     const char* input;
     const char* expected_output;
     const bool write_url;
     const char* expected_url;
   } input[] = {
-      // Test that http:// is inserted if all text is selected.
-      {"a.de/b", 0, true, "a.de/b", "http://a.de/b", true, "http://a.de/b"},
+      // Test that http:// and https:// are inserted if all text is selected.
+      {"a.de/b", 0, true, "", false, "a.de/b", "http://a.de/b", true,
+       "http://a.de/b"},
+      {"https://a.de/b", 0, true, "", false, "a.de/b", "https://a.de/b", true,
+       "https://a.de/b"},
 
-      // Test that http:// is inserted if the host is selected.
-      {"a.de/b", 0, false, "a.de/", "http://a.de/", true, "http://a.de/"},
+      // Test that http:// and https:// are inserted if the host is selected.
+      {"a.de/b", 0, false, "", false, "a.de/", "http://a.de/", true,
+       "http://a.de/"},
+      {"https://a.de/b", 0, false, "", false, "https://a.de/", "https://a.de/",
+       true, "https://a.de/"},
 
       // Tests that http:// is inserted if the path is modified.
-      {"a.de/b", 0, false, "a.de/c", "http://a.de/c", true, "http://a.de/c"},
+      {"a.de/b", 0, false, "", false, "a.de/c", "http://a.de/c", true,
+       "http://a.de/c"},
 
       // Tests that http:// isn't inserted if the host is modified.
-      {"a.de/b", 0, false, "a.com/b", "a.com/b", false, ""},
+      {"a.de/b", 0, false, "", false, "a.com/b", "a.com/b", false, ""},
 
       // Tests that http:// isn't inserted if the start of the selection is 1.
-      {"a.de/b", 1, false, "a.de/b", "a.de/b", false, ""},
+      {"a.de/b", 1, false, "", false, "a.de/b", "a.de/b", false, ""},
 
       // Tests that http:// isn't inserted if a portion of the host is selected.
-      {"a.de/", 0, false, "a.d", "a.d", false, ""},
-
-      // Tests that http:// isn't inserted for an https url after the user nukes
-      // https.
-      {"https://a.com/", 0, false, "a.com/", "a.com/", false, ""},
+      {"a.de/", 0, false, "", false, "a.d", "a.d", false, ""},
 
       // Tests that http:// isn't inserted if the user adds to the host.
-      {"a.de/", 0, false, "a.de.com/", "a.de.com/", false, ""},
+      {"a.de/", 0, false, "", false, "a.de.com/", "a.de.com/", false, ""},
 
-      // Tests that we don't get double http if the user manually inserts http.
-      {"a.de/", 0, false, "http://a.de/", "http://a.de/", true, "http://a.de/"},
+      // Tests that we don't get double schemes if the user manually inserts
+      // a scheme.
+      {"a.de/", 0, false, "", false, "http://a.de/", "http://a.de/", true,
+       "http://a.de/"},
+      {"a.de/", 0, false, "", false, "HTtp://a.de/", "HTtp://a.de/", true,
+       "http://a.de/"},
+      {"https://a.de/", 0, false, "", false, "https://a.de/", "https://a.de/",
+       true, "https://a.de/"},
+
+      // Test that we don't get double schemes or revert the change if the user
+      // manually changes the scheme from 'http://' to 'https://' or vice versa.
+      {"a.de/", 0, false, "", false, "https://a.de/", "https://a.de/", true,
+       "https://a.de/"},
+      {"https://a.de/", 0, false, "", false, "http://a.de/", "http://a.de/",
+       true, "http://a.de/"},
 
       // Makes sure intranet urls get 'http://' prefixed to them.
-      {"b/foo", 0, true, "b/foo", "http://b/foo", true, "http://b/foo"},
+      {"b/foo", 0, true, "", false, "b/foo", "http://b/foo", true,
+       "http://b/foo"},
 
       // Verifies a search term 'foo' doesn't end up with http.
-      {"www.google.com/search?", 0, false, "foo", "foo", false, ""},
+      {"www.google.com/search?", 0, false, "", false, "foo", "foo", false, ""},
+
+      // Verifies that http:// and https:// are inserted for a match in a popup.
+      {"a.com", 0, true, "http://b.com/foo", true, "b.com/foo",
+       "http://b.com/foo", true, "http://b.com/foo"},
+      {"a.com", 0, true, "https://b.com/foo", true, "b.com/foo",
+       "https://b.com/foo", true, "https://b.com/foo"},
+
+      // Verifies that no scheme is inserted if there is no valid match.
+      {"a.com", 0, true, "", true, "b.com/foo", "b.com/foo", false, ""},
   };
 
   for (size_t i = 0; i < arraysize(input); ++i) {
-    model()->SetPermanentText(base::ASCIIToUTF16(input[i].perm_text));
+    toolbar_model()->set_formatted_full_url(
+        base::ASCIIToUTF16(input[i].url_for_editing));
+    model()->ResetDisplayUrls();
+
+    model()->SetInputInProgress(input[i].is_match_selected_in_popup);
+    model()->SetPopupIsOpen(input[i].is_match_selected_in_popup);
+    AutocompleteMatch match;
+    match.type = AutocompleteMatchType::NAVSUGGEST;
+    match.destination_url = GURL(input[i].match_destination_url);
+    model()->SetCurrentMatch(match);
 
     base::string16 result = base::ASCIIToUTF16(input[i].input);
     GURL url;

@@ -26,7 +26,6 @@
 #include "base/json/json_writer.h"
 #include "base/location.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/memory/ref_counted.h"
 #include "base/path_service.h"
 #include "base/run_loop.h"
@@ -131,6 +130,7 @@
 #include "extensions/browser/test_extension_registry_observer.h"
 #include "extensions/common/constants.h"
 #include "extensions/common/extension.h"
+#include "extensions/common/switches.h"
 #include "net/base/url_util.h"
 #include "net/http/http_status_code.h"
 #include "net/test/embedded_test_server/embedded_test_server.h"
@@ -390,7 +390,7 @@ std::unique_ptr<net::FakeURLFetcher> RunCallbackAndReturnFakeURLFetcher(
     net::HttpStatusCode response_code,
     net::URLRequestStatus::Status status) {
   task_runner->PostTask(FROM_HERE, callback);
-  return base::MakeUnique<net::FakeURLFetcher>(url, delegate, response_data,
+  return std::make_unique<net::FakeURLFetcher>(url, delegate, response_data,
                                                response_code, status);
 }
 
@@ -408,7 +408,7 @@ void PolicyChangedCallback(const base::Closure& callback,
 
 class DeviceLocalAccountTest : public DevicePolicyCrosBrowserTest,
                                public user_manager::UserManager::Observer,
-                               public chrome::BrowserListObserver,
+                               public BrowserListObserver,
                                public extensions::AppWindowRegistry::Observer {
  protected:
   DeviceLocalAccountTest()
@@ -444,6 +444,10 @@ class DeviceLocalAccountTest : public DevicePolicyCrosBrowserTest,
     command_line->AppendSwitchASCII(chromeos::switches::kLoginProfile, "user");
     command_line->AppendSwitchASCII(policy::switches::kDeviceManagementUrl,
                                     test_server_.GetServiceURL().spec());
+
+    // TODO(devlin): Remove this. See https://crbug.com/816679.
+    command_line->AppendSwitch(
+        extensions::switches::kAllowLegacyExtensionManifests);
   }
 
   void SetUpInProcessBrowserTestFixture() override {
@@ -727,6 +731,7 @@ class DeviceLocalAccountTest : public DevicePolicyCrosBrowserTest,
   void WaitForSessionStart() {
     if (IsSessionStarted())
       return;
+    chromeos::WizardController::SkipPostLoginScreensForTesting();
     content::WindowedNotificationObserver(chrome::NOTIFICATION_SESSION_STARTED,
                                           base::Bind(IsSessionStarted)).Wait();
   }
@@ -1264,7 +1269,7 @@ IN_PROC_BROWSER_TEST_F(DeviceLocalAccountTest, ExtensionCacheImplTest) {
                  extensions::LocalExtensionCache::kCacheReadyFlagFileName),
              0, base::Time::Now());
   extensions::ExtensionCacheImpl cache_impl(
-      base::MakeUnique<extensions::ChromeOSExtensionCacheDelegate>(impl_path));
+      std::make_unique<extensions::ChromeOSExtensionCacheDelegate>(impl_path));
   std::unique_ptr<base::RunLoop> run_loop;
   run_loop.reset(new base::RunLoop);
   cache_impl.Start(base::Bind(&OnExtensionCacheImplInitialized, &run_loop));

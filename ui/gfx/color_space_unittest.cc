@@ -3,6 +3,7 @@
 // found in the LICENSE file.
 
 #include <cmath>
+#include <tuple>
 
 #include "base/logging.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -80,13 +81,13 @@ TEST(ColorSpace, RGBToYUV) {
   }
 }
 
-typedef std::tr1::tuple<ColorSpace::TransferID, size_t> TableTestData;
+typedef std::tuple<ColorSpace::TransferID, size_t> TableTestData;
 
 class ColorSpaceTableTest : public testing::TestWithParam<TableTestData> {};
 
 TEST_P(ColorSpaceTableTest, ApproximateTransferFn) {
-  ColorSpace::TransferID transfer_id = std::tr1::get<0>(GetParam());
-  const size_t table_size = std::tr1::get<1>(GetParam());
+  ColorSpace::TransferID transfer_id = std::get<0>(GetParam());
+  const size_t table_size = std::get<1>(GetParam());
 
   gfx::ColorSpace color_space(ColorSpace::PrimaryID::BT709, transfer_id);
   SkColorSpaceTransferFn tr_fn;
@@ -257,7 +258,11 @@ TEST(ColorSpace, RasterAndBlend) {
 }
 
 TEST(ColorSpace, ToSkColorSpace) {
-  const size_t kNumTests = 4;
+  const size_t kNumTests = 5;
+  SkMatrix44 primary_matrix;
+  primary_matrix.set3x3(0.205276f, 0.149185f, 0.609741f, 0.625671f, 0.063217f,
+                        0.311111f, 0.060867f, 0.744553f, 0.019470f);
+  SkColorSpaceTransferFn transfer_fn = {2.1f, 1.f, 0.f, 0.f, 0.f, 0.f, 0.f};
   ColorSpace color_spaces[kNumTests] = {
       ColorSpace(ColorSpace::PrimaryID::BT709,
                  ColorSpace::TransferID::IEC61966_2_1),
@@ -267,6 +272,7 @@ TEST(ColorSpace, ToSkColorSpace) {
                  ColorSpace::TransferID::LINEAR),
       ColorSpace(ColorSpace::PrimaryID::BT2020,
                  ColorSpace::TransferID::IEC61966_2_1),
+      ColorSpace::CreateCustom(primary_matrix, transfer_fn),
   };
   sk_sp<SkColorSpace> sk_color_spaces[kNumTests] = {
       SkColorSpace::MakeSRGB(),
@@ -276,11 +282,25 @@ TEST(ColorSpace, ToSkColorSpace) {
                             SkColorSpace::kDCIP3_D65_Gamut),
       SkColorSpace::MakeRGB(SkColorSpace::kSRGB_RenderTargetGamma,
                             SkColorSpace::kRec2020_Gamut),
+      SkColorSpace::MakeRGB(transfer_fn, primary_matrix),
   };
+  sk_sp<SkColorSpace> got_sk_color_spaces[kNumTests];
+  for (size_t i = 0; i < kNumTests; ++i)
+    got_sk_color_spaces[i] = color_spaces[i].ToSkColorSpace();
   for (size_t i = 0; i < kNumTests; ++i) {
-    EXPECT_TRUE(SkColorSpace::Equals(color_spaces[i].ToSkColorSpace().get(),
+    EXPECT_TRUE(SkColorSpace::Equals(got_sk_color_spaces[i].get(),
                                      sk_color_spaces[i].get()))
         << " on iteration i = " << i;
+    // ToSkColorSpace should return the same thing every time.
+    EXPECT_EQ(got_sk_color_spaces[i].get(),
+              color_spaces[i].ToSkColorSpace().get())
+        << " on iteration i = " << i;
+    // But there is no cache within Skia, except for sRGB.
+    // This test may start failing if this behavior changes.
+    if (i != 0) {
+      EXPECT_NE(got_sk_color_spaces[i].get(), sk_color_spaces[i].get())
+          << " on iteration i = " << i;
+    }
   }
 }
 

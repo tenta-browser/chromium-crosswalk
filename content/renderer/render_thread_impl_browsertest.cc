@@ -6,25 +6,27 @@
 
 #include <stddef.h>
 #include <stdint.h>
+
+#include <memory>
 #include <utility>
 
 #include "base/callback.h"
 #include "base/command_line.h"
 #include "base/debug/leak_annotations.h"
 #include "base/location.h"
+#include "base/macros.h"
 #include "base/memory/discardable_memory.h"
+#include "base/message_loop/message_loop.h"
 #include "base/metrics/field_trial.h"
 #include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/string_number_conversions.h"
+#include "base/task_scheduler/task_scheduler.h"
 #include "base/test/scoped_feature_list.h"
 #include "base/threading/sequenced_task_runner_handle.h"
-#include "base/threading/sequenced_worker_pool.h"
 #include "base/threading/thread_task_runner_handle.h"
-#include "components/viz/common/resources/buffer_to_texture_target_map.h"
 #include "content/app/mojo/mojo_init.h"
 #include "content/common/in_process_child_thread_params.h"
-#include "content/common/resource_messages.h"
 #include "content/common/service_manager/child_connection.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/content_browser_client.h"
@@ -44,13 +46,16 @@
 #include "content/test/mock_render_process.h"
 #include "gpu/GLES2/gl2extchromium.h"
 #include "gpu/command_buffer/client/gpu_memory_buffer_manager.h"
+#include "gpu/config/gpu_switches.h"
 #include "gpu/ipc/host/gpu_switches.h"
 #include "ipc/ipc.mojom.h"
 #include "ipc/ipc_channel_mojo.h"
 #include "mojo/edk/embedder/embedder.h"
 #include "mojo/edk/embedder/outgoing_broker_client_invitation.h"
+#include "mojo/edk/embedder/scoped_ipc_support.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/WebKit/public/platform/scheduler/renderer/renderer_scheduler.h"
+#include "third_party/blink/public/platform/scheduler/test/renderer_scheduler_test_support.h"
+#include "third_party/blink/public/platform/scheduler/web_main_thread_scheduler.h"
 #include "ui/base/ui_base_switches.h"
 #include "ui/gfx/buffer_format_util.h"
 
@@ -127,9 +132,13 @@ class RenderThreadImplForTest : public RenderThreadImpl {
  public:
   RenderThreadImplForTest(
       const InProcessChildThreadParams& params,
-      std::unique_ptr<blink::scheduler::RendererScheduler> scheduler,
-      scoped_refptr<base::SingleThreadTaskRunner>& test_task_counter)
-      : RenderThreadImpl(params, std::move(scheduler), test_task_counter) {}
+      std::unique_ptr<blink::scheduler::WebMainThreadScheduler> scheduler,
+      scoped_refptr<base::SingleThreadTaskRunner>& test_task_counter,
+      base::MessageLoop* unowned_message_loop)
+      : RenderThreadImpl(params,
+                         std::move(scheduler),
+                         test_task_counter,
+                         unowned_message_loop) {}
 
   ~RenderThreadImplForTest() override {}
 };
@@ -141,7 +150,8 @@ class RenderThreadImplForTest : public RenderThreadImpl {
 class QuitOnTestMsgFilter : public IPC::MessageFilter {
  public:
   explicit QuitOnTestMsgFilter(base::OnceClosure quit_closure)
-      : origin_task_runner_(base::SequencedTaskRunnerHandle::Get()),
+      : origin_task_runner_(
+            blink::scheduler::GetSequencedTaskRunnerForTesting()),
         quit_closure_(std::move(quit_closure)) {}
 
   // IPC::MessageFilter overrides:
@@ -165,24 +175,42 @@ class QuitOnTestMsgFilter : public IPC::MessageFilter {
 
 class RenderThreadImplBrowserTest : public testing::Test {
  public:
+  // Managing our own main MessageLoop also forces us to manage our own
+  // TaskScheduler. This ensures a basic TaskScheduler is in scope during this
+  // test.
+  class TestTaskScheduler {
+   public:
+    TestTaskScheduler() {
+      base::TaskScheduler::CreateAndStartWithDefaultParams(
+          "RenderThreadImplBrowserTest");
+    }
+
+    ~TestTaskScheduler() {
+      base::TaskScheduler::GetInstance()->Shutdown();
+      base::TaskScheduler::GetInstance()->JoinForTesting();
+      base::TaskScheduler::SetInstance(nullptr);
+    }
+
+   private:
+    DISALLOW_COPY_AND_ASSIGN(TestTaskScheduler);
+  };
+
   RenderThreadImplBrowserTest() : field_trial_list_(nullptr) {}
 
   void SetUp() override {
-    // SequencedWorkerPool is enabled by default in tests. Disable it for this
-    // test to avoid a DCHECK failure when RenderThreadImpl::Init enables it.
-    // TODO(fdoray): Remove this once the SequencedWorkerPool to TaskScheduler
-    // redirection experiment concludes https://crbug.com/622400.
-    base::SequencedWorkerPool::DisableForProcessForTesting();
-
     content_renderer_client_.reset(new ContentRendererClient());
     SetRendererClientForTesting(content_renderer_client_.get());
 
+    main_message_loop_.reset(new base::MessageLoop(base::MessageLoop::TYPE_IO));
+    test_task_scheduler_.reset(new TestTaskScheduler);
     browser_threads_.reset(
         new TestBrowserThreadBundle(TestBrowserThreadBundle::IO_MAINLOOP));
     scoped_refptr<base::SingleThreadTaskRunner> io_task_runner =
-        base::ThreadTaskRunnerHandle::Get();
+        blink::scheduler::GetSingleThreadTaskRunnerForTesting();
 
     InitializeMojo();
+    mojo_ipc_support_.reset(new mojo::edk::ScopedIPCSupport(
+        io_task_runner, mojo::edk::ScopedIPCSupport::ShutdownPolicy::FAST));
     shell_context_.reset(new TestServiceManagerContext);
     mojo::edk::OutgoingBrokerClientInvitation invitation;
     service_manager::Identity child_identity(
@@ -200,8 +228,9 @@ class RenderThreadImplBrowserTest : public testing::Test {
     channel_ = IPC::ChannelProxy::Create(
         IPC::ChannelMojo::CreateServerFactory(
             std::move(pipe.handle0), io_task_runner,
-            base::ThreadTaskRunnerHandle::Get()),
-        nullptr, io_task_runner, base::ThreadTaskRunnerHandle::Get());
+            blink::scheduler::GetSingleThreadTaskRunnerForTesting()),
+        nullptr, io_task_runner,
+        blink::scheduler::GetSingleThreadTaskRunnerForTesting());
 
     mock_process_.reset(new MockRenderProcess);
     test_task_counter_ = base::MakeRefCounted<TestTaskCounter>();
@@ -213,13 +242,15 @@ class RenderThreadImplBrowserTest : public testing::Test {
     cmd->AppendSwitchASCII(switches::kLang, "en-US");
 
     cmd->AppendSwitchASCII(switches::kNumRasterThreads, "1");
-    cmd->AppendSwitchASCII(
-        switches::kContentImageTextureTarget,
-        viz::BufferToTextureTargetMapToString(
-            viz::DefaultBufferToTextureTargetMapForTesting()));
 
-    std::unique_ptr<blink::scheduler::RendererScheduler> renderer_scheduler =
-        blink::scheduler::RendererScheduler::Create();
+    // To avoid creating a GPU channel to query if
+    // accelerated_video_decode is blacklisted on older Android system
+    // in RenderThreadImpl::Init().
+    cmd->AppendSwitch(switches::kIgnoreGpuBlacklist);
+
+    std::unique_ptr<blink::scheduler::WebMainThreadScheduler>
+        main_thread_scheduler =
+            blink::scheduler::WebMainThreadScheduler::Create();
     scoped_refptr<base::SingleThreadTaskRunner> test_task_counter(
         test_task_counter_.get());
 
@@ -228,7 +259,8 @@ class RenderThreadImplBrowserTest : public testing::Test {
     thread_ = new RenderThreadImplForTest(
         InProcessChildThreadParams(io_task_runner, &invitation,
                                    child_connection_->service_token()),
-        std::move(renderer_scheduler), test_task_counter);
+        std::move(main_thread_scheduler), test_task_counter,
+        main_message_loop_.get());
     cmd->InitFromArgv(old_argv);
 
     run_loop_ = std::make_unique<base::RunLoop>();
@@ -248,16 +280,20 @@ class RenderThreadImplBrowserTest : public testing::Test {
     }
   }
 
+ protected:
   IPC::Sender* sender() { return channel_.get(); }
 
   scoped_refptr<TestTaskCounter> test_task_counter_;
   TestContentClientInitializer content_client_initializer_;
   std::unique_ptr<ContentRendererClient> content_renderer_client_;
 
+  std::unique_ptr<base::MessageLoop> main_message_loop_;
+  std::unique_ptr<TestTaskScheduler> test_task_scheduler_;
   std::unique_ptr<TestBrowserThreadBundle> browser_threads_;
   std::unique_ptr<TestServiceManagerContext> shell_context_;
   std::unique_ptr<ChildConnection> child_connection_;
   std::unique_ptr<IPC::ChannelProxy> channel_;
+  std::unique_ptr<mojo::edk::ScopedIPCSupport> mojo_ipc_support_;
 
   std::unique_ptr<MockRenderProcess> mock_process_;
   scoped_refptr<QuitOnTestMsgFilter> test_msg_filter_;
@@ -266,6 +302,9 @@ class RenderThreadImplBrowserTest : public testing::Test {
   base::FieldTrialList field_trial_list_;
 
   std::unique_ptr<base::RunLoop> run_loop_;
+
+ private:
+  DISALLOW_COPY_AND_ASSIGN(RenderThreadImplBrowserTest);
 };
 
 class RenderThreadImplMojoInputMessagesDisabledBrowserTest
@@ -301,16 +340,6 @@ TEST_F(RenderThreadImplMojoInputMessagesDisabledBrowserTest,
   thread_->compositor_task_runner()->PostTask(
       FROM_HERE,
       base::BindOnce(&CheckRenderThreadInputHandlerManager, thread_));
-}
-
-// Disabled under LeakSanitizer due to memory leaks.
-TEST_F(RenderThreadImplBrowserTest,
-       WILL_LEAK(ResourceDispatchIPCTasksGoThroughScheduler)) {
-  sender()->Send(new ResourceHostMsg_FollowRedirect(0));
-  sender()->Send(new TestMsg_QuitRunLoop());
-
-  run_loop_->Run();
-  EXPECT_EQ(1, test_task_counter_->NumTasksPosted());
 }
 
 // Disabled under LeakSanitizer due to memory leaks.
@@ -427,6 +456,5 @@ INSTANTIATE_TEST_CASE_P(
                                          gfx::BufferFormat::RGBA_8888,
                                          gfx::BufferFormat::BGRA_8888,
                                          gfx::BufferFormat::YVU_420)));
-
 }  // namespace
 }  // namespace content

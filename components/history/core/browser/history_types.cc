@@ -190,13 +190,7 @@ MostVisitedURL::MostVisitedURL(const GURL& url,
 
 MostVisitedURL::MostVisitedURL(const MostVisitedURL& other) = default;
 
-// TODO(bug 706963) this should be implemented as "= default" when Android
-// toolchain is updated.
-MostVisitedURL::MostVisitedURL(MostVisitedURL&& other) noexcept
-    : url(std::move(other.url)),
-      title(std::move(other.title)),
-      last_forced_time(other.last_forced_time),
-      redirects(std::move(other.redirects)) {}
+MostVisitedURL::MostVisitedURL(MostVisitedURL&& other) noexcept = default;
 
 MostVisitedURL::~MostVisitedURL() {}
 
@@ -355,6 +349,24 @@ void ExpireHistoryArgs::SetTimeRangeForOneDay(base::Time time) {
   // Due to DST, leap seconds, etc., the next day at midnight may be more than
   // 24 hours away, so add 36 hours and round back down to midnight.
   end_time = (begin_time + base::TimeDelta::FromHours(36)).LocalMidnight();
+}
+
+// DeletionTimeRange ----------------------------------------------------------
+
+DeletionTimeRange DeletionTimeRange::Invalid() {
+  return DeletionTimeRange();
+}
+
+DeletionTimeRange DeletionTimeRange::AllTime() {
+  return DeletionTimeRange(base::Time(), base::Time::Max());
+}
+
+bool DeletionTimeRange::IsValid() const {
+  return end_.is_null() || begin_ <= end_;
+}
+
+bool DeletionTimeRange::IsAllTime() const {
+  return begin_.is_null() && (end_.is_null() || end_.is_max());
 }
 
 }  // namespace history

@@ -6,6 +6,8 @@
 
 #include <map>
 #include <unordered_set>
+#include <utility>
+#include <vector>
 
 #include "base/command_line.h"
 #include "base/feature_list.h"
@@ -98,13 +100,25 @@ net::SettingsMap GetHttp2Settings(
     uint32_t value;
     if (!base::StringToUint(key_value.second, &value))
       continue;
-    http2_settings[static_cast<net::SpdySettingsIds>(key)] = value;
+    http2_settings[static_cast<net::SpdyKnownSettingsId>(key)] = value;
   }
 
   return http2_settings;
 }
 
-void ConfigureHttp2Params(base::StringPiece http2_trial_group,
+bool ConfigureWebsocketOverHttp2(
+    const base::CommandLine& command_line,
+    const VariationParameters& http2_trial_params) {
+  if (command_line.HasSwitch(switches::kEnableWebsocketOverHttp2))
+    return true;
+
+  const std::string websocket_value =
+      GetVariationParam(http2_trial_params, "websocket_over_http2");
+  return websocket_value == "true";
+}
+
+void ConfigureHttp2Params(const base::CommandLine& command_line,
+                          base::StringPiece http2_trial_group,
                           const VariationParameters& http2_trial_params,
                           net::HttpNetworkSession::Params* params) {
   if (http2_trial_group.starts_with(kHttp2FieldTrialDisablePrefix)) {
@@ -112,6 +126,8 @@ void ConfigureHttp2Params(base::StringPiece http2_trial_group,
     return;
   }
   params->http2_settings = GetHttp2Settings(http2_trial_params);
+  params->enable_websocket_over_http2 =
+      ConfigureWebsocketOverHttp2(command_line, http2_trial_params);
 }
 
 bool ShouldEnableQuic(base::StringPiece quic_trial_group,
@@ -139,10 +155,10 @@ bool ShouldMarkQuicBrokenWhenNetworkBlackholes(
 
 bool ShouldRetryWithoutAltSvcOnQuicErrors(
     const VariationParameters& quic_trial_params) {
-  return base::LowerCaseEqualsASCII(
+  return !base::LowerCaseEqualsASCII(
       GetVariationParam(quic_trial_params,
                         "retry_without_alt_svc_on_quic_errors"),
-      "true");
+      "false");
 }
 
 bool ShouldSupportIetfFormatQuicAltSvc(
@@ -239,6 +255,14 @@ bool ShouldQuicEstimateInitialRtt(
       GetVariationParam(quic_trial_params, "estimate_initial_rtt"), "true");
 }
 
+bool ShouldQuicHeadersIncludeH2StreamDependencies(
+    const VariationParameters& quic_trial_params) {
+  return base::LowerCaseEqualsASCII(
+      GetVariationParam(quic_trial_params,
+                        "headers_include_h2_stream_dependency"),
+      "true");
+}
+
 bool ShouldQuicConnectUsingDefaultNetwork(
     const VariationParameters& quic_trial_params) {
   return base::LowerCaseEqualsASCII(
@@ -274,6 +298,32 @@ bool ShouldQuicMigrateSessionsEarlyV2(
       GetVariationParam(quic_trial_params, "migrate_sessions_early_v2"),
       "true");
 }
+
+int GetQuicMaxTimeOnNonDefaultNetworkSeconds(
+    const VariationParameters& quic_trial_params) {
+  int value;
+  if (base::StringToInt(
+          GetVariationParam(quic_trial_params,
+                            "max_time_on_non_default_network_seconds"),
+          &value)) {
+    return value;
+  }
+  return 0;
+}
+
+int GetQuicMaxNumMigrationsToNonDefaultNetworkOnPathDegrading(
+    const VariationParameters& quic_trial_params) {
+  int value;
+  if (base::StringToInt(
+          GetVariationParam(
+              quic_trial_params,
+              "max_migrations_to_non_default_network_on_path_degrading"),
+          &value)) {
+    return value;
+  }
+  return 0;
+}
+
 bool ShouldQuicAllowServerMigration(
     const VariationParameters& quic_trial_params) {
   return base::LowerCaseEqualsASCII(
@@ -367,6 +417,8 @@ void ConfigureQuicParams(base::StringPiece quic_trial_group,
         ShouldQuicRaceCertVerification(quic_trial_params);
     params->quic_estimate_initial_rtt =
         ShouldQuicEstimateInitialRtt(quic_trial_params);
+    params->quic_headers_include_h2_stream_dependency =
+        ShouldQuicHeadersIncludeH2StreamDependencies(quic_trial_params);
     params->quic_connect_using_default_network =
         ShouldQuicConnectUsingDefaultNetwork(quic_trial_params);
     params->quic_migrate_sessions_on_network_change =
@@ -377,6 +429,19 @@ void ConfigureQuicParams(base::StringPiece quic_trial_group,
         ShouldQuicMigrateSessionsOnNetworkChangeV2(quic_trial_params);
     params->quic_migrate_sessions_early_v2 =
         ShouldQuicMigrateSessionsEarlyV2(quic_trial_params);
+    int max_time_on_non_default_network_seconds =
+        GetQuicMaxTimeOnNonDefaultNetworkSeconds(quic_trial_params);
+    if (max_time_on_non_default_network_seconds > 0) {
+      params->quic_max_time_on_non_default_network =
+          base::TimeDelta::FromSeconds(max_time_on_non_default_network_seconds);
+    }
+    int max_migrations_to_non_default_network_on_path_degrading =
+        GetQuicMaxNumMigrationsToNonDefaultNetworkOnPathDegrading(
+            quic_trial_params);
+    if (max_migrations_to_non_default_network_on_path_degrading > 0) {
+      params->quic_max_migrations_to_non_default_network_on_path_degrading =
+          max_migrations_to_non_default_network_on_path_degrading;
+    }
     params->quic_allow_server_migration =
         ShouldQuicAllowServerMigration(quic_trial_params);
     params->quic_host_whitelist = GetQuicHostWhitelist(quic_trial_params);
@@ -444,7 +509,8 @@ void ParseCommandLineAndFieldTrials(const base::CommandLine& command_line,
   if (!variations::GetVariationParams(kHttp2FieldTrialName,
                                       &http2_trial_params))
     http2_trial_params.clear();
-  ConfigureHttp2Params(http2_trial_group, http2_trial_params, params);
+  ConfigureHttp2Params(command_line, http2_trial_group, http2_trial_params,
+                       params);
 
   const std::string tfo_trial_group =
       base::FieldTrialList::FindFullName(kTCPFastOpenFieldTrialName);

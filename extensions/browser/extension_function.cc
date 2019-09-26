@@ -8,10 +8,9 @@
 
 #include "base/logging.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/memory/singleton.h"
+#include "base/metrics/histogram_functions.h"
 #include "base/metrics/histogram_macros.h"
-#include "base/metrics/sparse_histogram.h"
 #include "base/metrics/user_metrics.h"
 #include "base/synchronization/lock.h"
 #include "content/public/browser/notification_source.h"
@@ -45,33 +44,33 @@ void LogUma(bool success,
   // long execution time equates to a poorly-performing function.
   if (success) {
     if (elapsed_time < base::TimeDelta::FromMilliseconds(1)) {
-      UMA_HISTOGRAM_SPARSE_SLOWLY(
-          "Extensions.Functions.SucceededTime.LessThan1ms", histogram_value);
+      base::UmaHistogramSparse("Extensions.Functions.SucceededTime.LessThan1ms",
+                               histogram_value);
     } else if (elapsed_time < base::TimeDelta::FromMilliseconds(5)) {
-      UMA_HISTOGRAM_SPARSE_SLOWLY("Extensions.Functions.SucceededTime.1msTo5ms",
-                                  histogram_value);
+      base::UmaHistogramSparse("Extensions.Functions.SucceededTime.1msTo5ms",
+                               histogram_value);
     } else if (elapsed_time < base::TimeDelta::FromMilliseconds(10)) {
-      UMA_HISTOGRAM_SPARSE_SLOWLY(
-          "Extensions.Functions.SucceededTime.5msTo10ms", histogram_value);
+      base::UmaHistogramSparse("Extensions.Functions.SucceededTime.5msTo10ms",
+                               histogram_value);
     } else {
-      UMA_HISTOGRAM_SPARSE_SLOWLY("Extensions.Functions.SucceededTime.Over10ms",
-                                  histogram_value);
+      base::UmaHistogramSparse("Extensions.Functions.SucceededTime.Over10ms",
+                               histogram_value);
     }
     UMA_HISTOGRAM_TIMES("Extensions.Functions.SucceededTotalExecutionTime",
                         elapsed_time);
   } else {
     if (elapsed_time < base::TimeDelta::FromMilliseconds(1)) {
-      UMA_HISTOGRAM_SPARSE_SLOWLY("Extensions.Functions.FailedTime.LessThan1ms",
-                                  histogram_value);
+      base::UmaHistogramSparse("Extensions.Functions.FailedTime.LessThan1ms",
+                               histogram_value);
     } else if (elapsed_time < base::TimeDelta::FromMilliseconds(5)) {
-      UMA_HISTOGRAM_SPARSE_SLOWLY("Extensions.Functions.FailedTime.1msTo5ms",
-                                  histogram_value);
+      base::UmaHistogramSparse("Extensions.Functions.FailedTime.1msTo5ms",
+                               histogram_value);
     } else if (elapsed_time < base::TimeDelta::FromMilliseconds(10)) {
-      UMA_HISTOGRAM_SPARSE_SLOWLY("Extensions.Functions.FailedTime.5msTo10ms",
-                                  histogram_value);
+      base::UmaHistogramSparse("Extensions.Functions.FailedTime.5msTo10ms",
+                               histogram_value);
     } else {
-      UMA_HISTOGRAM_SPARSE_SLOWLY("Extensions.Functions.FailedTime.Over10ms",
-                                  histogram_value);
+      base::UmaHistogramSparse("Extensions.Functions.FailedTime.Over10ms",
+                               histogram_value);
     }
     UMA_HISTOGRAM_TIMES("Extensions.Functions.FailedTotalExecutionTime",
                         elapsed_time);
@@ -458,7 +457,7 @@ bool ExtensionFunction::ShouldSkipQuotaLimiting() const {
 
 bool ExtensionFunction::HasOptionalArgument(size_t index) {
   base::Value* value;
-  return args_->Get(index, &value) && !value->IsType(base::Value::Type::NONE);
+  return args_->Get(index, &value) && !value->is_none();
 }
 
 void ExtensionFunction::SendResponseImpl(bool success) {
@@ -625,58 +624,10 @@ void IOThreadExtensionFunction::Destruct() const {
   BrowserThread::DeleteOnIOThread::Destruct(this);
 }
 
-AsyncExtensionFunction::AsyncExtensionFunction() {
-}
-
-void AsyncExtensionFunction::SetError(const std::string& error) {
-  error_ = error;
-}
-
-const std::string& AsyncExtensionFunction::GetError() const {
-  return error_.empty() ? UIThreadExtensionFunction::GetError() : error_;
-}
-
-AsyncExtensionFunction::~AsyncExtensionFunction() {
-}
-
-void AsyncExtensionFunction::SetResult(std::unique_ptr<base::Value> result) {
-  results_.reset(new base::ListValue());
-  results_->Append(std::move(result));
-}
-
-void AsyncExtensionFunction::SetResultList(
-    std::unique_ptr<base::ListValue> results) {
-  results_ = std::move(results);
-}
-
 ExtensionFunction::ScopedUserGestureForTests::ScopedUserGestureForTests() {
   UserGestureForTests::GetInstance()->IncrementCount();
 }
 
 ExtensionFunction::ScopedUserGestureForTests::~ScopedUserGestureForTests() {
   UserGestureForTests::GetInstance()->DecrementCount();
-}
-
-ExtensionFunction::ResponseAction AsyncExtensionFunction::Run() {
-  if (RunAsync())
-    return RespondLater();
-  DCHECK(!results_);
-  return RespondNow(Error(error_));
-}
-
-// static
-bool AsyncExtensionFunction::ValidationFailure(
-    AsyncExtensionFunction* function) {
-  return false;
-}
-
-void AsyncExtensionFunction::SendResponse(bool success) {
-  ResponseValue response;
-  if (success) {
-    response = ArgumentList(std::move(results_));
-  } else {
-    response = results_ ? ErrorWithArguments(std::move(results_), error_)
-                        : Error(error_);
-  }
-  Respond(std::move(response));
 }

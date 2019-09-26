@@ -96,26 +96,26 @@ class MockClient : public mojom::AudioInputStreamClient {
  public:
   MockClient() = default;
 
-  void Initialized(mojo::ScopedSharedBufferHandle shared_buffer,
-                   mojo::ScopedHandle socket_handle,
-                   bool initially_muted) {
-    ASSERT_TRUE(shared_buffer.is_valid());
-    ASSERT_TRUE(socket_handle.is_valid());
+  void Initialized(mojom::AudioDataPipePtr data_pipe, bool initially_muted) {
+    ASSERT_TRUE(data_pipe->shared_memory.is_valid());
+    ASSERT_TRUE(data_pipe->socket.is_valid());
 
     base::PlatformFile fd;
-    mojo::UnwrapPlatformFile(std::move(socket_handle), &fd);
-    socket_ = base::MakeUnique<base::CancelableSyncSocket>(fd);
+    mojo::UnwrapPlatformFile(std::move(data_pipe->socket), &fd);
+    socket_ = std::make_unique<base::CancelableSyncSocket>(fd);
     EXPECT_NE(socket_->handle(), base::CancelableSyncSocket::kInvalidHandle);
 
     size_t memory_length;
     base::SharedMemoryHandle shmem_handle;
-    bool read_only;
-    EXPECT_EQ(
-        mojo::UnwrapSharedMemoryHandle(std::move(shared_buffer), &shmem_handle,
-                                       &memory_length, &read_only),
-        MOJO_RESULT_OK);
-    EXPECT_FALSE(read_only);
-    buffer_ = base::MakeUnique<base::SharedMemory>(shmem_handle, read_only);
+    mojo::UnwrappedSharedMemoryHandleProtection protection;
+    EXPECT_EQ(mojo::UnwrapSharedMemoryHandle(
+                  std::move(data_pipe->shared_memory), &shmem_handle,
+                  &memory_length, &protection),
+              MOJO_RESULT_OK);
+    EXPECT_EQ(protection,
+              mojo::UnwrappedSharedMemoryHandleProtection::kReadOnly);
+    buffer_ = std::make_unique<base::SharedMemory>(shmem_handle,
+                                                   true /* read_only */);
 
     GotNotification(initially_muted);
   }
@@ -138,9 +138,7 @@ std::unique_ptr<AudioInputDelegate> CreateNoDelegate(
   return nullptr;
 }
 
-void NotCalled(mojo::ScopedSharedBufferHandle shared_buffer,
-               mojo::ScopedHandle socket_handle,
-               bool initially_muted) {
+void NotCalled(mojom::AudioDataPipePtr data_pipe, bool initially_muted) {
   EXPECT_TRUE(false) << "The StreamCreated callback was called despite the "
                         "test expecting it not to.";
 }
@@ -150,13 +148,13 @@ void NotCalled(mojo::ScopedSharedBufferHandle shared_buffer,
 class MojoAudioInputStreamTest : public Test {
  public:
   MojoAudioInputStreamTest()
-      : foreign_socket_(base::MakeUnique<TestCancelableSyncSocket>()),
+      : foreign_socket_(std::make_unique<TestCancelableSyncSocket>()),
         client_binding_(&client_, mojo::MakeRequest(&client_ptr_)) {}
 
   AudioInputStreamPtr CreateAudioInput() {
     AudioInputStreamPtr p;
     ExpectDelegateCreation();
-    impl_ = base::MakeUnique<MojoAudioInputStream>(
+    impl_ = std::make_unique<MojoAudioInputStream>(
         mojo::MakeRequest(&p), std::move(client_ptr_),
         base::BindOnce(&MockDelegateFactory::CreateDelegate,
                        base::Unretained(&mock_delegate_factory_)),
@@ -173,7 +171,10 @@ class MojoAudioInputStreamTest : public Test {
         base::WrapUnique(delegate_));
     EXPECT_TRUE(
         base::CancelableSyncSocket::CreatePair(&local_, foreign_socket_.get()));
-    EXPECT_TRUE(mem_.CreateAnonymous(kShmemSize));
+    base::SharedMemoryCreateOptions shmem_options;
+    shmem_options.size = kShmemSize;
+    shmem_options.share_read_only = true;
+    EXPECT_TRUE(mem_.Create(shmem_options));
     EXPECT_CALL(mock_delegate_factory_, MockCreateDelegate(NotNull()))
         .WillOnce(SaveArg<0>(&delegate_event_handler_));
   }

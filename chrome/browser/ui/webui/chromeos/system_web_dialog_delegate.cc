@@ -14,12 +14,17 @@ namespace chromeos {
 
 SystemWebDialogDelegate::SystemWebDialogDelegate(const GURL& gurl,
                                                  const base::string16& title)
-    : gurl_(gurl), title_(title) {}
+    : gurl_(gurl),
+      title_(title),
+      modal_type_(session_manager::SessionManager::Get()->session_state() ==
+                          session_manager::SessionState::ACTIVE
+                      ? ui::MODAL_TYPE_NONE
+                      : ui::MODAL_TYPE_SYSTEM) {}
 
 SystemWebDialogDelegate::~SystemWebDialogDelegate() {}
 
 ui::ModalType SystemWebDialogDelegate::GetDialogModalType() const {
-  return ui::MODAL_TYPE_NONE;
+  return modal_type_;
 }
 
 base::string16 SystemWebDialogDelegate::GetDialogTitle() const {
@@ -35,6 +40,10 @@ void SystemWebDialogDelegate::GetWebUIMessageHandlers(
 
 void SystemWebDialogDelegate::GetDialogSize(gfx::Size* size) const {
   size->SetSize(kDialogWidth, kDialogHeight);
+}
+
+std::string SystemWebDialogDelegate::GetDialogArgs() const {
+  return std::string();
 }
 
 void SystemWebDialogDelegate::OnDialogShown(
@@ -56,7 +65,7 @@ bool SystemWebDialogDelegate::ShouldShowDialogTitle() const {
   return !title_.empty();
 }
 
-void SystemWebDialogDelegate::ShowSystemDialog() {
+void SystemWebDialogDelegate::ShowSystemDialog(bool is_minimal_style) {
   // NetworkConfigView does not interact well with web dialogs. For now, do
   // not show the dialog while NetworkConfigView is shown: crbug.com/791955.
   // TODO(stevenjb): Remove this when NetworkConfigView is deprecated.
@@ -66,11 +75,11 @@ void SystemWebDialogDelegate::ShowSystemDialog() {
   }
   content::BrowserContext* browser_context =
       ProfileManager::GetActiveUserProfile();
-  int container_id = session_manager::SessionManager::Get()->session_state() ==
-                             session_manager::SessionState::ACTIVE
+  int container_id = GetDialogModalType() == ui::MODAL_TYPE_NONE
                          ? ash::kShellWindowId_AlwaysOnTopContainer
                          : ash::kShellWindowId_LockSystemModalContainer;
-  chrome::ShowWebDialogInContainer(container_id, browser_context, this);
+  chrome::ShowWebDialogInContainer(container_id, browser_context, this,
+                                   is_minimal_style);
 }
 
 }  // namespace chromeos

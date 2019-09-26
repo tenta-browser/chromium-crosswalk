@@ -10,10 +10,13 @@ if (is_android) {
   import("//build/config/android/config.gni")
   import("//build/config/android/rules.gni")
   import("//build/config/sanitizers/sanitizers.gni")
+  import("//build/config/android/extract_unwind_tables.gni")
 }
 
 if (is_fuchsia) {
+  import("//build/config/chromecast_build.gni")
   import("//build/config/fuchsia/rules.gni")
+  import("//build/config/fuchsia/package.gni")
 }
 
 # Define a test as an executable (or apk on Android) with the "testonly" flag
@@ -98,6 +101,21 @@ template("test") {
         "write_asset_list",
         "use_native_activity",
       ]
+
+      # Adds the unwind tables from unstripped binary as an asset file in the
+      # apk, if |add_unwind_tables_in_apk| is specified by the test.
+      if (defined(invoker.add_unwind_tables_in_apk) &&
+          invoker.add_unwind_tables_in_apk) {
+        _unwind_table_asset_name = "${target_name}_unwind_assets"
+        unwind_table_asset(_unwind_table_asset_name) {
+          testonly = true
+          library_target = _library_target
+          deps = [
+            ":$_library_target",
+          ]
+        }
+      }
+
       shared_library(_library_target) {
         # Configs will always be defined since we set_defaults in BUILDCONFIG.gn.
         configs = []  # Prevent list overwriting warning.
@@ -126,6 +144,10 @@ template("test") {
 
         # Add the Java classes so that each target does not have to do it.
         deps += [ "//base/test:test_support_java" ]
+
+        if (defined(_unwind_table_asset_name)) {
+          deps += [ ":${_unwind_table_asset_name}" ]
+        }
 
         # TODO(agrieve): Remove this data_dep once bots don't build the _apk
         #     target (post-GYP).
@@ -226,28 +248,49 @@ template("test") {
     }
   } else if (is_fuchsia) {
     _output_name = invoker.target_name
-    _test_runner_target = "${_output_name}__test_runner_script"
+    _pkg_target = "${_output_name}_pkg"
+    _gen_runner_target = "${_output_name}_runner"
+    _exec_target = "${_output_name}__exec"
 
-    test_runner_script(_test_runner_target) {
-      forward_variables_from(invoker,
-                             [
-                               "data",
-                               "data_deps",
-                               "deps",
-                               "public_deps",
-                               "use_test_server",
-                             ])
-      test_name = _output_name
+    group(target_name) {
+      testonly = true
+      deps = [
+        ":$_gen_runner_target",
+        ":$_pkg_target",
+      ]
+
+      # Disable packaging for Chromecast builds. (https://crbug.com/810069)
+      if (is_chromecast) {
+        deps -= [ ":${_pkg_target}" ]
+      }
     }
 
-    executable(target_name) {
+    # Makes the script which invokes the executable.
+    test_runner_script(_gen_runner_target) {
+      forward_variables_from(invoker, [ "use_test_server" ])
+      deps = [
+        ":$_exec_target",
+      ]
+      test_name = _output_name
+      exe_path =
+          "$root_out_dir/exe.unstripped/" + get_label_info(_exec_target, "name")
+      package_name = _output_name
+    }
+
+    executable(_exec_target) {
       testonly = true
       forward_variables_from(invoker, "*")
-      if (!defined(data_deps)) {
-        data_deps = []
-      }
-      data_deps += [ ":$_test_runner_target" ]
+      output_name = _exec_target
       deps += [ "//build/config:exe_and_shlib_deps" ]
+    }
+
+    package(_pkg_target) {
+      testonly = true
+      package_name = _output_name
+      binary = get_label_info(_exec_target, "name")
+      deps = [
+        ":$_exec_target",
+      ]
     }
   } else if (is_ios) {
     import("//build/config/ios/ios_sdk.gni")

@@ -4,7 +4,6 @@
 
 #include "chrome/browser/content_settings/local_shared_objects_container.h"
 
-#include "base/memory/ptr_util.h"
 #include "chrome/browser/browsing_data/browsing_data_appcache_helper.h"
 #include "chrome/browser/browsing_data/browsing_data_cache_storage_helper.h"
 #include "chrome/browser/browsing_data/browsing_data_channel_id_helper.h"
@@ -237,5 +236,5 @@ LocalSharedObjectsContainer::CreateCookiesTreeModel() const {
       indexed_dbs_, file_systems_, nullptr, channel_ids_, service_workers_,
       shared_workers_, cache_storages_, nullptr, nullptr);
 
-  return base::MakeUnique<CookiesTreeModel>(container, nullptr);
+  return std::make_unique<CookiesTreeModel>(container, nullptr);
 }

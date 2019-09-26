@@ -4,7 +4,6 @@
 
 #include "ui/aura/mus/property_converter.h"
 
-#include "base/memory/ptr_util.h"
 #include "mojo/public/cpp/bindings/type_converter.h"
 #include "services/ui/public/cpp/property_type_converters.h"
 #include "services/ui/public/interfaces/window_manager.mojom.h"
@@ -47,6 +46,10 @@ bool ValidateShowState(int64_t value) {
          value == int64_t(ui::mojom::ShowState::MAXIMIZED) ||
          value == int64_t(ui::mojom::ShowState::INACTIVE) ||
          value == int64_t(ui::mojom::ShowState::FULLSCREEN);
+}
+
+bool ValidateWindowCornerRadius(int64_t value) {
+  return value >= -1;
 }
 
 }  // namespace
@@ -96,6 +99,10 @@ PropertyConverter::PropertyConverter() {
                          ui::mojom::WindowManager::kName_Property);
   RegisterString16Property(client::kTitleKey,
                            ui::mojom::WindowManager::kWindowTitle_Property);
+  RegisterPrimitiveProperty(
+      client::kWindowCornerRadiusKey,
+      ui::mojom::WindowManager::kWindowCornerRadius_Property,
+      base::BindRepeating(&ValidateWindowCornerRadius));
 }
 
 PropertyConverter::~PropertyConverter() {}

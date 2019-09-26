@@ -22,7 +22,6 @@ class TickClock;
 
 namespace net {
 class NetLog;
-class ProxyServer;
 }
 
 namespace data_reduction_proxy {
@@ -71,7 +70,7 @@ class TestDataReductionProxyConfig : public DataReductionProxyConfig {
 
   // Sets the |tick_clock_| to |tick_clock|. Ownership of |tick_clock| is not
   // passed to the callee.
-  void SetTickClock(base::TickClock* tick_clock);
+  void SetTickClock(const base::TickClock* tick_clock);
 
   base::TimeTicks GetTicksNow() const override;
 
@@ -102,16 +101,44 @@ class TestDataReductionProxyConfig : public DataReductionProxyConfig {
 
   void SetShouldAddDefaultProxyBypassRules(bool add_default_proxy_bypass_rules);
 
+  std::string GetCurrentNetworkID() const override;
+
+  void SetCurrentNetworkID(const std::string& network_id);
+
+  base::Optional<std::pair<bool /* is_secure_proxy */, bool /*is_core_proxy */>>
+  GetInFlightWarmupProxyDetails() const override;
+
+  void SetInFlightWarmupProxyDetails(
+      base::Optional<
+          std::pair<bool /* is_secure_proxy */, bool /*is_core_proxy */>>
+          in_flight_warmup_proxy_details);
+
+  bool IsFetchInFlight() const override;
+
+  void SetIsFetchInFlight(bool fetch_in_flight);
+
+  size_t GetWarmupURLFetchAttemptCounts() const override;
+
+  void SetWarmupURLFetchAttemptCounts(
+      base::Optional<size_t> previous_attempt_counts);
+
   using DataReductionProxyConfig::UpdateConfigForTesting;
-  using DataReductionProxyConfig::OnInsecureProxyWarmupURLProbeStatusChange;
+  using DataReductionProxyConfig::HandleWarmupFetcherResponse;
 
  private:
   bool GetIsCaptivePortal() const override;
 
-  base::TickClock* tick_clock_;
+  const base::TickClock* tick_clock_;
+
+  base::Optional<size_t> previous_attempt_counts_;
 
   base::Optional<bool> was_data_reduction_proxy_used_;
   base::Optional<int> proxy_index_;
+
+  base::Optional<std::string> current_network_id_;
+
+  base::Optional<std::pair<bool /* is_secure_proxy */, bool /*is_core_proxy */>>
+      in_flight_warmup_proxy_details_;
 
   // Set to true if the captive portal probe for the current network has been
   // blocked.
@@ -120,6 +147,8 @@ class TestDataReductionProxyConfig : public DataReductionProxyConfig {
   // True if the default bypass rules should be added. Should be set to false
   // when fetching resources from an embedded test server running on localhost.
   bool add_default_proxy_bypass_rules_;
+
+  base::Optional<bool> fetch_in_flight_;
 
   DISALLOW_COPY_AND_ASSIGN(TestDataReductionProxyConfig);
 };
@@ -137,29 +166,13 @@ class MockDataReductionProxyConfig : public TestDataReductionProxyConfig {
       DataReductionProxyEventCreator* event_creator);
   ~MockDataReductionProxyConfig();
 
-  MOCK_METHOD2(SetProxyPrefs, void(bool enabled, bool at_startup));
-  MOCK_CONST_METHOD2(IsDataReductionProxy,
-                     bool(const net::ProxyServer& proxy_server,
-                          DataReductionProxyTypeInfo* proxy_info));
   MOCK_CONST_METHOD2(WasDataReductionProxyUsed,
                      bool(const net::URLRequest*,
                           DataReductionProxyTypeInfo* proxy_info));
   MOCK_CONST_METHOD1(ContainsDataReductionProxy,
                      bool(const net::ProxyConfig::ProxyRules& proxy_rules));
-  MOCK_CONST_METHOD2(IsBypassedByDataReductionProxyLocalRules,
-                     bool(const net::URLRequest& request,
-                          const net::ProxyConfig& data_reduction_proxy_config));
-  MOCK_CONST_METHOD3(AreDataReductionProxiesBypassed,
-                     bool(const net::URLRequest& request,
-                          const net::ProxyConfig& data_reduction_proxy_config,
-                          base::TimeDelta* min_retry_delay));
   MOCK_METHOD1(SecureProxyCheck,
                void(SecureProxyCheckerCallback fetcher_callback));
-
-  using DataReductionProxyConfig::UpdateConfigForTesting;
-
-  // Resets the Lo-Fi status to default state.
-  void ResetLoFiStatusForTest();
 };
 
 }  // namespace data_reduction_proxy

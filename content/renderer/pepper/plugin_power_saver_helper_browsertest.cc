@@ -16,9 +16,9 @@
 #include "content/renderer/render_view_impl.h"
 #include "content/test/test_render_frame.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/WebKit/public/web/WebDocument.h"
-#include "third_party/WebKit/public/web/WebLocalFrame.h"
-#include "third_party/WebKit/public/web/WebPluginParams.h"
+#include "third_party/blink/public/web/web_document.h"
+#include "third_party/blink/public/web/web_local_frame.h"
+#include "third_party/blink/public/web/web_plugin_params.h"
 #include "ui/gfx/geometry/size.h"
 #include "url/gurl.h"
 
@@ -65,7 +65,8 @@ TEST_F(PluginPowerSaverHelperTest, TemporaryOriginWhitelist) {
   // Test that we've sent an IPC to the browser.
   ASSERT_EQ(1u, sink_->message_count());
   const IPC::Message* msg = sink_->GetMessageAt(0);
-  EXPECT_EQ(FrameHostMsg_PluginContentOriginAllowed::ID, msg->type());
+  EXPECT_EQ(static_cast<uint32_t>(FrameHostMsg_PluginContentOriginAllowed::ID),
+            msg->type());
   FrameHostMsg_PluginContentOriginAllowed::Param params;
   FrameHostMsg_PluginContentOriginAllowed::Read(msg, &params);
   EXPECT_TRUE(url::Origin::Create(GURL("http://other.com"))

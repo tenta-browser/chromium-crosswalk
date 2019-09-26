@@ -11,7 +11,6 @@
 #include "ash/shell.h"
 #include "base/command_line.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/values.h"
 #include "chrome/browser/extensions/chrome_extension_web_contents_observer.h"
 #include "chrome/browser/media/webrtc/media_capture_devices_dispatcher.h"
@@ -40,21 +39,24 @@
 #include "ui/aura/window.h"
 #include "ui/aura/window_event_dispatcher.h"
 #include "ui/aura/window_tree_host.h"
+#include "ui/base/ime/chromeos/input_method_manager.h"
 #include "ui/base/ime/input_method.h"
 #include "ui/base/ime/text_input_client.h"
 #include "ui/compositor/scoped_layer_animation_settings.h"
+#include "ui/compositor_extra/shadow.h"
 #include "ui/gfx/geometry/insets.h"
-#include "ui/keyboard/content/keyboard_constants.h"
 #include "ui/keyboard/keyboard_controller.h"
 #include "ui/keyboard/keyboard_controller_observer.h"
+#include "ui/keyboard/keyboard_resource_util.h"
 #include "ui/keyboard/keyboard_switches.h"
 #include "ui/keyboard/keyboard_util.h"
-#include "ui/wm/core/shadow.h"
 #include "ui/wm/core/shadow_types.h"
 
 namespace virtual_keyboard_private = extensions::api::virtual_keyboard_private;
 
 namespace {
+
+base::Optional<GURL> g_override_virtual_keyboard_url;
 
 class WindowBoundsChangeObserver : public aura::WindowObserver {
  public:
@@ -194,7 +196,7 @@ class AshKeyboardControllerObserver
   ~AshKeyboardControllerObserver() override {}
 
   // KeyboardControllerObserver:
-  void OnKeyboardVisibleBoundsChanging(const gfx::Rect& bounds) override {
+  void OnKeyboardVisibleBoundsChanged(const gfx::Rect& bounds) override {
     extensions::EventRouter* router = extensions::EventRouter::Get(context_);
 
     if (!router->HasEventListener(
@@ -211,7 +213,7 @@ class AshKeyboardControllerObserver
     new_bounds->SetInteger("height", bounds.height());
     event_args->Append(std::move(new_bounds));
 
-    auto event = base::MakeUnique<extensions::Event>(
+    auto event = std::make_unique<extensions::Event>(
         extensions::events::VIRTUAL_KEYBOARD_PRIVATE_ON_BOUNDS_CHANGED,
         virtual_keyboard_private::OnBoundsChanged::kEventName,
         std::move(event_args), context_);
@@ -226,10 +228,10 @@ class AshKeyboardControllerObserver
       return;
     }
 
-    auto event = base::MakeUnique<extensions::Event>(
+    auto event = std::make_unique<extensions::Event>(
         extensions::events::VIRTUAL_KEYBOARD_PRIVATE_ON_KEYBOARD_CLOSED,
         virtual_keyboard_private::OnKeyboardClosed::kEventName,
-        base::MakeUnique<base::ListValue>(), context_);
+        std::make_unique<base::ListValue>(), context_);
     router->BroadcastEvent(std::move(event));
   }
 
@@ -247,6 +249,11 @@ class AshKeyboardControllerObserver
 };
 
 }  // namespace
+
+void ChromeKeyboardUI::TestApi::SetOverrideVirtualKeyboardUrl(
+    base::Optional<GURL> url) {
+  g_override_virtual_keyboard_url = url;
+}
 
 ChromeKeyboardUI::ChromeKeyboardUI(content::BrowserContext* context)
     : browser_context_(context),
@@ -436,12 +443,18 @@ void ChromeKeyboardUI::LoadContents(const GURL& url) {
 }
 
 const GURL& ChromeKeyboardUI::GetVirtualKeyboardUrl() {
-  if (keyboard::IsInputViewEnabled()) {
-    const GURL& override_url = keyboard::GetOverrideContentUrl();
-    return override_url.is_valid() ? override_url : default_url_;
-  } else {
+  if (g_override_virtual_keyboard_url.has_value())
+    return g_override_virtual_keyboard_url.value();
+
+  chromeos::input_method::InputMethodManager* ime_manager =
+      chromeos::input_method::InputMethodManager::Get();
+  if (!keyboard::IsInputViewEnabled() || !ime_manager ||
+      !ime_manager->GetActiveIMEState())
     return default_url_;
-  }
+
+  const GURL& input_view_url =
+      ime_manager->GetActiveIMEState()->GetInputViewUrl();
+  return input_view_url.is_valid() ? input_view_url : default_url_;
 }
 
 bool ChromeKeyboardUI::ShouldEnableInsets(aura::Window* window) {
@@ -464,8 +477,8 @@ void ChromeKeyboardUI::SetShadowAroundKeyboard() {
     return;
 
   if (!shadow_) {
-    shadow_.reset(new wm::Shadow());
-    shadow_->Init(wm::ShadowElevation::LARGE);
+    shadow_ = std::make_unique<ui::Shadow>();
+    shadow_->Init(wm::kShadowElevationActiveWindow);
     shadow_->layer()->SetVisible(true);
     contents_window->parent()->layer()->Add(shadow_->layer());
   }

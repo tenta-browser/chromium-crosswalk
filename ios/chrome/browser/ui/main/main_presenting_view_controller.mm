@@ -5,6 +5,9 @@
 #import "ios/chrome/browser/ui/main/main_presenting_view_controller.h"
 
 #import "base/logging.h"
+#include "base/mac/bundle_locations.h"
+#include "base/mac/foundation_util.h"
+#import "ios/chrome/browser/ui/main/bvc_container_view_controller.h"
 #import "ios/chrome/browser/ui/main/transitions/bvc_container_to_tab_switcher_animator.h"
 #import "ios/chrome/browser/ui/main/transitions/tab_switcher_to_bvc_container_animator.h"
 #import "ios/chrome/browser/ui/tab_switcher/tab_switcher.h"
@@ -13,91 +16,16 @@
 #error "This file requires ARC support."
 #endif
 
-@interface BVCContainerViewController : UIViewController
-
-@property(nonatomic, weak) UIViewController* currentBVC;
-
-@end
-
-@implementation BVCContainerViewController
-
-- (UIViewController*)currentBVC {
-  return [self.childViewControllers firstObject];
-}
-
-- (void)setCurrentBVC:(UIViewController*)bvc {
-  DCHECK(bvc);
-  if (self.currentBVC == bvc) {
-    return;
-  }
-
-  // Remove the current bvc, if any.
-  if (self.currentBVC) {
-    [self.currentBVC willMoveToParentViewController:nil];
-    [self.currentBVC.view removeFromSuperview];
-    [self.currentBVC removeFromParentViewController];
-  }
-
-  DCHECK_EQ(nil, self.currentBVC);
-  DCHECK_EQ(0U, self.view.subviews.count);
-
-  // Add the new active view controller.
-  [self addChildViewController:bvc];
-  bvc.view.frame = self.view.bounds;
-  [self.view addSubview:bvc.view];
-  [bvc didMoveToParentViewController:self];
-
-  // Let the system know that the child has changed so appearance updates can
-  // be made.
-  [self setNeedsStatusBarAppearanceUpdate];
-
-  DCHECK(self.currentBVC == bvc);
-}
-
-#pragma mark - UIViewController methods
-
-- (void)presentViewController:(UIViewController*)viewControllerToPresent
-                     animated:(BOOL)flag
-                   completion:(void (^)())completion {
-  // Force presentation to go through the current BVC, which does some
-  // associated bookkeeping.
-  DCHECK(self.currentBVC);
-  [self.currentBVC presentViewController:viewControllerToPresent
-                                animated:flag
-                              completion:completion];
-}
-
-- (void)dismissViewControllerAnimated:(BOOL)flag
-                           completion:(void (^)())completion {
-  // Force dismissal to go through the current BVC, which does some associated
-  // bookkeeping.
-  DCHECK(self.currentBVC);
-  [self.currentBVC dismissViewControllerAnimated:flag completion:completion];
-}
-
-- (UIViewController*)childViewControllerForStatusBarHidden {
-  return self.currentBVC;
-}
-
-- (UIViewController*)childViewControllerForStatusBarStyle {
-  return self.currentBVC;
-}
-
-- (BOOL)shouldAutorotate {
-  return self.currentBVC ? [self.currentBVC shouldAutorotate]
-                         : [super shouldAutorotate];
-}
-
-@end
-
 @interface MainPresentingViewController ()<
     UIViewControllerTransitioningDelegate>
 
 @property(nonatomic, strong) BVCContainerViewController* bvcContainer;
 
+// A copy of the launch screen view used to mask flicker at startup.
+@property(nonatomic, strong) UIView* launchScreen;
+
 // Redeclared as readwrite.
-@property(nonatomic, readwrite, weak)
-    UIViewController<TabSwitcher>* tabSwitcher;
+@property(nonatomic, readwrite, weak) id<TabSwitcher> tabSwitcher;
 
 @end
 
@@ -105,10 +33,24 @@
 @synthesize animationsDisabledForTesting = _animationsDisabledForTesting;
 @synthesize tabSwitcher = _tabSwitcher;
 @synthesize bvcContainer = _bvcContainer;
+@synthesize launchScreen = _launchScreen;
 
 - (void)viewDidLoad {
   // Set a white background color to avoid flickers of black during startup.
   self.view.backgroundColor = [UIColor whiteColor];
+  // In some circumstances (such as when uploading a crash report), there may
+  // be no other view controller visible for a few seconds. To prevent a
+  // white screen from appearing in that case, the startup view is added to
+  // the view hierarchy until another view controller is added.
+  NSBundle* mainBundle = base::mac::FrameworkBundle();
+  NSArray* topObjects =
+      [mainBundle loadNibNamed:@"LaunchScreen" owner:self options:nil];
+  UIViewController* launchScreenController =
+      base::mac::ObjCCastStrict<UIViewController>([topObjects lastObject]);
+  self.launchScreen = launchScreenController.view;
+  self.launchScreen.userInteractionEnabled = NO;
+  self.launchScreen.frame = self.view.bounds;
+  [self.view addSubview:self.launchScreen];
 }
 
 - (UIViewController*)activeViewController {
@@ -118,41 +60,61 @@
     return self.bvcContainer.currentBVC;
   } else if (self.tabSwitcher) {
     DCHECK_EQ(self.tabSwitcher, [self.childViewControllers firstObject]);
-    return self.tabSwitcher;
+    return [self.tabSwitcher viewController];
   }
 
   return nil;
 }
 
-- (void)showTabSwitcher:(UIViewController<TabSwitcher>*)tabSwitcher
+- (UIViewController*)viewController {
+  return self;
+}
+
+- (void)showTabSwitcher:(id<TabSwitcher>)tabSwitcher
              completion:(ProceduralBlock)completion {
   DCHECK(tabSwitcher);
+
+  // Before any child view controller would be added, remove the launch screen.
+  if (self.launchScreen) {
+    [self.launchScreen removeFromSuperview];
+    self.launchScreen = nil;
+  }
 
   // Don't remove and re-add the tabSwitcher if it hasn't changed.
   if (self.tabSwitcher != tabSwitcher) {
     // Remove any existing tab switchers first.
     if (self.tabSwitcher) {
-      [self.tabSwitcher willMoveToParentViewController:nil];
-      [self.tabSwitcher.view removeFromSuperview];
-      [self.tabSwitcher removeFromParentViewController];
+      UIViewController* tabSwitcherViewController =
+          [tabSwitcher viewController];
+      [tabSwitcherViewController willMoveToParentViewController:nil];
+      [tabSwitcherViewController.view removeFromSuperview];
+      [tabSwitcherViewController removeFromParentViewController];
     }
 
+    // Reset the background color of the container view.  The tab switcher does
+    // not draw anything below the status bar, so those pixels fall through to
+    // display the container's background.
+    self.view.backgroundColor = [UIColor clearColor];
+
+    UIViewController* tabSwitcherViewController = [tabSwitcher viewController];
     // Add the new tab switcher as a child VC.
-    [self addChildViewController:tabSwitcher];
-    tabSwitcher.view.translatesAutoresizingMaskIntoConstraints = NO;
-    [self.view addSubview:tabSwitcher.view];
+    [self addChildViewController:tabSwitcherViewController];
+    tabSwitcherViewController.view.translatesAutoresizingMaskIntoConstraints =
+        NO;
+    [self.view addSubview:tabSwitcherViewController.view];
 
     [NSLayoutConstraint activateConstraints:@[
-      [tabSwitcher.view.topAnchor constraintEqualToAnchor:self.view.topAnchor],
-      [tabSwitcher.view.bottomAnchor
+      [tabSwitcherViewController.view.topAnchor
+          constraintEqualToAnchor:self.view.topAnchor],
+      [tabSwitcherViewController.view.bottomAnchor
           constraintEqualToAnchor:self.view.bottomAnchor],
-      [tabSwitcher.view.leadingAnchor
+      [tabSwitcherViewController.view.leadingAnchor
           constraintEqualToAnchor:self.view.leadingAnchor],
-      [tabSwitcher.view.trailingAnchor
+      [tabSwitcherViewController.view.trailingAnchor
           constraintEqualToAnchor:self.view.trailingAnchor],
     ]];
 
-    [tabSwitcher didMoveToParentViewController:self];
+    [tabSwitcherViewController didMoveToParentViewController:self];
     self.tabSwitcher = tabSwitcher;
   }
 

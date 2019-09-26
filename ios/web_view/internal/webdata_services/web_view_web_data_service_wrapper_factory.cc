@@ -8,7 +8,6 @@
 #include "base/callback.h"
 #include "base/files/file_path.h"
 #include "base/logging.h"
-#include "base/memory/ptr_util.h"
 #include "base/memory/singleton.h"
 #include "components/autofill/core/browser/webdata/autofill_webdata_service.h"
 #include "components/keyed_service/core/service_access_type.h"
@@ -21,13 +20,6 @@
 #include "ios/web_view/internal/web_view_browser_state.h"
 
 namespace ios_web_view {
-namespace {
-
-void DoNothingOnErrorCallback(WebDataServiceWrapper::ErrorType error_type,
-                              sql::InitStatus status,
-                              const std::string& diagnostics) {}
-
-}  // namespace
 
 // static
 WebDataServiceWrapper* WebViewWebDataServiceWrapperFactory::GetForBrowserState(
@@ -76,11 +68,11 @@ std::unique_ptr<KeyedService>
 WebViewWebDataServiceWrapperFactory::BuildServiceInstanceFor(
     web::BrowserState* context) const {
   const base::FilePath& browser_state_path = context->GetStatePath();
-  return base::MakeUnique<WebDataServiceWrapper>(
+  return std::make_unique<WebDataServiceWrapper>(
       browser_state_path,
       ApplicationContext::GetInstance()->GetApplicationLocale(),
       web::WebThread::GetTaskRunnerForThread(web::WebThread::UI),
-      base::Callback<void(syncer::ModelType)>(), &DoNothingOnErrorCallback);
+      base::Callback<void(syncer::ModelType)>(), base::DoNothing());
 }
 
 bool WebViewWebDataServiceWrapperFactory::ServiceIsNULLWhileTesting() const {

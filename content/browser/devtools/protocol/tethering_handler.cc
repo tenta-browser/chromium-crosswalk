@@ -6,7 +6,6 @@
 
 #include <map>
 
-#include "base/memory/ptr_util.h"
 #include "content/public/browser/browser_thread.h"
 #include "net/base/io_buffer.h"
 #include "net/base/ip_address.h"
@@ -15,6 +14,7 @@
 #include "net/socket/server_socket.h"
 #include "net/socket/stream_socket.h"
 #include "net/socket/tcp_server_socket.h"
+#include "net/traffic_annotation/network_traffic_annotation.h"
 
 namespace content {
 namespace protocol {
@@ -29,6 +29,35 @@ const int kSocketPumpBufferSize = 16 * 1024;
 
 const int kMinTetheringPort = 1024;
 const int kMaxTetheringPort = 65535;
+
+net::NetworkTrafficAnnotationTag kTrafficAnnotation =
+    net::DefineNetworkTrafficAnnotation("tethering_handler_socket", R"(
+        semantics {
+          sender: "Tethering Handler"
+          description:
+            "For remote debugging local Android device, one might need to "
+            "enable reverse tethering for forwarding local ports from the "
+            "device to some ports on the host. This socket pumps the traffic "
+            "between the two."
+          trigger:
+            "A user connects to an Android device using remote debugging and "
+            "enables port forwarding on chrome://inspect."
+          data: "Any data requested from the local port on Android device."
+          destination: OTHER
+          destination_other:
+            "Data is sent to the target that user selects in chrome://inspect."
+        }
+        policy {
+          cookies_allowed: YES
+          cookies_store: "user"
+          setting:
+            "This request cannot be disabled in settings, however it would be "
+            "sent only if user enables port fowarding in chrome://inspect and "
+            "USB debugging in the Android device system settings."
+          policy_exception_justification:
+            "Not implemented, policies defined on Android device will apply "
+            "here."
+        })");
 
 using CreateServerSocketCallback =
     base::Callback<std::unique_ptr<net::ServerSocket>(std::string*)>;
@@ -99,13 +128,10 @@ class SocketPump {
         new net::DrainableIOBuffer(buffer.get(), total);
 
     ++pending_writes_;
-    result = to->Write(drainable.get(),
-                       total,
+    result = to->Write(drainable.get(), total,
                        base::Bind(&SocketPump::OnWritten,
-                                  base::Unretained(this),
-                                  drainable,
-                                  from,
-                                  to));
+                                  base::Unretained(this), drainable, from, to),
+                       kTrafficAnnotation);
     if (result != net::ERR_IO_PENDING)
       OnWritten(drainable, from, to, result);
   }
@@ -123,13 +149,11 @@ class SocketPump {
     drainable->DidConsume(result);
     if (drainable->BytesRemaining() > 0) {
       ++pending_writes_;
-      result = to->Write(drainable.get(),
-                         drainable->BytesRemaining(),
-                         base::Bind(&SocketPump::OnWritten,
-                                    base::Unretained(this),
-                                    drainable,
-                                    from,
-                                    to));
+      result =
+          to->Write(drainable.get(), drainable->BytesRemaining(),
+                    base::Bind(&SocketPump::OnWritten, base::Unretained(this),
+                               drainable, from, to),
+                    kTrafficAnnotation);
       if (result != net::ERR_IO_PENDING)
         OnWritten(drainable, from, to, result);
       return;
@@ -262,8 +286,7 @@ void TetheringHandler::TetheringImpl::Bind(
   if (bound_sockets_.find(port) != bound_sockets_.end()) {
     BrowserThread::PostTask(
         BrowserThread::UI, FROM_HERE,
-        base::BindOnce(&BindCallback::sendFailure,
-                       base::Passed(std::move(callback)),
+        base::BindOnce(&BindCallback::sendFailure, std::move(callback),
                        Response::Error("Port already bound")));
     return;
   }
@@ -271,20 +294,19 @@ void TetheringHandler::TetheringImpl::Bind(
   BoundSocket::AcceptedCallback accepted = base::Bind(
       &TetheringHandler::TetheringImpl::Accepted, base::Unretained(this));
   std::unique_ptr<BoundSocket> bound_socket =
-      std::make_unique<BoundSocket>(accepted, socket_callback_);
+      std::make_unique<BoundSocket>(std::move(accepted), socket_callback_);
   if (!bound_socket->Listen(port)) {
     BrowserThread::PostTask(
         BrowserThread::UI, FROM_HERE,
-        base::BindOnce(&BindCallback::sendFailure,
-                       base::Passed(std::move(callback)),
+        base::BindOnce(&BindCallback::sendFailure, std::move(callback),
                        Response::Error("Could not bind port")));
     return;
   }
 
   bound_sockets_[port] = std::move(bound_socket);
-  BrowserThread::PostTask(BrowserThread::UI, FROM_HERE,
-                          base::BindOnce(&BindCallback::sendSuccess,
-                                         base::Passed(std::move(callback))));
+  BrowserThread::PostTask(
+      BrowserThread::UI, FROM_HERE,
+      base::BindOnce(&BindCallback::sendSuccess, std::move(callback)));
 }
 
 void TetheringHandler::TetheringImpl::Unbind(
@@ -293,16 +315,15 @@ void TetheringHandler::TetheringImpl::Unbind(
   if (it == bound_sockets_.end()) {
     BrowserThread::PostTask(
         BrowserThread::UI, FROM_HERE,
-        base::BindOnce(&UnbindCallback::sendFailure,
-                       base::Passed(std::move(callback)),
+        base::BindOnce(&UnbindCallback::sendFailure, std::move(callback),
                        Response::InvalidParams("Port is not bound")));
     return;
   }
 
   bound_sockets_.erase(it);
-  BrowserThread::PostTask(BrowserThread::UI, FROM_HERE,
-                          base::BindOnce(&UnbindCallback::sendSuccess,
-                                         base::Passed(std::move(callback))));
+  BrowserThread::PostTask(
+      BrowserThread::UI, FROM_HERE,
+      base::BindOnce(&UnbindCallback::sendSuccess, std::move(callback)));
 }
 
 void TetheringHandler::TetheringImpl::Accepted(uint16_t port,
@@ -370,7 +391,7 @@ void TetheringHandler::Bind(
   DCHECK(impl_);
   task_runner_->PostTask(
       FROM_HERE, base::BindOnce(&TetheringImpl::Bind, base::Unretained(impl_),
-                                port, base::Passed(std::move(callback))));
+                                port, std::move(callback)));
 }
 
 void TetheringHandler::Unbind(
@@ -384,7 +405,7 @@ void TetheringHandler::Unbind(
   DCHECK(impl_);
   task_runner_->PostTask(
       FROM_HERE, base::BindOnce(&TetheringImpl::Unbind, base::Unretained(impl_),
-                                port, base::Passed(std::move(callback))));
+                                port, std::move(callback)));
 }
 
 }  // namespace protocol

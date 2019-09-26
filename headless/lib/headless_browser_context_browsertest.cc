@@ -5,7 +5,6 @@
 #include <memory>
 
 #include "base/files/scoped_temp_dir.h"
-#include "base/memory/ptr_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/threading/thread_restrictions.h"
 #include "content/public/browser/render_view_host.h"
@@ -95,8 +94,9 @@ class HeadlessBrowserContextIsolationTest
 
     devtools_client_->GetRuntime()->Evaluate(
         base::StringPrintf("document.cookie = '%s'", kMainPageCookie),
-        base::Bind(&HeadlessBrowserContextIsolationTest::OnFirstSetCookieResult,
-                   base::Unretained(this)));
+        base::BindOnce(
+            &HeadlessBrowserContextIsolationTest::OnFirstSetCookieResult,
+            base::Unretained(this)));
   }
 
   void OnFirstSetCookieResult(std::unique_ptr<runtime::EvaluateResult> result) {
@@ -104,7 +104,7 @@ class HeadlessBrowserContextIsolationTest
 
     devtools_client2_->GetRuntime()->Evaluate(
         base::StringPrintf("document.cookie = '%s'", kIsolatedPageCookie),
-        base::Bind(
+        base::BindOnce(
             &HeadlessBrowserContextIsolationTest::OnSecondSetCookieResult,
             base::Unretained(this)));
   }
@@ -116,8 +116,9 @@ class HeadlessBrowserContextIsolationTest
 
     devtools_client_->GetRuntime()->Evaluate(
         "document.cookie",
-        base::Bind(&HeadlessBrowserContextIsolationTest::OnFirstGetCookieResult,
-                   base::Unretained(this)));
+        base::BindOnce(
+            &HeadlessBrowserContextIsolationTest::OnFirstGetCookieResult,
+            base::Unretained(this)));
   }
 
   void OnFirstGetCookieResult(std::unique_ptr<runtime::EvaluateResult> result) {
@@ -125,7 +126,7 @@ class HeadlessBrowserContextIsolationTest
 
     devtools_client2_->GetRuntime()->Evaluate(
         "document.cookie",
-        base::Bind(
+        base::BindOnce(
             &HeadlessBrowserContextIsolationTest::OnSecondGetCookieResult,
             base::Unretained(this)));
   }
@@ -157,7 +158,7 @@ IN_PROC_BROWSER_TEST_F(HeadlessBrowserTest, ContextProtocolHandler) {
   const std::string kResponseBody = "<p>HTTP response body</p>";
   ProtocolHandlerMap protocol_handlers;
   protocol_handlers[url::kHttpScheme] =
-      base::MakeUnique<TestProtocolHandler>(kResponseBody);
+      std::make_unique<TestProtocolHandler>(kResponseBody);
 
   // Load a page which doesn't actually exist, but which is fetched by our
   // custom protocol handler.

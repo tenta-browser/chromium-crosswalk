@@ -3,28 +3,39 @@
     {
       "name": "LayoutView #document",
       "bounds": [800, 600],
+      "drawsContent": false,
+      "backgroundColor": "#FFFFFF"
+    },
+    {
+      "name": "Scrolling Layer",
+      "bounds": [800, 600],
+      "drawsContent": false
+    },
+    {
+      "name": "Scrolling Contents Layer",
+      "bounds": [800, 600],
       "contentsOpaque": true,
       "backgroundColor": "#FFFFFF",
       "paintInvalidations": [
         {
-          "object": "LayoutBlockFlow DIV",
-          "rect": [146, 11, 125, 13],
-          "reason": "geometry"
+          "object": "InlineTextBox 'PASSED'",
+          "rect": [146, 11, 43, 14],
+          "reason": "appeared"
         },
         {
-          "object": "LayoutBlockFlow DIV",
-          "rect": [11, 11, 125, 13],
-          "reason": "geometry"
+          "object": "InlineTextBox 'PASSED'",
+          "rect": [11, 11, 43, 14],
+          "reason": "appeared"
         },
         {
-          "object": "LayoutText #text",
-          "rect": [146, 11, 43, 13],
-          "reason": "full"
+          "object": "InlineTextBox 'FAILED'",
+          "rect": [146, 11, 38, 14],
+          "reason": "disappeared"
         },
         {
-          "object": "LayoutText #text",
-          "rect": [11, 11, 43, 13],
-          "reason": "full"
+          "object": "InlineTextBox 'FAILED'",
+          "rect": [11, 11, 38, 14],
+          "reason": "disappeared"
         }
       ]
     }

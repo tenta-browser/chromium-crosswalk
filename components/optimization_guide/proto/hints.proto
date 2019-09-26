@@ -25,6 +25,15 @@ enum KeyRepresentation {
 message Optimization {
   // The type of optimization the hint applies to.
   optional OptimizationType optimization_type = 1;
+  // A percent value to inflate the number of received bytes by for the purposes
+  // of data savings calculations in the client.
+  //
+  // If this value is set to 0, the client should use its configured default.
+  //
+  // Ex: If the received bytes is 100 and the inflation_percent is 30, the
+  // inflated bytes calculated by the client will be 30 in order to have a total
+  // consumed bytes value of 130.
+  optional int64 inflation_percent = 2;
 }
 
 message Hint {
@@ -47,7 +56,7 @@ message Configuration {
   // Note, this list may contain multiple hints that apply to a page. For
   // example, if there are hints for (HOST_SUFFIX,cnn.com) and
   // (HOST_SUFFIX,sports.cnn.com), these may both apply to sports.cnn.com/foo.
-  // It is expected for the client to match a page to the hint with the
-  // finest granularity.
+  //
+  // It is expected for the client to use the first match in this list.
   repeated Hint hints = 1;
 }

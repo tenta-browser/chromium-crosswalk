@@ -268,7 +268,7 @@ IN_PROC_BROWSER_TEST_F(TaskManagerBrowserTest, KillTab) {
   // Killing the tab via task manager should remove the row.
   int tab = FindResourceIndex(MatchTab("title1.html"));
   ASSERT_NE(-1, tab);
-  ASSERT_NE(-1, model()->GetTabId(tab));
+  ASSERT_TRUE(model()->GetTabId(tab).is_valid());
   model()->Kill(tab);
   ASSERT_NO_FATAL_FAILURE(WaitForTaskManagerRows(0, MatchTab("title1.html")));
   ASSERT_NO_FATAL_FAILURE(WaitForTaskManagerRows(1, MatchAnyTab()));
@@ -365,11 +365,11 @@ IN_PROC_BROWSER_TEST_F(TaskManagerBrowserTest, NoticeExtensionTabChanges) {
 
   int extension_tab = FindResourceIndex(MatchExtension("Foobar"));
   ASSERT_NE(-1, extension_tab);
-  ASSERT_NE(-1, model()->GetTabId(extension_tab));
+  ASSERT_TRUE(model()->GetTabId(extension_tab).is_valid());
 
   int background_page = FindResourceIndex(MatchExtension("My extension 1"));
   ASSERT_NE(-1, background_page);
-  ASSERT_EQ(-1, model()->GetTabId(background_page));
+  ASSERT_FALSE(model()->GetTabId(background_page).is_valid());
 }
 
 IN_PROC_BROWSER_TEST_F(TaskManagerBrowserTest, NoticeExtensionTab) {
@@ -395,11 +395,11 @@ IN_PROC_BROWSER_TEST_F(TaskManagerBrowserTest, NoticeExtensionTab) {
 
   int extension_tab = FindResourceIndex(MatchExtension("Foobar"));
   ASSERT_NE(-1, extension_tab);
-  ASSERT_NE(-1, model()->GetTabId(extension_tab));
+  ASSERT_TRUE(model()->GetTabId(extension_tab).is_valid());
 
   int background_page = FindResourceIndex(MatchExtension("My extension 1"));
   ASSERT_NE(-1, background_page);
-  ASSERT_EQ(-1, model()->GetTabId(background_page));
+  ASSERT_FALSE(model()->GetTabId(background_page).is_valid());
 }
 
 IN_PROC_BROWSER_TEST_F(TaskManagerBrowserTest, NoticeAppTabChanges) {
@@ -432,7 +432,7 @@ IN_PROC_BROWSER_TEST_F(TaskManagerBrowserTest, NoticeAppTabChanges) {
   // a tab contents and an extension.
   int app_tab = FindResourceIndex(MatchApp("Packaged App Test"));
   ASSERT_NE(-1, app_tab);
-  ASSERT_NE(-1, model()->GetTabId(app_tab));
+  ASSERT_TRUE(model()->GetTabId(app_tab).is_valid());
   ASSERT_EQ(2, browser()->tab_strip_model()->count());
 
   // Unload extension to make sure the tab goes away.
@@ -469,7 +469,7 @@ IN_PROC_BROWSER_TEST_F(TaskManagerBrowserTest, NoticeAppTab) {
   // a tab contents and an extension.
   int app_tab = FindResourceIndex(MatchApp("Packaged App Test"));
   ASSERT_NE(-1, app_tab);
-  ASSERT_NE(-1, model()->GetTabId(app_tab));
+  ASSERT_TRUE(model()->GetTabId(app_tab).is_valid());
 }
 
 IN_PROC_BROWSER_TEST_F(TaskManagerBrowserTest, NoticeHostedAppTabChanges) {
@@ -698,12 +698,8 @@ IN_PROC_BROWSER_TEST_F(TaskManagerBrowserTest, SentDataObserved) {
       ->GetActiveWebContents()
       ->GetMainFrame()
       ->ExecuteJavaScriptForTests(base::UTF8ToUTF16(test_js));
-  // TODO(cburn): The assertion below currently assumes that the rate
-  // contribution of the entire 16MB upload arrives in a single refresh cycle.
-  // That's true now because it's only reported when the transaction completes,
-  // but if that changes in the future, this assertion may need to change.
   ASSERT_NO_FATAL_FAILURE(WaitForTaskManagerStatToExceed(
-      MatchTab("network use"), ColumnSpecifier::NETWORK_USE, 16000000));
+      MatchTab("network use"), ColumnSpecifier::TOTAL_NETWORK_USE, 16000000));
 }
 
 IN_PROC_BROWSER_TEST_F(TaskManagerBrowserTest, TotalSentDataObserved) {
@@ -750,14 +746,7 @@ IN_PROC_BROWSER_TEST_F(TaskManagerBrowserTest, TotalSentDataObserved) {
 }
 
 // Checks that task manager counts idle wakeups.
-// Flakily fails on Mac: http://crbug.com/639939
-#if defined(OS_MACOSX)
-#define MAYBE_IdleWakeups DISABLED_IdleWakeups
-#else
-#define MAYBE_IdleWakeups IdleWakeups
-#endif  // defined(OS_MACOSX)
-IN_PROC_BROWSER_TEST_F(TaskManagerBrowserTest,
-                       MAYBE_IdleWakeups) {
+IN_PROC_BROWSER_TEST_F(TaskManagerBrowserTest, IdleWakeups) {
   ShowTaskManager();
   model()->ToggleColumnVisibility(ColumnSpecifier::IDLE_WAKEUPS);
 
@@ -775,10 +764,17 @@ IN_PROC_BROWSER_TEST_F(TaskManagerBrowserTest,
       browser()->tab_strip_model()->GetActiveWebContents(), test_js, &ok));
   ASSERT_EQ("okay", ok);
 
-  // The script above should trigger a lot of idle wakeups - up to 1000 per
-  // second. Let's make sure we get at least 100 (in case the test runs slow).
+// The script above should trigger a lot of idle wakeups - up to 1000 per
+// second. Let's make sure we get at least 100 (in case the test runs slow).
+// On Mac, set a lower threshold because Chrome Mac generates fewer wakes.
+#if defined(OS_MACOSX)
+  const int kMinExpectedWakeCount = 50;
+#else
+  const int kMinExpectedWakeCount = 100;
+#endif  // defined(OS_MACOSX)
   ASSERT_NO_FATAL_FAILURE(WaitForTaskManagerStatToExceed(
-      MatchTab("title1.html"), ColumnSpecifier::IDLE_WAKEUPS, 100));
+      MatchTab("title1.html"), ColumnSpecifier::IDLE_WAKEUPS,
+      kMinExpectedWakeCount));
   ASSERT_NO_FATAL_FAILURE(WaitForTaskManagerRows(1, MatchAnyTab()));
   ASSERT_NO_FATAL_FAILURE(WaitForTaskManagerRows(1, MatchTab("title1.html")));
 }
@@ -975,7 +971,8 @@ IN_PROC_BROWSER_TEST_P(TaskManagerOOPIFBrowserTest, SubframeHistoryNavigation) {
       MatchSubframe("http://e.com/"), ColumnSpecifier::MEMORY_FOOTPRINT, 1000));
 }
 
-IN_PROC_BROWSER_TEST_P(TaskManagerOOPIFBrowserTest, KillSubframe) {
+// Flaky, see https://crbug.com/797860.
+IN_PROC_BROWSER_TEST_P(TaskManagerOOPIFBrowserTest, DISABLED_KillSubframe) {
   ShowTaskManager();
 
   content::TestNavigationObserver navigation_observer(
@@ -1014,7 +1011,7 @@ IN_PROC_BROWSER_TEST_P(TaskManagerOOPIFBrowserTest, KillSubframe) {
 
     int subframe_b = FindResourceIndex(MatchSubframe("http://b.com/"));
     ASSERT_NE(-1, subframe_b);
-    ASSERT_NE(-1, model()->GetTabId(subframe_b));
+    ASSERT_TRUE(model()->GetTabId(subframe_b).is_valid());
     model()->Kill(subframe_b);
 
     ASSERT_NO_FATAL_FAILURE(
@@ -1186,10 +1183,12 @@ IN_PROC_BROWSER_TEST_P(TaskManagerOOPIFBrowserTest,
 
   // Navigate the b.com frame back to a.com. It is no longer a cross-site iframe
   navigation_observer.Wait();
+  const std::string r_script =
+      R"( document.getElementById('frame1').src='/title1.html';
+          document.title='aac'; )";
   ASSERT_TRUE(content::ExecuteScript(
       browser()->tab_strip_model()->GetActiveWebContents()->GetMainFrame(),
-      R"( document.getElementById('frame1').src='/title1.html';
-          document.title='aac'; )"));
+      r_script));
   ASSERT_NO_FATAL_FAILURE(WaitForTaskManagerRows(1, MatchTab("aac")));
   ASSERT_NO_FATAL_FAILURE(WaitForTaskManagerRows(1, MatchAnyTab()));
   if (!ShouldExpectSubframes()) {
@@ -1324,29 +1323,38 @@ IN_PROC_BROWSER_TEST_P(TaskManagerOOPIFBrowserTest, OrderingOfDependentRows) {
   // random e.g. zygote or gpu activity).
   index = FindResourceIndex(MatchTab("Cross-site iframe factory"));
 
-  // Tab 2's rows should immediately follow tab 1.
-  int tab2_start = index + static_cast<int>(subframe_offsets.size()) + 1;
-  int tab2_count = ShouldExpectSubframes() ? 4 : 1;
-  ASSERT_LE(tab2_start + tab2_count, model()->GetRowCount());
-
+  // All of Tab 2's subframes will reuse Tab 1's existing processes for
+  // corresponding sites.  Tab 2's d.com main frame row should then appear
+  // after all the subframe processes.
+  int tab2_subframe_count = ShouldExpectSubframes() ? 3 : 0;
+  int tab2_main_frame_index = index +
+                              static_cast<int>(subframe_offsets.size()) +
+                              tab2_subframe_count + 1;
   EXPECT_EQ("Tab: Cross-site iframe factory",
-            base::UTF16ToUTF8(model()->GetRowTitle(tab2_start)));
-  if (ShouldExpectSubframes()) {
-    // The relative ordering of tab1's subframe rows shall be the same as what
-    // was observed previously.
-    ASSERT_EQ(subframe_offsets[0],
-              FindResourceIndex(MatchSubframe("http://b.com/")) - index);
-    ASSERT_EQ(subframe_offsets[1],
-              FindResourceIndex(MatchSubframe("http://c.com/")) - index);
-    ASSERT_EQ(subframe_offsets[2],
-              FindResourceIndex(MatchSubframe("http://d.com/")) - index);
+            base::UTF16ToUTF8(model()->GetRowTitle(tab2_main_frame_index)));
 
-    // Because the subframes for tab 2 are nested, their order is deterministic.
-    EXPECT_EQ("Subframe: http://a.com/",
-              base::UTF16ToUTF8(model()->GetRowTitle(tab2_start + 1)));
-    EXPECT_EQ("Subframe: http://c.com/",
-              base::UTF16ToUTF8(model()->GetRowTitle(tab2_start + 2)));
+  if (ShouldExpectSubframes()) {
+    // Tab 2's a.com subframe should share Tab 1's main frame process and go
+    // directly below it.
+    EXPECT_EQ(index + 1, FindResourceIndex(MatchSubframe("http://a.com/")));
+
+    // The other tab 2 subframes (b.com and c.com) should join existing
+    // subframe processes from tab 1.  Check that the b.com and c.com subframe
+    // processes now have two rows each.
+    int subframe_b_index = FindResourceIndex(MatchSubframe("http://b.com/"));
+    int subframe_c_index = FindResourceIndex(MatchSubframe("http://c.com/"));
+    int subframe_d_index = FindResourceIndex(MatchSubframe("http://d.com/"));
     EXPECT_EQ("Subframe: http://b.com/",
-              base::UTF16ToUTF8(model()->GetRowTitle(tab2_start + 3)));
+              base::UTF16ToUTF8(model()->GetRowTitle(subframe_b_index + 1)));
+    EXPECT_EQ("Subframe: http://c.com/",
+              base::UTF16ToUTF8(model()->GetRowTitle(subframe_c_index + 1)));
+
+    // The subframe processes should preserve their relative ordering.
+    EXPECT_EQ(subframe_offsets[0] < subframe_offsets[1],
+              subframe_b_index < subframe_c_index);
+    EXPECT_EQ(subframe_offsets[1] < subframe_offsets[2],
+              subframe_c_index < subframe_d_index);
+    EXPECT_EQ(subframe_offsets[0] < subframe_offsets[2],
+              subframe_b_index < subframe_d_index);
   }
 }

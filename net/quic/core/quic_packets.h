@@ -10,7 +10,6 @@
 #include <list>
 #include <memory>
 #include <ostream>
-#include <string>
 #include <utility>
 #include <vector>
 
@@ -27,6 +26,7 @@
 #include "net/quic/platform/api/quic_export.h"
 #include "net/quic/platform/api/quic_socket_address.h"
 #include "net/quic/platform/api/quic_string_piece.h"
+#include "net/quic/platform/api/quic_uint128.h"
 
 namespace net {
 
@@ -72,7 +72,7 @@ struct QUIC_EXPORT_PRIVATE QuicPacketHeader {
   bool reset_flag;
   bool version_flag;
   QuicPacketNumberLength packet_number_length;
-  QuicTransportVersion version;
+  ParsedQuicVersion version;
   // nonce contains an optional, 32-byte nonce value. If not included in the
   // packet, |nonce| will be empty.
   DiversificationNonce* nonce;
@@ -95,7 +95,18 @@ struct QUIC_EXPORT_PRIVATE QuicVersionNegotiationPacket {
   ~QuicVersionNegotiationPacket();
 
   QuicConnectionId connection_id;
-  QuicTransportVersionVector versions;
+  ParsedQuicVersionVector versions;
+};
+
+struct QUIC_EXPORT_PRIVATE QuicIetfStatelessResetPacket {
+  QuicIetfStatelessResetPacket();
+  QuicIetfStatelessResetPacket(const QuicPacketHeader& header,
+                               QuicUint128 token);
+  QuicIetfStatelessResetPacket(const QuicIetfStatelessResetPacket& other);
+  ~QuicIetfStatelessResetPacket();
+
+  QuicPacketHeader header;
+  QuicUint128 stateless_reset_token;
 };
 
 class QUIC_EXPORT_PRIVATE QuicData {
@@ -246,6 +257,21 @@ QUIC_EXPORT_PRIVATE void ClearSerializedPacket(
 // Allocates a new char[] of size |packet.encrypted_length| and copies in
 // |packet.encrypted_buffer|.
 QUIC_EXPORT_PRIVATE char* CopyBuffer(const SerializedPacket& packet);
+
+struct QUIC_EXPORT_PRIVATE SerializedPacketDeleter {
+  void operator()(SerializedPacket* packet) {
+    if (packet->encrypted_buffer != nullptr) {
+      delete[] packet->encrypted_buffer;
+    }
+    delete packet;
+  }
+};
+
+// On destruction, OwningSerializedPacketPointer deletes a packet's (on-heap)
+// encrypted_buffer before deleting the (also on-heap) packet itself.
+// TODO(wub): Maybe delete retransmittable_frames too?
+typedef std::unique_ptr<SerializedPacket, SerializedPacketDeleter>
+    OwningSerializedPacketPointer;
 
 }  // namespace net
 

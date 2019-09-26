@@ -24,14 +24,14 @@
 #include "content/public/renderer/render_frame.h"
 #include "content/public/renderer/render_view.h"
 #include "google_apis/gaia/gaia_urls.h"
-#include "third_party/WebKit/common/associated_interfaces/associated_interface_provider.h"
-#include "third_party/WebKit/public/platform/WebSecurityOrigin.h"
-#include "third_party/WebKit/public/platform/WebVector.h"
-#include "third_party/WebKit/public/web/WebDocument.h"
-#include "third_party/WebKit/public/web/WebFormElement.h"
-#include "third_party/WebKit/public/web/WebInputElement.h"
-#include "third_party/WebKit/public/web/WebLocalFrame.h"
-#include "third_party/WebKit/public/web/WebView.h"
+#include "third_party/blink/public/common/associated_interfaces/associated_interface_provider.h"
+#include "third_party/blink/public/platform/web_security_origin.h"
+#include "third_party/blink/public/platform/web_vector.h"
+#include "third_party/blink/public/web/web_document.h"
+#include "third_party/blink/public/web/web_form_element.h"
+#include "third_party/blink/public/web/web_input_element.h"
+#include "third_party/blink/public/web/web_local_frame.h"
+#include "third_party/blink/public/web/web_view.h"
 #include "ui/gfx/geometry/rect.h"
 
 namespace autofill {
@@ -49,7 +49,7 @@ bool GetAccountCreationPasswordFields(
     const blink::WebInputElement* input_element =
         ToWebInputElement(&control_element);
     if (input_element && input_element->IsTextField() &&
-        input_element->IsPasswordField()) {
+        input_element->IsPasswordFieldForAutofill()) {
       passwords->push_back(*input_element);
     }
   }
@@ -108,7 +108,8 @@ std::vector<blink::WebInputElement> FindPasswordElementsForGeneration(
        iter != all_password_elements.end(); ++iter) {
     const blink::WebInputElement& input = *iter;
     FieldSignature signature = CalculateFieldSignatureByNameAndType(
-        input.NameForAutofill().Utf16(), input.FormControlType().Utf8());
+        input.NameForAutofill().Utf16(),
+        input.FormControlTypeForAutofill().Utf8());
     if (signature == generation_data.field_signature) {
       generation_field_iter = iter;
     } else if (generation_data.confirmation_field_signature &&
@@ -163,6 +164,9 @@ PasswordGenerationAgent::PasswordGenerationAgent(
       editing_popup_shown_(false),
       enabled_(password_generation::IsPasswordGenerationEnabled()),
       form_classifier_enabled_(false),
+      mark_generation_element_(
+          base::CommandLine::ForCurrentProcess()->HasSwitch(
+              switches::kShowAutofillSignatures)),
       password_agent_(password_agent),
       binding_(this) {
   LogBoolean(Logger::STRING_GENERATION_RENDERER_ENABLED, enabled_);
@@ -175,6 +179,14 @@ PasswordGenerationAgent::~PasswordGenerationAgent() {}
 void PasswordGenerationAgent::BindRequest(
     mojom::PasswordGenerationAgentRequest request) {
   binding_.Bind(std::move(request));
+}
+
+void PasswordGenerationAgent::DidCommitProvisionalLoad(
+    bool /*is_new_navigation*/, bool is_same_document_navigation) {
+  if (is_same_document_navigation)
+    return;
+  generation_element_.Reset();
+  last_focused_password_element_.Reset();
 }
 
 void PasswordGenerationAgent::DidFinishDocumentLoad() {
@@ -455,6 +467,8 @@ void PasswordGenerationAgent::DetermineGenerationElement() {
     generation_form_data_.reset(new AccountCreationFormData(
         possible_form_data.form, std::move(password_elements)));
     generation_element_ = generation_form_data_->password_elements[0];
+    if (mark_generation_element_)
+      generation_element_.SetAttribute("password_creation_field", "1");
     generation_element_.SetAttribute("aria-autocomplete", "list");
     password_generation::LogPasswordGenerationEvent(
         password_generation::GENERATION_AVAILABLE);
@@ -497,7 +511,8 @@ bool PasswordGenerationAgent::SetUpUserTriggeredGeneration() {
           0, /* form_signature */
           CalculateFieldSignatureByNameAndType(
               last_focused_password_element_.NameForAutofill().Utf16(),
-              last_focused_password_element_.FormControlType().Utf8())));
+              last_focused_password_element_.FormControlTypeForAutofill()
+                  .Utf8())));
   generation_form_data_.reset(new AccountCreationFormData(
       make_linked_ptr(password_form.release()), password_elements));
   is_manually_triggered_ = true;
@@ -517,7 +532,7 @@ bool PasswordGenerationAgent::FocusedNodeHasChanged(
     return false;
 
   const blink::WebInputElement* element = ToWebInputElement(&web_element);
-  if (element && element->IsPasswordField())
+  if (element && element->IsPasswordFieldForAutofill())
     last_focused_password_element_ = *element;
   if (!element || *element != generation_element_)
     return false;

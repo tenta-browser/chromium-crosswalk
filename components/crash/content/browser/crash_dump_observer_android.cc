@@ -9,7 +9,6 @@
 #include "base/bind.h"
 #include "base/logging.h"
 #include "base/stl_util.h"
-#include "base/threading/sequenced_worker_pool.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/child_process_data.h"
 #include "content/public/browser/notification_service.h"
@@ -31,13 +30,13 @@ void CrashDumpObserver::Create() {
   // If this DCHECK fails in a unit test then a previously executing
   // test that makes use of CrashDumpObserver forgot to create a
   // ShadowingAtExitManager.
-  DCHECK(g_instance == nullptr);
+  DCHECK(!g_instance.IsCreated());
   g_instance.Get();
 }
 
 // static
 CrashDumpObserver* CrashDumpObserver::GetInstance() {
-  DCHECK(!(g_instance == nullptr));
+  DCHECK(g_instance.IsCreated());
   return g_instance.Pointer();
 }
 

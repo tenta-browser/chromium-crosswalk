@@ -9,7 +9,6 @@
 #include <utility>
 
 #include "base/bind.h"
-#include "base/memory/ptr_util.h"
 #include "base/message_loop/message_loop.h"
 #include "base/metrics/user_metrics.h"
 #include "base/stl_util.h"
@@ -33,7 +32,7 @@
 #include "components/prefs/pref_service.h"
 #include "components/signin/core/browser/profile_oauth2_token_service.h"
 #include "content/public/browser/web_ui.h"
-#include "printing/features/features.h"
+#include "printing/buildflags/buildflags.h"
 #include "ui/base/l10n/l10n_util.h"
 
 #if BUILDFLAG(ENABLE_PRINT_PREVIEW) && !defined(OS_CHROMEOS)
@@ -120,39 +119,45 @@ bool LocalDiscoveryUIHandler::GetHasVisible() {
 }
 
 void LocalDiscoveryUIHandler::RegisterMessages() {
-  web_ui()->RegisterMessageCallback("start", base::Bind(
-      &LocalDiscoveryUIHandler::HandleStart,
-      base::Unretained(this)));
-  web_ui()->RegisterMessageCallback("isVisible", base::Bind(
-      &LocalDiscoveryUIHandler::HandleIsVisible,
-      base::Unretained(this)));
-  web_ui()->RegisterMessageCallback("registerDevice", base::Bind(
-      &LocalDiscoveryUIHandler::HandleRegisterDevice,
-      base::Unretained(this)));
-  web_ui()->RegisterMessageCallback("cancelRegistration", base::Bind(
-      &LocalDiscoveryUIHandler::HandleCancelRegistration,
-      base::Unretained(this)));
+  web_ui()->RegisterMessageCallback(
+      "start", base::BindRepeating(&LocalDiscoveryUIHandler::HandleStart,
+                                   base::Unretained(this)));
+  web_ui()->RegisterMessageCallback(
+      "isVisible",
+      base::BindRepeating(&LocalDiscoveryUIHandler::HandleIsVisible,
+                          base::Unretained(this)));
+  web_ui()->RegisterMessageCallback(
+      "registerDevice",
+      base::BindRepeating(&LocalDiscoveryUIHandler::HandleRegisterDevice,
+                          base::Unretained(this)));
+  web_ui()->RegisterMessageCallback(
+      "cancelRegistration",
+      base::BindRepeating(&LocalDiscoveryUIHandler::HandleCancelRegistration,
+                          base::Unretained(this)));
   web_ui()->RegisterMessageCallback(
       "requestDeviceList",
-      base::Bind(&LocalDiscoveryUIHandler::HandleRequestDeviceList,
-                 base::Unretained(this)));
-  web_ui()->RegisterMessageCallback("openCloudPrintURL", base::Bind(
-      &LocalDiscoveryUIHandler::HandleOpenCloudPrintURL,
-      base::Unretained(this)));
-  web_ui()->RegisterMessageCallback("showSyncUI", base::Bind(
-      &LocalDiscoveryUIHandler::HandleShowSyncUI,
-      base::Unretained(this)));
+      base::BindRepeating(&LocalDiscoveryUIHandler::HandleRequestDeviceList,
+                          base::Unretained(this)));
+  web_ui()->RegisterMessageCallback(
+      "openCloudPrintURL",
+      base::BindRepeating(&LocalDiscoveryUIHandler::HandleOpenCloudPrintURL,
+                          base::Unretained(this)));
+  web_ui()->RegisterMessageCallback(
+      "showSyncUI",
+      base::BindRepeating(&LocalDiscoveryUIHandler::HandleShowSyncUI,
+                          base::Unretained(this)));
 
   // Cloud print connector related messages
 #if defined(CLOUD_PRINT_CONNECTOR_UI_AVAILABLE)
   web_ui()->RegisterMessageCallback(
       "showCloudPrintSetupDialog",
-      base::Bind(&LocalDiscoveryUIHandler::ShowCloudPrintSetupDialog,
-                 base::Unretained(this)));
+      base::BindRepeating(&LocalDiscoveryUIHandler::ShowCloudPrintSetupDialog,
+                          base::Unretained(this)));
   web_ui()->RegisterMessageCallback(
       "disableCloudPrintConnector",
-      base::Bind(&LocalDiscoveryUIHandler::HandleDisableCloudPrintConnector,
-                 base::Unretained(this)));
+      base::BindRepeating(
+          &LocalDiscoveryUIHandler::HandleDisableCloudPrintConnector,
+          base::Unretained(this)));
 #endif  // defined(CLOUD_PRINT_CONNECTOR_UI_AVAILABLE)
 }
 
@@ -231,7 +236,7 @@ void LocalDiscoveryUIHandler::HandleRequestDeviceList(
 
   if (cloud_print_printer_list_) {
     cloud_print_printer_list_->Start(
-        base::MakeUnique<CloudPrintPrinterList>(this));
+        std::make_unique<CloudPrintPrinterList>(this));
   }
 
   CheckListingDone();
@@ -294,7 +299,7 @@ void LocalDiscoveryUIHandler::OnPrivetRegisterClaimToken(
     return;
   }
   confirm_api_call_flow_->Start(
-      base::MakeUnique<cloud_print::PrivetConfirmApiCallFlow>(
+      std::make_unique<cloud_print::PrivetConfirmApiCallFlow>(
           token, base::Bind(&LocalDiscoveryUIHandler::OnConfirmDone,
                             base::Unretained(this))));
 }
@@ -365,7 +370,7 @@ void LocalDiscoveryUIHandler::DeviceChanged(
     web_ui()->CallJavascriptFunctionUnsafe(
         "local_discovery.onUnregisteredDeviceUpdate", service_key, info);
   } else {
-    auto null_value = base::MakeUnique<base::Value>();
+    auto null_value = std::make_unique<base::Value>();
 
     web_ui()->CallJavascriptFunctionUnsafe(
         "local_discovery.onUnregisteredDeviceUpdate", service_key, *null_value);
@@ -374,7 +379,7 @@ void LocalDiscoveryUIHandler::DeviceChanged(
 
 void LocalDiscoveryUIHandler::DeviceRemoved(const std::string& name) {
   device_descriptions_.erase(name);
-  auto null_value = base::MakeUnique<base::Value>();
+  auto null_value = std::make_unique<base::Value>();
   base::Value name_value(kKeyPrefixMDns + name);
 
   web_ui()->CallJavascriptFunctionUnsafe(

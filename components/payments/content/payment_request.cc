@@ -8,7 +8,6 @@
 #include <utility>
 
 #include "base/feature_list.h"
-#include "base/memory/ptr_util.h"
 #include "base/stl_util.h"
 #include "components/payments/content/can_make_payment_query_factory.h"
 #include "components/payments/content/content_payment_request_delegate.h"
@@ -16,6 +15,7 @@
 #include "components/payments/content/payment_request_converter.h"
 #include "components/payments/content/payment_request_web_contents_manager.h"
 #include "components/payments/core/can_make_payment_query.h"
+#include "components/payments/core/features.h"
 #include "components/payments/core/payment_details.h"
 #include "components/payments/core/payment_details_validation.h"
 #include "components/payments/core/payment_prefs.h"
@@ -33,11 +33,14 @@ PaymentRequest::PaymentRequest(
     content::WebContents* web_contents,
     std::unique_ptr<ContentPaymentRequestDelegate> delegate,
     PaymentRequestWebContentsManager* manager,
+    PaymentRequestDisplayManager* display_manager,
     mojo::InterfaceRequest<mojom::PaymentRequest> request,
     ObserverForTest* observer_for_testing)
     : web_contents_(web_contents),
       delegate_(std::move(delegate)),
       manager_(manager),
+      display_manager_(display_manager),
+      display_handle_(nullptr),
       binding_(this, std::move(request)),
       top_level_origin_(url_formatter::FormatUrlForSecurityDisplay(
           web_contents_->GetLastCommittedURL())),
@@ -90,11 +93,11 @@ void PaymentRequest::Init(mojom::PaymentRequestClientPtr client,
   if (!allowed_origin || invalid_ssl) {
     // Don't show UI. Resolve .canMakepayment() with "false". Reject .show()
     // with "NotSupportedError".
-    spec_ = base::MakeUnique<PaymentRequestSpec>(
+    spec_ = std::make_unique<PaymentRequestSpec>(
         mojom::PaymentOptions::New(), mojom::PaymentDetails::New(),
         std::vector<mojom::PaymentMethodDataPtr>(), this,
         delegate_->GetApplicationLocale());
-    state_ = base::MakeUnique<PaymentRequestState>(
+    state_ = std::make_unique<PaymentRequestState>(
         web_contents_, top_level_origin_, frame_origin_, spec_.get(), this,
         delegate_->GetApplicationLocale(), delegate_->GetPersonalDataManager(),
         delegate_.get(), &journey_logger_);
@@ -114,10 +117,10 @@ void PaymentRequest::Init(mojom::PaymentRequestClientPtr client,
     return;
   }
 
-  spec_ = base::MakeUnique<PaymentRequestSpec>(
+  spec_ = std::make_unique<PaymentRequestSpec>(
       std::move(options), std::move(details), std::move(method_data), this,
       delegate_->GetApplicationLocale());
-  state_ = base::MakeUnique<PaymentRequestState>(
+  state_ = std::make_unique<PaymentRequestState>(
       web_contents_, top_level_origin_, frame_origin_, spec_.get(), this,
       delegate_->GetApplicationLocale(), delegate_->GetPersonalDataManager(),
       delegate_.get(), &journey_logger_);
@@ -147,7 +150,7 @@ void PaymentRequest::Init(mojom::PaymentRequestClientPtr client,
           spec_->url_payment_method_identifiers().end());
 }
 
-void PaymentRequest::Show() {
+void PaymentRequest::Show(bool is_user_gesture) {
   if (!client_.is_bound() || !binding_.is_bound()) {
     LOG(ERROR) << "Attempted Show(), but binding(s) missing.";
     OnConnectionTerminated();
@@ -155,7 +158,8 @@ void PaymentRequest::Show() {
   }
 
   // A tab can display only one PaymentRequest UI at a time.
-  if (!manager_->CanShow(this)) {
+  display_handle_ = display_manager_->TryShow(delegate_.get());
+  if (!display_handle_) {
     LOG(ERROR) << "A PaymentRequest UI is already showing";
     journey_logger_.SetNotShown(
         JourneyLogger::NOT_SHOWN_REASON_CONCURRENT_REQUESTS);
@@ -172,6 +176,8 @@ void PaymentRequest::Show() {
     return;
   }
 
+  is_show_user_gesture_ = is_user_gesture;
+
   // TODO(crbug.com/783811): Display a spinner when checking whether
   // the methods are supported asynchronously for better user experience.
   state_->AreRequestedMethodsSupported(
@@ -184,7 +190,8 @@ void PaymentRequest::AreRequestedMethodsSupportedCallback(
   if (methods_supported) {
     journey_logger_.SetEventOccurred(JourneyLogger::EVENT_SHOWN);
 
-    delegate_->ShowDialog(this);
+    DCHECK(display_handle_);
+    display_handle_->Show(this);
   } else {
     journey_logger_.SetNotShown(
         JourneyLogger::NOT_SHOWN_REASON_NO_SUPPORTED_PAYMENT_METHOD);
@@ -339,6 +346,27 @@ void PaymentRequest::Pay() {
   state_->GeneratePaymentResponse();
 }
 
+void PaymentRequest::HideIfNecessary() {
+  display_handle_.reset();
+}
+
+bool PaymentRequest::IsIncognito() const {
+  return delegate_->IsIncognito();
+}
+
+bool PaymentRequest::SatisfiesSkipUIConstraints() const {
+  return base::FeatureList::IsEnabled(features::kWebPaymentsSingleAppUiSkip) &&
+         base::FeatureList::IsEnabled(::features::kServiceWorkerPaymentApps) &&
+         is_show_user_gesture_ && state()->is_get_all_instruments_finished() &&
+         state()->available_instruments().size() == 1 &&
+         spec()->stringified_method_data().size() == 1 &&
+         !spec()->request_shipping() && !spec()->request_payer_name() &&
+         !spec()->request_payer_phone() &&
+         !spec()->request_payer_email()
+         // Only allowing URL base payment apps to skip the payment sheet.
+         && spec()->url_payment_method_identifiers().size() == 1;
+}
+
 void PaymentRequest::RecordFirstAbortReason(
     JourneyLogger::AbortReason abort_reason) {
   if (!has_recorded_completion_) {
@@ -369,7 +397,7 @@ void PaymentRequest::RespondToCanMakePaymentQuery(bool can_make_payment,
   if (delegate_->IsIncognito()) {
     can_make_payment =
         spec()->HasBasicCardMethodName() ||
-        base::FeatureList::IsEnabled(features::kServiceWorkerPaymentApps);
+        base::FeatureList::IsEnabled(::features::kServiceWorkerPaymentApps);
   }
 
   mojom::CanMakePaymentQueryResult positive =

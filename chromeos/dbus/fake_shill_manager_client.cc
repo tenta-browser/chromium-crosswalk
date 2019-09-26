@@ -171,15 +171,15 @@ void FakeShillManagerClient::GetProperties(
     const DictionaryValueCallback& callback) {
   VLOG(1) << "Manager.GetProperties";
   base::ThreadTaskRunnerHandle::Get()->PostTask(
-      FROM_HERE, base::Bind(&FakeShillManagerClient::PassStubProperties,
-                            weak_ptr_factory_.GetWeakPtr(), callback));
+      FROM_HERE, base::BindOnce(&FakeShillManagerClient::PassStubProperties,
+                                weak_ptr_factory_.GetWeakPtr(), callback));
 }
 
 void FakeShillManagerClient::GetNetworksForGeolocation(
     const DictionaryValueCallback& callback) {
   base::ThreadTaskRunnerHandle::Get()->PostTask(
-      FROM_HERE, base::Bind(&FakeShillManagerClient::PassStubGeoNetworks,
-                            weak_ptr_factory_.GetWeakPtr(), callback));
+      FROM_HERE, base::BindOnce(&FakeShillManagerClient::PassStubGeoNetworks,
+                                weak_ptr_factory_.GetWeakPtr(), callback));
 }
 
 void FakeShillManagerClient::SetProperty(const std::string& name,
@@ -209,8 +209,8 @@ void FakeShillManagerClient::RequestScan(const std::string& type,
   }
   base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
       FROM_HERE,
-      base::Bind(&FakeShillManagerClient::ScanCompleted,
-                 weak_ptr_factory_.GetWeakPtr(), device_path, callback),
+      base::BindOnce(&FakeShillManagerClient::ScanCompleted,
+                     weak_ptr_factory_.GetWeakPtr(), device_path, callback),
       base::TimeDelta::FromSeconds(interactive_delay_));
 }
 
@@ -224,13 +224,13 @@ void FakeShillManagerClient::EnableTechnology(
     base::ThreadTaskRunnerHandle::Get()->PostTask(FROM_HERE, callback);
     base::ThreadTaskRunnerHandle::Get()->PostTask(
         FROM_HERE,
-        base::Bind(error_callback, "StubError", "Property not found"));
+        base::BindOnce(error_callback, "StubError", "Property not found"));
     return;
   }
   base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
       FROM_HERE,
-      base::Bind(&FakeShillManagerClient::SetTechnologyEnabled,
-                 weak_ptr_factory_.GetWeakPtr(), type, callback, true),
+      base::BindOnce(&FakeShillManagerClient::SetTechnologyEnabled,
+                     weak_ptr_factory_.GetWeakPtr(), type, callback, true),
       base::TimeDelta::FromSeconds(interactive_delay_));
 }
 
@@ -243,13 +243,13 @@ void FakeShillManagerClient::DisableTechnology(
           shill::kAvailableTechnologiesProperty, &enabled_list)) {
     base::ThreadTaskRunnerHandle::Get()->PostTask(
         FROM_HERE,
-        base::Bind(error_callback, "StubError", "Property not found"));
+        base::BindOnce(error_callback, "StubError", "Property not found"));
     return;
   }
   base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
       FROM_HERE,
-      base::Bind(&FakeShillManagerClient::SetTechnologyEnabled,
-                 weak_ptr_factory_.GetWeakPtr(), type, callback, false),
+      base::BindOnce(&FakeShillManagerClient::SetTechnologyEnabled,
+                     weak_ptr_factory_.GetWeakPtr(), type, callback, false),
       base::TimeDelta::FromSeconds(interactive_delay_));
 }
 
@@ -268,7 +268,7 @@ void FakeShillManagerClient::ConfigureService(
     // If the properties aren't filled out completely, then just return an empty
     // object path.
     base::ThreadTaskRunnerHandle::Get()->PostTask(
-        FROM_HERE, base::Bind(callback, dbus::ObjectPath()));
+        FROM_HERE, base::BindOnce(callback, dbus::ObjectPath()));
     return;
   }
 
@@ -311,12 +311,14 @@ void FakeShillManagerClient::ConfigureService(
   merged_properties->GetStringWithoutPathExpansion(shill::kProfileProperty,
                                                    &profile_path);
   if (!profile_path.empty()) {
-    DBusThreadManager::Get()->GetShillProfileClient()->GetTestInterface()->
-        AddService(profile_path, service_path);
+    auto* profile_client =
+        DBusThreadManager::Get()->GetShillProfileClient()->GetTestInterface();
+    if (!profile_client->UpdateService(profile_path, service_path))
+      profile_client->AddService(profile_path, service_path);
   }
 
   base::ThreadTaskRunnerHandle::Get()->PostTask(
-      FROM_HERE, base::Bind(callback, dbus::ObjectPath(service_path)));
+      FROM_HERE, base::BindOnce(callback, dbus::ObjectPath(service_path)));
 }
 
 void FakeShillManagerClient::ConfigureServiceForProfile(
@@ -337,7 +339,7 @@ void FakeShillManagerClient::GetService(
     const ObjectPathCallback& callback,
     const ErrorCallback& error_callback) {
   base::ThreadTaskRunnerHandle::Get()->PostTask(
-      FROM_HERE, base::Bind(callback, dbus::ObjectPath()));
+      FROM_HERE, base::BindOnce(callback, dbus::ObjectPath()));
 }
 
 void FakeShillManagerClient::VerifyDestination(
@@ -345,7 +347,7 @@ void FakeShillManagerClient::VerifyDestination(
     const BooleanCallback& callback,
     const ErrorCallback& error_callback) {
   base::ThreadTaskRunnerHandle::Get()->PostTask(FROM_HERE,
-                                                base::Bind(callback, true));
+                                                base::BindOnce(callback, true));
 }
 
 void FakeShillManagerClient::VerifyAndEncryptCredentials(
@@ -354,7 +356,7 @@ void FakeShillManagerClient::VerifyAndEncryptCredentials(
     const StringCallback& callback,
     const ErrorCallback& error_callback) {
   base::ThreadTaskRunnerHandle::Get()->PostTask(
-      FROM_HERE, base::Bind(callback, "encrypted_credentials"));
+      FROM_HERE, base::BindOnce(callback, "encrypted_credentials"));
 }
 
 void FakeShillManagerClient::VerifyAndEncryptData(
@@ -363,7 +365,7 @@ void FakeShillManagerClient::VerifyAndEncryptData(
     const StringCallback& callback,
     const ErrorCallback& error_callback) {
   base::ThreadTaskRunnerHandle::Get()->PostTask(
-      FROM_HERE, base::Bind(callback, "encrypted_data"));
+      FROM_HERE, base::BindOnce(callback, "encrypted_data"));
 }
 
 void FakeShillManagerClient::ConnectToBestServices(
@@ -476,8 +478,7 @@ void FakeShillManagerClient::ClearProperties() {
 
 void FakeShillManagerClient::SetManagerProperty(const std::string& key,
                                                 const base::Value& value) {
-  SetProperty(key, value,
-              base::Bind(&base::DoNothing), base::Bind(&LogErrorCallback));
+  SetProperty(key, value, base::DoNothing(), base::Bind(&LogErrorCallback));
 }
 
 void FakeShillManagerClient::AddManagerService(
@@ -588,12 +589,18 @@ void FakeShillManagerClient::SetBestServiceToConnect(
   best_service_ = service_path;
 }
 
+const ShillManagerClient::NetworkThrottlingStatus&
+FakeShillManagerClient::GetNetworkThrottlingStatus() {
+  return network_throttling_status_;
+}
+
 void FakeShillManagerClient::SetNetworkThrottlingStatus(
-    bool enabled,
-    uint32_t upload_rate_kbits,
-    uint32_t download_rate_kbits,
+    const NetworkThrottlingStatus& status,
     const base::Closure& callback,
-    const ErrorCallback& error_callback) {}
+    const ErrorCallback& error_callback) {
+  network_throttling_status_ = status;
+  base::ThreadTaskRunnerHandle::Get()->PostTask(FROM_HERE, callback);
+}
 
 void FakeShillManagerClient::SetupDefaultEnvironment() {
   // Bail out from setup if there is no message loop. This will be the common
@@ -722,6 +729,10 @@ void FakeShillManagerClient::SetupDefaultEnvironment() {
       services->SetServiceProperty(kWifi2Path, shill::kSecurityClassProperty,
                                    base::Value(shill::kSecurityPsk));
     }
+    services->SetServiceProperty(kWifi2Path, shill::kConnectableProperty,
+                                 base::Value(false));
+    services->SetServiceProperty(kWifi2Path, shill::kPassphraseRequiredProperty,
+                                 base::Value(true));
     services->SetServiceProperty(kWifi2Path, shill::kSignalStrengthProperty,
                                  base::Value(80));
     profiles->AddService(shared_profile, kWifi2Path);
@@ -953,8 +964,8 @@ void FakeShillManagerClient::CallNotifyObserversPropertyChanged(
     return;
   base::ThreadTaskRunnerHandle::Get()->PostTask(
       FROM_HERE,
-      base::Bind(&FakeShillManagerClient::NotifyObserversPropertyChanged,
-                 weak_ptr_factory_.GetWeakPtr(), property));
+      base::BindOnce(&FakeShillManagerClient::NotifyObserversPropertyChanged,
+                     weak_ptr_factory_.GetWeakPtr(), property));
 }
 
 void FakeShillManagerClient::NotifyObserversPropertyChanged(

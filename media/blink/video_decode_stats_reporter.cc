@@ -17,7 +17,8 @@ VideoDecodeStatsReporter::VideoDecodeStatsReporter(
     mojom::VideoDecodeStatsRecorderPtr recorder_ptr,
     GetPipelineStatsCB get_pipeline_stats_cb,
     const VideoDecoderConfig& video_config,
-    std::unique_ptr<base::TickClock> tick_clock)
+    scoped_refptr<base::SingleThreadTaskRunner> task_runner,
+    const base::TickClock* tick_clock)
     : kRecordingInterval(
           base::TimeDelta::FromMilliseconds(kRecordingIntervalMs)),
       kTinyFpsWindowDuration(
@@ -26,14 +27,15 @@ VideoDecodeStatsReporter::VideoDecodeStatsReporter(
       get_pipeline_stats_cb_(std::move(get_pipeline_stats_cb)),
       video_config_(video_config),
       natural_size_(GetSizeBucket(video_config.natural_size())),
-      tick_clock_(std::move(tick_clock)),
-      stats_cb_timer_(tick_clock_.get()) {
+      tick_clock_(tick_clock),
+      stats_cb_timer_(tick_clock_) {
   DCHECK(recorder_ptr_.is_bound());
   DCHECK(!get_pipeline_stats_cb_.is_null());
   DCHECK(video_config_.IsValidConfig());
 
   recorder_ptr_.set_connection_error_handler(base::BindRepeating(
       &VideoDecodeStatsReporter::OnIpcConnectionError, base::Unretained(this)));
+  stats_cb_timer_.SetTaskRunner(task_runner);
 }
 
 VideoDecodeStatsReporter::~VideoDecodeStatsReporter() = default;
@@ -188,8 +190,9 @@ void VideoDecodeStatsReporter::StartNewRecord(
   frames_dropped_offset_ = frames_dropped_offset;
   frames_decoded_power_efficient_offset_ =
       frames_decoded_power_efficient_offset;
-  recorder_ptr_->StartNewRecord(video_config_.profile(), natural_size_,
-                                last_observed_fps_);
+  mojom::PredictionFeaturesPtr features = mojom::PredictionFeatures::New(
+      video_config_.profile(), natural_size_, last_observed_fps_);
+  recorder_ptr_->StartNewRecord(std::move(features));
 }
 
 void VideoDecodeStatsReporter::ResetFrameRateState() {
@@ -341,18 +344,17 @@ void VideoDecodeStatsReporter::UpdateStats() {
   if (stats.video_frames_decoded == frames_decoded_offset_)
     return;
 
-  uint32_t frames_decoded = stats.video_frames_decoded - frames_decoded_offset_;
-  uint32_t frames_dropped = stats.video_frames_dropped - frames_dropped_offset_;
-  uint32_t frames_decoded_power_efficient =
+  mojom::PredictionTargetsPtr targets = mojom::PredictionTargets::New(
+      stats.video_frames_decoded - frames_decoded_offset_,
+      stats.video_frames_dropped - frames_dropped_offset_,
       stats.video_frames_decoded_power_efficient -
-      frames_decoded_power_efficient_offset_;
+          frames_decoded_power_efficient_offset_);
 
-  DVLOG(2) << __func__ << " Recording -- dropped:" << frames_dropped << "/"
-           << frames_decoded
-           << " power efficient:" << frames_decoded_power_efficient << "/"
-           << frames_decoded;
-  recorder_ptr_->UpdateRecord(frames_decoded, frames_dropped,
-                              frames_decoded_power_efficient);
+  DVLOG(2) << __func__ << " Recording -- dropped:" << targets->frames_dropped
+           << "/" << targets->frames_decoded
+           << " power efficient:" << targets->frames_decoded_power_efficient
+           << "/" << targets->frames_decoded;
+  recorder_ptr_->UpdateRecord(std::move(targets));
 }
 
 }  // namespace media

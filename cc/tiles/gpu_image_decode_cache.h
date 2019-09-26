@@ -20,7 +20,7 @@
 #include "third_party/skia/include/gpu/gl/GrGLTypes.h"
 
 namespace viz {
-class ContextProvider;
+class RasterContextProvider;
 }
 
 namespace cc {
@@ -100,11 +100,13 @@ class CC_EXPORT GpuImageDecodeCache
       public base::trace_event::MemoryDumpProvider,
       public base::MemoryCoordinatorClient {
  public:
-  enum class DecodeTaskType { PART_OF_UPLOAD_TASK, STAND_ALONE_DECODE_TASK };
+  enum class DecodeTaskType { kPartOfUploadTask, kStandAloneDecodeTask };
 
-  explicit GpuImageDecodeCache(viz::ContextProvider* context,
+  explicit GpuImageDecodeCache(viz::RasterContextProvider* context,
+                               bool use_transfer_cache,
                                SkColorType color_type,
-                               size_t max_working_set_bytes);
+                               size_t max_working_set_bytes,
+                               int max_texture_size);
   ~GpuImageDecodeCache() override;
 
   // ImageDecodeCache overrides.
@@ -135,13 +137,15 @@ class CC_EXPORT GpuImageDecodeCache
   void OnPurgeMemory() override;
 
   // Called by Decode / Upload tasks.
-  void DecodeImage(const DrawImage& image, TaskType task_type);
-  void UploadImage(const DrawImage& image);
+  void DecodeImageInTask(const DrawImage& image, TaskType task_type);
+  void UploadImageInTask(const DrawImage& image);
 
   // Called by Decode / Upload tasks when tasks are finished.
   void OnImageDecodeTaskCompleted(const DrawImage& image,
                                   DecodeTaskType task_type);
   void OnImageUploadTaskCompleted(const DrawImage& image);
+
+  bool SupportsColorSpaceConversion() const;
 
   // For testing only.
   void SetWorkingSetLimitForTesting(size_t limit) {
@@ -156,9 +160,10 @@ class CC_EXPORT GpuImageDecodeCache
   void SetImageDecodingFailedForTesting(const DrawImage& image);
   bool DiscardableIsLockedForTesting(const DrawImage& image);
   bool IsInInUseCacheForTesting(const DrawImage& image) const;
+  sk_sp<SkImage> GetSWImageDecodeForTesting(const DrawImage& image);
 
  private:
-  enum class DecodedDataMode { GPU, CPU };
+  enum class DecodedDataMode { kGpu, kCpu, kTransferCache };
 
   // Stores stats tracked by both DecodedImageData and UploadedImageData.
   struct ImageDataBase {
@@ -196,7 +201,7 @@ class CC_EXPORT GpuImageDecodeCache
 
   // Stores the CPU-side decoded bits of an image and supporting fields.
   struct DecodedImageData : public ImageDataBase {
-    DecodedImageData();
+    explicit DecodedImageData(bool is_bitmap_backed);
     ~DecodedImageData();
 
     bool Lock();
@@ -207,6 +212,17 @@ class CC_EXPORT GpuImageDecodeCache
     void ResetData();
     base::DiscardableMemory* data() const { return data_.get(); }
 
+    void SetBitmapImage(sk_sp<SkImage> image);
+    void ResetBitmapImage();
+
+    sk_sp<SkImage> image() const {
+      DCHECK(is_locked() || is_bitmap_backed_);
+      return image_;
+    }
+
+    // Test-only functions.
+    sk_sp<SkImage> ImageForTesting() const { return image_; }
+
     bool decode_failure = false;
     // Similar to |task|, but only is generated if there is no associated upload
     // generated for this task (ie, this is an out-of-raster request for decode.
@@ -215,6 +231,7 @@ class CC_EXPORT GpuImageDecodeCache
    private:
     void ReportUsageStats() const;
 
+    const bool is_bitmap_backed_;
     std::unique_ptr<base::DiscardableMemory> data_;
   };
 
@@ -224,32 +241,65 @@ class CC_EXPORT GpuImageDecodeCache
     ~UploadedImageData();
 
     void SetImage(sk_sp<SkImage> image);
-    void ResetImage();
-    const sk_sp<SkImage>& image() const { return image_; }
-    GrGLuint gl_id() const { return gl_id_; }
+    void SetTransferCacheId(uint32_t id);
+    void Reset();
 
-    // True if the image is counting against our working set limits.
-    bool budgeted = false;
+    // If in image mode.
+    const sk_sp<SkImage>& image() const {
+      DCHECK(mode_ == Mode::kSkImage || mode_ == Mode::kNone);
+      return image_;
+    }
+    GrGLuint gl_id() const {
+      DCHECK(mode_ == Mode::kSkImage || mode_ == Mode::kNone);
+      return gl_id_;
+    }
+
+    // If in transfer cache mode.
+    base::Optional<uint32_t> transfer_cache_id() const {
+      DCHECK(mode_ == Mode::kTransferCache || mode_ == Mode::kNone);
+      return transfer_cache_id_;
+    }
 
    private:
+    // Used for internal DCHECKs only.
+    enum class Mode {
+      kNone,
+      kSkImage,
+      kTransferCache,
+    };
+
     void ReportUsageStats() const;
 
+    Mode mode_ = Mode::kNone;
+
+    // Used if |mode_| == kSkImage.
     // May be null if image not yet uploaded / prepared.
     sk_sp<SkImage> image_;
     GrGLuint gl_id_ = 0;
+
+    // Used if |mode_| == kTransferCache.
+    base::Optional<uint32_t> transfer_cache_id_;
   };
 
   struct ImageData : public base::RefCountedThreadSafe<ImageData> {
     ImageData(DecodedDataMode mode,
               size_t size,
               const gfx::ColorSpace& target_color_space,
-              const SkImage::DeferredTextureImageUsageParams& upload_params);
+              SkFilterQuality quality,
+              int mip_level,
+              bool is_bitmap_backed);
+
+    bool IsGpuOrTransferCache() const;
+    bool HasUploadedData() const;
+    void ValidateBudgeted() const;
 
     const DecodedDataMode mode;
     const size_t size;
     gfx::ColorSpace target_color_space;
-    bool is_at_raster = false;
-    SkImage::DeferredTextureImageUsageParams upload_params;
+    SkFilterQuality quality;
+    int mip_level;
+    bool is_bitmap_backed;
+    bool is_budgeted = false;
 
     // If true, this image is no longer in our |persistent_cache_| and will be
     // deleted as soon as its ref count reaches zero.
@@ -371,9 +421,12 @@ class CC_EXPORT GpuImageDecodeCache
   // These including deleting, unlocking, and locking textures.
   void RunPendingContextThreadOperations();
 
+  void CheckContextLockAcquiredIfNecessary();
+
   const SkColorType color_type_;
-  viz::ContextProvider* context_;
-  sk_sp<GrContextThreadSafeProxy> context_threadsafe_proxy_;
+  const bool use_transfer_cache_ = false;
+  viz::RasterContextProvider* context_;
+  int max_texture_size_ = 0;
 
   // All members below this point must only be accessed while holding |lock_|.
   // The exception are const members like |normal_max_cache_bytes_| that can
@@ -403,6 +456,9 @@ class CC_EXPORT GpuImageDecodeCache
   std::vector<SkImage*> images_pending_complete_lock_;
   std::vector<SkImage*> images_pending_unlock_;
   std::vector<sk_sp<SkImage>> images_pending_deletion_;
+
+  std::vector<uint32_t> ids_pending_unlock_;
+  std::vector<uint32_t> ids_pending_deletion_;
 
   // Records the maximum number of items in the cache over the lifetime of the
   // cache. This is updated anytime we are requested to reduce cache usage.

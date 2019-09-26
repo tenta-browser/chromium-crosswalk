@@ -4,22 +4,23 @@
 
 #import <Cronet/Cronet.h>
 
+#include "base/strings/sys_string_conversions.h"
 #include "components/cronet/ios/test/cronet_test_base.h"
 #include "components/cronet/ios/test/start_cronet.h"
-#include "components/grpc_support/test/quic_test_server.h"
 #include "net/base/mac/url_conversions.h"
 #include "net/cert/mock_cert_verifier.h"
 #include "net/test/cert_test_util.h"
+#include "net/test/quic_simple_test_server.h"
 #include "net/test/test_data_directory.h"
-
 #include "testing/gtest_mac.h"
+#include "url/gurl.h"
 
 namespace {
 const bool kIncludeSubdomains = true;
 const bool kExcludeSubdomains = false;
 const bool kSuccess = true;
 const bool kError = false;
-const std::string kServerCert = "quic_test.example.com.crt";
+const std::string kServerCert = "quic-chain.pem";
 NSDate* const kDistantFuture = [NSDate distantFuture];
 }  // namespace
 
@@ -29,15 +30,13 @@ class PkpTest : public CronetTestBase {
  protected:
   void SetUp() override {
     CronetTestBase::SetUp();
-    server_host_ = [NSString stringWithCString:grpc_support::kTestServerHost
-                                      encoding:NSUTF8StringEncoding];
-    server_domain_ = [NSString stringWithCString:grpc_support::kTestServerDomain
-                                        encoding:NSUTF8StringEncoding];
 
-    NSString* request_url_str =
-        [NSString stringWithCString:grpc_support::kTestServerSimpleUrl
-                           encoding:NSUTF8StringEncoding];
-    request_url_ = [NSURL URLWithString:request_url_str];
+    server_host_ =
+        base::SysUTF8ToNSString(net::QuicSimpleTestServer::GetHost());
+    server_domain_ =
+        base::SysUTF8ToNSString(net::QuicSimpleTestServer::GetDomain());
+    request_url_ =
+        net::NSURLWithGURL(net::QuicSimpleTestServer::GetSimpleURL());
 
     // Create a Cronet enabled NSURLSession.
     NSURLSessionConfiguration* sessionConfig =
@@ -67,10 +66,10 @@ class PkpTest : public CronetTestBase {
         [url_session_ dataTaskWithURL:request_url_];
     StartDataTaskAndWaitForCompletion(dataTask);
     if (expected_success) {
-      ASSERT_TRUE(IsResponseSuccessful());
+      ASSERT_TRUE(IsResponseSuccessful(dataTask));
     } else {
-      ASSERT_FALSE(IsResponseSuccessful());
-      ASSERT_FALSE(IsResponseCanceled());
+      ASSERT_FALSE(IsResponseSuccessful(dataTask));
+      ASSERT_FALSE(IsResponseCanceled(dataTask));
     }
   }
 
@@ -89,7 +88,7 @@ class PkpTest : public CronetTestBase {
                                              error:&error];
     CHECK(success);
     CHECK(!error);
-    StartCronet(grpc_support::GetQuicTestServerPort());
+    StartCronet(net::QuicSimpleTestServer::GetPort());
   }
 
   // Returns an arbitrary public key hash that doesn't match with any test
@@ -205,7 +204,7 @@ TEST_F(PkpTest, TestPinsAreNotPersisted) {
 
   // Restart Cronet engine and try the same request again. Since the pins are
   // not persisted, a successful response is expected.
-  StartCronet(grpc_support::GetQuicTestServerPort());
+  StartCronet(net::QuicSimpleTestServer::GetPort());
   ASSERT_NO_FATAL_FAILURE(sendRequestAndAssertResult(request_url_, kSuccess));
 }
 

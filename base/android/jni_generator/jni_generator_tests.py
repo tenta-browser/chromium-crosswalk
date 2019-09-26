@@ -393,7 +393,9 @@ class TestGenerator(unittest.TestCase):
     class InnerClass {}
 
     @CalledByNative
-    InnerClass showConfirmInfoBar(int nativeInfoBar,
+    @SomeOtherA
+    @SomeOtherB
+    public InnerClass showConfirmInfoBar(int nativeInfoBar,
             String buttonOk, String buttonCancel, String title, Bitmap icon) {
         InfoBar infobar = new ConfirmInfoBar(nativeInfoBar, mContext,
                                              buttonOk, buttonCancel,
@@ -767,12 +769,14 @@ import org.chromium.base.BuildInfo;
 public abstract class java.util.HashSet<T> extends java.util.AbstractSet<E>
       implements java.util.Set<E>, java.lang.Cloneable, java.io.Serializable {
     public void dummy();
-  Signature: ()V
+      Signature: ()V
+    public java.lang.Class<?> getClass();
+      Signature: ()Ljava/lang/Class<*>;
 }
 """
     jni_from_javap = jni_generator.JNIFromJavaP(contents.split('\n'),
                                                 TestOptions())
-    self.assertEquals(1, len(jni_from_javap.called_by_natives))
+    self.assertEquals(2, len(jni_from_javap.called_by_natives))
     self.assertGoldenTextEquals(jni_from_javap.GetContent())
 
   def testSnippnetJavap6_7_8(self):
@@ -1008,16 +1012,22 @@ class Foo {
          public class Test implements Testable<java.io.Serializable> {
       """,
       '@MainDex public class Test implements Testable<java.io.Serializable> {',
-      '@MainDex public class Test extends Testable<java.io.Serializable> {',
+      '@a.B @MainDex @C public class Test extends Testable<Serializable> {',
+      """public class Test extends Testable<java.io.Serializable> {
+         @MainDex void func() {}
+      """,
     ]
     for entry in mainDexEntries:
-      self.assertEquals(True, IsMainDexJavaClass(entry))
+      self.assertEquals(True, IsMainDexJavaClass(entry), entry)
 
   def testNoMainDexAnnotation(self):
     noMainDexEntries = [
       'public class Test {',
       '@NotMainDex public class Test {',
+      '// @MainDex public class Test {',
+      '/* @MainDex */ public class Test {',
       'public class Test implements java.io.Serializable {',
+      '@MainDexNot public class Test {',
       'public class Test extends BaseTest {'
     ]
     for entry in noMainDexEntries:
@@ -1129,9 +1139,14 @@ def TouchStamp(stamp_path):
 def main(argv):
   parser = optparse.OptionParser()
   parser.add_option('--stamp', help='Path to touch on success.')
+  parser.add_option('--verbose', action="store_true",
+                    help='Whether to output details.')
   options, _ = parser.parse_args(argv[1:])
 
-  test_result = unittest.main(argv=argv[0:1], exit=False)
+  test_result = unittest.main(
+      argv=argv[0:1],
+      exit=False,
+      verbosity=(2 if options.verbose else 1))
 
   if test_result.result.wasSuccessful() and options.stamp:
     TouchStamp(options.stamp)

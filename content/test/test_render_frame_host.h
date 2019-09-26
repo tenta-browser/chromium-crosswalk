@@ -12,6 +12,7 @@
 
 #include "base/macros.h"
 #include "content/browser/frame_host/render_frame_host_impl.h"
+#include "content/common/navigation_params.mojom.h"
 #include "content/public/browser/web_contents_observer.h"
 #include "content/public/test/mock_render_process_host.h"
 #include "content/public/test/test_renderer_host.h"
@@ -78,7 +79,7 @@ class TestRenderFrameHost : public RenderFrameHostImpl,
   void NavigateAndCommitRendererInitiated(bool did_create_new_entry,
                                           const GURL& url) override;
   void SimulateFeaturePolicyHeader(
-      blink::FeaturePolicyFeature feature,
+      blink::mojom::FeaturePolicyFeature feature,
       const std::vector<url::Origin>& whitelist) override;
   const std::vector<std::string>& GetConsoleMessages() override;
 
@@ -98,7 +99,12 @@ class TestRenderFrameHost : public RenderFrameHostImpl,
       const GURL& url,
       const ModificationCallback& callback);
   void SendNavigateWithParams(
-      FrameHostMsg_DidCommitProvisionalLoad_Params* params);
+      FrameHostMsg_DidCommitProvisionalLoad_Params* params,
+      bool was_within_same_document);
+  void SendNavigateWithParamsAndInterfaceProvider(
+      FrameHostMsg_DidCommitProvisionalLoad_Params* params,
+      service_manager::mojom::InterfaceProviderRequest request,
+      bool was_within_same_document);
 
   // Simulates a navigation to |url| failing with the error code |error_code|.
   // DEPRECATED: use NavigationSimulator instead.
@@ -180,6 +186,9 @@ class TestRenderFrameHost : public RenderFrameHostImpl,
     return last_commit_was_error_page_;
   }
 
+  // Exposes the interface registry to be manipulated for testing.
+  service_manager::BinderRegistry& binder_registry() { return *registry_; }
+
   // Returns a pending InterfaceProvider request that is safe to bind to an
   // implementation, but will never receive any interface requests.
   static service_manager::mojom::InterfaceProviderRequest
@@ -201,8 +210,6 @@ class TestRenderFrameHost : public RenderFrameHostImpl,
 
   // Computes the page ID for a pending navigation in this RenderFrameHost;
   int32_t ComputeNextPageID();
-
-  void SimulateWillStartRequest(ui::PageTransition transition);
 
   // RenderFrameHostImpl:
   mojom::FrameNavigationControl* GetNavigationControl() override;

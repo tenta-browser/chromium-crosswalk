@@ -6,6 +6,9 @@
 
 namespace ash {
 
+constexpr base::TimeDelta
+    TestAccessibilityControllerClient::kShutdownSoundDuration;
+
 TestAccessibilityControllerClient::TestAccessibilityControllerClient()
     : binding_(this) {}
 
@@ -22,6 +25,42 @@ TestAccessibilityControllerClient::CreateInterfacePtrAndBind() {
 void TestAccessibilityControllerClient::TriggerAccessibilityAlert(
     mojom::AccessibilityAlert alert) {
   last_a11y_alert_ = alert;
+}
+
+void TestAccessibilityControllerClient::PlayEarcon(int32_t sound_key) {
+  sound_key_ = sound_key;
+}
+
+void TestAccessibilityControllerClient::PlayShutdownSound(
+    PlayShutdownSoundCallback callback) {
+  std::move(callback).Run(kShutdownSoundDuration);
+}
+
+void TestAccessibilityControllerClient::HandleAccessibilityGesture(
+    ax::mojom::Gesture gesture) {
+  last_a11y_gesture_ = gesture;
+}
+
+void TestAccessibilityControllerClient::ToggleDictation() {}
+
+void TestAccessibilityControllerClient::SilenceSpokenFeedback() {}
+
+void TestAccessibilityControllerClient::OnTwoFingerTouchStart() {}
+
+void TestAccessibilityControllerClient::OnTwoFingerTouchStop() {}
+
+void TestAccessibilityControllerClient::ShouldToggleSpokenFeedbackViaTouch(
+    ShouldToggleSpokenFeedbackViaTouchCallback callback) {
+  std::move(callback).Run(true);  // Passing true for testing.
+}
+
+void TestAccessibilityControllerClient::PlaySpokenFeedbackToggleCountdown(
+    int tick_count) {}
+
+int32_t TestAccessibilityControllerClient::GetPlayedEarconAndReset() {
+  int32_t tmp = sound_key_;
+  sound_key_ = -1;
+  return tmp;
 }
 
 }  // namespace ash

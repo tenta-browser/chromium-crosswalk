@@ -11,7 +11,6 @@
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/memory/ref_counted.h"
 #include "base/run_loop.h"
 #include "base/strings/string_util.h"
@@ -38,6 +37,7 @@
 #include "content/shell/browser/shell.h"
 #include "content/shell/browser/shell_content_browser_client.h"
 #include "content/shell/browser/shell_network_delegate.h"
+#include "net/base/filename_util.h"
 #include "net/base/load_flags.h"
 #include "net/base/net_errors.h"
 #include "net/dns/mock_host_resolver.h"
@@ -47,9 +47,13 @@
 #include "net/test/url_request/url_request_failed_job.h"
 #include "net/test/url_request/url_request_mock_http_job.h"
 #include "net/url_request/url_request.h"
+#include "services/network/public/cpp/features.h"
+#include "testing/gmock/include/gmock/gmock.h"
 #include "url/gurl.h"
 
 using base::ASCIIToUTF16;
+using testing::HasSubstr;
+using testing::Not;
 
 namespace content {
 
@@ -67,10 +71,11 @@ class ResourceDispatcherHostBrowserTest : public ContentBrowserTest,
     BrowserThread::PostTask(
         BrowserThread::IO, FROM_HERE,
         base::BindOnce(&net::URLRequestFailedJob::AddUrlHandler));
+    host_resolver()->AddRule("*", "127.0.0.1");
   }
 
   void OnDownloadCreated(DownloadManager* manager,
-                         DownloadItem* item) override {
+                         download::DownloadItem* item) override {
     if (!got_downloads_)
       got_downloads_ = !!manager->InProgressCount();
   }
@@ -135,6 +140,10 @@ IN_PROC_BROWSER_TEST_F(ResourceDispatcherHostBrowserTest, DynamicTitle2) {
 
 IN_PROC_BROWSER_TEST_F(ResourceDispatcherHostBrowserTest,
                        SniffHTMLWithNoContentType) {
+  // Covered by URLLoaderTest.SniffMimeType.
+  if (base::FeatureList::IsEnabled(network::features::kNetworkService))
+    return;
+
   CheckTitleTest(
       net::URLRequestMockHTTPJob::GetMockUrl("content-sniffer-test0.html"),
       "Content Sniffer Test 0");
@@ -142,12 +151,20 @@ IN_PROC_BROWSER_TEST_F(ResourceDispatcherHostBrowserTest,
 
 IN_PROC_BROWSER_TEST_F(ResourceDispatcherHostBrowserTest,
                        RespectNoSniffDirective) {
+  // Covered by URLLoaderTest.RespectNoSniff.
+  if (base::FeatureList::IsEnabled(network::features::kNetworkService))
+    return;
+
   CheckTitleTest(net::URLRequestMockHTTPJob::GetMockUrl("nosniff-test.html"),
                  "mock.http/nosniff-test.html");
 }
 
 IN_PROC_BROWSER_TEST_F(ResourceDispatcherHostBrowserTest,
                        DoNotSniffHTMLFromTextPlain) {
+  // Covered by URLLoaderTest.DoNotSniffHTMLFromTextPlain.
+  if (base::FeatureList::IsEnabled(network::features::kNetworkService))
+    return;
+
   CheckTitleTest(
       net::URLRequestMockHTTPJob::GetMockUrl("content-sniffer-test1.html"),
       "mock.http/content-sniffer-test1.html");
@@ -155,6 +172,10 @@ IN_PROC_BROWSER_TEST_F(ResourceDispatcherHostBrowserTest,
 
 IN_PROC_BROWSER_TEST_F(ResourceDispatcherHostBrowserTest,
                        DoNotSniffHTMLFromImageGIF) {
+  // Covered by URLLoaderTest.DoNotSniffHTMLFromImageGIF.
+  if (base::FeatureList::IsEnabled(network::features::kNetworkService))
+    return;
+
   CheckTitleTest(
       net::URLRequestMockHTTPJob::GetMockUrl("content-sniffer-test2.html"),
       "mock.http/content-sniffer-test2.html");
@@ -171,6 +192,17 @@ IN_PROC_BROWSER_TEST_F(ResourceDispatcherHostBrowserTest,
       "Content Sniffer Test 3");
   EXPECT_EQ(1u, Shell::windows().size());
   ASSERT_FALSE(got_downloads());
+}
+
+// Make sure file URLs are not sniffed as HTML when they don't end in HTML.
+IN_PROC_BROWSER_TEST_F(ResourceDispatcherHostBrowserTest,
+                       DoNotSniffHTMLFromFileUrl) {
+  base::FilePath path =
+      GetTestFilePath(nullptr, "content-sniffer-test5.not-html");
+  GURL file_url = net::FilePathToFileURL(path);
+  // If the file isn't rendered as HTML, the title will match the name of the
+  // file, rather than the contents of the file's title tag.
+  CheckTitleTest(file_url, path.BaseName().MaybeAsASCII());
 }
 
 IN_PROC_BROWSER_TEST_F(ResourceDispatcherHostBrowserTest,
@@ -541,7 +573,6 @@ IN_PROC_BROWSER_TEST_F(ResourceDispatcherHostBrowserTest, CookiePolicy) {
       "http://localhost:%u/set_cookie.html", embedded_test_server()->port()));
   GURL url(embedded_test_server()->GetURL("/redirect?" + set_cookie_url));
 
-  ShellContentBrowserClient::SetSwapProcessesForRedirect(true);
   ShellNetworkDelegate::SetBlockThirdPartyCookies(true);
 
   CheckTitleTest(url, "cookie set");
@@ -578,6 +609,10 @@ class PageTransitionResourceDispatcherHostDelegate
 // when encountering a meta refresh tag.
 IN_PROC_BROWSER_TEST_F(ResourceDispatcherHostBrowserTest,
                        PageTransitionClientRedirect) {
+  // TODO(crbug.com/818445): Fix the flakiness on Network Service.
+  if (base::FeatureList::IsEnabled(network::features::kNetworkService))
+    return;
+
   ASSERT_TRUE(embedded_test_server()->Start());
 
   PageTransitionResourceDispatcherHostDelegate delegate(
@@ -643,7 +678,7 @@ class PreviewsStateResourceDispatcherHostDelegate
     ResourceDispatcherHost::Get()->SetDelegate(this);
   }
 
-  PreviewsState DeterminePreviewsState(
+  PreviewsState DetermineEnabledPreviews(
       net::URLRequest* request,
       content::ResourceContext* resource_context,
       content::PreviewsState previews_to_allow) override {
@@ -891,26 +926,17 @@ IN_PROC_BROWSER_TEST_F(RequestDataResourceDispatcherHostBrowserTest, Basic) {
 
   EXPECT_EQ(8u, delegate_->data().size());
 
-  // All resources loaded directly by the top-level document (including the
-  // top-level document itself) should have a |first_party| and |initiator|
-  // that match the URL of the top-level document.
-  // PlzNavigate: the document itself should have an empty initiator.
-  if (IsBrowserSideNavigationEnabled()) {
-    const RequestDataForDelegate* first_request = delegate_->data()[0].get();
-    EXPECT_EQ(top_url, first_request->first_party);
-    EXPECT_FALSE(first_request->initiator.has_value());
-    for (size_t i = 1; i < delegate_->data().size(); i++) {
-      const RequestDataForDelegate* request = delegate_->data()[i].get();
-      EXPECT_EQ(top_url, request->first_party);
-      ASSERT_TRUE(request->initiator.has_value());
-      EXPECT_EQ(top_origin, request->initiator);
-    }
-  } else {
-    for (const auto& request : delegate_->data()) {
-      SCOPED_TRACE(request->url);
-      EXPECT_EQ(top_url, request->first_party);
-      EXPECT_EQ(top_origin, request->initiator);
-    }
+  // All resources loaded directly by the top-level document should have a
+  // |first_party| and |initiator| that match the URL of the top-level document.
+  // The top-level document itself doesn't have an |initiator|.
+  const RequestDataForDelegate* first_request = delegate_->data()[0].get();
+  EXPECT_EQ(top_url, first_request->first_party);
+  EXPECT_FALSE(first_request->initiator.has_value());
+  for (size_t i = 1; i < delegate_->data().size(); i++) {
+    const RequestDataForDelegate* request = delegate_->data()[i].get();
+    EXPECT_EQ(top_url, request->first_party);
+    ASSERT_TRUE(request->initiator.has_value());
+    EXPECT_EQ(top_origin, request->initiator);
   }
 }
 
@@ -932,16 +958,26 @@ IN_PROC_BROWSER_TEST_F(RequestDataResourceDispatcherHostBrowserTest,
                        LinkRelPrefetchReferrerPolicy) {
   GURL top_url(embedded_test_server()->GetURL(
       "/link_rel_prefetch_referrer_policy.html"));
+  GURL img_url(embedded_test_server()->GetURL("/image.jpg"));
   url::Origin top_origin = url::Origin::Create(top_url);
 
   NavigateToURLBlockUntilNavigationsComplete(shell(), top_url, 1);
 
   EXPECT_EQ(2u, delegate_->data().size());
-  auto* request = delegate_->data()[1].get();
-  EXPECT_EQ(top_origin, request->initiator);
+  auto* main_frame_request = delegate_->data()[0].get();
+  auto* image_request = delegate_->data()[1].get();
+
+  // Check the main frame request.
+  EXPECT_EQ(top_url, main_frame_request->url);
+  EXPECT_FALSE(main_frame_request->initiator.has_value());
+
+  // Check the image request.
+  EXPECT_EQ(img_url, image_request->url);
+  EXPECT_TRUE(image_request->initiator.has_value());
+  EXPECT_EQ(top_origin, image_request->initiator);
   // Respect the "origin" policy set by the <meta> tag.
-  EXPECT_EQ(top_url.GetOrigin().spec(), request->referrer);
-  EXPECT_TRUE(request->load_flags & net::LOAD_PREFETCH);
+  EXPECT_EQ(top_url.GetOrigin().spec(), image_request->referrer);
+  EXPECT_TRUE(image_request->load_flags & net::LOAD_PREFETCH);
 }
 
 IN_PROC_BROWSER_TEST_F(RequestDataResourceDispatcherHostBrowserTest,
@@ -958,17 +994,12 @@ IN_PROC_BROWSER_TEST_F(RequestDataResourceDispatcherHostBrowserTest,
   EXPECT_EQ(9u, delegate_->data().size());
 
   // The first items loaded are the top-level and nested documents. These should
-  // both have a |first_party| and |initiator| that match the URL of the
-  // top-level document.
-  // PlzNavigate: the top-level initiator is null.
+  // both have a |first_party| that match the URL of the top-level document.
+  // The top-level document has no initiator and the nested frame is initiated
+  // by the top-level document.
   EXPECT_EQ(top_url, delegate_->data()[0]->url);
   EXPECT_EQ(top_url, delegate_->data()[0]->first_party);
-  if (IsBrowserSideNavigationEnabled()) {
-    EXPECT_FALSE(delegate_->data()[0]->initiator.has_value());
-  } else {
-    ASSERT_TRUE(delegate_->data()[0]->initiator.has_value());
-    EXPECT_EQ(top_origin, delegate_->data()[0]->initiator);
-  }
+  EXPECT_FALSE(delegate_->data()[0]->initiator.has_value());
 
   EXPECT_EQ(nested_url, delegate_->data()[1]->url);
   EXPECT_EQ(top_url, delegate_->data()[1]->first_party);
@@ -995,17 +1026,12 @@ IN_PROC_BROWSER_TEST_F(RequestDataResourceDispatcherHostBrowserTest,
 
   EXPECT_EQ(3u, delegate_->data().size());
 
-  // User-initiated top-level navigations have a first-party and initiator that
-  // matches the URL to which they navigate.
-  // PlzNavigate: the top-level initiator is null.
+  // User-initiated top-level navigations have a first-party that matches the
+  // URL to which they navigate. The navigation was initiated outside of a
+  // document, so there is no |initiator|.
   EXPECT_EQ(top_url, delegate_->data()[0]->url);
   EXPECT_EQ(top_url, delegate_->data()[0]->first_party);
-  if (IsBrowserSideNavigationEnabled()) {
-    EXPECT_FALSE(delegate_->data()[0]->initiator.has_value());
-  } else {
-    ASSERT_TRUE(delegate_->data()[0]->initiator.has_value());
-    EXPECT_EQ(top_origin, delegate_->data()[0]->initiator);
-  }
+  EXPECT_FALSE(delegate_->data()[0]->initiator.has_value());
 
   // Subresource requests have a first-party and initiator that matches the
   // document in which they're embedded.
@@ -1040,17 +1066,12 @@ IN_PROC_BROWSER_TEST_F(RequestDataResourceDispatcherHostBrowserTest,
 
   EXPECT_EQ(2u, delegate_->data().size());
 
-  // User-initiated top-level navigations have a first-party and initiator that
-  // matches the URL to which they navigate, even if they fail to load.
-  // PlzNavigate: the top-level initiator is null.
+  // User-initiated top-level navigations have a first-party that matches the
+  // URL to which they navigate, even if they fail to load. The navigation was
+  // initiated outside of a document, so there is no |initiator|.
   EXPECT_EQ(top_url, delegate_->data()[0]->url);
   EXPECT_EQ(top_url, delegate_->data()[0]->first_party);
-  if (IsBrowserSideNavigationEnabled()) {
-    EXPECT_FALSE(delegate_->data()[0]->initiator.has_value());
-  } else {
-    ASSERT_TRUE(delegate_->data()[0]->initiator.has_value());
-    EXPECT_EQ(top_origin, delegate_->data()[0]->initiator);
-  }
+  EXPECT_FALSE(delegate_->data()[0]->initiator.has_value());
 
   // Auxiliary navigations have a first-party that matches the URL to which they
   // navigate, and an initiator that matches the document that triggered them.
@@ -1087,17 +1108,12 @@ IN_PROC_BROWSER_TEST_F(RequestDataResourceDispatcherHostBrowserTest,
 
   EXPECT_EQ(2u, delegate_->data().size());
 
-  // User-initiated top-level navigations have a first-party and initiator that
-  // matches the URL to which they navigate, even if they fail to load.
-  // PlzNavigate: the top-level initiator is null.
+  // User-initiated top-level navigations have a first-party that matches the
+  // URL to which they navigate, even if they fail to load. The navigation was
+  // initiated outside of a document, so there is no initiator.
   EXPECT_EQ(top_url, delegate_->data()[0]->url);
   EXPECT_EQ(top_url, delegate_->data()[0]->first_party);
-  if (IsBrowserSideNavigationEnabled()) {
-    EXPECT_FALSE(delegate_->data()[0]->initiator.has_value());
-  } else {
-    ASSERT_TRUE(delegate_->data()[0]->initiator.has_value());
-    EXPECT_EQ(top_origin, delegate_->data()[0]->initiator);
-  }
+  EXPECT_FALSE(delegate_->data()[0]->initiator.has_value());
 
   // Auxiliary navigations have a first-party that matches the URL to which they
   // navigate, and an initiator that matches the document that triggered them.
@@ -1117,17 +1133,12 @@ IN_PROC_BROWSER_TEST_F(RequestDataResourceDispatcherHostBrowserTest,
 
   EXPECT_EQ(1u, delegate_->data().size());
 
-  // User-initiated top-level navigations have a first-party and initiator that
-  // matches the URL to which they navigate, even if they fail to load.
-  // PlzNavigate: the top-level initiator is null.
+  // User-initiated top-level navigations have a first-party that matches the
+  // URL to which they navigate, even if they fail to load. The navigation was
+  // initiated outside of a document, so there is no initiator.
   EXPECT_EQ(top_url, delegate_->data()[0]->url);
   EXPECT_EQ(top_url, delegate_->data()[0]->first_party);
-  if (IsBrowserSideNavigationEnabled()) {
-    EXPECT_FALSE(delegate_->data()[0]->initiator.has_value());
-  } else {
-    ASSERT_TRUE(delegate_->data()[0]->initiator.has_value());
-    EXPECT_EQ(top_origin, delegate_->data()[0]->initiator);
-  }
+  EXPECT_FALSE(delegate_->data()[0]->initiator.has_value());
 }
 
 IN_PROC_BROWSER_TEST_F(RequestDataResourceDispatcherHostBrowserTest,
@@ -1147,17 +1158,11 @@ IN_PROC_BROWSER_TEST_F(RequestDataResourceDispatcherHostBrowserTest,
 
   EXPECT_EQ(4u, delegate_->data().size());
 
-  // User-initiated top-level navigations have a first-party and initiator that
-  // matches the URL to which they navigate.
-  // PlzNavigate: the top-level initiator is null.
+  // User-initiated top-level navigations have a |first-party|. The navigation
+  // was initiated outside of a document, so there are no initiator.
   EXPECT_EQ(top_url, delegate_->data()[0]->url);
   EXPECT_EQ(top_url, delegate_->data()[0]->first_party);
-  if (IsBrowserSideNavigationEnabled()) {
-    EXPECT_FALSE(delegate_->data()[0]->initiator.has_value());
-  } else {
-    ASSERT_TRUE(delegate_->data()[0]->initiator.has_value());
-    EXPECT_EQ(top_origin, delegate_->data()[0]->initiator);
-  }
+  EXPECT_FALSE(delegate_->data()[0]->initiator.has_value());
 
   EXPECT_EQ(top_js_url, delegate_->data()[1]->url);
   EXPECT_EQ(top_url, delegate_->data()[1]->first_party);
@@ -1174,6 +1179,63 @@ IN_PROC_BROWSER_TEST_F(RequestDataResourceDispatcherHostBrowserTest,
   EXPECT_EQ(nested_js_url, delegate_->data()[3]->url);
   EXPECT_EQ(kURLWithUniqueOrigin, delegate_->data()[3]->first_party);
   EXPECT_EQ(nested_origin, delegate_->data()[3]->initiator);
+}
+
+// Regression test for https://crbug.com/648608. An attacker could trivially
+// bypass cookies SameSite=Strict protections by navigating a new window twice.
+IN_PROC_BROWSER_TEST_F(ResourceDispatcherHostBrowserTest,
+                       CookieSameSiteStrictOpenNewNamedWindowTwice) {
+  ASSERT_TRUE(embedded_test_server()->Start());
+
+  // 1) Add cookies for 'a.com', one of them with the "SameSite=Strict" option.
+  BrowserContext* context = shell()->web_contents()->GetBrowserContext();
+  GURL a_url("http://a.com");
+  EXPECT_TRUE(SetCookie(context, a_url, "cookie_A=A; SameSite=Strict;"));
+  EXPECT_TRUE(SetCookie(context, a_url, "cookie_B=B"));
+
+  // 2) Navigate to malicious.com.
+  EXPECT_TRUE(NavigateToURL(shell(), embedded_test_server()->GetURL(
+                                         "malicious.com", "/title1.html")));
+
+  // 2.1) malicious.com opens a new window to 'http://a.com/echoall'.
+  GURL echoall_url = embedded_test_server()->GetURL("a.com", "/echoall");
+  std::string script = base::StringPrintf("window.open('%s', 'named_frame');",
+                                          echoall_url.spec().c_str());
+  {
+    TestNavigationObserver new_tab_observer(shell()->web_contents(), 1);
+    new_tab_observer.StartWatchingNewWebContents();
+    EXPECT_TRUE(ExecuteScript(shell(), script));
+    new_tab_observer.Wait();
+    ASSERT_EQ(2u, Shell::windows().size());
+    Shell* new_shell = Shell::windows()[1];
+    EXPECT_TRUE(WaitForLoadStop(new_shell->web_contents()));
+
+    // Only the cookie without "SameSite=Strict" should be sent.
+    std::string html_content;
+    EXPECT_TRUE(ExecuteScriptAndExtractString(
+        new_shell, "domAutomationController.send(document.body.textContent)",
+        &html_content));
+    EXPECT_THAT(html_content.c_str(), Not(HasSubstr("cookie_A=A")));
+    EXPECT_THAT(html_content.c_str(), HasSubstr("cookie_B=B"));
+  }
+
+  // 2.2) Same as in 2.1). The difference is that the new tab will be reused.
+  {
+    Shell* new_shell = Shell::windows()[1];
+    TestNavigationObserver new_tab_observer(new_shell->web_contents(), 1);
+    EXPECT_TRUE(ExecuteScript(shell(), script));
+    new_tab_observer.Wait();
+    ASSERT_EQ(2u, Shell::windows().size());
+    EXPECT_TRUE(WaitForLoadStop(new_shell->web_contents()));
+
+    // Only the cookie without "SameSite=Strict" should be sent.
+    std::string html_content;
+    EXPECT_TRUE(ExecuteScriptAndExtractString(
+        new_shell, "domAutomationController.send(document.body.textContent)",
+        &html_content));
+    EXPECT_THAT(html_content.c_str(), Not(HasSubstr("cookie_A=A")));
+    EXPECT_THAT(html_content.c_str(), HasSubstr("cookie_B=B"));
+  }
 }
 
 }  // namespace content

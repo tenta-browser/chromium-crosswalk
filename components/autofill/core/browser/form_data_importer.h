@@ -8,6 +8,7 @@
 #include <map>
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "build/build_config.h"
@@ -49,8 +50,8 @@ class FormDataImporter {
  protected:
   // Exposed for testing.
   void set_credit_card_save_manager(
-      CreditCardSaveManager* credit_card_save_manager) {
-    credit_card_save_manager_.reset(credit_card_save_manager);
+      std::unique_ptr<CreditCardSaveManager> credit_card_save_manager) {
+    credit_card_save_manager_ = std::move(credit_card_save_manager);
   }
 
  private:
@@ -62,17 +63,12 @@ class FormDataImporter {
   // data. If the form contains credit card data already present in a local
   // credit card entry *and* |should_return_local_card| is true, the data is
   // stored into |imported_credit_card| so that we can prompt the user whether
-  // to upload it. |imported_credit_card_matches_masked_server_credit_card| is
-  // set to |true| if the |TypeAndLastFourDigits| in |imported_credit_card|
-  // matches the |TypeAndLastFourDigits| in a saved masked server card. Returns
-  // |true| if sufficient address or credit card data was found.
-  // Exposed for testing.
-  bool ImportFormData(
-      const FormStructure& form,
-      bool credit_card_autofill_enabled,
-      bool should_return_local_card,
-      std::unique_ptr<CreditCard>* imported_credit_card,
-      bool* imported_credit_card_matches_masked_server_credit_card);
+  // to upload it. Returns |true| if sufficient address or credit card data
+  // was found. Exposed for testing.
+  bool ImportFormData(const FormStructure& form,
+                      bool credit_card_autofill_enabled,
+                      bool should_return_local_card,
+                      std::unique_ptr<CreditCard>* imported_credit_card);
 
   // Go through the |form| fields and attempt to extract and import valid
   // address profiles. Returns true on extraction success of at least one
@@ -88,16 +84,11 @@ class FormDataImporter {
   // Go through the |form| fields and attempt to extract a new credit card in
   // |imported_credit_card|, or update an existing card.
   // |should_return_local_card| will indicate whether |imported_credit_card| is
-  // filled even if an existing card was updated.
-  // |imported_credit_card_matches_masked_server_credit_card| will indicate
-  // whether |imported_credit_card| is filled even if an existing masked server
-  // card as the same |TypeAndLastFourDigits|. Success is defined as having a
-  // new card to import, or having merged with an existing card.
-  bool ImportCreditCard(
-      const FormStructure& form,
-      bool should_return_local_card,
-      std::unique_ptr<CreditCard>* imported_credit_card,
-      bool* imported_credit_card_matches_masked_server_credit_card);
+  // filled even if an existing card was updated. Success is defined as having
+  // a new card to import, or having merged with an existing card.
+  bool ImportCreditCard(const FormStructure& form,
+                        bool should_return_local_card,
+                        std::unique_ptr<CreditCard>* imported_credit_card);
 
   // Extracts credit card from the form structure. |hasDuplicateFieldType| will
   // be set as true if there are duplicated field types in the form.
@@ -113,16 +104,25 @@ class FormDataImporter {
   // May be NULL.  NULL indicates OTR.
   PersonalDataManager* personal_data_manager_;
 
+  // For metrics, to be passed to |credit_card_save_manager_|. Notes if the
+  // credit card being offered for upload is already a locally-saved card.
+  bool offering_upload_of_local_credit_card_ = false;
+
   std::string app_locale_;
 
   friend class AutofillMergeTest;
   friend class FormDataImporterTest;
   friend class FormDataImporterTestBase;
+  friend class SaveCardBubbleViewsBrowserTestBase;
   FRIEND_TEST_ALL_PREFIXES(AutofillMergeTest, MergeProfiles);
   FRIEND_TEST_ALL_PREFIXES(FormDataImporterTest,
                            AllowDuplicateMaskedServerCardIfFlagEnabled);
   FRIEND_TEST_ALL_PREFIXES(FormDataImporterTest, DontDuplicateFullServerCard);
   FRIEND_TEST_ALL_PREFIXES(FormDataImporterTest, DontDuplicateMaskedServerCard);
+  FRIEND_TEST_ALL_PREFIXES(FormDataImporterTest,
+                           ImportCreditCard_TrackOfferingUploadOfLocalCard);
+  FRIEND_TEST_ALL_PREFIXES(FormDataImporterTest,
+                           ImportCreditCard_TrackOfferingUploadOfNewCard);
   FRIEND_TEST_ALL_PREFIXES(FormDataImporterTest,
                            ImportFormData_OneAddressCreditCardDisabled);
   FRIEND_TEST_ALL_PREFIXES(FormDataImporterTest,

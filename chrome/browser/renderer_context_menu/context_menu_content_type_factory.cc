@@ -9,7 +9,7 @@
 #include "components/renderer_context_menu/context_menu_content_type.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/url_constants.h"
-#include "extensions/features/features.h"
+#include "extensions/buildflags/buildflags.h"
 
 #if BUILDFLAG(ENABLE_EXTENSIONS)
 #include "chrome/browser/app_mode/app_mode_utils.h"
@@ -98,8 +98,7 @@ ContextMenuContentType* ContextMenuContentTypeFactory::CreateInternal(
 
   const extensions::ViewType view_type = extensions::GetViewType(web_contents);
 
-  if (view_type == extensions::VIEW_TYPE_APP_WINDOW ||
-      view_type == extensions::VIEW_TYPE_LAUNCHER_PAGE)
+  if (view_type == extensions::VIEW_TYPE_APP_WINDOW)
     return new ContextMenuContentTypePlatformApp(web_contents, params);
 
   if (view_type == extensions::VIEW_TYPE_EXTENSION_POPUP)

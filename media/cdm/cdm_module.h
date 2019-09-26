@@ -13,7 +13,7 @@
 #include "base/scoped_native_library.h"
 #include "media/base/media_export.h"
 #include "media/cdm/api/content_decryption_module.h"
-#include "media/media_features.h"
+#include "media/media_buildflags.h"
 
 #if BUILDFLAG(ENABLE_CDM_HOST_VERIFICATION)
 #include "media/cdm/cdm_host_file.h"
@@ -59,6 +59,7 @@ class MEDIA_EXPORT CdmModule {
  private:
   using InitializeCdmModuleFunc = void (*)();
   using DeinitializeCdmModuleFunc = void (*)();
+  using GetCdmVersionFunc = char* (*)();
 
   CdmModule();
 
@@ -68,6 +69,7 @@ class MEDIA_EXPORT CdmModule {
   CreateCdmFunc create_cdm_func_ = nullptr;
   InitializeCdmModuleFunc initialize_cdm_module_func_ = nullptr;
   DeinitializeCdmModuleFunc deinitialize_cdm_module_func_ = nullptr;
+  GetCdmVersionFunc get_cdm_version_func_ = nullptr;
 
   DISALLOW_COPY_AND_ASSIGN(CdmModule);
 };

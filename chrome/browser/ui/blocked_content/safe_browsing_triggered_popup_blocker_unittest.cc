@@ -10,7 +10,6 @@
 #include <vector>
 
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/run_loop.h"
 #include "base/test/histogram_tester.h"
 #include "base/test/scoped_feature_list.h"
@@ -23,7 +22,7 @@
 #include "content/public/test/navigation_simulator.h"
 #include "content/public/test/test_renderer_host.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/WebKit/public/web/WebTriggeringEventInfo.h"
+#include "third_party/blink/public/web/web_triggering_event_info.h"
 #include "ui/base/page_transition_types.h"
 #include "ui/base/window_open_disposition.h"
 #include "url/gurl.h"
@@ -78,7 +77,7 @@ class SafeBrowsingTriggeredPopupBlockerTest
   }
 
   virtual std::unique_ptr<base::test::ScopedFeatureList> DefaultFeatureList() {
-    auto feature_list = base::MakeUnique<base::test::ScopedFeatureList>();
+    auto feature_list = std::make_unique<base::test::ScopedFeatureList>();
     feature_list->InitAndEnableFeature(kAbusiveExperienceEnforce);
     return feature_list;
   }
@@ -88,7 +87,7 @@ class SafeBrowsingTriggeredPopupBlockerTest
   }
 
   base::test::ScopedFeatureList* ResetFeatureAndGet() {
-    scoped_feature_list_ = base::MakeUnique<base::test::ScopedFeatureList>();
+    scoped_feature_list_ = std::make_unique<base::test::ScopedFeatureList>();
     return scoped_feature_list_.get();
   }
 
@@ -136,7 +135,7 @@ class SafeBrowsingTriggeredPopupBlockerTest
 class IgnoreSublistSafeBrowsingTriggeredPopupBlockerTest
     : public SafeBrowsingTriggeredPopupBlockerTest {
   std::unique_ptr<base::test::ScopedFeatureList> DefaultFeatureList() override {
-    auto feature_list = base::MakeUnique<base::test::ScopedFeatureList>();
+    auto feature_list = std::make_unique<base::test::ScopedFeatureList>();
     feature_list->InitAndEnableFeatureWithParameters(
         kAbusiveExperienceEnforce, {{"ignore_sublists", "true"}});
     return feature_list;
@@ -199,10 +198,11 @@ TEST_F(SafeBrowsingTriggeredPopupBlockerTest, NoMatch_NoBlocking) {
   EXPECT_TRUE(GetMainFrameConsoleMessages().empty());
 }
 
-TEST_F(SafeBrowsingTriggeredPopupBlockerTest, NoFeature_NoCreating) {
+TEST_F(SafeBrowsingTriggeredPopupBlockerTest, FeatureEnabledByDefault) {
+  ResetFeatureAndGet();
   EXPECT_NE(nullptr,
             SafeBrowsingTriggeredPopupBlocker::MaybeCreate(web_contents()));
-  ResetFeatureAndGet();
+  ResetFeatureAndGet()->InitAndDisableFeature(kAbusiveExperienceEnforce);
   EXPECT_EQ(nullptr,
             SafeBrowsingTriggeredPopupBlocker::MaybeCreate(web_contents()));
 }

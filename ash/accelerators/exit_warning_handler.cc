@@ -61,7 +61,7 @@ class ExitWarningWidgetDelegateView : public views::WidgetDelegateView {
     label->SetAutoColorReadabilityEnabled(false);
     label->SetSubpixelRenderingEnabled(false);
     AddChildView(label);
-    SetLayoutManager(new views::FillLayout);
+    SetLayoutManager(std::make_unique<views::FillLayout>());
   }
 
   void OnPaint(gfx::Canvas* canvas) override {
@@ -74,7 +74,7 @@ class ExitWarningWidgetDelegateView : public views::WidgetDelegateView {
 
   void GetAccessibleNodeData(ui::AXNodeData* node_data) override {
     node_data->SetName(accessible_name_);
-    node_data->role = ui::AX_ROLE_ALERT;
+    node_data->role = ax::mojom::Role::kAlert;
   }
 
  private:
@@ -158,7 +158,7 @@ void ExitWarningHandler::Show() {
   widget_->Init(params);
   widget_->Show();
 
-  delegate->NotifyAccessibilityEvent(ui::AX_EVENT_ALERT, true);
+  delegate->NotifyAccessibilityEvent(ax::mojom::Event::kAlert, true);
 }
 
 void ExitWarningHandler::Hide() {

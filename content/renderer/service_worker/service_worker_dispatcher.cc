@@ -8,9 +8,7 @@
 #include <utility>
 
 #include "base/lazy_instance.h"
-#include "base/memory/ptr_util.h"
 #include "base/memory/ref_counted.h"
-#include "base/single_thread_task_runner.h"
 #include "base/stl_util.h"
 #include "base/threading/thread_local.h"
 #include "base/threading/thread_task_runner_handle.h"
@@ -18,13 +16,12 @@
 #include "content/common/service_worker/service_worker_messages.h"
 #include "content/common/service_worker/service_worker_types.h"
 #include "content/public/common/content_constants.h"
-#include "content/renderer/service_worker/service_worker_handle_reference.h"
 #include "content/renderer/service_worker/service_worker_provider_context.h"
 #include "content/renderer/service_worker/web_service_worker_impl.h"
-#include "third_party/WebKit/public/platform/WebString.h"
-#include "third_party/WebKit/public/platform/modules/serviceworker/WebServiceWorkerProviderClient.h"
-#include "third_party/WebKit/public/platform/modules/serviceworker/service_worker_error_type.mojom.h"
-#include "third_party/WebKit/public/platform/modules/serviceworker/service_worker_registration.mojom.h"
+#include "third_party/blink/public/mojom/service_worker/service_worker_error_type.mojom.h"
+#include "third_party/blink/public/mojom/service_worker/service_worker_registration.mojom.h"
+#include "third_party/blink/public/platform/modules/serviceworker/web_service_worker_provider_client.h"
+#include "third_party/blink/public/platform/web_string.h"
 #include "url/url_constants.h"
 
 using blink::WebServiceWorkerError;
@@ -38,20 +35,21 @@ namespace {
 base::LazyInstance<ThreadLocalPointer<void>>::Leaky g_dispatcher_tls =
     LAZY_INSTANCE_INITIALIZER;
 
-void* const kHasBeenDeleted = reinterpret_cast<void*>(0x1);
+void* const kDeletedServiceWorkerDispatcherMarker =
+    reinterpret_cast<void*>(0x1);
 
 }  // namespace
 
-ServiceWorkerDispatcher::ServiceWorkerDispatcher(
-    ThreadSafeSender* thread_safe_sender,
-    base::SingleThreadTaskRunner* main_thread_task_runner)
-    : thread_safe_sender_(thread_safe_sender),
-      main_thread_task_runner_(main_thread_task_runner) {
+ServiceWorkerDispatcher::ServiceWorkerDispatcher() {
   g_dispatcher_tls.Pointer()->Set(static_cast<void*>(this));
 }
 
 ServiceWorkerDispatcher::~ServiceWorkerDispatcher() {
-  g_dispatcher_tls.Pointer()->Set(kHasBeenDeleted);
+  if (allow_reinstantiation_) {
+    g_dispatcher_tls.Pointer()->Set(nullptr);
+    return;
+  }
+  g_dispatcher_tls.Pointer()->Set(kDeletedServiceWorkerDispatcherMarker);
 }
 
 void ServiceWorkerDispatcher::OnMessageReceived(const IPC::Message& msg) {
@@ -69,10 +67,9 @@ void ServiceWorkerDispatcher::OnMessageReceived(const IPC::Message& msg) {
 }
 
 ServiceWorkerDispatcher*
-ServiceWorkerDispatcher::GetOrCreateThreadSpecificInstance(
-    ThreadSafeSender* thread_safe_sender,
-    base::SingleThreadTaskRunner* main_thread_task_runner) {
-  if (g_dispatcher_tls.Pointer()->Get() == kHasBeenDeleted) {
+ServiceWorkerDispatcher::GetOrCreateThreadSpecificInstance() {
+  if (g_dispatcher_tls.Pointer()->Get() ==
+      kDeletedServiceWorkerDispatcherMarker) {
     NOTREACHED() << "Re-instantiating TLS ServiceWorkerDispatcher.";
     g_dispatcher_tls.Pointer()->Set(nullptr);
   }
@@ -80,18 +77,22 @@ ServiceWorkerDispatcher::GetOrCreateThreadSpecificInstance(
     return static_cast<ServiceWorkerDispatcher*>(
         g_dispatcher_tls.Pointer()->Get());
 
-  ServiceWorkerDispatcher* dispatcher =
-      new ServiceWorkerDispatcher(thread_safe_sender, main_thread_task_runner);
+  ServiceWorkerDispatcher* dispatcher = new ServiceWorkerDispatcher();
   if (WorkerThread::GetCurrentId())
     WorkerThread::AddObserver(dispatcher);
   return dispatcher;
 }
 
 ServiceWorkerDispatcher* ServiceWorkerDispatcher::GetThreadSpecificInstance() {
-  if (g_dispatcher_tls.Pointer()->Get() == kHasBeenDeleted)
+  if (g_dispatcher_tls.Pointer()->Get() ==
+      kDeletedServiceWorkerDispatcherMarker)
     return nullptr;
   return static_cast<ServiceWorkerDispatcher*>(
       g_dispatcher_tls.Pointer()->Get());
+}
+
+void ServiceWorkerDispatcher::AllowReinstantiationForTesting() {
+  allow_reinstantiation_ = true;
 }
 
 void ServiceWorkerDispatcher::WillStopCurrentWorkerThread() {
@@ -100,18 +101,34 @@ void ServiceWorkerDispatcher::WillStopCurrentWorkerThread() {
 
 scoped_refptr<WebServiceWorkerImpl>
 ServiceWorkerDispatcher::GetOrCreateServiceWorker(
-    std::unique_ptr<ServiceWorkerHandleReference> handle_ref) {
-  if (!handle_ref)
+    blink::mojom::ServiceWorkerObjectInfoPtr info) {
+  if (!info)
     return nullptr;
+  DCHECK_NE(blink::mojom::kInvalidServiceWorkerHandleId, info->handle_id);
+  DCHECK_NE(blink::mojom::kInvalidServiceWorkerVersionId, info->version_id);
 
-  WorkerObjectMap::iterator found =
-      service_workers_.find(handle_ref->handle_id());
+  WorkerObjectMap::iterator found = service_workers_.find(info->handle_id);
   if (found != service_workers_.end())
     return found->second;
 
-  // WebServiceWorkerImpl constructor calls AddServiceWorker.
-  return new WebServiceWorkerImpl(std::move(handle_ref),
-                                  thread_safe_sender_.get());
+  if (WorkerThread::GetCurrentId()) {
+    // Because we do not support navigator.serviceWorker in
+    // WorkerNavigator (see https://crbug.com/371690), both dedicated worker and
+    // shared worker context can never have a ServiceWorker object, but service
+    // worker execution context is different as it can have some ServiceWorker
+    // objects via the ServiceWorkerGlobalScope#registration object.
+    // So, if we're on a worker thread here we know it's definitely a service
+    // worker thread.
+    DCHECK(io_thread_task_runner_);
+    return WebServiceWorkerImpl::CreateForServiceWorkerGlobalScope(
+        std::move(info), io_thread_task_runner_);
+  }
+  return WebServiceWorkerImpl::CreateForServiceWorkerClient(std::move(info));
+}
+
+void ServiceWorkerDispatcher::SetIOThreadTaskRunner(
+    scoped_refptr<base::SingleThreadTaskRunner> io_thread_task_runner) {
+  io_thread_task_runner_ = std::move(io_thread_task_runner);
 }
 
 void ServiceWorkerDispatcher::OnServiceWorkerStateChanged(

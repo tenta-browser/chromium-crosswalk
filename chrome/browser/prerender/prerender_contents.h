@@ -45,6 +45,10 @@ namespace history {
 struct HistoryAddPageArgs;
 }
 
+namespace memory_instrumentation {
+class GlobalMemoryDump;
+}
+
 namespace prerender {
 
 class PrerenderManager;
@@ -113,9 +117,6 @@ class PrerenderContents : public content::NotificationObserver,
   // started.
   void SetPrerenderMode(PrerenderMode mode);
   PrerenderMode prerender_mode() const { return prerender_mode_; }
-
-  // Returns true iff the method given is valid for prerendering.
-  bool IsValidHttpMethod(const std::string& method);
 
   static Factory* CreateFactory();
 
@@ -226,11 +227,6 @@ class PrerenderContents : public content::NotificationObserver,
 
   std::unique_ptr<base::DictionaryValue> GetAsValue() const;
 
-  // Returns whether a pending cross-site navigation is happening.
-  // This could happen with renderer-issued navigations, such as a
-  // MouseEvent being dispatched by a link to a website installed as an app.
-  bool IsCrossSiteNavigationPending() const;
-
   // Marks prerender as used and releases any throttled resource requests.
   void PrepareForUse();
 
@@ -301,7 +297,7 @@ class PrerenderContents : public content::NotificationObserver,
   // The session storage namespace id for use in matching. We must save it
   // rather than get it from the RenderViewHost since in the control group
   // we won't have a RenderViewHost.
-  int64_t session_storage_namespace_id_;
+  std::string session_storage_namespace_id_;
 
  private:
   class WebContentsDelegateImpl;
@@ -310,10 +306,15 @@ class PrerenderContents : public content::NotificationObserver,
   friend class PrerenderContentsFactoryImpl;
 
   // Returns the ProcessMetrics for the render process, if it exists.
-  base::ProcessMetrics* MaybeGetProcessMetrics();
+  void DidGetMemoryUsage(
+      bool success,
+      std::unique_ptr<memory_instrumentation::GlobalMemoryDump> dump);
 
   // chrome::mojom::PrerenderCanceler:
   void CancelPrerenderForPrinting() override;
+  void CancelPrerenderForUnsupportedMethod() override;
+  void CancelPrerenderForUnsupportedScheme(const GURL& url) override;
+  void CancelPrerenderForSyncDeferredRedirect() override;
 
   void OnPrerenderCancelerRequest(
       chrome::mojom::PrerenderCancelerRequest request);
@@ -359,9 +360,9 @@ class PrerenderContents : public content::NotificationObserver,
   // Used solely to prevent double deletion.
   bool prerendering_has_been_cancelled_;
 
-  // Process Metrics of the render process associated with the
-  // RenderViewHost for this object.
-  std::unique_ptr<base::ProcessMetrics> process_metrics_;
+  // Pid of the render process associated with the RenderViewHost for this
+  // object.
+  base::ProcessId process_pid_;
 
   std::unique_ptr<WebContentsDelegateImpl> web_contents_delegate_;
 

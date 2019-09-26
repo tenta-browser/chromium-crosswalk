@@ -17,6 +17,7 @@
 #include "base/threading/thread_checker.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "build/build_config.h"
+#include "content/browser/media/media_devices_permission_checker.h"
 #include "content/browser/renderer_host/media/media_stream_manager.h"
 #include "content/browser/renderer_host/media/video_capture_manager.h"
 #include "content/public/browser/browser_thread.h"
@@ -36,6 +37,17 @@ namespace content {
 
 namespace {
 
+// Resolutions used if the source doesn't support capability enumeration.
+struct {
+  uint16_t width;
+  uint16_t height;
+} const kFallbackVideoResolutions[] = {{1920, 1080}, {1280, 720}, {960, 720},
+                                       {640, 480},   {640, 360},  {320, 240},
+                                       {320, 180}};
+
+// Frame rates for sources with no support for capability enumeration.
+const uint16_t kFallbackVideoFrameRates[] = {30, 60};
+
 // Private helper method to generate a string for the log message that lists the
 // human readable names of |devices|.
 std::string GetLogMessageString(MediaDeviceType device_type,
@@ -49,30 +61,116 @@ std::string GetLogMessageString(MediaDeviceType device_type,
   return output_string;
 }
 
-media::AudioDeviceDescriptions GetFakeAudioDevices(bool is_input) {
-  media::AudioDeviceDescriptions result;
+MediaDeviceInfoArray GetFakeAudioDevices(bool is_input) {
+  MediaDeviceInfoArray result;
   if (is_input) {
-    result.emplace_back("Fake Default Audio Input",
-                        media::AudioDeviceDescription::kDefaultDeviceId,
-                        "fake_group_audio_1");
-    result.emplace_back("Fake Audio Input 1", "fake_audio_input_1",
-                        "fake_group_audio_1");
-    result.emplace_back("Fake Audio Input 2", "fake_audio_input_2",
+    result.emplace_back(media::AudioDeviceDescription::kDefaultDeviceId,
+                        "Fake Default Audio Input",
+                        "fake_group_audio_input_default");
+    result.emplace_back("fake_audio_input_1", "Fake Audio Input 1",
+                        "fake_group_audio_input_1");
+    result.emplace_back("fake_audio_input_2", "Fake Audio Input 2",
                         "fake_group_audio_input_2");
   } else {
-    result.emplace_back("Fake Default Audio Output",
-                        media::AudioDeviceDescription::kDefaultDeviceId,
-                        "fake_group_audio_1");
-    result.emplace_back("Fake Audio Output 1", "fake_audio_output_1",
-                        "fake_group_audio_1");
-    result.emplace_back("Fake Audio Output 2", "fake_audio_output_2",
+    result.emplace_back(media::AudioDeviceDescription::kDefaultDeviceId,
+                        "Fake Default Audio Output",
+                        "fake_group_audio_output_default");
+    result.emplace_back("fake_audio_output_1", "Fake Audio Output 1",
+                        "fake_group_audio_output_1");
+    result.emplace_back("fake_audio_output_2", "Fake Audio Output 2",
                         "fake_group_audio_output_2");
   }
 
   return result;
 }
 
+std::string VideoLabelWithoutModelID(const std::string& label) {
+  if (label.rfind(")") != label.size() - 1)
+    return label;
+
+  auto idx = label.rfind(" (");
+  if (idx == std::string::npos)
+    return label;
+
+  return label.substr(0, idx - 1);
+}
+
+bool LabelHasUSBModel(const std::string& label) {
+  return label.size() >= 11 && label[label.size() - 11] == '(' &&
+         label[label.size() - 6] == ':' && label[label.size() - 1] == ')';
+}
+
+std::string GetUSBModelFromLabel(const std::string& label) {
+  DCHECK(LabelHasUSBModel(label));
+  return label.substr(label.size() - 10, 9);
+}
+
+bool IsRealAudioDeviceID(const std::string& device_id) {
+  return !media::AudioDeviceDescription::IsDefaultDevice(device_id) &&
+         !media::AudioDeviceDescription::IsCommunicationsDevice(device_id);
+}
+
 }  // namespace
+
+std::string GuessVideoGroupID(const MediaDeviceInfoArray& audio_infos,
+                              const MediaDeviceInfo& video_info) {
+  std::string video_label = VideoLabelWithoutModelID(video_info.label);
+
+  // If |video_label| is very small, do not guess in order to avoid false
+  // positives.
+  if (video_label.size() <= 3)
+    return video_info.device_id;
+
+  std::function<bool(const MediaDeviceInfo&)>
+      video_label_is_included_in_audio_label =
+          [&video_label](const MediaDeviceInfo& audio_info) {
+            return audio_info.label.find(video_label) != std::string::npos;
+          };
+
+  bool video_has_usb_model = LabelHasUSBModel(video_info.label);
+  std::string video_usb_model = video_has_usb_model
+                                    ? GetUSBModelFromLabel(video_info.label)
+                                    : std::string();
+  std::function<bool(const MediaDeviceInfo&)> usb_model_matches =
+      [video_has_usb_model,
+       &video_usb_model](const MediaDeviceInfo& audio_info) {
+        return video_has_usb_model && LabelHasUSBModel(audio_info.label)
+                   ? video_usb_model == GetUSBModelFromLabel(audio_info.label)
+                   : false;
+      };
+
+  for (auto* lambda :
+       {&video_label_is_included_in_audio_label, &usb_model_matches}) {
+    // The label for the default and communication audio devices may contain the
+    // same label as the real devices, so they should be ignored when trying to
+    // find unique matches.
+    auto real_device_matches = [lambda](const MediaDeviceInfo& audio_info) {
+      return IsRealAudioDeviceID(audio_info.device_id) && (*lambda)(audio_info);
+    };
+    auto it_first = std::find_if(audio_infos.begin(), audio_infos.end(),
+                                 real_device_matches);
+    if (it_first == audio_infos.end())
+      continue;
+
+    auto it = it_first;
+    bool duplicate_found = false;
+    while ((it = std::find_if(it + 1, audio_infos.end(),
+                              real_device_matches)) != audio_infos.end()) {
+      // If there is more than one match, it is impossible to know which group
+      // ID is the correct one. This may occur if multiple devices of the same
+      // model are installed.
+      if (it->group_id != it_first->group_id) {
+        duplicate_found = true;
+        break;
+      }
+    }
+
+    if (!duplicate_found)
+      return it_first->group_id;
+  }
+
+  return video_info.device_id;
+}
 
 struct MediaDevicesManager::EnumerationRequest {
   EnumerationRequest(const BoolDeviceTypes& requested_types,
@@ -145,6 +243,27 @@ class MediaDevicesManager::CacheInfo {
   base::ThreadChecker thread_checker_;
 };
 
+MediaDevicesManager::SubscriptionRequest::SubscriptionRequest(
+    int render_process_id,
+    int render_frame_id,
+    const std::string& group_id_salt_base,
+    const BoolDeviceTypes& subscribe_types,
+    blink::mojom::MediaDevicesListenerPtr listener)
+    : render_process_id(render_process_id),
+      render_frame_id(render_frame_id),
+      group_id_salt_base(group_id_salt_base),
+      subscribe_types(subscribe_types),
+      listener(std::move(listener)) {}
+
+MediaDevicesManager::SubscriptionRequest::SubscriptionRequest(
+    SubscriptionRequest&&) = default;
+
+MediaDevicesManager::SubscriptionRequest::~SubscriptionRequest() = default;
+
+MediaDevicesManager::SubscriptionRequest&
+MediaDevicesManager::SubscriptionRequest::operator=(SubscriptionRequest&&) =
+    default;
+
 MediaDevicesManager::MediaDevicesManager(
     media::AudioSystem* audio_system,
     const scoped_refptr<VideoCaptureManager>& video_capture_manager,
@@ -154,8 +273,11 @@ MediaDevicesManager::MediaDevicesManager(
       audio_system_(audio_system),
       video_capture_manager_(video_capture_manager),
       media_stream_manager_(media_stream_manager),
+      permission_checker_(std::make_unique<MediaDevicesPermissionChecker>()),
       cache_infos_(NUM_MEDIA_DEVICE_TYPES),
       monitoring_started_(false),
+      salt_and_origin_callback_(
+          base::BindRepeating(&GetMediaDeviceSaltAndOrigin)),
       weak_factory_(this) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
   DCHECK(audio_system_);
@@ -187,25 +309,50 @@ void MediaDevicesManager::EnumerateDevices(
     ProcessRequests();
 }
 
-void MediaDevicesManager::SubscribeDeviceChangeNotifications(
-    MediaDeviceType type,
-    MediaDeviceChangeSubscriber* subscriber) {
+void MediaDevicesManager::EnumerateDevices(
+    int render_process_id,
+    int render_frame_id,
+    const std::string& group_id_salt_base,
+    const BoolDeviceTypes& requested_types,
+    bool request_video_input_capabilities,
+    EnumerateDevicesCallback callback) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
 
-  auto it = std::find(device_change_subscribers_[type].begin(),
-                      device_change_subscribers_[type].end(), subscriber);
-  if (it == device_change_subscribers_[type].end())
-    device_change_subscribers_[type].push_back(subscriber);
+  base::PostTaskAndReplyWithResult(
+      BrowserThread::GetTaskRunnerForThread(BrowserThread::UI).get(), FROM_HERE,
+      base::BindOnce(salt_and_origin_callback_, render_process_id,
+                     render_frame_id),
+      base::BindOnce(&MediaDevicesManager::CheckPermissionsForEnumerateDevices,
+                     weak_factory_.GetWeakPtr(), render_process_id,
+                     render_frame_id, group_id_salt_base, requested_types,
+                     request_video_input_capabilities, std::move(callback)));
+}
+
+uint32_t MediaDevicesManager::SubscribeDeviceChangeNotifications(
+    int render_process_id,
+    int render_frame_id,
+    const std::string& group_id_salt_base,
+    const BoolDeviceTypes& subscribe_types,
+    blink::mojom::MediaDevicesListenerPtr listener) {
+  DCHECK_CURRENTLY_ON(BrowserThread::IO);
+  uint32_t subscription_id = ++last_subscription_id_;
+  blink::mojom::MediaDevicesListenerPtr media_devices_listener =
+      std::move(listener);
+  media_devices_listener.set_connection_error_handler(
+      base::BindOnce(&MediaDevicesManager::UnsubscribeDeviceChangeNotifications,
+                     weak_factory_.GetWeakPtr(), subscription_id));
+  subscriptions_.emplace(
+      subscription_id, SubscriptionRequest(render_process_id, render_frame_id,
+                                           group_id_salt_base, subscribe_types,
+                                           std::move(media_devices_listener)));
+
+  return subscription_id;
 }
 
 void MediaDevicesManager::UnsubscribeDeviceChangeNotifications(
-    MediaDeviceType type,
-    MediaDeviceChangeSubscriber* subscriber) {
+    uint32_t subscription_id) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
-  auto it = std::find(device_change_subscribers_[type].begin(),
-                      device_change_subscribers_[type].end(), subscriber);
-  if (it != device_change_subscribers_[type].end())
-    device_change_subscribers_[type].erase(it);
+  subscriptions_.erase(subscription_id);
 }
 
 void MediaDevicesManager::SetCachePolicy(MediaDeviceType type,
@@ -253,11 +400,6 @@ void MediaDevicesManager::StartMonitoring() {
       BrowserThread::UI, FROM_HERE,
       base::Bind(&MediaDevicesManager::StartMonitoringOnUIThread,
                  base::Unretained(this)));
-
-  // TODO(guidou): Remove this statement once the Mac device monitor is fixed to
-  //  correctly report device-change events for output-only audio devices.
-  // See http://crbug.com/648173.
-  SetCachePolicy(MEDIA_DEVICE_TYPE_AUDIO_OUTPUT, CachePolicy::NO_CACHE);
 #endif
 }
 
@@ -302,10 +444,176 @@ void MediaDevicesManager::OnDevicesChanged(
   }
 }
 
+media::VideoCaptureFormats MediaDevicesManager::GetVideoInputFormats(
+    const std::string& device_id,
+    bool try_in_use_first) {
+  DCHECK_CURRENTLY_ON(BrowserThread::IO);
+  media::VideoCaptureFormats formats;
+
+  if (try_in_use_first) {
+    base::Optional<media::VideoCaptureFormat> format =
+        video_capture_manager_->GetDeviceFormatInUse(MEDIA_DEVICE_VIDEO_CAPTURE,
+                                                     device_id);
+    if (format.has_value()) {
+      formats.push_back(format.value());
+      return formats;
+    }
+  }
+
+  video_capture_manager_->GetDeviceSupportedFormats(device_id, &formats);
+  // Remove formats that have zero resolution.
+  formats.erase(std::remove_if(formats.begin(), formats.end(),
+                               [](const media::VideoCaptureFormat& format) {
+                                 return format.frame_size.GetArea() <= 0;
+                               }),
+                formats.end());
+
+  // If the device does not report any valid format, use a fallback list of
+  // standard formats.
+  if (formats.empty()) {
+    for (const auto& resolution : kFallbackVideoResolutions) {
+      for (const auto frame_rate : kFallbackVideoFrameRates) {
+        formats.push_back(media::VideoCaptureFormat(
+            gfx::Size(resolution.width, resolution.height), frame_rate,
+            media::PIXEL_FORMAT_I420));
+      }
+    }
+  }
+
+  return formats;
+}
+
 MediaDeviceInfoArray MediaDevicesManager::GetCachedDeviceInfo(
     MediaDeviceType type) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
   return current_snapshot_[type];
+}
+
+MediaDevicesPermissionChecker*
+MediaDevicesManager::media_devices_permission_checker() {
+  DCHECK_CURRENTLY_ON(BrowserThread::IO);
+  return permission_checker_.get();
+}
+
+void MediaDevicesManager::SetPermissionChecker(
+    std::unique_ptr<MediaDevicesPermissionChecker> permission_checker) {
+  DCHECK_CURRENTLY_ON(BrowserThread::IO);
+  DCHECK(permission_checker);
+  permission_checker_ = std::move(permission_checker);
+}
+
+void MediaDevicesManager::CheckPermissionsForEnumerateDevices(
+    int render_process_id,
+    int render_frame_id,
+    const std::string& group_id_salt_base,
+    const BoolDeviceTypes& requested_types,
+    bool request_video_input_capabilities,
+    EnumerateDevicesCallback callback,
+    const std::pair<std::string, url::Origin>& salt_and_origin) {
+  DCHECK_CURRENTLY_ON(BrowserThread::IO);
+  permission_checker_->CheckPermissions(
+      requested_types, render_process_id, render_frame_id,
+      base::BindOnce(&MediaDevicesManager::OnPermissionsCheckDone,
+                     weak_factory_.GetWeakPtr(), group_id_salt_base,
+                     requested_types, request_video_input_capabilities,
+                     std::move(callback), salt_and_origin.first,
+                     salt_and_origin.second));
+}
+
+void MediaDevicesManager::OnPermissionsCheckDone(
+    const std::string& group_id_salt_base,
+    const MediaDevicesManager::BoolDeviceTypes& requested_types,
+    bool request_video_input_capabilities,
+    EnumerateDevicesCallback callback,
+    const std::string& device_id_salt,
+    const url::Origin& security_origin,
+    const MediaDevicesManager::BoolDeviceTypes& has_permissions) {
+  DCHECK_CURRENTLY_ON(BrowserThread::IO);
+  EnumerateDevices(
+      requested_types,
+      base::BindRepeating(&MediaDevicesManager::OnDevicesEnumerated,
+                          weak_factory_.GetWeakPtr(), group_id_salt_base,
+                          requested_types, request_video_input_capabilities,
+                          base::Passed(&callback), device_id_salt,
+                          security_origin, has_permissions));
+}
+
+void MediaDevicesManager::OnDevicesEnumerated(
+    const std::string& group_id_salt_base,
+    const MediaDevicesManager::BoolDeviceTypes& requested_types,
+    bool request_video_input_capabilities,
+    EnumerateDevicesCallback callback,
+    const std::string& device_id_salt,
+    const url::Origin& security_origin,
+    const MediaDevicesManager::BoolDeviceTypes& has_permissions,
+    const MediaDeviceEnumeration& enumeration) {
+  DCHECK_CURRENTLY_ON(BrowserThread::IO);
+  std::string group_id_salt = group_id_salt_base + device_id_salt;
+  const bool video_input_capabilities_requested =
+      has_permissions[MEDIA_DEVICE_TYPE_VIDEO_INPUT] &&
+      request_video_input_capabilities;
+
+  MediaDeviceInfoArray video_device_infos =
+      enumeration[MEDIA_DEVICE_TYPE_VIDEO_INPUT];
+  for (auto& video_device_info : video_device_infos) {
+    video_device_info.group_id = GuessVideoGroupID(
+        enumeration[MEDIA_DEVICE_TYPE_AUDIO_INPUT], video_device_info);
+  }
+
+  std::vector<MediaDeviceInfoArray> result(NUM_MEDIA_DEVICE_TYPES);
+  for (size_t i = 0; i < NUM_MEDIA_DEVICE_TYPES; ++i) {
+    if (!requested_types[i])
+      continue;
+
+    if (i == MEDIA_DEVICE_TYPE_VIDEO_INPUT) {
+      for (const auto& device_info : video_device_infos) {
+        MediaDeviceInfo translated_device_info = TranslateMediaDeviceInfo(
+            has_permissions[i], device_id_salt, group_id_salt, security_origin,
+            device_info);
+        if (video_input_capabilities_requested)
+          translated_device_info.video_facing = device_info.video_facing;
+        result[i].push_back(translated_device_info);
+      }
+    } else {
+      for (const auto& device_info : enumeration[i]) {
+        result[i].push_back(TranslateMediaDeviceInfo(
+            has_permissions[i], device_id_salt, group_id_salt, security_origin,
+            device_info));
+      }
+    }
+  }
+
+  std::move(callback).Run(
+      std::move(result),
+      video_input_capabilities_requested
+          ? ComputeVideoInputCapabilities(result[MEDIA_DEVICE_TYPE_VIDEO_INPUT])
+          : std::vector<VideoInputDeviceCapabilitiesPtr>());
+}
+
+std::vector<VideoInputDeviceCapabilitiesPtr>
+MediaDevicesManager::ComputeVideoInputCapabilities(
+    const MediaDeviceInfoArray& device_infos) {
+  std::vector<VideoInputDeviceCapabilitiesPtr> video_input_capabilities;
+  for (const auto& device_info : device_infos) {
+    VideoInputDeviceCapabilitiesPtr capabilities =
+        blink::mojom::VideoInputDeviceCapabilities::New();
+    capabilities->device_id = device_info.device_id;
+    capabilities->formats = GetVideoInputFormats(device_info.device_id,
+                                                 false /* try_in_use_first */);
+    capabilities->facing_mode = device_info.video_facing;
+#if defined(OS_ANDROID)
+    // On Android, the facing mode is not available in the |facing| field,
+    // but is available as part of the label.
+    // TODO(guidou): Remove this code once the |facing| field is supported
+    // on Android. See http://crbug.com/672856.
+    if (device_info.label.find("front") != std::string::npos)
+      capabilities->facing_mode = media::MEDIA_VIDEO_FACING_USER;
+    else if (device_info.label.find("back") != std::string::npos)
+      capabilities->facing_mode = media::MEDIA_VIDEO_FACING_ENVIRONMENT;
+#endif
+    video_input_capabilities.push_back(std::move(capabilities));
+  }
+  return video_input_capabilities;
 }
 
 void MediaDevicesManager::DoEnumerateDevices(MediaDeviceType type) {
@@ -339,7 +647,7 @@ void MediaDevicesManager::EnumerateAudioDevices(bool is_input) {
       is_input ? MEDIA_DEVICE_TYPE_AUDIO_INPUT : MEDIA_DEVICE_TYPE_AUDIO_OUTPUT;
   if (use_fake_devices_) {
     base::ThreadTaskRunnerHandle::Get()->PostTask(
-        FROM_HERE, base::BindOnce(&MediaDevicesManager::AudioDevicesEnumerated,
+        FROM_HERE, base::BindOnce(&MediaDevicesManager::DevicesEnumerated,
                                   weak_factory_.GetWeakPtr(), type,
                                   GetFakeAudioDevices(is_input)));
     return;
@@ -365,56 +673,10 @@ void MediaDevicesManager::AudioDevicesEnumerated(
     media::AudioDeviceDescriptions device_descriptions) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
 
-  auto it_default_device =
-      std::find_if(device_descriptions.begin(), device_descriptions.end(),
-                   [](const media::AudioDeviceDescription& description) {
-                     return media::AudioDeviceDescription::IsDefaultDevice(
-                         description.unique_id);
-                   });
-
-  auto it_real_default_device = device_descriptions.end();
-  if (it_default_device != device_descriptions.end()) {
-    // Find the real device that maps to the default device by finding
-    // coincidence in the group ID.
-    // This approach works only when the following is true:
-    // * group ID is properly supported so that the default device has the
-    //   same group ID as some real device.
-    // * For input devices, the default device has an associated output device.
-    // * There is only one device with the same group ID of the default device.
-    // TODO(guidou): Get the real ID of the default input device from
-    // media::AudioSystem when the functionality becomes available.
-    // http://crbug.com/788758
-    for (auto it = device_descriptions.begin(); it != device_descriptions.end();
-         ++it) {
-      if (it->group_id == it_default_device->group_id &&
-          !media::AudioDeviceDescription::IsDefaultDevice(it->unique_id)) {
-        if (it_real_default_device != device_descriptions.end()) {
-          // If there is more than one real device with the same group ID as the
-          // default device, the exact mapping cannot be found.
-          it_real_default_device = device_descriptions.end();
-          break;
-        } else {
-          it_real_default_device = it;
-        }
-      }
-    }
-  }
-
   MediaDeviceInfoArray snapshot;
   for (const media::AudioDeviceDescription& description : device_descriptions) {
-    if (it_real_default_device != device_descriptions.end() &&
-        media::AudioDeviceDescription::IsDefaultDevice(description.unique_id)) {
-      // TODO(guidou): Make the concatenation of the default and real device
-      // labels in a properly localized manner. http://crbug.com/788767
-      snapshot.emplace_back(
-          description.unique_id,
-          description.device_name + " - " + it_real_default_device->device_name,
-          description.group_id);
-    } else {
-      snapshot.emplace_back(description);
-    }
+    snapshot.emplace_back(description);
   }
-
   DevicesEnumerated(type, snapshot);
 }
 
@@ -548,9 +810,57 @@ void MediaDevicesManager::NotifyDeviceChangeSubscribers(
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
   DCHECK(IsValidMediaDeviceType(type));
 
-  for (auto* subscriber : device_change_subscribers_[type]) {
-    subscriber->OnDevicesChanged(type, snapshot);
+  for (auto& subscription : subscriptions_) {
+    const SubscriptionRequest& request = subscription.second;
+    if (request.subscribe_types[type]) {
+      base::PostTaskAndReplyWithResult(
+          BrowserThread::GetTaskRunnerForThread(BrowserThread::UI).get(),
+          FROM_HERE,
+          base::BindOnce(salt_and_origin_callback_, request.render_process_id,
+                         request.render_frame_id),
+          base::BindOnce(&MediaDevicesManager::CheckPermissionForDeviceChange,
+                         weak_factory_.GetWeakPtr(), subscription.first,
+                         request.render_process_id, request.render_frame_id,
+                         type, snapshot));
+    }
   }
+}
+
+void MediaDevicesManager::CheckPermissionForDeviceChange(
+    uint32_t subscription_id,
+    int render_process_id,
+    int render_frame_id,
+    MediaDeviceType type,
+    const MediaDeviceInfoArray& device_infos,
+    const std::pair<std::string, url::Origin>& salt_and_origin) {
+  DCHECK_CURRENTLY_ON(BrowserThread::IO);
+  permission_checker_->CheckPermission(
+      type, render_process_id, render_frame_id,
+      base::BindOnce(&MediaDevicesManager::NotifyDeviceChange,
+                     weak_factory_.GetWeakPtr(), subscription_id, type,
+                     device_infos, salt_and_origin.first,
+                     salt_and_origin.second));
+}
+
+void MediaDevicesManager::NotifyDeviceChange(
+    uint32_t subscription_id,
+    MediaDeviceType type,
+    const MediaDeviceInfoArray& device_infos,
+    std::string device_id_salt,
+    const url::Origin& security_origin,
+    bool has_permission) {
+  DCHECK_CURRENTLY_ON(BrowserThread::IO);
+  DCHECK(IsValidMediaDeviceType(type));
+  auto it = subscriptions_.find(subscription_id);
+  if (it == subscriptions_.end())
+    return;
+
+  const SubscriptionRequest& request = it->second;
+  std::string group_id_salt = request.group_id_salt_base + device_id_salt;
+  request.listener->OnDevicesChanged(
+      type, TranslateMediaDeviceInfoArray(has_permission, device_id_salt,
+                                          group_id_salt, security_origin,
+                                          device_infos));
 }
 
 }  // namespace content

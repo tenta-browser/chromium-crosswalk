@@ -29,11 +29,12 @@ FakeBluetoothInstance::LEDeviceFoundData::LEDeviceFoundData(
 FakeBluetoothInstance::LEDeviceFoundData::~LEDeviceFoundData() {}
 
 void FakeBluetoothInstance::InitDeprecated(mojom::BluetoothHostPtr host_ptr) {
-  Init(std::move(host_ptr), base::BindOnce(&base::DoNothing));
+  Init(std::move(host_ptr), base::DoNothing());
 }
 
 void FakeBluetoothInstance::Init(mojom::BluetoothHostPtr host_ptr,
                                  InitCallback callback) {
+  host_ = std::move(host_ptr);
   std::move(callback).Run();
 }
 
@@ -107,17 +108,20 @@ void FakeBluetoothInstance::OnGattNotify(
     bool is_notify,
     const std::vector<uint8_t>& value) {}
 
-void FakeBluetoothInstance::RequestGattRead(mojom::BluetoothAddressPtr address,
-                                            int32_t attribute_handle,
-                                            int32_t offset,
-                                            bool is_long,
-                                            RequestGattReadCallback callback) {}
+void FakeBluetoothInstance::RequestGattRead(
+    mojom::BluetoothAddressPtr address,
+    int32_t attribute_handle,
+    int32_t offset,
+    bool is_long,
+    mojom::BluetoothGattDBAttributeType attribute_type,
+    RequestGattReadCallback callback) {}
 
 void FakeBluetoothInstance::RequestGattWrite(
     mojom::BluetoothAddressPtr address,
     int32_t attribute_handle,
     int32_t offset,
     const std::vector<uint8_t>& value,
+    mojom::BluetoothGattDBAttributeType attribute_type,
     RequestGattWriteCallback callback) {}
 
 void FakeBluetoothInstance::OnGetSdpRecords(

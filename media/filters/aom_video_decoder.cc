@@ -54,7 +54,7 @@ static VideoPixelFormat AomImgFmtToVideoPixelFormat(const aom_image_t* img) {
     case AOM_IMG_FMT_I422:
       return PIXEL_FORMAT_I422;
     case AOM_IMG_FMT_I444:
-      return PIXEL_FORMAT_YV24;
+      return PIXEL_FORMAT_I444;
 
     case AOM_IMG_FMT_I42016:
       switch (img->bit_depth) {
@@ -95,12 +95,6 @@ static VideoPixelFormat AomImgFmtToVideoPixelFormat(const aom_image_t* img) {
           DLOG(ERROR) << "Unsupported bit depth: " << img->bit_depth;
           return PIXEL_FORMAT_UNKNOWN;
       }
-
-    case AOM_IMG_FMT_I440:
-    case AOM_IMG_FMT_I44016:
-      // TODO(dalecurtis): We'll need to add support for these to handle the
-      // full range of expected AOM content.
-      NOTIMPLEMENTED();
 
     default:
       break;
@@ -215,11 +209,13 @@ std::string AomVideoDecoder::GetDisplayName() const {
   return "AomVideoDecoder";
 }
 
-void AomVideoDecoder::Initialize(const VideoDecoderConfig& config,
-                                 bool /* low_delay */,
-                                 CdmContext* /* cdm_context */,
-                                 const InitCB& init_cb,
-                                 const OutputCB& output_cb) {
+void AomVideoDecoder::Initialize(
+    const VideoDecoderConfig& config,
+    bool /* low_delay */,
+    CdmContext* /* cdm_context */,
+    const InitCB& init_cb,
+    const OutputCB& output_cb,
+    const WaitingForDecryptionKeyCB& /* waiting_for_decryption_key_cb */) {
   DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
   DCHECK(config.IsValidConfig());
 
@@ -257,7 +253,7 @@ void AomVideoDecoder::Initialize(const VideoDecoderConfig& config,
   bound_init_cb.Run(true);
 }
 
-void AomVideoDecoder::Decode(const scoped_refptr<DecoderBuffer>& buffer,
+void AomVideoDecoder::Decode(scoped_refptr<DecoderBuffer> buffer,
                              const DecodeCB& decode_cb) {
   DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
   DCHECK(buffer);

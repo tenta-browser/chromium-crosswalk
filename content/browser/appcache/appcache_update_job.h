@@ -34,7 +34,11 @@
 namespace content {
 FORWARD_DECLARE_TEST(AppCacheGroupTest, QueueUpdate);
 class AppCacheGroupTest;
+
+namespace appcache_update_job_unittest {
 class AppCacheUpdateJobTest;
+}
+
 class HostNotifier;
 
 // Application cache Update algorithm and state.
@@ -59,7 +63,7 @@ class CONTENT_EXPORT AppCacheUpdateJob
 
  private:
   friend class content::AppCacheGroupTest;
-  friend class content::AppCacheUpdateJobTest;
+  friend class content::appcache_update_job_unittest::AppCacheUpdateJobTest;
 
   class URLFetcher;
   class UpdateRequestBase;
@@ -68,10 +72,10 @@ class CONTENT_EXPORT AppCacheUpdateJob
 
   // Master entries have multiple hosts, for example, the same page is opened
   // in different tabs.
-  typedef std::vector<AppCacheHost*> PendingHosts;
-  typedef std::map<GURL, PendingHosts> PendingMasters;
-  typedef std::map<GURL, URLFetcher*> PendingUrlFetches;
-  typedef std::map<int64_t, GURL> LoadingResponses;
+  using PendingHosts = std::vector<AppCacheHost*>;
+  using PendingMasters = std::map<GURL, PendingHosts>;
+  using PendingUrlFetches = std::map<GURL, URLFetcher*>;
+  using LoadingResponses = std::map<int64_t, GURL>;
 
   static const int kRerunDelayMs = 1000;
 

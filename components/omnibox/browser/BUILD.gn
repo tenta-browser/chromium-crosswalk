@@ -3,7 +3,7 @@
 # found in the LICENSE file.
 
 import("//build/buildflag_header.gni")
-import("//device/vr/features/features.gni")
+import("//device/vr/buildflags/buildflags.gni")
 import("//third_party/protobuf/proto_library.gni")
 import("//components/vector_icons/vector_icons.gni")
 
@@ -11,8 +11,8 @@ if (is_android) {
   import("//build/config/android/rules.gni")
 }
 
-buildflag_header("build_features") {
-  header = "features.h"
+buildflag_header("buildflags") {
+  header = "buildflags.h"
   flags = [ "ENABLE_VR=$enable_vr" ]
 }
 
@@ -20,17 +20,19 @@ aggregate_vector_icons("omnibox_vector_icons") {
   icon_directory = "vector_icons"
 
   icons = [
-    "blank.1x.icon",
     "blank.icon",
-    "calculator.1x.icon",
     "calculator.icon",
-    "extension_app.1x.icon",
     "extension_app.icon",
+    "extension_app_20.icon",
     "http.icon",
     "keyword_search.icon",
-    "star.1x.icon",
     "star.icon",
+    "switch.icon",
     "tab.icon",
+    "touchable_bookmark.icon",
+    "touchable_clear.icon",
+    "touchable_page.icon",
+    "touchable_search.icon",
   ]
 }
 
@@ -58,15 +60,12 @@ static_library("browser") {
     "base_search_provider.h",
     "bookmark_provider.cc",
     "bookmark_provider.h",
-    "tailored_word_break_iterator.cc",
-    "tailored_word_break_iterator.h",
     "builtin_provider.cc",
     "builtin_provider.h",
     "clipboard_url_provider.cc",
     "clipboard_url_provider.h",
     "contextual_suggestions_service.cc",
     "contextual_suggestions_service.h",
-    "features.h",
     "history_match.cc",
     "history_match.h",
     "history_provider.cc",
@@ -103,7 +102,6 @@ static_library("browser") {
     "omnibox_navigation_observer.h",
     "omnibox_popup_model.cc",
     "omnibox_popup_model.h",
-    "omnibox_popup_model_observer.h",
     "omnibox_popup_view.h",
     "omnibox_pref_names.cc",
     "omnibox_pref_names.h",
@@ -131,6 +129,8 @@ static_library("browser") {
     "shortcuts_provider.h",
     "suggestion_answer.cc",
     "suggestion_answer.h",
+    "tailored_word_break_iterator.cc",
+    "tailored_word_break_iterator.h",
     "titled_url_match_utils.cc",
     "titled_url_match_utils.h",
     "url_index_private_data.cc",
@@ -151,7 +151,7 @@ static_library("browser") {
     "//third_party/metrics_proto",
   ]
   deps = [
-    ":build_features",
+    ":buildflags",
     ":in_memory_url_index_cache_proto",
     "//base",
     "//base:i18n",
@@ -169,14 +169,15 @@ static_library("browser") {
     "//components/search",
     "//components/search_engines",
     "//components/sessions",
-    "//components/signin/core/browser",
     "//components/strings",
+    "//components/sync",
     "//components/toolbar",
     "//components/url_formatter",
     "//components/variations",
     "//components/variations/net",
     "//extensions/common:common_constants",
     "//net",
+    "//services/identity/public/cpp",
     "//skia",
     "//sql",
     "//third_party/protobuf:protobuf_lite",
@@ -301,6 +302,7 @@ source_set("unit_tests") {
     "omnibox_view_unittest.cc",
     "physical_web_provider_unittest.cc",
     "scored_history_match_unittest.cc",
+    "search_suggestion_parser_unittest.cc",
     "shortcuts_backend_unittest.cc",
     "shortcuts_database_unittest.cc",
     "shortcuts_provider_unittest.cc",
@@ -327,6 +329,7 @@ source_set("unit_tests") {
     "//components/search_engines",
     "//components/sessions",
     "//components/strings",
+    "//components/toolbar:test_support",
     "//components/url_formatter",
     "//components/variations",
     "//net:test_support",

@@ -6,7 +6,6 @@
 
 #include "base/bind.h"
 #include "base/callback.h"
-#include "base/memory/ptr_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "chrome/browser/ui/views/payments/payment_request_dialog_view.h"
@@ -52,8 +51,13 @@ ShippingAddressEditorViewController::ShippingAddressEditorViewController(
     BackNavigationType back_navigation_type,
     base::OnceClosure on_edited,
     base::OnceCallback<void(const autofill::AutofillProfile&)> on_added,
-    autofill::AutofillProfile* profile)
-    : EditorViewController(spec, state, dialog, back_navigation_type),
+    autofill::AutofillProfile* profile,
+    bool is_incognito)
+    : EditorViewController(spec,
+                           state,
+                           dialog,
+                           back_navigation_type,
+                           is_incognito),
       on_edited_(std::move(on_edited)),
       on_added_(std::move(on_added)),
       profile_to_edit_(profile),
@@ -122,7 +126,8 @@ bool ShippingAddressEditorViewController::ValidateModelAndSave() {
   if (!profile_to_edit_) {
     // Add the profile (will not add a duplicate).
     profile.set_origin(autofill::kSettingsOrigin);
-    state()->GetPersonalDataManager()->AddProfile(profile);
+    if (!is_incognito())
+      state()->GetPersonalDataManager()->AddProfile(profile);
     std::move(on_added_).Run(profile);
     on_edited_.Reset();
   } else {
@@ -140,7 +145,8 @@ bool ShippingAddressEditorViewController::ValidateModelAndSave() {
                                        /*ignore_errors=*/false);
     DCHECK(success);
     profile_to_edit_->set_origin(autofill::kSettingsOrigin);
-    state()->GetPersonalDataManager()->UpdateProfile(*profile_to_edit_);
+    if (!is_incognito())
+      state()->GetPersonalDataManager()->UpdateProfile(*profile_to_edit_);
     state()->profile_comparator()->Invalidate(*profile_to_edit_);
     std::move(on_edited_).Run();
     on_added_.Reset();
@@ -152,7 +158,7 @@ bool ShippingAddressEditorViewController::ValidateModelAndSave() {
 std::unique_ptr<ValidationDelegate>
 ShippingAddressEditorViewController::CreateValidationDelegate(
     const EditorField& field) {
-  return base::MakeUnique<
+  return std::make_unique<
       ShippingAddressEditorViewController::ShippingAddressValidationDelegate>(
       this, field);
 }
@@ -163,7 +169,7 @@ ShippingAddressEditorViewController::GetComboboxModelForType(
   switch (type) {
     case autofill::ADDRESS_HOME_COUNTRY: {
       std::unique_ptr<autofill::CountryComboboxModel> model =
-          base::MakeUnique<autofill::CountryComboboxModel>();
+          std::make_unique<autofill::CountryComboboxModel>();
       model->SetCountries(*state()->GetPersonalDataManager(),
                           base::Callback<bool(const std::string&)>(),
                           state()->GetApplicationLocale());
@@ -173,7 +179,7 @@ ShippingAddressEditorViewController::GetComboboxModelForType(
     }
     case autofill::ADDRESS_HOME_STATE: {
       std::unique_ptr<autofill::RegionComboboxModel> model =
-          base::MakeUnique<autofill::RegionComboboxModel>();
+          std::make_unique<autofill::RegionComboboxModel>();
       region_model_ = model.get();
       if (chosen_country_index_ < countries_.size()) {
         model->LoadRegionData(countries_[chosen_country_index_].first,
@@ -317,7 +323,7 @@ bool ShippingAddressEditorViewController::ShippingAddressValidationDelegate::
   if (!value.empty()) {
     if (field_.type == autofill::PHONE_HOME_WHOLE_NUMBER &&
         controller_->chosen_country_index_ < controller_->countries_.size() &&
-        !autofill::IsValidPhoneNumber(
+        !autofill::IsPossiblePhoneNumber(
             value, controller_->countries_[controller_->chosen_country_index_]
                        .first)) {
       if (error_message) {
@@ -338,7 +344,7 @@ bool ShippingAddressEditorViewController::ShippingAddressValidationDelegate::
   }
   if (error_message && field_.required) {
     *error_message = l10n_util::GetStringUTF16(
-        IDS_PAYMENTS_FIELD_REQUIRED_VALIDATION_MESSAGE);
+        IDS_PREF_EDIT_DIALOG_FIELD_REQUIRED_VALIDATION_MESSAGE);
   }
   return !field_.required;
 }

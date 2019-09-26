@@ -5,13 +5,33 @@
 #include "ui/ozone/platform/drm/gpu/hardware_display_plane_manager_legacy.h"
 
 #include <errno.h>
+#include <sync/sync.h>
 
 #include "base/bind.h"
+#include "base/posix/eintr_wrapper.h"
+#include "base/task_scheduler/post_task.h"
+#include "ui/gfx/presentation_feedback.h"
 #include "ui/ozone/platform/drm/gpu/crtc_controller.h"
 #include "ui/ozone/platform/drm/gpu/drm_device.h"
 #include "ui/ozone/platform/drm/gpu/scanout_buffer.h"
 
 namespace ui {
+
+namespace {
+
+const int kInfiniteSyncWaitTimeout = -1;
+
+// We currently wait for the fences serially, but it's possible
+// that merging the fences and waiting on the merged fence fd
+// is more efficient. We should revisit once we have more info.
+void WaitForPlaneFences(const ui::OverlayPlaneList& planes) {
+  for (const auto& plane : planes) {
+    if (plane.fence_fd >= 0)
+      sync_wait(plane.fence_fd, kInfiniteSyncWaitTimeout);
+  }
+}
+
+}  // namespace
 
 HardwareDisplayPlaneManagerLegacy::HardwareDisplayPlaneManagerLegacy() {
 }
@@ -48,7 +68,8 @@ bool HardwareDisplayPlaneManagerLegacy::Commit(
         PLOG(ERROR) << "Cannot display plane on overlay: crtc=" << flip.crtc
                     << " plane=" << plane.plane;
         ret = false;
-        flip.crtc->SignalPageFlipRequest(gfx::SwapResult::SWAP_FAILED);
+        flip.crtc->SignalPageFlipRequest(gfx::SwapResult::SWAP_FAILED,
+                                         gfx::PresentationFeedback());
         break;
       }
     }
@@ -68,8 +89,9 @@ bool HardwareDisplayPlaneManagerLegacy::Commit(
                     << " framebuffer=" << flip.framebuffer;
         ret = false;
       }
-      flip.crtc->SignalPageFlipRequest(ret ? gfx::SwapResult::SWAP_ACK
-                                           : gfx::SwapResult::SWAP_FAILED);
+      flip.crtc->SignalPageFlipRequest(
+          ret ? gfx::SwapResult::SWAP_ACK : gfx::SwapResult::SWAP_FAILED,
+          gfx::PresentationFeedback());
     }
   }
   // For each element in |old_plane_list|, if it hasn't been reclaimed (by
@@ -117,6 +139,15 @@ bool HardwareDisplayPlaneManagerLegacy::ValidatePrimarySize(
   return primary.buffer->GetSize() == gfx::Size(mode.hdisplay, mode.vdisplay);
 }
 
+void HardwareDisplayPlaneManagerLegacy::RequestPlanesReadyCallback(
+    const OverlayPlaneList& planes,
+    base::OnceClosure callback) {
+  base::PostTaskWithTraitsAndReply(
+      FROM_HERE,
+      {base::MayBlock(), base::TaskShutdownBehavior::CONTINUE_ON_SHUTDOWN},
+      base::BindOnce(&WaitForPlaneFences, planes), std::move(callback));
+}
+
 bool HardwareDisplayPlaneManagerLegacy::SetPlaneData(
     HardwareDisplayPlaneList* plane_list,
     HardwareDisplayPlane* hw_plane,
@@ -136,10 +167,23 @@ bool HardwareDisplayPlaneManagerLegacy::SetPlaneData(
   } else {
     plane_list->legacy_page_flips.back().planes.push_back(
         HardwareDisplayPlaneList::PageFlipInfo::Plane(
-            hw_plane->plane_id(), overlay.buffer->GetFramebufferId(),
+            hw_plane->plane_id(), overlay.buffer->GetOpaqueFramebufferId(),
             overlay.display_bounds, src_rect));
   }
   return true;
+}
+
+bool HardwareDisplayPlaneManagerLegacy::IsCompatible(
+    HardwareDisplayPlane* plane,
+    const OverlayPlane& overlay,
+    uint32_t crtc_index) const {
+  if (!plane->CanUseForCrtc(crtc_index))
+    return false;
+
+  // When using legacy kms we always scanout only one plane (the primary),
+  // and we always use the opaque fb. Refer to SetPlaneData above.
+  const uint32_t format = overlay.buffer->GetOpaqueFramebufferPixelFormat();
+  return plane->IsSupportedFormat(format);
 }
 
 }  // namespace ui

@@ -11,11 +11,9 @@
 #include <memory>
 #include <string>
 
-#include "base/macros.h"
 #include "net/base/address_family.h"
 #include "net/base/completion_callback.h"
 #include "net/base/host_port_pair.h"
-#include "net/base/net_export.h"
 #include "net/base/prioritized_dispatcher.h"
 #include "net/base/request_priority.h"
 #include "net/dns/host_cache.h"
@@ -28,9 +26,9 @@ namespace net {
 
 class AddressList;
 class HostResolverImpl;
-class HostResolverProc;
 class NetLog;
 class NetLogWithSource;
+class URLRequestContext;
 
 // This class represents the task of resolving hostnames (or IP address
 // literal) to an AddressList object.
@@ -180,6 +178,14 @@ class NET_EXPORT HostResolver {
                                AddressList* addresses,
                                const NetLogWithSource& net_log) = 0;
 
+  // Like |ResolveFromCache()|, but can return a stale result if the
+  // implementation supports it. Fills in |*stale_info| if a response is
+  // returned to indicate how stale (or not) it is.
+  virtual int ResolveStaleFromCache(const RequestInfo& info,
+                                    AddressList* addresses,
+                                    HostCache::EntryStaleness* stale_info,
+                                    const NetLogWithSource& source_net_log) = 0;
+
   // Enable or disable the built-in asynchronous DnsClient.
   virtual void SetDnsClientEnabled(bool enabled);
 
@@ -187,24 +193,29 @@ class NET_EXPORT HostResolver {
   // Used primarily to clear the cache and for getting debug information.
   virtual HostCache* GetHostCache();
 
+  // Checks whether this HostResolver has cached a resolution for the given
+  // hostname (or IP address literal). If so, returns true and writes the source
+  // of the resolution (e.g. DNS, HOSTS file, etc.) to |source_out| and the
+  // staleness of the resolution to |stale_out| (if they are not null).
+  // It tries using two common address_family and host_resolver_flag
+  // combinations when checking the cache; this means false negatives are
+  // possible, but unlikely.
+  virtual bool HasCached(base::StringPiece hostname,
+                         HostCache::Entry::Source* source_out,
+                         HostCache::EntryStaleness* stale_out) const = 0;
+
   // Returns the current DNS configuration |this| is using, as a Value, or
   // nullptr if it's configured to always use the system host resolver.
   virtual std::unique_ptr<base::Value> GetDnsConfigAsValue() const;
-
-  typedef base::Callback<void(std::unique_ptr<const base::Value>)>
-      PersistCallback;
-  // Configures the HostResolver to be able to persist data (e.g. observed
-  // performance) between sessions. |persist_callback| is a callback that will
-  // be called when the HostResolver wants to persist data; |old_data| is the
-  // data last persisted by the resolver on the previous session.
-  virtual void InitializePersistence(
-      const PersistCallback& persist_callback,
-      std::unique_ptr<const base::Value> old_data);
 
   // Sets the HostResolver to assume that IPv6 is unreachable when on a wifi
   // connection. See https://crbug.com/696569 for further context.
   virtual void SetNoIPv6OnWifi(bool no_ipv6_on_wifi);
   virtual bool GetNoIPv6OnWifi();
+
+  virtual void SetRequestContext(URLRequestContext* request_context) {}
+  virtual void AddDnsOverHttpsServer(std::string spec, bool use_post) {}
+  virtual void ClearDnsOverHttpsServers() {}
 
   // Creates a HostResolver implementation that queries the underlying system.
   // (Except if a unit-test has changed the global HostResolverProc using

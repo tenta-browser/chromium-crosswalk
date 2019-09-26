@@ -13,7 +13,6 @@
 #include "base/base64.h"
 #include "base/bind.h"
 #include "base/command_line.h"
-#include "base/memory/ptr_util.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/path_service.h"
 #include "base/strings/string16.h"
@@ -56,7 +55,7 @@ namespace {
 // encrypt persisted user data created on the lock screen.
 constexpr char kDataCryptoKeyPref[] = "lockScreenAppDataCryptoKey";
 
-StateController* g_instance = nullptr;
+StateController* g_state_controller_instance = nullptr;
 
 // Generates a random 256 bit AES key. Returns an empty string on error.
 std::string GenerateCryptoKey() {
@@ -77,8 +76,8 @@ bool StateController::IsEnabled() {
 
 // static
 StateController* StateController::Get() {
-  DCHECK(g_instance || !IsEnabled());
-  return g_instance;
+  DCHECK(g_state_controller_instance || !IsEnabled());
+  return g_state_controller_instance;
 }
 
 // static
@@ -94,15 +93,15 @@ StateController::StateController()
       input_devices_observer_(this),
       power_manager_client_observer_(this),
       weak_ptr_factory_(this) {
-  DCHECK(!g_instance);
+  DCHECK(!g_state_controller_instance);
   DCHECK(IsEnabled());
 
-  g_instance = this;
+  g_state_controller_instance = this;
 }
 
 StateController::~StateController() {
-  DCHECK_EQ(g_instance, this);
-  g_instance = nullptr;
+  DCHECK_EQ(g_state_controller_instance, this);
+  g_state_controller_instance = nullptr;
 }
 
 void StateController::SetTrayActionPtrForTesting(
@@ -121,10 +120,9 @@ void StateController::SetReadyCallbackForTesting(
   ready_callback_ = ready_callback;
 }
 
-void StateController::SetTickClockForTesting(
-    std::unique_ptr<base::TickClock> clock) {
+void StateController::SetTickClockForTesting(const base::TickClock* clock) {
   DCHECK(!tick_clock_);
-  tick_clock_ = std::move(clock);
+  tick_clock_ = clock;
 }
 
 void StateController::SetAppManagerForTesting(
@@ -141,7 +139,7 @@ void StateController::SetLockScreenLockScreenProfileCreatorForTesting(
 
 void StateController::Initialize() {
   if (!tick_clock_)
-    tick_clock_ = base::MakeUnique<base::DefaultTickClock>();
+    tick_clock_ = base::DefaultTickClock::GetInstance();
 
   // The tray action ptr might be set previously if the client was being created
   // for testing.
@@ -217,7 +215,7 @@ void StateController::InitializeWithCryptoKey(Profile* profile,
   }
 
   lock_screen_data_ =
-      base::MakeUnique<extensions::lock_screen_data::LockScreenItemStorage>(
+      std::make_unique<extensions::lock_screen_data::LockScreenItemStorage>(
           profile, g_browser_process->local_state(), crypto_key,
           base_path.AppendASCII("lock_screen_app_data"),
           base_path.AppendASCII("lock_screen_app_data_v2"));
@@ -229,14 +227,13 @@ void StateController::InitializeWithCryptoKey(Profile* profile,
   // Lock screen profile creator might have been set by a test.
   if (!lock_screen_profile_creator_) {
     lock_screen_profile_creator_ =
-        base::MakeUnique<LockScreenProfileCreatorImpl>(profile,
-                                                       tick_clock_.get());
+        std::make_unique<LockScreenProfileCreatorImpl>(profile, tick_clock_);
   }
   lock_screen_profile_creator_->Initialize();
 
   // App manager might have been set previously by a test.
   if (!app_manager_)
-    app_manager_ = base::MakeUnique<AppManagerImpl>(tick_clock_.get());
+    app_manager_ = std::make_unique<AppManagerImpl>(tick_clock_);
   app_manager_->Initialize(profile, lock_screen_profile_creator_.get());
 
   first_app_run_toast_manager_ =
@@ -305,7 +302,7 @@ void StateController::RequestNewLockScreenNote(LockScreenNoteOrigin origin) {
   DCHECK(app_manager_->IsNoteTakingAppAvailable());
 
   UMA_HISTOGRAM_ENUMERATION("Apps.LockScreen.NoteTakingApp.LaunchRequestReason",
-                            origin, LockScreenNoteOrigin::kCount);
+                            origin);
 
   // Update state to launching even if app fails to launch - this is to notify
   // listeners that a lock screen note request was handled.
@@ -319,7 +316,7 @@ void StateController::RequestNewLockScreenNote(LockScreenNoteOrigin origin) {
   // This is not needed for requests that come from the lock UI as the lock
   // screen UI sends these requests *after* the note action launch animation.
   if (origin == LockScreenNoteOrigin::kStylusEject &&
-      ash::switches::IsUsingWebUiLock()) {
+      !ash::switches::IsUsingViewsLock()) {
     app_launch_delayed_for_animation_ = true;
     return;
   }
@@ -359,7 +356,7 @@ void StateController::OnSessionStateChanged() {
       base::Bind(&StateController::OnNoteTakingAvailabilityChanged,
                  base::Unretained(this)));
   note_app_window_metrics_ =
-      base::MakeUnique<AppWindowMetricsTracker>(tick_clock_.get());
+      std::make_unique<AppWindowMetricsTracker>(tick_clock_);
   lock_screen_data_->SetSessionLocked(true);
   OnNoteTakingAvailabilityChanged();
 }
@@ -507,8 +504,7 @@ void StateController::ResetNoteTakingWindowAndMoveToNextState(
   if (lock_screen_note_state_ != TrayActionState::kAvailable &&
       lock_screen_note_state_ != TrayActionState::kNotAvailable) {
     UMA_HISTOGRAM_ENUMERATION(
-        "Apps.LockScreen.NoteTakingApp.NoteTakingExitReason", reason,
-        CloseLockScreenNoteReason::kCount);
+        "Apps.LockScreen.NoteTakingApp.NoteTakingExitReason", reason);
   }
 
   if (focus_cycler_delegate_ &&

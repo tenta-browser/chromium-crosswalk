@@ -7,11 +7,6 @@
   await TestRunner.loadModule('performance_test_runner');
   await TestRunner.loadModule('network_test_runner');
   await TestRunner.showPanel('timeline');
-  await TestRunner.loadHTML(`
-      <p>
-      Tests the Timeline events for XMLHttpReqeust with responseType=&quot;blob&quot;
-      </p>
-    `);
   await TestRunner.evaluateInPagePromise(`
       function performActions()
       {
@@ -33,11 +28,9 @@
       }
   `);
 
-  PerformanceTestRunner.invokeAsyncWithTimeline('performActions', finish);
+  await PerformanceTestRunner.invokeAsyncWithTimeline('performActions');
 
-  function finish() {
-    PerformanceTestRunner.printTimelineRecords('XHRReadyStateChange');
-    PerformanceTestRunner.printTimelineRecords('XHRLoad');
-    TestRunner.completeTest();
-  }
+  PerformanceTestRunner.printTimelineRecords('XHRReadyStateChange');
+  PerformanceTestRunner.printTimelineRecords('XHRLoad');
+  TestRunner.completeTest();
 })();

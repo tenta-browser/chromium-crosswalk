@@ -9,12 +9,12 @@
 
 #include "base/command_line.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/message_loop/message_loop.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "base/trace_event/trace_event.h"
 #include "ui/display/types/display_mode.h"
 #include "ui/display/types/display_snapshot.h"
+#include "ui/gfx/presentation_feedback.h"
 #include "ui/ozone/platform/drm/common/drm_util.h"
 #include "ui/ozone/platform/drm/gpu/drm_buffer.h"
 #include "ui/ozone/platform/drm/gpu/drm_device_generator.h"
@@ -41,10 +41,15 @@ class GbmBufferGenerator : public ScanoutBufferGenerator {
   // ScanoutBufferGenerator:
   scoped_refptr<ScanoutBuffer> Create(const scoped_refptr<DrmDevice>& drm,
                                       uint32_t format,
+                                      const std::vector<uint64_t>& modifiers,
                                       const gfx::Size& size) override {
     scoped_refptr<GbmDevice> gbm(static_cast<GbmDevice*>(drm.get()));
-    // TODO(dcastagna): Use GBM_BO_USE_MAP modifier once minigbm exposes it.
-    return GbmBuffer::CreateBuffer(gbm, format, size, GBM_BO_USE_SCANOUT);
+    if (modifiers.size() > 0) {
+      return GbmBuffer::CreateBufferWithModifiers(
+          gbm, format, size, GBM_BO_USE_SCANOUT, modifiers);
+    } else {
+      return GbmBuffer::CreateBuffer(gbm, format, size, GBM_BO_USE_SCANOUT);
+    }
   }
 
  protected:
@@ -76,16 +81,18 @@ class GbmDeviceGenerator : public DrmDeviceGenerator {
 
 }  // namespace
 
-DrmThread::DrmThread() : base::Thread("DrmThread"), binding_(this) {}
+DrmThread::DrmThread() : base::Thread("DrmThread"), weak_ptr_factory_(this) {}
 
 DrmThread::~DrmThread() {
   Stop();
 }
 
-void DrmThread::Start() {
+void DrmThread::Start(base::OnceClosure binding_completer) {
+  complete_early_binding_requests_ = std::move(binding_completer);
   base::Thread::Options thread_options;
   thread_options.message_loop_type = base::MessageLoop::TYPE_IO;
   thread_options.priority = base::ThreadPriority::DISPLAY;
+
   if (!StartWithOptions(thread_options))
     LOG(FATAL) << "Failed to create DRM thread";
 }
@@ -102,6 +109,13 @@ void DrmThread::Init() {
 
   display_manager_.reset(
       new DrmGpuDisplayManager(screen_manager_.get(), device_manager_.get()));
+
+  DCHECK(task_runner())
+      << "DrmThread::Init -- thread doesn't have a task_runner";
+
+  // DRM thread is running now so can safely handle binding requests. So drain
+  // the queue of as-yet unhandled binding requests if there are any.
+  std::move(complete_early_binding_requests_).Run();
 }
 
 void DrmThread::CreateBuffer(gfx::AcceleratedWidget widget,
@@ -188,12 +202,26 @@ void DrmThread::GetScanoutFormats(
 void DrmThread::SchedulePageFlip(gfx::AcceleratedWidget widget,
                                  const std::vector<OverlayPlane>& planes,
                                  SwapCompletionOnceCallback callback) {
+  scoped_refptr<ui::DrmDevice> drm_device =
+      device_manager_->GetDrmDevice(widget);
+
+  drm_device->plane_manager()->RequestPlanesReadyCallback(
+      planes, base::BindOnce(&DrmThread::OnPlanesReadyForPageFlip,
+                             weak_ptr_factory_.GetWeakPtr(), widget, planes,
+                             std::move(callback)));
+}
+
+void DrmThread::OnPlanesReadyForPageFlip(
+    gfx::AcceleratedWidget widget,
+    const std::vector<OverlayPlane>& planes,
+    SwapCompletionOnceCallback callback) {
   DrmWindow* window = screen_manager_->GetWindow(widget);
   if (window) {
     bool result = window->SchedulePageFlip(planes, std::move(callback));
     CHECK(result) << "DrmThread::SchedulePageFlip failed.";
   } else {
-    std::move(callback).Run(gfx::SwapResult::SWAP_ACK);
+    std::move(callback).Run(gfx::SwapResult::SWAP_ACK,
+                            gfx::PresentationFeedback());
   }
 }
 
@@ -327,12 +355,12 @@ void DrmThread::StartDrmDevice(StartDrmDeviceCallback callback) {
 // be used from multiple threads in multiple processes.
 void DrmThread::AddBindingCursorDevice(
     ozone::mojom::DeviceCursorRequest request) {
-  bindings_.AddBinding(this, std::move(request));
+  cursor_bindings_.AddBinding(this, std::move(request));
 }
 
 void DrmThread::AddBindingDrmDevice(ozone::mojom::DrmDeviceRequest request) {
   TRACE_EVENT0("drm", "DrmThread::AddBindingDrmDevice");
-  binding_.Bind(std::move(request));
+  drm_bindings_.AddBinding(this, std::move(request));
 }
 
 }  // namespace ui

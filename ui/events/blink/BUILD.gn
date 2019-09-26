@@ -2,9 +2,10 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
+import("//build/config/jumbo.gni")
 import("//build/config/ui.gni")
 
-source_set("blink") {
+jumbo_source_set("blink") {
   sources = [
     "blink_event_util.cc",
     "blink_event_util.h",
@@ -23,6 +24,10 @@ source_set("blink") {
     "input_handler_proxy_client.h",
     "input_scroll_elasticity_controller.cc",
     "input_scroll_elasticity_controller.h",
+    "snap_fling_controller.cc",
+    "snap_fling_controller.h",
+    "snap_fling_curve.cc",
+    "snap_fling_curve.h",
     "synchronous_input_handler_proxy.h",
     "web_input_event.cc",
     "web_input_event.h",
@@ -32,7 +37,7 @@ source_set("blink") {
 
   deps = [
     "//cc:cc",
-    "//third_party/WebKit/public:blink_headers",
+    "//third_party/blink/public:blink_headers",
     "//ui/events",
     "//ui/events:dom_keycode_converter",
     "//ui/events:events_base",

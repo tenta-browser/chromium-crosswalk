@@ -12,7 +12,7 @@
 #include "content/common/input/input_event_ack.h"
 #include "content/common/input/input_event_dispatch_type.h"
 #include "content/renderer/input/main_thread_event_queue.h"
-#include "third_party/WebKit/public/platform/WebCoalescedInputEvent.h"
+#include "third_party/blink/public/platform/web_coalesced_input_event.h"
 #include "ui/base/ui_base_types.h"
 #include "ui/events/blink/did_overscroll_params.h"
 
@@ -24,6 +24,10 @@ struct WebOverscrollBehavior;
 
 namespace ui {
 class LatencyInfo;
+}
+
+namespace viz {
+class FrameSinkId;
 }
 
 namespace content {
@@ -40,8 +44,8 @@ class CONTENT_EXPORT RenderWidgetInputHandler {
   virtual ~RenderWidgetInputHandler();
 
   // Hit test the given point to find out the frame underneath and
-  // return the routing id for that frame.
-  int GetWidgetRoutingIdAtPoint(const gfx::Point& point);
+  // returns the FrameSinkId for that frame.
+  viz::FrameSinkId GetFrameSinkIdAtPoint(const gfx::Point& point);
 
   // Handle input events from the input event provider.
   virtual void HandleInputEvent(
@@ -66,6 +70,9 @@ class CONTENT_EXPORT RenderWidgetInputHandler {
   bool ProcessTouchAction(cc::TouchAction touch_action);
 
  private:
+  blink::WebInputEventResult HandleTouchEvent(
+      const blink::WebCoalescedInputEvent& coalesced_event);
+
   RenderWidgetInputHandlerDelegate* const delegate_;
 
   RenderWidget* const widget_;

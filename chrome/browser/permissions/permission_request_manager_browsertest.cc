@@ -4,6 +4,8 @@
 
 #include "chrome/browser/permissions/permission_request_manager.h"
 
+#include <memory>
+
 #include "base/command_line.h"
 #include "base/metrics/field_trial.h"
 #include "base/run_loop.h"
@@ -15,6 +17,7 @@
 #include "chrome/browser/media/webrtc/media_stream_devices_controller.h"
 #include "chrome/browser/permissions/permission_context_base.h"
 #include "chrome/browser/permissions/permission_request_impl.h"
+#include "chrome/browser/permissions/permission_request_manager_test_api.h"
 #include "chrome/browser/permissions/permission_util.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser.h"
@@ -110,7 +113,7 @@ class PermissionDialogTest
   PermissionRequest* MakePermissionRequest(ContentSettingsType permission);
 
   // TestBrowserDialog:
-  void ShowDialog(const std::string& name) override;
+  void ShowUi(const std::string& name) override;
 
   // Holds requests that do not delete themselves.
   std::vector<std::unique_ptr<PermissionRequest>> owned_requests_;
@@ -137,13 +140,13 @@ PermissionRequest* PermissionDialogTest::MakePermissionRequest(
   bool user_gesture = true;
   auto decided = [](ContentSetting) {};
   auto cleanup = [] {};  // Leave cleanup to test harness destructor.
-  owned_requests_.push_back(base::MakeUnique<PermissionRequestImpl>(
+  owned_requests_.push_back(std::make_unique<PermissionRequestImpl>(
       GetUrl(), permission, user_gesture, base::Bind(decided),
       base::Bind(cleanup)));
   return owned_requests_.back().get();
 }
 
-void PermissionDialogTest::ShowDialog(const std::string& name) {
+void PermissionDialogTest::ShowUi(const std::string& name) {
   constexpr const char* kMultipleName = "multiple";
   constexpr struct {
     const char* name;
@@ -293,8 +296,9 @@ IN_PROC_BROWSER_TEST_F(PermissionRequestManagerBrowserTest,
   EXPECT_EQ(1, bubble_factory()->TotalRequestCount());
 }
 
-// Bubble requests should be shown after in-page navigation.
-IN_PROC_BROWSER_TEST_F(PermissionRequestManagerBrowserTest, InPageNavigation) {
+// Bubble requests should be shown after same-document navigation.
+IN_PROC_BROWSER_TEST_F(PermissionRequestManagerBrowserTest,
+                       SameDocumentNavigation) {
   ASSERT_TRUE(embedded_test_server()->Start());
 
   ui_test_utils::NavigateToURLBlockUntilNavigationsComplete(
@@ -333,7 +337,7 @@ IN_PROC_BROWSER_TEST_F(PermissionRequestManagerBrowserTest, MultipleTabs) {
   // SetUp() only creates a mock prompt factory for the first tab.
   MockPermissionPromptFactory* bubble_factory_0 = bubble_factory();
   std::unique_ptr<MockPermissionPromptFactory> bubble_factory_1(
-      base::MakeUnique<MockPermissionPromptFactory>(
+      std::make_unique<MockPermissionPromptFactory>(
           GetPermissionRequestManager()));
 
   TabStripModel* tab_strip_model = browser()->tab_strip_model();
@@ -470,7 +474,7 @@ IN_PROC_BROWSER_TEST_F(PermissionRequestManagerBrowserTest,
 // that could result in permission bubbles not being dismissed, and a problem
 // referencing a temporary drag window. See http://crbug.com/754552.
 IN_PROC_BROWSER_TEST_F(PermissionDialogTest, SwitchBrowserWindow) {
-  ShowDialog("geolocation");
+  ShowUi("geolocation");
   TabStripModel* strip = browser()->tab_strip_model();
 
   // Drag out into a dragging window. E.g. see steps in [BrowserWindowController
@@ -489,59 +493,59 @@ IN_PROC_BROWSER_TEST_F(PermissionDialogTest, SwitchBrowserWindow) {
                              TabStripModel::ADD_ACTIVE);
 
   // Clear the request. There should be no crash.
-  GetPermissionRequestManager()->CancelRequest(owned_requests_.back().get());
+  test::PermissionRequestManagerTestApi(GetPermissionRequestManager())
+      .SimulateWebContentsDestroyed();
   owned_requests_.clear();
 }
 
 // Host wants to run flash.
-IN_PROC_BROWSER_TEST_F(PermissionDialogTest, InvokeDialog_flash) {
-  RunDialog();
+IN_PROC_BROWSER_TEST_F(PermissionDialogTest, InvokeUi_flash) {
+  ShowAndVerifyUi();
 }
 
 // Host wants to know your location.
-IN_PROC_BROWSER_TEST_F(PermissionDialogTest, InvokeDialog_geolocation) {
-  RunDialog();
+IN_PROC_BROWSER_TEST_F(PermissionDialogTest, InvokeUi_geolocation) {
+  ShowAndVerifyUi();
 }
 
 // Host wants to show notifications.
-IN_PROC_BROWSER_TEST_F(PermissionDialogTest, InvokeDialog_notifications) {
-  RunDialog();
+IN_PROC_BROWSER_TEST_F(PermissionDialogTest, InvokeUi_notifications) {
+  ShowAndVerifyUi();
 }
 
 // Host wants to use your microphone.
-IN_PROC_BROWSER_TEST_F(PermissionDialogTest, InvokeDialog_mic) {
-  RunDialog();
+IN_PROC_BROWSER_TEST_F(PermissionDialogTest, InvokeUi_mic) {
+  ShowAndVerifyUi();
 }
 
 // Host wants to use your camera.
-IN_PROC_BROWSER_TEST_F(PermissionDialogTest, InvokeDialog_camera) {
-  RunDialog();
+IN_PROC_BROWSER_TEST_F(PermissionDialogTest, InvokeUi_camera) {
+  ShowAndVerifyUi();
 }
 
 // Host wants to open email links.
-IN_PROC_BROWSER_TEST_F(PermissionDialogTest, InvokeDialog_protocol_handlers) {
-  RunDialog();
+IN_PROC_BROWSER_TEST_F(PermissionDialogTest, InvokeUi_protocol_handlers) {
+  ShowAndVerifyUi();
 }
 
 // Host wants to use your MIDI devices.
-IN_PROC_BROWSER_TEST_F(PermissionDialogTest, InvokeDialog_midi) {
-  RunDialog();
+IN_PROC_BROWSER_TEST_F(PermissionDialogTest, InvokeUi_midi) {
+  ShowAndVerifyUi();
 }
 
 // Shows a permissions bubble with multiple requests.
-IN_PROC_BROWSER_TEST_F(PermissionDialogTest, InvokeDialog_multiple) {
-  RunDialog();
+IN_PROC_BROWSER_TEST_F(PermissionDialogTest, InvokeUi_multiple) {
+  ShowAndVerifyUi();
 }
 
 // CONTENT_SETTINGS_TYPE_PROTECTED_MEDIA_IDENTIFIER is ChromeOS only.
 #if defined(OS_CHROMEOS)
-#define MAYBE_InvokeDialog_protected_media InvokeDialog_protected_media
+#define MAYBE_InvokeUi_protected_media InvokeUi_protected_media
 #else
-#define MAYBE_InvokeDialog_protected_media DISABLED_InvokeDialog_protected_media
+#define MAYBE_InvokeUi_protected_media DISABLED_InvokeUi_protected_media
 #endif
-IN_PROC_BROWSER_TEST_F(PermissionDialogTest,
-                       MAYBE_InvokeDialog_protected_media) {
-  RunDialog();
+IN_PROC_BROWSER_TEST_F(PermissionDialogTest, MAYBE_InvokeUi_protected_media) {
+  ShowAndVerifyUi();
 }
 
 }  // anonymous namespace

@@ -25,7 +25,6 @@ class MenuModel;
 }
 
 namespace views {
-class MenuModelAdapter;
 class MenuRunner;
 }
 
@@ -114,6 +113,9 @@ class ChromeNativeAppWindowViewsAuraAsh
   void DestroyAnyExclusiveAccessBubble() override;
   bool CanTriggerOnMouse() const override;
 
+  // WidgetObserver:
+  void OnWidgetActivationChanged(views::Widget* widget, bool active) override;
+
  private:
   FRIEND_TEST_ALL_PREFIXES(ChromeNativeAppWindowViewsAuraAshBrowserTest,
                            ImmersiveWorkFlow);
@@ -130,12 +132,12 @@ class ChromeNativeAppWindowViewsAuraAsh
   FRIEND_TEST_ALL_PREFIXES(ShapedAppWindowTargeterTest,
                            ResizeInsetsWithinBounds);
 
-  // Callback for MenuModelAdapter
+  // Callback for MenuRunner
   void OnMenuClosed();
 
-  // Helper function which returns true if in tablet mode, the auto hide
-  // titlebars feature is turned on, and the widget is maximizable.
-  bool CanAutohideTitlebarsInTabletMode() const;
+  // Helper function to update the immersive mode based on the current
+  // app's and window manager's state.
+  void UpdateImmersiveMode();
 
   // Used to put non-frameless windows into immersive fullscreen on ChromeOS. In
   // immersive fullscreen, the window header (title bar and window controls)
@@ -146,7 +148,6 @@ class ChromeNativeAppWindowViewsAuraAsh
 
   // Used to show the system menu.
   std::unique_ptr<ui::MenuModel> menu_model_;
-  std::unique_ptr<views::MenuModelAdapter> menu_model_adapter_;
   std::unique_ptr<views::MenuRunner> menu_runner_;
 
   // Used for displaying the toast with instructions on exiting fullscreen.

@@ -136,7 +136,6 @@ TEST_F(WebStateObserverBridgeTest, NavigationItemCommitted) {
   LoadCommittedDetails load_details;
   load_details.item = reinterpret_cast<web::NavigationItem*>(1);
   load_details.previous_item_index = 15;
-  load_details.previous_url = GURL("https://chromium.test/");
   load_details.is_in_page = true;
 
   observer_bridge_.NavigationItemCommitted(&test_web_state_, load_details);
@@ -147,8 +146,6 @@ TEST_F(WebStateObserverBridgeTest, NavigationItemCommitted) {
             [observer_ commitNavigationInfo]->load_details.item);
   EXPECT_EQ(load_details.previous_item_index,
             [observer_ commitNavigationInfo]->load_details.previous_item_index);
-  EXPECT_EQ(load_details.previous_url,
-            [observer_ commitNavigationInfo]->load_details.previous_url);
   EXPECT_EQ(load_details.is_in_page,
             [observer_ commitNavigationInfo]->load_details.is_in_page);
 }
@@ -216,13 +213,15 @@ TEST_F(WebStateObserverBridgeTest, DocumentSubmitted) {
   ASSERT_FALSE([observer_ submitDocumentInfo]);
 
   std::string kTestFormName("form-name");
-  BOOL user_initiated = YES;
+  bool user_initiated = true;
+  bool is_main_frame = true;
   observer_bridge_.DocumentSubmitted(&test_web_state_, kTestFormName,
-                                     user_initiated);
+                                     user_initiated, is_main_frame);
   ASSERT_TRUE([observer_ submitDocumentInfo]);
   EXPECT_EQ(&test_web_state_, [observer_ submitDocumentInfo]->web_state);
   EXPECT_EQ(kTestFormName, [observer_ submitDocumentInfo]->form_name);
   EXPECT_EQ(user_initiated, [observer_ submitDocumentInfo]->user_initiated);
+  EXPECT_EQ(is_main_frame, [observer_ submitDocumentInfo]->is_main_frame);
 }
 
 // Tests |webState:didRegisterFormActivity:...| forwarding.

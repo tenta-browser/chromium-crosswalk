@@ -21,8 +21,8 @@
 #include "base/run_loop.h"
 #include "base/sys_info.h"
 #include "base/test/scoped_path_override.h"
-#include "base/threading/sequenced_worker_pool.h"
 #include "base/threading/thread_task_runner_handle.h"
+#include "chrome/browser/chromeos/app_mode/arc/arc_kiosk_app_manager.h"
 #include "chrome/browser/chromeos/app_mode/kiosk_app_data.h"
 #include "chrome/browser/chromeos/app_mode/kiosk_app_manager.h"
 #include "chrome/browser/chromeos/login/users/mock_user_manager.h"
@@ -80,7 +80,9 @@ namespace {
 
 const int64_t kMillisecondsPerDay = Time::kMicrosecondsPerDay / 1000;
 const char kKioskAccountId[] = "kiosk_user@localhost";
+const char kArcKioskAccountId[] = "arc_kiosk_user@localhost";
 const char kKioskAppId[] = "kiosk_app_id";
+const char kArcKioskPackageName[] = "com.test.kioskapp";
 const char kExternalMountPoint[] = "/a/b/c";
 const char kPublicAccountId[] = "public_user@localhost";
 const char kArcStatus[] = "{\"applications\":[ { "
@@ -89,8 +91,8 @@ const char kArcStatus[] = "{\"applications\":[ { "
     "\"permissions\": [\"android.permission.INTERNET\"] }],"
     "\"userEmail\":\"xxx@google.com\"}";
 const char kDroidGuardInfo[] = "{\"droid_guard_info\":42}";
-const std::string kShillFakeProfilePath = "/profile/user1/shill";
-const std::string kShillFakeUserhash = "user1";
+const char kShillFakeProfilePath[] = "/profile/user1/shill";
+const char kShillFakeUserhash[] = "user1";
 
 class TestingDeviceStatusCollector : public policy::DeviceStatusCollector {
  public:
@@ -102,13 +104,15 @@ class TestingDeviceStatusCollector : public policy::DeviceStatusCollector {
       const policy::DeviceStatusCollector::CPUStatisticsFetcher& cpu_fetcher,
       const policy::DeviceStatusCollector::CPUTempFetcher& cpu_temp_fetcher,
       const policy::DeviceStatusCollector::AndroidStatusFetcher&
-          android_status_fetcher)
+          android_status_fetcher,
+      bool is_enterprise_device)
       : policy::DeviceStatusCollector(local_state,
                                       provider,
                                       volume_info_fetcher,
                                       cpu_fetcher,
                                       cpu_temp_fetcher,
-                                      android_status_fetcher) {
+                                      android_status_fetcher,
+                                      is_enterprise_device) {
     // Set the baseline time to a fixed value (1 AM) to prevent test flakiness
     // due to a single activity period spanning two days.
     SetBaselineTime(Time::Now().LocalMidnight() + TimeDelta::FromHours(1));
@@ -140,7 +144,7 @@ class TestingDeviceStatusCollector : public policy::DeviceStatusCollector {
   std::unique_ptr<policy::DeviceLocalAccount> GetAutoLaunchedKioskSessionInfo()
       override {
     if (kiosk_account_)
-      return base::MakeUnique<policy::DeviceLocalAccount>(*kiosk_account_);
+      return std::make_unique<policy::DeviceLocalAccount>(*kiosk_account_);
     return std::unique_ptr<policy::DeviceLocalAccount>();
   }
 
@@ -284,10 +288,17 @@ class DeviceStatusCollectorTest : public testing::Test {
         user_manager_(new chromeos::MockUserManager()),
         user_manager_enabler_(base::WrapUnique(user_manager_)),
         got_session_status_(false),
-        fake_device_local_account_(policy::DeviceLocalAccount::TYPE_KIOSK_APP,
-                                   kKioskAccountId,
-                                   kKioskAppId,
-                                   std::string() /* kiosk_app_update_url */),
+        fake_kiosk_device_local_account_(
+            policy::DeviceLocalAccount::TYPE_KIOSK_APP,
+            kKioskAccountId,
+            kKioskAppId,
+            std::string() /* kiosk_app_update_url */),
+        fake_arc_kiosk_app_basic_info_(kArcKioskPackageName,
+                                       std::string() /* class_name */,
+                                       std::string() /* action */,
+                                       std::string() /* display_name */),
+        fake_arc_kiosk_device_local_account_(fake_arc_kiosk_app_basic_info_,
+                                             kArcKioskAccountId),
         user_data_dir_override_(chrome::DIR_USER_DATA),
         update_engine_client_(new chromeos::FakeUpdateEngineClient) {
     EXPECT_CALL(*user_manager_, Shutdown()).Times(1);
@@ -306,7 +317,7 @@ class DeviceStatusCollectorTest : public testing::Test {
     // Initialize our mock mounted disk volumes.
     std::unique_ptr<chromeos::disks::MockDiskMountManager>
         mock_disk_mount_manager =
-            base::MakeUnique<chromeos::disks::MockDiskMountManager>();
+            std::make_unique<chromeos::disks::MockDiskMountManager>();
     AddMountPoint("/mount/volume1");
     AddMountPoint("/mount/volume2");
     EXPECT_CALL(*mock_disk_mount_manager, mount_points())
@@ -346,11 +357,6 @@ class DeviceStatusCollectorTest : public testing::Test {
 
     chromeos::CrasAudioHandler::InitializeForTesting();
     chromeos::LoginState::Initialize();
-
-    RestartStatusCollector(base::Bind(&GetEmptyVolumeInfo),
-                           base::Bind(&GetEmptyCPUStatistics),
-                           base::Bind(&GetEmptyCPUTempInfo),
-                           base::Bind(&GetEmptyAndroidStatus));
   }
 
   ~DeviceStatusCollectorTest() override {
@@ -366,6 +372,11 @@ class DeviceStatusCollectorTest : public testing::Test {
   }
 
   void SetUp() override {
+    RestartStatusCollector(base::BindRepeating(&GetEmptyVolumeInfo),
+                           base::BindRepeating(&GetEmptyCPUStatistics),
+                           base::BindRepeating(&GetEmptyCPUTempInfo),
+                           base::BindRepeating(&GetEmptyAndroidStatus));
+
     // Disable network interface reporting since it requires additional setup.
     settings_helper_.SetBoolean(chromeos::kReportDeviceNetworkInterfaces,
                                 false);
@@ -383,7 +394,7 @@ class DeviceStatusCollectorTest : public testing::Test {
                          chromeos::disks::MOUNT_CONDITION_NONE)));
   }
 
-  void RestartStatusCollector(
+  virtual void RestartStatusCollector(
       const policy::DeviceStatusCollector::VolumeInfoFetcher& volume_info,
       const policy::DeviceStatusCollector::CPUStatisticsFetcher& cpu_stats,
       const policy::DeviceStatusCollector::CPUTempFetcher& cpu_temp_fetcher,
@@ -392,7 +403,8 @@ class DeviceStatusCollectorTest : public testing::Test {
     std::vector<em::VolumeInfo> expected_volume_info;
     status_collector_.reset(new TestingDeviceStatusCollector(
         &local_state_, &fake_statistics_provider_, volume_info, cpu_stats,
-        cpu_temp_fetcher, android_status_fetcher));
+        cpu_temp_fetcher, android_status_fetcher,
+        true /* is_enterprise_device */));
   }
 
   void GetStatus() {
@@ -437,15 +449,20 @@ class DeviceStatusCollectorTest : public testing::Test {
         .WillRepeatedly(Return(false));
   }
 
-  void MockRunningKioskApp(const DeviceLocalAccount& account) {
+  void MockRunningKioskApp(const DeviceLocalAccount& account, bool arc_kiosk) {
     std::vector<DeviceLocalAccount> accounts;
     accounts.push_back(account);
     user_manager::User* user = user_manager_->CreateKioskAppUser(
         AccountId::FromUserEmail(account.user_id));
-    EXPECT_CALL(*user_manager_, IsLoggedInAsKioskApp()).WillRepeatedly(
-        Return(true));
+    if (arc_kiosk) {
+      EXPECT_CALL(*user_manager_, IsLoggedInAsArcKioskApp())
+          .WillRepeatedly(Return(true));
+    } else {
+      EXPECT_CALL(*user_manager_, IsLoggedInAsKioskApp())
+          .WillRepeatedly(Return(true));
+    }
 
-    testing_profile_ = base::MakeUnique<TestingProfile>();
+    testing_profile_ = std::make_unique<TestingProfile>();
     chromeos::ProfileHelper::Get()->SetUserToProfileMappingForTesting(
         user, testing_profile_.get());
 
@@ -484,6 +501,25 @@ class DeviceStatusCollectorTest : public testing::Test {
               manager->GetAutoLaunchAppRequiredPlatformVersion());
   }
 
+  void MockAutoLaunchArcKioskApp(
+      const DeviceLocalAccount& auto_launch_app_account) {
+    arc_kiosk_app_manager_.reset(new chromeos::ArcKioskAppManager());
+    arc_kiosk_app_manager_->AddAutoLaunchAppForTest(
+        auto_launch_app_account.arc_kiosk_app_info.package_name(),
+        auto_launch_app_account.arc_kiosk_app_info,
+        AccountId::FromUserEmail(auto_launch_app_account.user_id));
+
+    std::vector<DeviceLocalAccount> accounts;
+    accounts.push_back(auto_launch_app_account);
+    SetDeviceLocalAccounts(owner_settings_service_.get(), accounts);
+
+    owner_settings_service_->SetString(
+        chromeos::kAccountsPrefDeviceLocalAccountAutoLoginId,
+        auto_launch_app_account.account_id);
+
+    base::RunLoop().RunUntilIdle();
+  }
+
   // Convenience method.
   int64_t ActivePeriodMilliseconds() {
     return policy::DeviceStatusCollector::kIdlePollIntervalSeconds * 1000;
@@ -504,15 +540,19 @@ class DeviceStatusCollectorTest : public testing::Test {
   std::unique_ptr<chromeos::FakeOwnerSettingsService> owner_settings_service_;
   // Only set after MockRunningKioskApp was called.
   std::unique_ptr<TestingProfile> testing_profile_;
+  // Only set after MockAutoLaunchArcKioskApp was called.
+  std::unique_ptr<chromeos::ArcKioskAppManager> arc_kiosk_app_manager_;
   chromeos::MockUserManager* const user_manager_;
   user_manager::ScopedUserManager user_manager_enabler_;
   em::DeviceStatusReportRequest device_status_;
   em::SessionStatusReportRequest session_status_;
   bool got_session_status_;
-  std::unique_ptr<TestingDeviceStatusCollector> status_collector_;
-  const policy::DeviceLocalAccount fake_device_local_account_;
-  base::ScopedPathOverride user_data_dir_override_;
   TestingPrefServiceSimple local_state_;
+  std::unique_ptr<TestingDeviceStatusCollector> status_collector_;
+  const policy::DeviceLocalAccount fake_kiosk_device_local_account_;
+  const policy::ArcKioskAppBasicInfo fake_arc_kiosk_app_basic_info_;
+  const policy::DeviceLocalAccount fake_arc_kiosk_device_local_account_;
+  base::ScopedPathOverride user_data_dir_override_;
   chromeos::FakeUpdateEngineClient* const update_engine_client_;
   std::unique_ptr<base::RunLoop> run_loop_;
 };
@@ -798,6 +838,78 @@ TEST_F(DeviceStatusCollectorTest, ActivityTimesKeptUntilSubmittedSuccessfully) {
   EXPECT_EQ(ActivePeriodMilliseconds(), GetActiveMilliseconds(device_status_));
 }
 
+TEST_F(DeviceStatusCollectorTest, ActivityNoUser) {
+  ui::IdleState test_states[] = {ui::IDLE_STATE_ACTIVE, ui::IDLE_STATE_ACTIVE,
+                                 ui::IDLE_STATE_ACTIVE};
+  settings_helper_.SetBoolean(chromeos::kReportDeviceActivityTimes, true);
+  settings_helper_.SetBoolean(chromeos::kReportDeviceUsers, true);
+
+  status_collector_->Simulate(test_states, 3);
+  GetStatus();
+  EXPECT_EQ(1, device_status_.active_period_size());
+  EXPECT_TRUE(device_status_.active_period(0).user_email().empty());
+}
+
+TEST_F(DeviceStatusCollectorTest, ActivityWithPublicSessionUser) {
+  ui::IdleState test_states[] = {ui::IDLE_STATE_ACTIVE, ui::IDLE_STATE_ACTIVE,
+                                 ui::IDLE_STATE_ACTIVE};
+  settings_helper_.SetBoolean(chromeos::kReportDeviceActivityTimes, true);
+  settings_helper_.SetBoolean(chromeos::kReportDeviceUsers, true);
+  const AccountId public_account_id(
+      AccountId::FromUserEmail("public@localhost"));
+  user_manager_->CreatePublicAccountUser(public_account_id);
+
+  status_collector_->Simulate(test_states, 3);
+  GetStatus();
+  EXPECT_EQ(1, device_status_.active_period_size());
+  EXPECT_TRUE(device_status_.active_period(0).user_email().empty());
+}
+
+TEST_F(DeviceStatusCollectorTest, ActivityWithAffiliatedUser) {
+  ui::IdleState test_states[] = {ui::IDLE_STATE_ACTIVE, ui::IDLE_STATE_ACTIVE,
+                                 ui::IDLE_STATE_ACTIVE};
+  settings_helper_.SetBoolean(chromeos::kReportDeviceActivityTimes, true);
+  settings_helper_.SetBoolean(chromeos::kReportDeviceUsers, true);
+  const AccountId account_id0(AccountId::FromUserEmail("user0@managed.com"));
+  user_manager_->AddUserWithAffiliation(account_id0, true);
+
+  status_collector_->Simulate(test_states, 3);
+  GetStatus();
+  EXPECT_EQ(1, device_status_.active_period_size());
+  EXPECT_EQ(account_id0.GetUserEmail(),
+            device_status_.active_period(0).user_email());
+  device_status_.clear_active_period();  // Clear the result protobuf.
+
+  settings_helper_.SetBoolean(chromeos::kReportDeviceUsers, false);
+
+  status_collector_->Simulate(test_states, 3);
+  GetStatus();
+  EXPECT_EQ(1, device_status_.active_period_size());
+  EXPECT_TRUE(device_status_.active_period(0).user_email().empty());
+}
+
+TEST_F(DeviceStatusCollectorTest, ActivityWithNotAffiliatedUser) {
+  ui::IdleState test_states[] = {ui::IDLE_STATE_ACTIVE, ui::IDLE_STATE_ACTIVE,
+                                 ui::IDLE_STATE_ACTIVE};
+  settings_helper_.SetBoolean(chromeos::kReportDeviceActivityTimes, true);
+  settings_helper_.SetBoolean(chromeos::kReportDeviceUsers, true);
+  const AccountId account_id0(AccountId::FromUserEmail("user0@managed.com"));
+  user_manager_->AddUserWithAffiliation(account_id0, false);
+
+  status_collector_->Simulate(test_states, 3);
+  GetStatus();
+  EXPECT_EQ(1, device_status_.active_period_size());
+  EXPECT_TRUE(device_status_.active_period(0).user_email().empty());
+  device_status_.clear_active_period();  // Clear the result protobuf.
+
+  settings_helper_.SetBoolean(chromeos::kReportDeviceUsers, false);
+
+  status_collector_->Simulate(test_states, 3);
+  GetStatus();
+  EXPECT_EQ(1, device_status_.active_period_size());
+  EXPECT_TRUE(device_status_.active_period(0).user_email().empty());
+}
+
 TEST_F(DeviceStatusCollectorTest, DevSwitchBootMode) {
   // Test that boot mode data is reported by default.
   fake_statistics_provider_.SetMachineStatistic(
@@ -1076,8 +1188,8 @@ TEST_F(DeviceStatusCollectorTest, KioskAndroidReporting) {
                          base::Bind(&GetFakeAndroidStatus, kArcStatus,
                              kDroidGuardInfo));
   status_collector_->set_kiosk_account(
-      base::MakeUnique<DeviceLocalAccount>(fake_device_local_account_));
-  MockRunningKioskApp(fake_device_local_account_);
+      std::make_unique<DeviceLocalAccount>(fake_kiosk_device_local_account_));
+  MockRunningKioskApp(fake_kiosk_device_local_account_, false /* arc_kiosk */);
   testing_profile_->GetPrefs()->SetBoolean(prefs::kReportArcStatusEnabled,
                                            true);
 
@@ -1098,8 +1210,8 @@ TEST_F(DeviceStatusCollectorTest, NoKioskAndroidReportingWhenDisabled) {
 
   // Mock Kiosk app, so some session status is reported
   status_collector_->set_kiosk_account(
-      base::MakeUnique<DeviceLocalAccount>(fake_device_local_account_));
-  MockRunningKioskApp(fake_device_local_account_);
+      std::make_unique<DeviceLocalAccount>(fake_kiosk_device_local_account_));
+  MockRunningKioskApp(fake_kiosk_device_local_account_, false /* arc_kiosk */);
 
   GetStatus();
   EXPECT_TRUE(got_session_status_);
@@ -1176,9 +1288,10 @@ TEST_F(DeviceStatusCollectorTest, NoSessionStatusIfSessionReportingDisabled) {
   // ReportDeviceSessionStatus only controls Kiosk reporting, ARC reporting
   // has to be disabled serarately.
   status_collector_->set_kiosk_account(
-      base::MakeUnique<policy::DeviceLocalAccount>(fake_device_local_account_));
+      std::make_unique<policy::DeviceLocalAccount>(
+          fake_kiosk_device_local_account_));
   // Set up a device-local account for single-app kiosk mode.
-  MockRunningKioskApp(fake_device_local_account_);
+  MockRunningKioskApp(fake_kiosk_device_local_account_, false /* arc_kiosk */);
   testing_profile_->GetPrefs()->SetBoolean(prefs::kReportArcStatusEnabled,
                                            false);
 
@@ -1189,10 +1302,11 @@ TEST_F(DeviceStatusCollectorTest, NoSessionStatusIfSessionReportingDisabled) {
 TEST_F(DeviceStatusCollectorTest, ReportKioskSessionStatus) {
   settings_helper_.SetBoolean(chromeos::kReportDeviceSessionStatus, true);
   status_collector_->set_kiosk_account(
-      base::MakeUnique<policy::DeviceLocalAccount>(fake_device_local_account_));
+      std::make_unique<policy::DeviceLocalAccount>(
+          fake_kiosk_device_local_account_));
 
   // Set up a device-local account for single-app kiosk mode.
-  MockRunningKioskApp(fake_device_local_account_);
+  MockRunningKioskApp(fake_kiosk_device_local_account_, false /* arc_kiosk */);
 
   GetStatus();
   EXPECT_TRUE(got_session_status_);
@@ -1208,10 +1322,33 @@ TEST_F(DeviceStatusCollectorTest, ReportKioskSessionStatus) {
   EXPECT_FALSE(session_status_.has_user_dm_token());
 }
 
+TEST_F(DeviceStatusCollectorTest, ReportArcKioskSessionStatus) {
+  settings_helper_.SetBoolean(chromeos::kReportDeviceSessionStatus, true);
+  status_collector_->set_kiosk_account(
+      std::make_unique<policy::DeviceLocalAccount>(
+          fake_arc_kiosk_device_local_account_));
+
+  // Set up a device-local account for single-app ARC kiosk mode.
+  MockRunningKioskApp(fake_arc_kiosk_device_local_account_,
+                      true /* arc_kiosk */);
+
+  GetStatus();
+  EXPECT_TRUE(got_session_status_);
+  ASSERT_EQ(1, session_status_.installed_apps_size());
+  EXPECT_EQ(kArcKioskAccountId, session_status_.device_local_account_id());
+  const em::AppStatus app = session_status_.installed_apps(0);
+  EXPECT_EQ(kArcKioskPackageName, app.app_id());
+  EXPECT_TRUE(app.extension_version().empty());
+  EXPECT_FALSE(app.has_status());
+  EXPECT_FALSE(app.has_error());
+  // Expect no User DM Token for kiosk sessions.
+  EXPECT_FALSE(session_status_.has_user_dm_token());
+}
+
 TEST_F(DeviceStatusCollectorTest, NoOsUpdateStatusByDefault) {
   MockPlatformVersion("1234.0.0");
-  MockAutoLaunchKioskAppWithRequiredPlatformVersion(fake_device_local_account_,
-                                                    "1234.0.0");
+  MockAutoLaunchKioskAppWithRequiredPlatformVersion(
+      fake_kiosk_device_local_account_, "1234.0.0");
 
   GetStatus();
   EXPECT_FALSE(device_status_.has_os_update_status());
@@ -1225,7 +1362,7 @@ TEST_F(DeviceStatusCollectorTest, ReportOsUpdateStatusUpToDate) {
 
   for (size_t i = 0; i < arraysize(kRequiredPlatformVersions); ++i) {
     MockAutoLaunchKioskAppWithRequiredPlatformVersion(
-        fake_device_local_account_, kRequiredPlatformVersions[i]);
+        fake_kiosk_device_local_account_, kRequiredPlatformVersions[i]);
 
     GetStatus();
     ASSERT_TRUE(device_status_.has_os_update_status())
@@ -1242,8 +1379,8 @@ TEST_F(DeviceStatusCollectorTest, ReportOsUpdateStatusUpToDate) {
 TEST_F(DeviceStatusCollectorTest, ReportOsUpdateStatus) {
   MockPlatformVersion("1234.0.0");
   settings_helper_.SetBoolean(chromeos::kReportOsUpdateStatus, true);
-  MockAutoLaunchKioskAppWithRequiredPlatformVersion(fake_device_local_account_,
-                                                    "1235");
+  MockAutoLaunchKioskAppWithRequiredPlatformVersion(
+      fake_kiosk_device_local_account_, "1235");
 
   chromeos::UpdateEngineClient::Status update_status;
   update_status.status = chromeos::UpdateEngineClient::UPDATE_STATUS_IDLE;
@@ -1287,11 +1424,12 @@ TEST_F(DeviceStatusCollectorTest, ReportOsUpdateStatus) {
 
 TEST_F(DeviceStatusCollectorTest, NoRunningKioskAppByDefault) {
   MockPlatformVersion("1234.0.0");
-  MockAutoLaunchKioskAppWithRequiredPlatformVersion(fake_device_local_account_,
-                                                    "1234.0.0");
+  MockAutoLaunchKioskAppWithRequiredPlatformVersion(
+      fake_kiosk_device_local_account_, "1234.0.0");
   status_collector_->set_kiosk_account(
-      base::MakeUnique<policy::DeviceLocalAccount>(fake_device_local_account_));
-  MockRunningKioskApp(fake_device_local_account_);
+      std::make_unique<policy::DeviceLocalAccount>(
+          fake_kiosk_device_local_account_));
+  MockRunningKioskApp(fake_kiosk_device_local_account_, false /* arc_kiosk */);
 
   GetStatus();
   EXPECT_FALSE(device_status_.has_running_kiosk_app());
@@ -1300,8 +1438,8 @@ TEST_F(DeviceStatusCollectorTest, NoRunningKioskAppByDefault) {
 TEST_F(DeviceStatusCollectorTest, NoRunningKioskAppWhenNotInKioskSession) {
   settings_helper_.SetBoolean(chromeos::kReportRunningKioskApp, true);
   MockPlatformVersion("1234.0.0");
-  MockAutoLaunchKioskAppWithRequiredPlatformVersion(fake_device_local_account_,
-                                                    "1234.0.0");
+  MockAutoLaunchKioskAppWithRequiredPlatformVersion(
+      fake_kiosk_device_local_account_, "1234.0.0");
 
   GetStatus();
   EXPECT_FALSE(device_status_.has_running_kiosk_app());
@@ -1310,17 +1448,37 @@ TEST_F(DeviceStatusCollectorTest, NoRunningKioskAppWhenNotInKioskSession) {
 TEST_F(DeviceStatusCollectorTest, ReportRunningKioskApp) {
   settings_helper_.SetBoolean(chromeos::kReportRunningKioskApp, true);
   MockPlatformVersion("1234.0.0");
-  MockAutoLaunchKioskAppWithRequiredPlatformVersion(fake_device_local_account_,
-                                                    "1235");
-  MockRunningKioskApp(fake_device_local_account_);
+  MockAutoLaunchKioskAppWithRequiredPlatformVersion(
+      fake_kiosk_device_local_account_, "1235");
+  MockRunningKioskApp(fake_kiosk_device_local_account_, false /* arc_kiosk */);
   status_collector_->set_kiosk_account(
-      base::MakeUnique<policy::DeviceLocalAccount>(fake_device_local_account_));
+      std::make_unique<policy::DeviceLocalAccount>(
+          fake_kiosk_device_local_account_));
 
   GetStatus();
   ASSERT_TRUE(device_status_.has_running_kiosk_app());
   const em::AppStatus app = device_status_.running_kiosk_app();
   EXPECT_EQ(kKioskAppId, app.app_id());
   EXPECT_EQ("1235", app.required_platform_version());
+  EXPECT_FALSE(app.has_status());
+  EXPECT_FALSE(app.has_error());
+}
+
+TEST_F(DeviceStatusCollectorTest, ReportRunningArcKioskApp) {
+  settings_helper_.SetBoolean(chromeos::kReportRunningKioskApp, true);
+  MockAutoLaunchArcKioskApp(fake_arc_kiosk_device_local_account_);
+  MockRunningKioskApp(fake_arc_kiosk_device_local_account_,
+                      true /* arc_kiosk */);
+  status_collector_->set_kiosk_account(
+      std::make_unique<policy::DeviceLocalAccount>(
+          fake_arc_kiosk_device_local_account_));
+
+  GetStatus();
+  ASSERT_TRUE(device_status_.has_running_kiosk_app());
+  const em::AppStatus app = device_status_.running_kiosk_app();
+  EXPECT_EQ(kArcKioskPackageName, app.app_id());
+  EXPECT_TRUE(app.extension_version().empty());
+  EXPECT_TRUE(app.required_platform_version().empty());
   EXPECT_FALSE(app.has_status());
   EXPECT_FALSE(app.has_error());
 }
@@ -1434,6 +1592,11 @@ class DeviceStatusCollectorNetworkInterfacesTest
     : public DeviceStatusCollectorTest {
  protected:
   void SetUp() override {
+    RestartStatusCollector(base::BindRepeating(&GetEmptyVolumeInfo),
+                           base::BindRepeating(&GetEmptyCPUStatistics),
+                           base::BindRepeating(&GetEmptyCPUTempInfo),
+                           base::BindRepeating(&GetEmptyAndroidStatus));
+
     chromeos::DBusThreadManager::Initialize();
     chromeos::NetworkHandler::Initialize();
     base::RunLoop().RunUntilIdle();
@@ -1619,7 +1782,8 @@ TEST_F(DeviceStatusCollectorNetworkInterfacesTest, NoNetworkStateIfNotKiosk) {
 TEST_F(DeviceStatusCollectorNetworkInterfacesTest, NetworkInterfaces) {
   // Mock that we are in kiosk mode so we report network state.
   status_collector_->set_kiosk_account(
-      base::MakeUnique<policy::DeviceLocalAccount>(fake_device_local_account_));
+      std::make_unique<policy::DeviceLocalAccount>(
+          fake_kiosk_device_local_account_));
 
   // Interfaces should be reported by default.
   GetStatus();
@@ -1649,6 +1813,171 @@ TEST_F(DeviceStatusCollectorNetworkInterfacesTest, ReportIfPublicSession) {
   settings_helper_.SetBoolean(chromeos::kReportDeviceNetworkInterfaces, true);
   GetStatus();
   VerifyNetworkReporting();
+}
+
+// Tests collecting device status for registered consumer device.
+class ConsumerDeviceStatusCollectorTest : public DeviceStatusCollectorTest {
+ protected:
+  void RestartStatusCollector(
+      const policy::DeviceStatusCollector::VolumeInfoFetcher& volume_info,
+      const policy::DeviceStatusCollector::CPUStatisticsFetcher& cpu_stats,
+      const policy::DeviceStatusCollector::CPUTempFetcher& cpu_temp_fetcher,
+      const policy::DeviceStatusCollector::AndroidStatusFetcher&
+          android_status_fetcher) override {
+    status_collector_.reset(new TestingDeviceStatusCollector(
+        &local_state_, &fake_statistics_provider_, volume_info, cpu_stats,
+        cpu_temp_fetcher, android_status_fetcher,
+        false /* is_enterprise_device */));
+  }
+};
+
+TEST_F(ConsumerDeviceStatusCollectorTest, ReportingBootMode) {
+  fake_statistics_provider_.SetMachineStatistic(
+      chromeos::system::kDevSwitchBootKey,
+      chromeos::system::kDevSwitchBootValueVerified);
+
+  GetStatus();
+
+  EXPECT_TRUE(device_status_.has_boot_mode());
+  EXPECT_EQ("Verified", device_status_.boot_mode());
+}
+
+TEST_F(ConsumerDeviceStatusCollectorTest, ReportingActivityTimes) {
+  ui::IdleState test_states[] = {ui::IDLE_STATE_ACTIVE, ui::IDLE_STATE_ACTIVE,
+                                 ui::IDLE_STATE_ACTIVE};
+  status_collector_->Simulate(test_states,
+                              sizeof(test_states) / sizeof(ui::IdleState));
+
+  GetStatus();
+
+  EXPECT_EQ(1, device_status_.active_period_size());
+  EXPECT_EQ(3 * ActivePeriodMilliseconds(),
+            GetActiveMilliseconds(device_status_));
+}
+
+TEST_F(ConsumerDeviceStatusCollectorTest, ReportingArcStatus) {
+  RestartStatusCollector(
+      base::BindRepeating(&GetEmptyVolumeInfo),
+      base::BindRepeating(&GetEmptyCPUStatistics),
+      base::BindRepeating(&GetEmptyCPUTempInfo),
+      base::BindRepeating(&GetFakeAndroidStatus, kArcStatus, kDroidGuardInfo));
+
+  const AccountId account_id(AccountId::FromUserEmail("user0@gmail.com"));
+  MockRegularUserWithAffiliation(account_id, true);
+  testing_profile_->GetPrefs()->SetBoolean(prefs::kReportArcStatusEnabled,
+                                           true);
+
+  GetStatus();
+
+  EXPECT_EQ(kArcStatus, session_status_.android_status().status_payload());
+  EXPECT_EQ(kDroidGuardInfo,
+            session_status_.android_status().droid_guard_info());
+  // In tests, GetUserDMToken returns the e-mail for easy verification.
+  EXPECT_EQ(account_id.GetUserEmail(), session_status_.user_dm_token());
+}
+
+TEST_F(ConsumerDeviceStatusCollectorTest, ReportingPartialVersionInfo) {
+  GetStatus();
+
+  // Should only report OS version.
+  EXPECT_TRUE(device_status_.has_os_version());
+  EXPECT_FALSE(device_status_.has_browser_version());
+  EXPECT_FALSE(device_status_.has_firmware_version());
+  EXPECT_FALSE(device_status_.has_tpm_version_info());
+}
+
+TEST_F(ConsumerDeviceStatusCollectorTest, NotReportingVolumeInfo) {
+  std::vector<std::string> expected_mount_points;
+  std::vector<em::VolumeInfo> expected_volume_info;
+  for (const auto& mount_info :
+       DiskMountManager::GetInstance()->mount_points()) {
+    expected_mount_points.push_back(mount_info.first);
+  }
+  expected_mount_points.push_back(kExternalMountPoint);
+
+  for (const std::string& mount_point : expected_mount_points) {
+    em::VolumeInfo info;
+    info.set_volume_id(mount_point);
+    info.set_storage_total(12345678);
+    info.set_storage_free(1234567);
+    expected_volume_info.push_back(info);
+  }
+  EXPECT_FALSE(expected_volume_info.empty());
+
+  RestartStatusCollector(
+      base::BindRepeating(&GetFakeVolumeInfo, expected_volume_info),
+      base::BindRepeating(&GetEmptyCPUStatistics),
+      base::BindRepeating(&GetEmptyCPUTempInfo),
+      base::BindRepeating(&GetEmptyAndroidStatus));
+  content::RunAllTasksUntilIdle();
+
+  GetStatus();
+
+  EXPECT_EQ(0, device_status_.volume_info_size());
+}
+
+TEST_F(ConsumerDeviceStatusCollectorTest, NotReportingUsers) {
+  const AccountId account_id0(AccountId::FromUserEmail("user0@gmail.com"));
+  const AccountId account_id1(AccountId::FromUserEmail("user1@gmail.com"));
+  user_manager_->AddUserWithAffiliation(account_id0, true);
+  user_manager_->AddUserWithAffiliation(account_id1, true);
+
+  GetStatus();
+
+  EXPECT_EQ(0, device_status_.user_size());
+}
+
+TEST_F(ConsumerDeviceStatusCollectorTest, NotReportingRunningKioskApp) {
+  MockPlatformVersion("1234.0.0");
+  MockAutoLaunchKioskAppWithRequiredPlatformVersion(
+      fake_kiosk_device_local_account_, "1235");
+  MockRunningKioskApp(fake_kiosk_device_local_account_, false /* arc_kiosk */);
+  status_collector_->set_kiosk_account(
+      std::make_unique<policy::DeviceLocalAccount>(
+          fake_kiosk_device_local_account_));
+
+  GetStatus();
+
+  EXPECT_FALSE(device_status_.has_running_kiosk_app());
+}
+
+TEST_F(ConsumerDeviceStatusCollectorTest, NotReportingOSUpdateStatus) {
+  MockPlatformVersion("1234.0.0");
+  MockAutoLaunchKioskAppWithRequiredPlatformVersion(
+      fake_kiosk_device_local_account_, "1234.0.0");
+
+  GetStatus();
+
+  EXPECT_FALSE(device_status_.has_os_update_status());
+}
+
+TEST_F(ConsumerDeviceStatusCollectorTest, NotReportingDeviceHardwareStatus) {
+  const std::string full_cpu_usage("cpu  500 0 500 0");
+
+  std::vector<em::CPUTempInfo> expected_temp_info;
+  for (int i = 0; i < 5; ++i) {
+    em::CPUTempInfo info;
+    info.set_cpu_temp(100);
+    info.set_cpu_label("Core");
+    expected_temp_info.push_back(info);
+  }
+
+  status_collector_->RefreshSampleResourceUsage();
+
+  RestartStatusCollector(
+      base::BindRepeating(&GetEmptyVolumeInfo),
+      base::BindRepeating(&GetFakeCPUStatistics, full_cpu_usage),
+      base::BindRepeating(&GetFakeCPUTempInfo, expected_temp_info),
+      base::BindRepeating(&GetEmptyAndroidStatus));
+  content::RunAllTasksUntilIdle();
+
+  GetStatus();
+
+  EXPECT_FALSE(device_status_.has_sound_volume());
+  EXPECT_EQ(0, device_status_.cpu_utilization_pct().size());
+  EXPECT_EQ(0, device_status_.cpu_temp_info_size());
+  EXPECT_EQ(0, device_status_.system_ram_free().size());
+  EXPECT_FALSE(device_status_.has_system_ram_total());
 }
 
 }  // namespace policy

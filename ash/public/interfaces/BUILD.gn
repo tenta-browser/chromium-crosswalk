@@ -14,10 +14,14 @@ mojom("interfaces_internal") {
   sources = [
     "accelerator_controller.mojom",
     "accessibility_controller.mojom",
+    "accessibility_focus_ring_controller.mojom",
+    "app_list.mojom",
+    "ash_assistant_controller.mojom",
     "ash_display_controller.mojom",
     "ash_message_center_controller.mojom",
     "cast_config.mojom",
     "constants.mojom",
+    "docked_magnifier_controller.mojom",
     "event_properties.mojom",
     "highlighter_controller.mojom",
     "ime_controller.mojom",
@@ -26,13 +30,16 @@ mojom("interfaces_internal") {
     "login_screen.mojom",
     "login_user_info.mojom",
     "media.mojom",
+    "menu.mojom",
     "new_window.mojom",
     "night_light_controller.mojom",
     "note_taking_controller.mojom",
     "pref_connector.mojom",
+    "process_creation_time_recorder.mojom",
     "session_controller.mojom",
     "shelf.mojom",
     "shutdown.mojom",
+    "split_view.mojom",
     "system_tray.mojom",
     "tablet_mode.mojom",
     "tray_action.mojom",
@@ -50,14 +57,23 @@ mojom("interfaces_internal") {
   ]
 
   public_deps = [
-    "//components/proximity_auth/public/interfaces",
+    "//chromeos/components/proximity_auth/public/interfaces",
+    "//chromeos/services/assistant/public/mojom",
+    "//components/password_manager/public/interfaces",
     "//components/signin/public/interfaces",
+    "//components/sync/mojo:interfaces",
     "//mojo/common:common_custom_types",
-    "//services/preferences/public/interfaces",
+    "//mojo/public/mojom/base",
+    "//services/preferences/public/mojom",
     "//skia/public/interfaces",
+    "//ui/accessibility:ax_enums_mojo",
+    "//ui/base/ime/chromeos/public/interfaces",
     "//ui/events/mojo:interfaces",
+    "//ui/gfx/geometry/mojo",
     "//ui/gfx/image/mojo:interfaces",
-    "//ui/message_center/mojo:mojo",
+    "//ui/gfx/range/mojo",
+    "//ui/message_center/public/mojo:mojo",
+    "//url/mojom:url_mojom_gurl",
   ]
 
   component_output_prefix = "ash_public_interfaces_internal"
@@ -70,9 +86,12 @@ mojom("test_interfaces") {
   testonly = true
   sources = [
     "shelf_test_api.mojom",
+    "shell_test_api.mojom",
     "system_tray_test_api.mojom",
+    "time_to_first_present_recorder_test_api.mojom",
   ]
   deps = [
     "//mojo/common:common_custom_types",
+    "//mojo/public/mojom/base",
   ]
 }

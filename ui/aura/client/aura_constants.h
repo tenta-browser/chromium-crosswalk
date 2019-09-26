@@ -77,9 +77,9 @@ AURA_EXPORT extern const WindowProperty<bool>* const kDrawAttentionKey;
 // A property key to store the focus client on the window.
 AURA_EXPORT extern const WindowProperty<FocusClient*>* const kFocusClientKey;
 
-// A bool property key to specify if the window should have a backdrop window
-// (typically black) that covers the desktop behind the window.
-AURA_EXPORT extern const WindowProperty<bool>* const kHasBackdrop;
+// A bool property key to specify if the window has a icon set for displaying in
+// overivew mode.
+AURA_EXPORT extern const WindowProperty<bool>* const kHasOverviewIcon;
 
 // A property key to store the host window of a window. This lets
 // WebContentsViews find the windows that should constrain NPAPI plugins.
@@ -151,6 +151,10 @@ AURA_EXPORT extern const WindowProperty<gfx::ImageSkia*>* const kWindowIconKey;
 
 // Indicates the type of embedding within the given window.
 AURA_EXPORT extern const WindowProperty<WindowEmbedType>* const kEmbedType;
+
+// The corner radius of a window in DIPs. Currently only used for shadows.
+// Default is -1, meaning "unspecified". 0 Ensures corners are square.
+AURA_EXPORT extern const WindowProperty<int>* const kWindowCornerRadiusKey;
 
 AURA_EXPORT extern const WindowProperty<ui::mojom::WindowType>* const
     kWindowTypeKey;

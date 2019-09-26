@@ -4,15 +4,14 @@
 
 #include "android_webview/browser/browser_view_renderer.h"
 
+#include <memory>
 #include <utility>
 
 #include "android_webview/browser/browser_view_renderer_client.h"
 #include "android_webview/browser/compositor_frame_consumer.h"
-#include "android_webview/common/aw_switches.h"
 #include "base/auto_reset.h"
 #include "base/command_line.h"
 #include "base/logging.h"
-#include "base/memory/ptr_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/stringprintf.h"
 #include "base/supports_user_data.h"
@@ -22,6 +21,7 @@
 #include "content/public/browser/render_view_host.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/content_switches.h"
+#include "content/public/common/use_zoom_for_dsf_policy.h"
 #include "gpu/command_buffer/service/gpu_switches.h"
 #include "third_party/skia/include/core/SkBitmap.h"
 #include "third_party/skia/include/core/SkCanvas.h"
@@ -93,8 +93,6 @@ BrowserViewRenderer::BrowserViewRenderer(
     const scoped_refptr<base::SingleThreadTaskRunner>& ui_task_runner)
     : client_(client),
       ui_task_runner_(ui_task_runner),
-      sync_on_draw_hardware_(base::CommandLine::ForCurrentProcess()->HasSwitch(
-          switches::kSyncOnDrawHardware)),
       current_compositor_frame_consumer_(nullptr),
       compositor_(nullptr),
       is_paused_(false),
@@ -109,8 +107,7 @@ BrowserViewRenderer::BrowserViewRenderer(
       max_page_scale_factor_(0.f),
       on_new_picture_enable_(false),
       clear_view_(false),
-      offscreen_pre_raster_(false),
-      allow_async_draw_(false) {}
+      offscreen_pre_raster_(false) {}
 
 BrowserViewRenderer::~BrowserViewRenderer() {
   DCHECK(compositor_map_.empty());
@@ -137,7 +134,7 @@ void BrowserViewRenderer::RegisterWithWebContents(
     content::WebContents* web_contents) {
   web_contents->SetUserData(
       kBrowserViewRendererUserDataKey,
-      base::MakeUnique<BrowserViewRendererUserData>(this));
+      std::make_unique<BrowserViewRendererUserData>(this));
 }
 
 void BrowserViewRenderer::TrimMemory() {
@@ -234,29 +231,13 @@ bool BrowserViewRenderer::OnDrawHardware() {
   gfx::Rect viewport_rect_for_tile_priority =
       ComputeViewportRectForTilePriority();
 
-  scoped_refptr<content::SynchronousCompositor::FrameFuture> future; // Async.
-  content::SynchronousCompositor::Frame frame; // Sync.
-  bool async = !sync_on_draw_hardware_ && allow_async_draw_;
-  if (async) {
-    future = compositor_->DemandDrawHwAsync(
-        size_, viewport_rect_for_tile_priority, transform_for_tile_priority);
-  } else {
-    frame = compositor_->DemandDrawHw(size_, viewport_rect_for_tile_priority,
-                                      transform_for_tile_priority);
-  }
-
-  if (!frame.frame && !future) {
-    TRACE_EVENT_INSTANT0("android_webview", "NoNewFrame",
-                         TRACE_EVENT_SCOPE_THREAD);
-    return current_compositor_frame_consumer_->HasFrameOnUI();
-  }
-
-  allow_async_draw_ = true;
-  std::unique_ptr<ChildFrame> child_frame = base::MakeUnique<ChildFrame>(
-      std::move(future), frame.layer_tree_frame_sink_id, std::move(frame.frame),
-      compositor_id_, viewport_rect_for_tile_priority.IsEmpty(),
-      transform_for_tile_priority, offscreen_pre_raster_,
-      external_draw_constraints_.is_layer);
+  scoped_refptr<content::SynchronousCompositor::FrameFuture> future =
+      compositor_->DemandDrawHwAsync(size_, viewport_rect_for_tile_priority,
+                                     transform_for_tile_priority);
+  std::unique_ptr<ChildFrame> child_frame = std::make_unique<ChildFrame>(
+      std::move(future), compositor_id_,
+      viewport_rect_for_tile_priority.IsEmpty(), transform_for_tile_priority,
+      offscreen_pre_raster_, external_draw_constraints_.is_layer);
 
   ReturnUnusedResource(
       current_compositor_frame_consumer_->SetFrameOnUI(std::move(child_frame)));
@@ -360,17 +341,21 @@ sk_sp<SkPicture> BrowserViewRenderer::CapturePicture(int width,
   SkPictureRecorder recorder;
   SkCanvas* rec_canvas = recorder.beginRecording(width, height, NULL, 0);
   if (compositor_) {
+    gfx::Vector2dF scroll_offset =
+        content::IsUseZoomForDSFEnabled()
+            ? gfx::ScaleVector2d(scroll_offset_dip_, dip_scale_)
+            : scroll_offset_dip_;
     {
       // Reset scroll back to the origin, will go back to the old
       // value when scroll_reset is out of scope.
       base::AutoReset<gfx::Vector2dF> scroll_reset(&scroll_offset_dip_,
                                                    gfx::Vector2dF());
       compositor_->DidChangeRootLayerScrollOffset(
-          gfx::ScrollOffset(scroll_offset_dip_));
+          gfx::ScrollOffset(scroll_offset));
       CompositeSW(rec_canvas);
     }
     compositor_->DidChangeRootLayerScrollOffset(
-        gfx::ScrollOffset(scroll_offset_dip_));
+        gfx::ScrollOffset(scroll_offset));
   }
   return recorder.finishRecordingAsPicture();
 }
@@ -550,8 +535,12 @@ void BrowserViewRenderer::SetActiveCompositorID(
           FindCompositor(compositor_id)) {
     compositor_ = compositor;
     UpdateMemoryPolicy();
+    gfx::Vector2dF scroll_offset =
+        content::IsUseZoomForDSFEnabled()
+            ? gfx::ScaleVector2d(scroll_offset_dip_, dip_scale_)
+            : scroll_offset_dip_;
     compositor_->DidChangeRootLayerScrollOffset(
-        gfx::ScrollOffset(scroll_offset_dip_));
+        gfx::ScrollOffset(scroll_offset));
   } else {
     compositor_ = nullptr;
   }
@@ -608,8 +597,9 @@ void BrowserViewRenderer::ScrollTo(const gfx::Vector2d& scroll_offset) {
                scroll_offset_dip.y());
 
   if (compositor_) {
-    compositor_->DidChangeRootLayerScrollOffset(
-        gfx::ScrollOffset(scroll_offset_dip_));
+    compositor_->DidChangeRootLayerScrollOffset(gfx::ScrollOffset(
+        content::IsUseZoomForDSFEnabled() ? scroll_offset
+                                          : scroll_offset_dip_));
   }
 }
 
@@ -656,14 +646,23 @@ void BrowserViewRenderer::SetTotalRootLayerScrollOffset(
 
 void BrowserViewRenderer::UpdateRootLayerState(
     content::SynchronousCompositor* compositor,
-    const gfx::Vector2dF& total_scroll_offset_dip,
-    const gfx::Vector2dF& max_scroll_offset_dip,
-    const gfx::SizeF& scrollable_size_dip,
+    const gfx::Vector2dF& total_scroll_offset,
+    const gfx::Vector2dF& total_max_scroll_offset,
+    const gfx::SizeF& scrollable_size,
     float page_scale_factor,
     float min_page_scale_factor,
     float max_page_scale_factor) {
   if (compositor != compositor_)
     return;
+
+  gfx::Vector2dF total_scroll_offset_dip = total_scroll_offset;
+  gfx::Vector2dF max_scroll_offset_dip = total_max_scroll_offset;
+  gfx::SizeF scrollable_size_dip = scrollable_size;
+  if (content::IsUseZoomForDSFEnabled()) {
+    total_scroll_offset_dip.Scale(1 / dip_scale_);
+    max_scroll_offset_dip.Scale(1 / dip_scale_);
+    scrollable_size_dip.Scale(1 / dip_scale_);
+  }
 
   TRACE_EVENT_INSTANT1(
       "android_webview",

@@ -4,11 +4,10 @@
 
 #include "cc/test/fake_tile_task_manager.h"
 
-#include "base/memory/ptr_util.h"
 
 namespace cc {
 
-FakeTileTaskManagerImpl::FakeTileTaskManagerImpl() {}
+FakeTileTaskManagerImpl::FakeTileTaskManagerImpl() = default;
 
 FakeTileTaskManagerImpl::~FakeTileTaskManagerImpl() {
   DCHECK_EQ(0u, completed_tasks_.size());

@@ -19,6 +19,10 @@ FakeBluetoothChooserController::FakeBluetoothChooserController(
 FakeBluetoothChooserController::~FakeBluetoothChooserController() {}
 
 bool FakeBluetoothChooserController::ShouldShowIconBeforeText() const {
+  return devices_.size() > 0;
+}
+
+bool FakeBluetoothChooserController::ShouldShowReScanButton() const {
   return true;
 }
 

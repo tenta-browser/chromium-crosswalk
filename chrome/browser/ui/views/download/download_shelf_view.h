@@ -24,8 +24,11 @@ class BrowserView;
 class DownloadItemView;
 
 namespace content {
-class DownloadItem;
 class PageNavigator;
+}
+
+namespace download {
+class DownloadItem;
 }
 
 namespace views {
@@ -94,7 +97,7 @@ class DownloadShelfView : public views::AccessiblePaneView,
 
  protected:
   // DownloadShelf:
-  void DoAddDownload(content::DownloadItem* download) override;
+  void DoAddDownload(download::DownloadItem* download) override;
   void DoOpen() override;
   void DoClose(CloseReason reason) override;
   void DoHide() override;
@@ -150,6 +153,10 @@ class DownloadShelfView : public views::AccessiblePaneView,
   // Button for closing the downloads. This is contained as a child, and
   // deleted by View.
   views::ImageButton* close_button_;
+
+  // Hidden view that will contain status text for immediate output by
+  // screen readers.
+  views::View* accessible_alert_;
 
   // The window this shelf belongs to.
   BrowserView* parent_;

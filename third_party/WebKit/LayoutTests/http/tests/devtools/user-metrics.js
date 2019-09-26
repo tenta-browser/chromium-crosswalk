@@ -6,7 +6,6 @@
   TestRunner.addResult(`Tests list of user metrics codes and invocations.\n`);
   await TestRunner.loadModule('performance_test_runner');
   await TestRunner.loadModule('cpu_profiler_test_runner');
-  await TestRunner.loadModule('audits_test_runner');
 
   InspectorFrontendHost.recordEnumeratedHistogram = function(name, code) {
     if (name === 'DevTools.ActionTaken')
@@ -32,7 +31,14 @@
   TestRunner.dump(Host.UserMetrics._PanelCodes);
   UI.viewManager.showView('js_profiler');
   UI.viewManager.showView('timeline');
-  UI.viewManager.showView('audits');
+
+  TestRunner.addResult('\nTest that drawer usage is recorded by PanelShown');
+  TestRunner.addResult('Show drawer:');
+  UI.inspectorView._showDrawer(true);
+  TestRunner.addResult('Selecting tab from triple dots menu:');
+  UI.inspectorView._drawerTabbedLocation.showView(UI.inspectorView._drawerTabbedLocation._views.get("animations"), undefined, true);
+  TestRunner.addResult('Selecting tab from tabbed pane header:');
+  UI.inspectorView._drawerTabbedLocation._tabbedPane._tabs[0]._tabElement.dispatchEvent(new MouseEvent("mousedown"));
 
   TestRunner.completeTest();
 })();

@@ -4,16 +4,12 @@
 
 #include "components/sync/base/data_type_histogram.h"
 
-#include "base/metrics/statistics_recorder.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace syncer {
 namespace {
 
-class DataTypeHistogramTest : public testing::Test {
- public:
-  void SetUp() override { base::StatisticsRecorder::Initialize(); }
-};
+class DataTypeHistogramTest : public testing::Test {};
 
 // Create a histogram of type LOCAL_HISTOGRAM_COUNTS for each model type.
 // Nothing should break.
@@ -22,19 +18,6 @@ TEST(DataTypeHistogramTest, BasicCount) {
     ModelType type = ModelTypeFromInt(i);
 #define PER_DATA_TYPE_MACRO(type_str) \
   LOCAL_HISTOGRAM_COUNTS("BasicCountPrefix" type_str "Suffix", 1);
-    SYNC_DATA_TYPE_HISTOGRAM(type);
-#undef PER_DATA_TYPE_MACRO
-  }
-}
-
-// Create a histogram of type SYNC_FREQ_HISTOGRAM for each model type. Nothing
-// should break.
-TEST(DataTypeHistogramTest, BasicFreq) {
-  for (int i = FIRST_REAL_MODEL_TYPE; i <= LAST_REAL_MODEL_TYPE; ++i) {
-    ModelType type = ModelTypeFromInt(i);
-#define PER_DATA_TYPE_MACRO(type_str)                      \
-  SYNC_FREQ_HISTOGRAM("BasicFreqPrefix" type_str "Suffix", \
-                      base::TimeDelta::FromSeconds(1));
     SYNC_DATA_TYPE_HISTOGRAM(type);
 #undef PER_DATA_TYPE_MACRO
   }

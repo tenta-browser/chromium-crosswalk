@@ -10,7 +10,6 @@
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/location.h"
-#include "base/memory/ptr_util.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/single_thread_task_runner.h"
 #include "base/stl_util.h"
@@ -112,7 +111,7 @@ ExtensionAction::ShowAction ExtensionActionRunner::RunAction(
 
   // Anything that gets here should have a page or browser action.
   DCHECK(extension_action);
-  int tab_id = SessionTabHelper::IdForTab(web_contents());
+  int tab_id = SessionTabHelper::IdForTab(web_contents()).id();
   if (!extension_action->GetIsVisible(tab_id))
     return ExtensionAction::ACTION_NONE;
 
@@ -205,7 +204,7 @@ ExtensionActionRunner::RequiresUserConsentForScriptInjection(
     return PermissionsData::ACCESS_ALLOWED;
 
   GURL url = web_contents()->GetVisibleURL();
-  int tab_id = SessionTabHelper::IdForTab(web_contents());
+  int tab_id = SessionTabHelper::IdForTab(web_contents()).id();
   switch (type) {
     case UserScript::CONTENT_SCRIPT:
       return extension->permissions_data()->GetContentScriptAccess(
@@ -359,7 +358,7 @@ void ExtensionActionRunner::ShowBlockedActionBubble(
           base::BindOnce(callback, *default_bubble_close_action_for_testing_));
     } else {
       toolbar_actions_bar->ShowToolbarActionBubble(
-          base::MakeUnique<BlockedActionBubbleDelegate>(callback,
+          std::make_unique<BlockedActionBubbleDelegate>(callback,
                                                         extension->id()));
     }
   }

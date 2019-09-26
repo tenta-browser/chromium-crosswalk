@@ -16,7 +16,7 @@
 #include "content/public/browser/navigation_handle.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/web_contents.h"
-#include "third_party/WebKit/common/associated_interfaces/associated_interface_provider.h"
+#include "third_party/blink/public/common/associated_interfaces/associated_interface_provider.h"
 #include "url/gurl.h"
 #include "url/origin.h"
 
@@ -60,7 +60,7 @@ SiteEngagementService::Helper::~Helper() {
 void SiteEngagementService::Helper::OnEngagementLevelChanged(
     const GURL& url,
     blink::mojom::EngagementLevel level) {
-  web_contents()->ForEachFrame(base::Bind(
+  web_contents()->ForEachFrame(base::BindRepeating(
       &SiteEngagementService::Helper::SendEngagementLevelToFramesMatchingOrigin,
       base::Unretained(this), url::Origin::Create(url), level));
 }
@@ -135,17 +135,17 @@ void SiteEngagementService::Helper::InputTracker::DidGetUserInteraction(
   // compiler verifying that all cases are covered).
   switch (type) {
     case blink::WebInputEvent::kRawKeyDown:
-      helper()->RecordUserInput(SiteEngagementMetrics::ENGAGEMENT_KEYPRESS);
+      helper()->RecordUserInput(SiteEngagementService::ENGAGEMENT_KEYPRESS);
       break;
     case blink::WebInputEvent::kMouseDown:
-      helper()->RecordUserInput(SiteEngagementMetrics::ENGAGEMENT_MOUSE);
+      helper()->RecordUserInput(SiteEngagementService::ENGAGEMENT_MOUSE);
       break;
     case blink::WebInputEvent::kTouchStart:
       helper()->RecordUserInput(
-          SiteEngagementMetrics::ENGAGEMENT_TOUCH_GESTURE);
+          SiteEngagementService::ENGAGEMENT_TOUCH_GESTURE);
       break;
     case blink::WebInputEvent::kGestureScrollBegin:
-      helper()->RecordUserInput(SiteEngagementMetrics::ENGAGEMENT_SCROLL);
+      helper()->RecordUserInput(SiteEngagementService::ENGAGEMENT_SCROLL);
       break;
     case blink::WebInputEvent::kUndefined:
       // Explicitly ignore browser-initiated navigation input.
@@ -159,17 +159,33 @@ void SiteEngagementService::Helper::InputTracker::DidGetUserInteraction(
 SiteEngagementService::Helper::MediaTracker::MediaTracker(
     SiteEngagementService::Helper* helper,
     content::WebContents* web_contents)
-    : PeriodicTracker(helper),
-      content::WebContentsObserver(web_contents),
-      is_hidden_(false) {}
+    : PeriodicTracker(helper), content::WebContentsObserver(web_contents) {}
 
 SiteEngagementService::Helper::MediaTracker::~MediaTracker() {}
 
 void SiteEngagementService::Helper::MediaTracker::TrackingStarted() {
-  if (!active_media_players_.empty())
-    helper()->RecordMediaPlaying(is_hidden_);
+  if (!active_media_players_.empty()) {
+    // TODO(dominickn): Consider treating OCCLUDED tabs like HIDDEN tabs when
+    // computing engagement score. They are currently treated as VISIBLE tabs to
+    // preserve old behavior.
+    helper()->RecordMediaPlaying(web_contents()->GetVisibility() ==
+                                 content::Visibility::HIDDEN);
+  }
 
   Pause();
+}
+
+void SiteEngagementService::Helper::MediaTracker::DidFinishNavigation(
+    content::NavigationHandle* handle) {
+  // Ignore subframe navigation to avoid clearing main frame active media
+  // players when they navigate.
+  if (!handle->HasCommitted() || !handle->IsInMainFrame() ||
+      handle->IsSameDocument()) {
+    return;
+  }
+
+  // Media stops playing on navigation, so clear our state.
+  active_media_players_.clear();
 }
 
 void SiteEngagementService::Helper::MediaTracker::MediaStartedPlaying(
@@ -190,14 +206,6 @@ void SiteEngagementService::Helper::MediaTracker::MediaStoppedPlaying(
                               active_media_players_.end());
 }
 
-void SiteEngagementService::Helper::MediaTracker::WasShown() {
-  is_hidden_ = false;
-}
-
-void SiteEngagementService::Helper::MediaTracker::WasHidden() {
-  is_hidden_ = true;
-}
-
 SiteEngagementService::Helper::Helper(content::WebContents* web_contents)
     : content::WebContentsObserver(web_contents),
       input_tracker_(this, web_contents),
@@ -208,7 +216,7 @@ SiteEngagementService::Helper::Helper(content::WebContents* web_contents)
 }
 
 void SiteEngagementService::Helper::RecordUserInput(
-    SiteEngagementMetrics::EngagementType type) {
+    SiteEngagementService::EngagementType type) {
   TRACE_EVENT0("SiteEngagement", "RecordUserInput");
   content::WebContents* contents = web_contents();
   if (contents)
@@ -283,13 +291,20 @@ void SiteEngagementService::Helper::ReadyToCommitNavigation(
   }
 }
 
-void SiteEngagementService::Helper::WasShown() {
-  // Ensure that the input callbacks are registered when we come into view.
-  input_tracker_.Start(
-      base::TimeDelta::FromSeconds(g_seconds_delay_after_show));
-}
-
-void SiteEngagementService::Helper::WasHidden() {
-  // Ensure that the input callbacks are not registered when hidden.
-  input_tracker_.Stop();
+void SiteEngagementService::Helper::OnVisibilityChanged(
+    content::Visibility visibility) {
+  // TODO(fdoray): Once the page visibility API [1] treats hidden and occluded
+  // documents the same way, consider stopping |input_tracker_| when
+  // |visibility| is OCCLUDED. https://crbug.com/668690
+  // [1] https://developer.mozilla.org/en-US/docs/Web/API/Page_Visibility_API
+  if (visibility == content::Visibility::HIDDEN) {
+    input_tracker_.Stop();
+  } else {
+    // Start a timer to track input if it isn't already running and input isn't
+    // already being tracked.
+    if (!input_tracker_.IsTimerRunning() && !input_tracker_.is_tracking()) {
+      input_tracker_.Start(
+          base::TimeDelta::FromSeconds(g_seconds_delay_after_show));
+    }
+  }
 }

@@ -4,7 +4,10 @@
 
 #include "content/renderer/gpu/queue_message_swap_promise.h"
 
+#include <memory>
+
 #include "base/command_line.h"
+#include "cc/trees/frame_token_allocator.h"
 #include "content/common/view_messages.h"
 #include "content/public/common/content_switches.h"
 #include "content/public/renderer/render_thread.h"
@@ -44,7 +47,9 @@ void QueueMessageSwapPromise::DidActivate() {
   // The OutputSurface will take care of the Drain+Send.
 }
 
-void QueueMessageSwapPromise::WillSwap(viz::CompositorFrameMetadata* metadata) {
+void QueueMessageSwapPromise::WillSwap(
+    viz::CompositorFrameMetadata* metadata,
+    cc::FrameTokenAllocator* frame_token_allocator) {
 #if DCHECK_IS_ON()
   DCHECK(!completed_);
 #endif
@@ -55,10 +60,11 @@ void QueueMessageSwapPromise::WillSwap(viz::CompositorFrameMetadata* metadata) {
         send_message_scope = message_queue_->AcquireSendMessageScope();
     std::vector<std::unique_ptr<IPC::Message>> messages;
     message_queue_->DrainMessages(&messages);
+
     std::vector<IPC::Message> messages_to_send;
     FrameSwapMessageQueue::TransferMessages(&messages, &messages_to_send);
     if (!messages_to_send.empty()) {
-      metadata->frame_token = message_queue_->AllocateFrameToken();
+      metadata->frame_token = frame_token_allocator->GetOrAllocateFrameToken();
       message_sender_->Send(new ViewHostMsg_FrameSwapMessages(
           message_queue_->routing_id(), metadata->frame_token,
           messages_to_send));

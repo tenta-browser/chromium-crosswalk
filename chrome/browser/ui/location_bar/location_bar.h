@@ -72,6 +72,10 @@ class LocationBar {
   // Reverts the location bar.  The bar's permanent text will be shown.
   virtual void Revert() = 0;
 
+  // Asks the location bar to show a page info dialog for |web_contents|.
+  // Returns true if a dialog was shown, false otherwise.
+  virtual bool ShowPageInfoDialog(content::WebContents* contents) = 0;
+
   virtual const OmniboxView* GetOmniboxView() const = 0;
   virtual OmniboxView* GetOmniboxView() = 0;
 
@@ -104,6 +108,9 @@ class LocationBarTesting {
   // Invokes the content setting image at |index|, displaying the bubble.
   // Returns false if there is none.
   virtual bool TestContentSettingImagePressed(size_t index) = 0;
+
+  // Returns if the content setting image at |index| is displaying a bubble.
+  virtual bool IsContentSettingBubbleShowing(size_t index) = 0;
 
  protected:
   virtual ~LocationBarTesting() {}

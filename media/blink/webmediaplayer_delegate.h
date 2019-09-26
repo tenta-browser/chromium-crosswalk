@@ -7,6 +7,7 @@
 
 namespace blink {
 class WebMediaPlayer;
+enum class WebFullscreenVideoStatus;
 }
 namespace gfx {
 class Size;
@@ -99,6 +100,12 @@ class WebMediaPlayerDelegate {
   // Notify that the muted status of the media player has changed.
   virtual void DidPlayerMutedStatusChange(int delegate_id, bool muted) = 0;
 
+  // Notify that the source media player of Picture-in-Picture has changed.
+  virtual void DidPictureInPictureSourceChange(int delegate_id) = 0;
+
+  // Notify that the source media player has exited Picture-in-Picture mode.
+  virtual void DidPictureInPictureModeEnd(int delegate_id) = 0;
+
   // Notify that playback is stopped. This will drop wake locks and remove any
   // external controls.
   //
@@ -129,8 +136,11 @@ class WebMediaPlayerDelegate {
 
   // Notifies the delegate that the player has entered fullscreen. This does not
   // differentiate native controls fullscreen and custom controls fullscreen.
-  virtual void SetIsEffectivelyFullscreen(int player_id,
-                                          bool is_fullscreen) = 0;
+  // |fullscreen_video_status| is used by MediaWebContentsObserver to
+  // trigger automatically Picture-in-Picture for fullscreen videos.
+  virtual void SetIsEffectivelyFullscreen(
+      int player_id,
+      blink::WebFullscreenVideoStatus fullscreen_video_status) = 0;
 
  protected:
   WebMediaPlayerDelegate() = default;

@@ -6,7 +6,6 @@
 
 #include "base/bind.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
@@ -108,7 +107,7 @@ class MojoAudioDecoderTest : public ::testing::Test {
         new StrictMock<MockAudioDecoder>());
     mock_audio_decoder_ = mock_audio_decoder.get();
 
-    EXPECT_CALL(*mock_audio_decoder_, Initialize(_, _, _, _))
+    EXPECT_CALL(*mock_audio_decoder_, Initialize(_, _, _, _, _))
         .WillRepeatedly(DoAll(SaveArg<3>(&output_cb_), RunCallback<2>(true)));
     EXPECT_CALL(*mock_audio_decoder_, Decode(_, _))
         .WillRepeatedly(
@@ -118,7 +117,7 @@ class MojoAudioDecoderTest : public ::testing::Test {
         .WillRepeatedly(RunCallback<0>());
 
     mojo::MakeStrongBinding(
-        base::MakeUnique<MojoAudioDecoderService>(
+        std::make_unique<MojoAudioDecoderService>(
             &mojo_cdm_service_context_, std::move(mock_audio_decoder)),
         std::move(request));
   }
@@ -137,9 +136,11 @@ class MojoAudioDecoderTest : public ::testing::Test {
                                     Unencrypted());
 
     mojo_audio_decoder_->Initialize(
-        audio_config, nullptr, base::Bind(&MojoAudioDecoderTest::OnInitialized,
-                                          base::Unretained(this)),
-        base::Bind(&MojoAudioDecoderTest::OnOutput, base::Unretained(this)));
+        audio_config, nullptr,
+        base::Bind(&MojoAudioDecoderTest::OnInitialized,
+                   base::Unretained(this)),
+        base::Bind(&MojoAudioDecoderTest::OnOutput, base::Unretained(this)),
+        AudioDecoder::WaitingForDecryptionKeyCB());
 
     RunLoop();
   }

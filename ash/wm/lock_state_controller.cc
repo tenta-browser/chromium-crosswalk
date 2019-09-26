@@ -8,7 +8,7 @@
 #include <string>
 #include <utility>
 
-#include "ash/accessibility/accessibility_delegate.h"
+#include "ash/accessibility/accessibility_controller.h"
 #include "ash/cancel_mode.h"
 #include "ash/public/cpp/shell_window_ids.h"
 #include "ash/public/interfaces/shutdown.mojom.h"
@@ -52,8 +52,7 @@ namespace {
 // For MSan the slowdown depends heavily on the value of msan_track_origins GYP
 // flag. The multiplier below corresponds to msan_track_origins=1.
 constexpr int kTimeoutMultiplier = 6;
-#elif defined(ADDRESS_SANITIZER) || defined(THREAD_SANITIZER) || \
-    defined(SYZYASAN)
+#elif defined(ADDRESS_SANITIZER) || defined(THREAD_SANITIZER)
 constexpr int kTimeoutMultiplier = 2;
 #else
 constexpr int kTimeoutMultiplier = 1;
@@ -273,6 +272,7 @@ void LockStateController::OnLockFailTimeout() {
 }
 
 void LockStateController::StartLockToShutdownTimer() {
+  DCHECK(shutdown_reason_);
   shutdown_after_lock_ = false;
   lock_to_shutdown_timer_.Stop();
   lock_to_shutdown_timer_.Start(
@@ -311,25 +311,30 @@ void LockStateController::StartRealShutdownTimer(bool with_animation_time) {
     duration +=
         animator_->GetDuration(SessionStateAnimator::ANIMATION_SPEED_SHUTDOWN);
   }
-
-  base::TimeDelta sound_duration =
-      Shell::Get()->accessibility_delegate()->PlayShutdownSound();
-  sound_duration =
-      std::min(sound_duration,
-               base::TimeDelta::FromMilliseconds(kMaxShutdownSoundDurationMs));
-  duration = std::max(duration, sound_duration);
-
-  real_shutdown_timer_.Start(
-      FROM_HERE, duration,
-      base::Bind(&LockStateController::OnRealPowerTimeout,
-                 base::Unretained(this)));
+  // Play and get shutdown sound duration from chrome in |sound_duration|. And
+  // start real shutdown after a delay of |duration|.
+  Shell::Get()->accessibility_controller()->PlayShutdownSound(base::BindOnce(
+      [](base::WeakPtr<LockStateController> self, base::TimeDelta duration,
+         base::TimeDelta sound_duration) {
+        if (!self)
+          return;
+        sound_duration = std::min(
+            sound_duration,
+            base::TimeDelta::FromMilliseconds(kMaxShutdownSoundDurationMs));
+        duration = std::max(duration, sound_duration);
+        self->real_shutdown_timer_.Start(
+            FROM_HERE, duration, self.get(),
+            &LockStateController::OnRealPowerTimeout);
+      },
+      weak_ptr_factory_.GetWeakPtr(), duration));
 }
 
 void LockStateController::OnRealPowerTimeout() {
   VLOG(1) << "OnRealPowerTimeout";
   DCHECK(shutting_down_);
+  DCHECK(shutdown_reason_);
   // Shut down or reboot based on device policy.
-  shutdown_controller_->ShutDownOrReboot(shutdown_reason_);
+  shutdown_controller_->ShutDownOrReboot(*shutdown_reason_);
 }
 
 void LockStateController::StartCancellableShutdownAnimation() {

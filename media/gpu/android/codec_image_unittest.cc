@@ -2,15 +2,17 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "media/gpu/android/codec_image.h"
+#include <memory>
+
 #include "base/bind.h"
+#include "base/bind_helpers.h"
 #include "base/logging.h"
-#include "base/memory/ptr_util.h"
 #include "base/test/mock_callback.h"
 #include "base/test/scoped_task_environment.h"
 #include "gpu/command_buffer/service/texture_manager.h"
 #include "media/base/android/media_codec_bridge.h"
 #include "media/base/android/mock_media_codec_bridge.h"
+#include "media/gpu/android/codec_image.h"
 #include "media/gpu/android/mock_surface_texture_gl_owner.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -31,18 +33,16 @@ using testing::_;
 
 namespace media {
 
-const auto kNoop = base::Bind([](CodecImage*) {});
-
 class CodecImageTest : public testing::Test {
  public:
   CodecImageTest() = default;
 
   void SetUp() override {
-    auto codec = base::MakeUnique<NiceMock<MockMediaCodecBridge>>();
+    auto codec = std::make_unique<NiceMock<MockMediaCodecBridge>>();
     codec_ = codec.get();
-    wrapper_ = base::MakeUnique<CodecWrapper>(
+    wrapper_ = std::make_unique<CodecWrapper>(
         CodecSurfacePair(std::move(codec), new AVDASurfaceBundle()),
-        base::Bind(&base::DoNothing));
+        base::DoNothing());
     ON_CALL(*codec_, DequeueOutputBuffer(_, _, _, _, _, _, _))
         .WillByDefault(Return(MEDIA_CODEC_OK));
 
@@ -74,7 +74,7 @@ class CodecImageTest : public testing::Test {
   enum ImageKind { kOverlay, kSurfaceTexture };
   scoped_refptr<CodecImage> NewImage(
       ImageKind kind,
-      CodecImage::DestructionCb destruction_cb = kNoop) {
+      CodecImage::DestructionCb destruction_cb = base::DoNothing()) {
     std::unique_ptr<CodecOutputBuffer> buffer;
     wrapper_->DequeueOutputBuffer(nullptr, nullptr, &buffer);
     scoped_refptr<CodecImage> image = new CodecImage(
@@ -123,7 +123,7 @@ TEST_F(CodecImageTest, ScheduleOverlayPlaneIsInvalidForSurfaceTextureImages) {
   auto i = NewImage(kSurfaceTexture);
   ASSERT_FALSE(i->ScheduleOverlayPlane(gfx::AcceleratedWidget(), 0,
                                        gfx::OverlayTransform(), gfx::Rect(),
-                                       gfx::RectF()));
+                                       gfx::RectF(), true));
 }
 
 TEST_F(CodecImageTest, CopyTexImageFailsIfTargetIsNotOES) {
@@ -185,7 +185,7 @@ TEST_F(CodecImageTest, ScheduleOverlayPlaneTriggersFrontBufferRendering) {
   PromotionHintAggregator::Hint hint(gfx::Rect(1, 2, 3, 4), true);
   EXPECT_CALL(promotion_hint_receiver_, OnPromotionHint(hint));
   i->ScheduleOverlayPlane(gfx::AcceleratedWidget(), 0, gfx::OverlayTransform(),
-                          hint.screen_rect, gfx::RectF());
+                          hint.screen_rect, gfx::RectF(), true);
   ASSERT_TRUE(i->was_rendered_to_front_buffer());
 }
 
@@ -281,12 +281,12 @@ TEST_F(CodecImageTest, ScheduleOverlayPlaneDoesntSendDuplicateHints) {
   EXPECT_CALL(promotion_hint_receiver_, OnPromotionHint(hint1)).Times(1);
   EXPECT_CALL(promotion_hint_receiver_, OnPromotionHint(hint2)).Times(1);
   i->ScheduleOverlayPlane(gfx::AcceleratedWidget(), 0, gfx::OverlayTransform(),
-                          hint1.screen_rect, gfx::RectF());
+                          hint1.screen_rect, gfx::RectF(), true);
   i->ScheduleOverlayPlane(gfx::AcceleratedWidget(), 0, gfx::OverlayTransform(),
-                          hint1.screen_rect, gfx::RectF());
+                          hint1.screen_rect, gfx::RectF(), true);
   // Sending a different rectangle should send another hint.
   i->ScheduleOverlayPlane(gfx::AcceleratedWidget(), 0, gfx::OverlayTransform(),
-                          hint2.screen_rect, gfx::RectF());
+                          hint2.screen_rect, gfx::RectF(), true);
 }
 
 }  // namespace media

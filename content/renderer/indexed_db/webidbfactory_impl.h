@@ -8,9 +8,9 @@
 #include "base/memory/ref_counted.h"
 #include "base/single_thread_task_runner.h"
 #include "content/common/indexed_db/indexed_db.mojom.h"
-#include "third_party/WebKit/public/platform/modules/indexeddb/WebIDBCallbacks.h"
-#include "third_party/WebKit/public/platform/modules/indexeddb/WebIDBDatabaseCallbacks.h"
-#include "third_party/WebKit/public/platform/modules/indexeddb/WebIDBFactory.h"
+#include "third_party/blink/public/platform/modules/indexeddb/web_idb_callbacks.h"
+#include "third_party/blink/public/platform/modules/indexeddb/web_idb_database_callbacks.h"
+#include "third_party/blink/public/platform/modules/indexeddb/web_idb_factory.h"
 
 namespace blink {
 class WebSecurityOrigin;
@@ -30,18 +30,23 @@ class WebIDBFactoryImpl : public blink::WebIDBFactory {
   ~WebIDBFactoryImpl() override;
 
   // See WebIDBFactory.h for documentation on these functions.
-  void GetDatabaseNames(blink::WebIDBCallbacks* callbacks,
-                        const blink::WebSecurityOrigin& origin) override;
+  void GetDatabaseNames(
+      blink::WebIDBCallbacks* callbacks,
+      const blink::WebSecurityOrigin& origin,
+      scoped_refptr<base::SingleThreadTaskRunner> task_runner) override;
   void Open(const blink::WebString& name,
             long long version,
             long long transaction_id,
             blink::WebIDBCallbacks* callbacks,
             blink::WebIDBDatabaseCallbacks* databaseCallbacks,
-            const blink::WebSecurityOrigin& origin) override;
-  void DeleteDatabase(const blink::WebString& name,
-                      blink::WebIDBCallbacks* callbacks,
-                      const blink::WebSecurityOrigin& origin,
-                      bool force_close) override;
+            const blink::WebSecurityOrigin& origin,
+            scoped_refptr<base::SingleThreadTaskRunner> task_runner) override;
+  void DeleteDatabase(
+      const blink::WebString& name,
+      blink::WebIDBCallbacks* callbacks,
+      const blink::WebSecurityOrigin& origin,
+      bool force_close,
+      scoped_refptr<base::SingleThreadTaskRunner> task_runner) override;
 
  private:
   class IOThreadHelper;

@@ -5,7 +5,10 @@
 #ifndef COMPONENTS_AUTOFILL_CONTENT_COMMON_AUTOFILL_TYPES_STRUCT_TRAITS_H_
 #define COMPONENTS_AUTOFILL_CONTENT_COMMON_AUTOFILL_TYPES_STRUCT_TRAITS_H_
 
+#include <map>
+#include <string>
 #include <utility>
+#include <vector>
 
 #include "base/i18n/rtl.h"
 #include "base/strings/string16.h"
@@ -18,6 +21,7 @@
 #include "components/autofill/core/common/password_form_field_prediction_map.h"
 #include "components/autofill/core/common/password_form_fill_data.h"
 #include "components/autofill/core/common/password_form_generation_data.h"
+#include "components/autofill/core/common/submission_source.h"
 #include "mojo/public/cpp/bindings/struct_traits.h"
 #include "url/origin.h"
 
@@ -94,6 +98,24 @@ struct EnumTraits<autofill::mojom::PasswordFormSubmissionIndicatorEvent,
   static bool FromMojom(
       autofill::mojom::PasswordFormSubmissionIndicatorEvent input,
       autofill::PasswordForm::SubmissionIndicatorEvent* output);
+};
+
+template <>
+struct EnumTraits<autofill::mojom::SubmissionSource,
+                  autofill::SubmissionSource> {
+  static autofill::mojom::SubmissionSource ToMojom(
+      autofill::SubmissionSource input);
+  static bool FromMojom(autofill::mojom::SubmissionSource input,
+                        autofill::SubmissionSource* output);
+};
+
+template <>
+struct EnumTraits<autofill::mojom::LabelSource,
+                  autofill::FormFieldData::LabelSource> {
+  static autofill::mojom::LabelSource ToMojom(
+      autofill::FormFieldData::LabelSource input);
+  static bool FromMojom(autofill::mojom::LabelSource input,
+                        autofill::FormFieldData::LabelSource* output);
 };
 
 template <>
@@ -176,6 +198,11 @@ struct StructTraits<autofill::mojom::FormFieldDataDataView,
   static const std::vector<base::string16>& option_contents(
       const autofill::FormFieldData& r) {
     return r.option_contents;
+  }
+
+  static autofill::FormFieldData::LabelSource label_source(
+      const autofill::FormFieldData& r) {
+    return r.label_source;
   }
 
   static bool Read(autofill::mojom::FormFieldDataDataView data,
@@ -402,12 +429,12 @@ struct StructTraits<autofill::mojom::PasswordFormDataView,
     return r.username_value;
   }
 
-  static const std::vector<autofill::PossibleUsernamePair>&
+  static const std::vector<autofill::ValueElementPair>&
   other_possible_usernames(const autofill::PasswordForm& r) {
     return r.other_possible_usernames;
   }
 
-  static const std::vector<base::string16>& all_possible_passwords(
+  static const std::vector<autofill::ValueElementPair>& all_possible_passwords(
       const autofill::PasswordForm& r) {
     return r.all_possible_passwords;
   }
@@ -561,18 +588,18 @@ struct StructTraits<autofill::mojom::FormsPredictionsMapDataView,
 };
 
 template <>
-struct StructTraits<autofill::mojom::PossibleUsernamePairDataView,
-                    autofill::PossibleUsernamePair> {
-  static base::string16 value(const autofill::PossibleUsernamePair& r) {
+struct StructTraits<autofill::mojom::ValueElementPairDataView,
+                    autofill::ValueElementPair> {
+  static base::string16 value(const autofill::ValueElementPair& r) {
     return r.first;
   }
 
-  static base::string16 field_name(const autofill::PossibleUsernamePair& r) {
+  static base::string16 field_name(const autofill::ValueElementPair& r) {
     return r.second;
   }
 
-  static bool Read(autofill::mojom::PossibleUsernamePairDataView data,
-                   autofill::PossibleUsernamePair* out);
+  static bool Read(autofill::mojom::ValueElementPairDataView data,
+                   autofill::ValueElementPair* out);
 };
 
 }  // namespace mojo

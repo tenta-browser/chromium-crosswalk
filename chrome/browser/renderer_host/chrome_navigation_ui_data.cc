@@ -4,32 +4,72 @@
 
 #include "chrome/browser/renderer_host/chrome_navigation_ui_data.h"
 
-#include "base/memory/ptr_util.h"
-#include "chrome/browser/sessions/session_tab_helper.h"
+#include "chrome/browser/prerender/prerender_contents.h"
+#include "chrome/browser/prerender/prerender_histograms.h"
 #include "content/public/browser/navigation_handle.h"
-#include "extensions/features/features.h"
+#include "extensions/buildflags/buildflags.h"
+#include "ui/base/window_open_disposition.h"
 
-ChromeNavigationUIData::ChromeNavigationUIData() {}
+#if BUILDFLAG(ENABLE_EXTENSIONS)
+#include "chrome/browser/extensions/chrome_extension_api_frame_id_map_helper.h"
+#include "extensions/common/constants.h"
+#endif
+
+ChromeNavigationUIData::ChromeNavigationUIData()
+    : disposition_(WindowOpenDisposition::CURRENT_TAB) {}
 
 ChromeNavigationUIData::ChromeNavigationUIData(
-    content::NavigationHandle* navigation_handle) {
+    content::NavigationHandle* navigation_handle)
+    : disposition_(WindowOpenDisposition::CURRENT_TAB) {
+  auto* web_contents = navigation_handle->GetWebContents();
 #if BUILDFLAG(ENABLE_EXTENSIONS)
-  SessionTabHelper* session_tab_helper =
-      SessionTabHelper::FromWebContents(navigation_handle->GetWebContents());
-  int tab_id = session_tab_helper ? session_tab_helper->session_id().id() : -1;
-  int window_id =
-      session_tab_helper ? session_tab_helper->window_id().id() : -1;
-  extension_data_ = base::MakeUnique<extensions::ExtensionNavigationUIData>(
+  int tab_id = extension_misc::kUnknownTabId;
+  int window_id = extension_misc::kUnknownWindowId;
+  extensions::ChromeExtensionApiFrameIdMapHelper::PopulateTabData(
+      web_contents, &tab_id, &window_id);
+  extension_data_ = std::make_unique<extensions::ExtensionNavigationUIData>(
       navigation_handle, tab_id, window_id);
 #endif
+
+  auto* prerender_contents =
+      prerender::PrerenderContents::FromWebContents(web_contents);
+  if (prerender_contents) {
+    prerender_mode_ = prerender_contents->prerender_mode();
+    prerender_histogram_prefix_ =
+        prerender::PrerenderHistograms::GetHistogramPrefix(
+            prerender_contents->origin());
+  }
 }
 
 ChromeNavigationUIData::~ChromeNavigationUIData() {}
 
+// static
+std::unique_ptr<ChromeNavigationUIData>
+ChromeNavigationUIData::CreateForMainFrameNavigation(
+    content::WebContents* web_contents,
+    WindowOpenDisposition disposition) {
+  auto navigation_ui_data = std::make_unique<ChromeNavigationUIData>();
+  navigation_ui_data->disposition_ = disposition;
+
+#if BUILDFLAG(ENABLE_EXTENSIONS)
+  int tab_id = extension_misc::kUnknownTabId;
+  int window_id = extension_misc::kUnknownWindowId;
+  extensions::ChromeExtensionApiFrameIdMapHelper::PopulateTabData(
+      web_contents, &tab_id, &window_id);
+
+  navigation_ui_data->extension_data_ =
+      extensions::ExtensionNavigationUIData::CreateForMainFrameNavigation(
+          web_contents, tab_id, window_id);
+#endif
+
+  return navigation_ui_data;
+}
+
 std::unique_ptr<content::NavigationUIData> ChromeNavigationUIData::Clone()
     const {
-  std::unique_ptr<ChromeNavigationUIData> copy =
-      base::MakeUnique<ChromeNavigationUIData>();
+  auto copy = std::make_unique<ChromeNavigationUIData>();
+
+  copy->disposition_ = disposition_;
 
 #if BUILDFLAG(ENABLE_EXTENSIONS)
   if (extension_data_)
@@ -40,6 +80,9 @@ std::unique_ptr<content::NavigationUIData> ChromeNavigationUIData::Clone()
   if (offline_page_data_)
     copy->SetOfflinePageNavigationUIData(offline_page_data_->DeepCopy());
 #endif
+
+  copy->prerender_mode_ = prerender_mode_;
+  copy->prerender_histogram_prefix_ = prerender_histogram_prefix_;
 
   return std::move(copy);
 }

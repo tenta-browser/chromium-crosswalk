@@ -7,14 +7,18 @@
 
 #include <memory>
 #include <string>
+#include <utility>
+#include <vector>
 
 #include "ash/app_list/model/app_list_item_observer.h"
+#include "ash/public/interfaces/menu.mojom.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/strings/string16.h"
 #include "base/timer/timer.h"
 #include "ui/app_list/app_list_export.h"
 #include "ui/app_list/views/image_shadow_animator.h"
+#include "ui/base/models/simple_menu_model.h"
 #include "ui/views/context_menu_controller.h"
 #include "ui/views/controls/button/button.h"
 
@@ -23,22 +27,26 @@ class ImageView;
 class Label;
 class MenuRunner;
 class ProgressBar;
-}
+}  // namespace views
 
 namespace app_list {
 
 class AppListItem;
+class AppListViewDelegate;
 class AppsGridView;
 
 class APP_LIST_EXPORT AppListItemView : public views::Button,
                                         public views::ContextMenuController,
                                         public AppListItemObserver,
-                                        public ImageShadowAnimator::Delegate {
+                                        public ImageShadowAnimator::Delegate,
+                                        public ui::SimpleMenuModel::Delegate {
  public:
   // Internal class name.
   static const char kViewClassName[];
 
-  AppListItemView(AppsGridView* apps_grid_view, AppListItem* item);
+  AppListItemView(AppsGridView* apps_grid_view,
+                  AppListItem* item,
+                  AppListViewDelegate* delegate);
   ~AppListItemView() override;
 
   // Set the icon of this image, adding a drop shadow if |has_shadow|.
@@ -61,9 +69,9 @@ class APP_LIST_EXPORT AppListItemView : public views::Button,
 
   AppListItem* item() const { return item_weak_; }
 
-  views::ImageView* icon() const { return icon_; }
+  views::ImageView* icon() { return icon_; }
 
-  const views::Label* title() const { return title_; }
+  views::Label* title() { return title_; }
 
   // In a synchronous drag the item view isn't informed directly of the drag
   // ending, so the runner of the drag should call this.
@@ -125,6 +133,15 @@ class APP_LIST_EXPORT AppListItemView : public views::Button,
   void OnTouchDragTimer(const gfx::Point& tap_down_location,
                         const gfx::Point& tap_down_root_location);
 
+  // Records the context menu user journey time.
+  void OnContextMenuClosed(const base::TimeTicks& open_time);
+
+  // Callback invoked when a context menu is received after calling
+  // |AppListViewDelegate::GetContextMenuModel|.
+  void OnContextMenuModelReceived(const gfx::Point& point,
+                                  ui::MenuSourceType source_type,
+                                  std::vector<ash::mojom::MenuItemPtr> menu);
+
   // views::ContextMenuController overrides:
   void ShowContextMenuForView(views::View* source,
                               const gfx::Point& point,
@@ -153,17 +170,26 @@ class APP_LIST_EXPORT AppListItemView : public views::Button,
   void ItemPercentDownloadedChanged() override;
   void ItemBeingDestroyed() override;
 
+  // ui::SimpleMenuModel::Delegate overrides;
+  bool IsCommandIdChecked(int command_id) const override;
+  bool IsCommandIdEnabled(int command_id) const override;
+  void ExecuteCommand(int command_id, int event_flags) override;
+
   const bool is_folder_;
   const bool is_in_folder_;
 
   AppListItem* item_weak_;  // Owned by AppListModel. Can be NULL.
 
+  AppListViewDelegate* delegate_;     // Unowned.
   AppsGridView* apps_grid_view_;      // Parent view, owns this.
   views::ImageView* icon_;            // Strongly typed child view.
   views::Label* title_;               // Strongly typed child view.
   views::ProgressBar* progress_bar_;  // Strongly typed child view.
 
   std::unique_ptr<views::MenuRunner> context_menu_runner_;
+  std::unique_ptr<ui::SimpleMenuModel> context_menu_model_;
+  std::vector<ash::mojom::MenuItemPtr> context_menu_items_;
+  std::vector<std::unique_ptr<ui::MenuModel>> context_submenu_models_;
 
   UIState ui_state_ = UI_STATE_NORMAL;
 
@@ -186,6 +212,8 @@ class APP_LIST_EXPORT AppListItemView : public views::Button,
   base::OneShotTimer mouse_drag_timer_;
   // A timer to defer showing drag UI when the app item is touch pressed.
   base::OneShotTimer touch_drag_timer_;
+
+  base::WeakPtrFactory<AppListItemView> weak_ptr_factory_;
 
   DISALLOW_COPY_AND_ASSIGN(AppListItemView);
 };

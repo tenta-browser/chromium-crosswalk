@@ -5,17 +5,23 @@
 #include "storage/browser/blob/blob_registry_impl.h"
 
 #include <limits>
+#include <memory>
+
 #include "base/files/scoped_temp_dir.h"
 #include "base/rand_util.h"
 #include "base/run_loop.h"
 #include "base/task_scheduler/post_task.h"
+#include "base/test/bind_test_util.h"
 #include "base/test/scoped_task_environment.h"
 #include "base/threading/thread_restrictions.h"
 #include "mojo/edk/embedder/embedder.h"
 #include "mojo/public/cpp/bindings/strong_binding.h"
+#include "mojo/public/cpp/system/data_pipe_utils.h"
 #include "storage/browser/blob/blob_data_builder.h"
 #include "storage/browser/blob/blob_data_handle.h"
 #include "storage/browser/blob/blob_storage_context.h"
+#include "storage/browser/test/fake_progress_client.h"
+#include "storage/browser/test/mock_blob_registry_delegate.h"
 #include "storage/browser/test/mock_bytes_provider.h"
 #include "storage/browser/test/mock_special_storage_policy.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -38,8 +44,13 @@ class MockBlob : public blink::mojom::Blob {
   explicit MockBlob(const std::string& uuid) : uuid_(uuid) {}
 
   void Clone(blink::mojom::BlobRequest request) override {
-    mojo::MakeStrongBinding(base::MakeUnique<MockBlob>(uuid_),
+    mojo::MakeStrongBinding(std::make_unique<MockBlob>(uuid_),
                             std::move(request));
+  }
+
+  void AsDataPipeGetter(
+      network::mojom::DataPipeGetterRequest request) override {
+    NOTREACHED();
   }
 
   void ReadRange(uint64_t offset,
@@ -54,30 +65,14 @@ class MockBlob : public blink::mojom::Blob {
     NOTREACHED();
   }
 
+  void ReadSideData(ReadSideDataCallback) override { NOTREACHED(); }
+
   void GetInternalUUID(GetInternalUUIDCallback callback) override {
     std::move(callback).Run(uuid_);
   }
 
  private:
   std::string uuid_;
-};
-
-class MockDelegate : public BlobRegistryImpl::Delegate {
- public:
-  MockDelegate() = default;
-  ~MockDelegate() override = default;
-
-  bool CanReadFile(const base::FilePath& file) override {
-    return can_read_file_result;
-  }
-  bool CanReadFileSystemFile(const FileSystemURL& url) override {
-    return can_read_file_system_file_result;
-  }
-  bool CanCommitURL(const GURL& url) override { return can_commit_url_result; }
-
-  bool can_read_file_result = true;
-  bool can_read_file_system_file_result = true;
-  bool can_commit_url_result = true;
 };
 
 void BindBytesProvider(std::unique_ptr<MockBytesProvider> impl,
@@ -91,7 +86,7 @@ class BlobRegistryImplTest : public testing::Test {
  public:
   void SetUp() override {
     ASSERT_TRUE(data_dir_.CreateUniqueTempDir());
-    context_ = base::MakeUnique<BlobStorageContext>(
+    context_ = std::make_unique<BlobStorageContext>(
         data_dir_.GetPath(),
         base::CreateTaskRunnerWithTraits({base::MayBlock()}));
     auto storage_policy =
@@ -105,9 +100,9 @@ class BlobRegistryImplTest : public testing::Test {
         std::vector<URLRequestAutoMountHandler>(), data_dir_.GetPath(),
         FileSystemOptions(FileSystemOptions::PROFILE_MODE_INCOGNITO,
                           std::vector<std::string>(), nullptr));
-    registry_impl_ = base::MakeUnique<BlobRegistryImpl>(context_->AsWeakPtr(),
+    registry_impl_ = std::make_unique<BlobRegistryImpl>(context_->AsWeakPtr(),
                                                         file_system_context_);
-    auto delegate = base::MakeUnique<MockDelegate>();
+    auto delegate = std::make_unique<MockBlobRegistryDelegate>();
     delegate_ptr_ = delegate.get();
     registry_impl_->Bind(MakeRequest(&registry_), std::move(delegate));
 
@@ -139,16 +134,16 @@ class BlobRegistryImplTest : public testing::Test {
   std::unique_ptr<BlobDataHandle> CreateBlobFromString(
       const std::string& uuid,
       const std::string& contents) {
-    BlobDataBuilder builder(uuid);
-    builder.set_content_type("text/plain");
-    builder.AppendData(contents);
-    return context_->AddFinishedBlob(builder);
+    auto builder = std::make_unique<BlobDataBuilder>(uuid);
+    builder->set_content_type("text/plain");
+    builder->AppendData(contents);
+    return context_->AddFinishedBlob(std::move(builder));
   }
 
   std::string UUIDFromBlob(blink::mojom::Blob* blob) {
     base::RunLoop loop;
     std::string received_uuid;
-    blob->GetInternalUUID(base::Bind(
+    blob->GetInternalUUID(base::BindOnce(
         [](base::Closure quit_closure, std::string* uuid_out,
            const std::string& uuid) {
           *uuid_out = uuid;
@@ -165,7 +160,7 @@ class BlobRegistryImplTest : public testing::Test {
 
   void WaitForBlobCompletion(BlobDataHandle* blob_handle) {
     base::RunLoop loop;
-    blob_handle->RunOnConstructionComplete(base::Bind(
+    blob_handle->RunOnConstructionComplete(base::BindOnce(
         [](const base::Closure& closure, BlobStatus status) { closure.Run(); },
         loop.QuitClosure()));
     loop.Run();
@@ -178,7 +173,7 @@ class BlobRegistryImplTest : public testing::Test {
           base::CreateSequencedTaskRunnerWithTraits({base::MayBlock()});
     }
     blink::mojom::BytesProviderPtrInfo result;
-    auto provider = base::MakeUnique<MockBytesProvider>(
+    auto provider = std::make_unique<MockBytesProvider>(
         std::vector<uint8_t>(bytes.begin(), bytes.end()), &reply_request_count_,
         &stream_request_count_, &file_request_count_);
     bytes_provider_runner_->PostTask(
@@ -193,7 +188,7 @@ class BlobRegistryImplTest : public testing::Test {
       bytes_provider_runner_ =
           base::CreateSequencedTaskRunnerWithTraits({base::MayBlock()});
     }
-    auto provider = base::MakeUnique<MockBytesProvider>(
+    auto provider = std::make_unique<MockBytesProvider>(
         std::vector<uint8_t>(bytes.begin(), bytes.end()), &reply_request_count_,
         &stream_request_count_, &file_request_count_);
     bytes_provider_runner_->PostTask(
@@ -205,23 +200,6 @@ class BlobRegistryImplTest : public testing::Test {
     return registry_impl_->BlobsUnderConstructionForTesting();
   }
 
-  void RegisterURL(blink::mojom::BlobPtr blob,
-                   const GURL& url,
-                   blink::mojom::BlobURLHandlePtr* url_handle_out) {
-    base::RunLoop loop;
-    registry_->RegisterURL(
-        std::move(blob), url,
-        base::Bind(
-            [](base::Closure quit_closure,
-               blink::mojom::BlobURLHandlePtr* url_handle_out,
-               blink::mojom::BlobURLHandlePtr url_handle) {
-              *url_handle_out = std::move(url_handle);
-              quit_closure.Run();
-            },
-            loop.QuitClosure(), url_handle_out));
-    loop.Run();
-  }
-
  protected:
   base::ScopedTempDir data_dir_;
   base::test::ScopedTaskEnvironment scoped_task_environment_;
@@ -229,7 +207,7 @@ class BlobRegistryImplTest : public testing::Test {
   scoped_refptr<storage::FileSystemContext> file_system_context_;
   std::unique_ptr<BlobRegistryImpl> registry_impl_;
   blink::mojom::BlobRegistryPtr registry_;
-  MockDelegate* delegate_ptr_;
+  MockBlobRegistryDelegate* delegate_ptr_;
   scoped_refptr<base::SequencedTaskRunner> bytes_provider_runner_;
 
   size_t reply_request_count_ = 0;
@@ -450,7 +428,7 @@ TEST_F(BlobRegistryImplTest, Register_NonExistentBlob) {
 
   std::vector<blink::mojom::DataElementPtr> elements;
   blink::mojom::BlobPtrInfo referenced_blob_info;
-  mojo::MakeStrongBinding(base::MakeUnique<MockBlob>("mock blob"),
+  mojo::MakeStrongBinding(std::make_unique<MockBlob>("mock blob"),
                           MakeRequest(&referenced_blob_info));
   elements.push_back(
       blink::mojom::DataElement::NewBlob(blink::mojom::DataElementBlob::New(
@@ -480,7 +458,7 @@ TEST_F(BlobRegistryImplTest, Register_ValidBlobReferences) {
   std::unique_ptr<BlobDataHandle> handle =
       CreateBlobFromString(kId1, "hello world");
   blink::mojom::BlobPtrInfo blob1_info;
-  mojo::MakeStrongBinding(base::MakeUnique<MockBlob>(kId1),
+  mojo::MakeStrongBinding(std::make_unique<MockBlob>(kId1),
                           MakeRequest(&blob1_info));
 
   const std::string kId2 = "id2";
@@ -541,7 +519,8 @@ TEST_F(BlobRegistryImplTest, Register_UnreadableFile) {
   WaitForBlobCompletion(handle.get());
 
   EXPECT_TRUE(handle->IsBroken());
-  EXPECT_EQ(BlobStatus::ERR_FILE_WRITE_FAILED, handle->GetBlobStatus());
+  EXPECT_EQ(BlobStatus::ERR_REFERENCED_FILE_UNAVAILABLE,
+            handle->GetBlobStatus());
   EXPECT_EQ(0u, BlobsUnderConstruction());
 }
 
@@ -590,7 +569,8 @@ TEST_F(BlobRegistryImplTest, Register_FileSystemFile_InvalidScheme) {
   WaitForBlobCompletion(handle.get());
 
   EXPECT_TRUE(handle->IsBroken());
-  EXPECT_EQ(BlobStatus::ERR_FILE_WRITE_FAILED, handle->GetBlobStatus());
+  EXPECT_EQ(BlobStatus::ERR_REFERENCED_FILE_UNAVAILABLE,
+            handle->GetBlobStatus());
   EXPECT_EQ(0u, BlobsUnderConstruction());
 }
 
@@ -613,7 +593,8 @@ TEST_F(BlobRegistryImplTest, Register_FileSystemFile_UnreadablFile) {
   WaitForBlobCompletion(handle.get());
 
   EXPECT_TRUE(handle->IsBroken());
-  EXPECT_EQ(BlobStatus::ERR_FILE_WRITE_FAILED, handle->GetBlobStatus());
+  EXPECT_EQ(BlobStatus::ERR_REFERENCED_FILE_UNAVAILABLE,
+            handle->GetBlobStatus());
   EXPECT_EQ(0u, BlobsUnderConstruction());
 }
 
@@ -868,7 +849,7 @@ TEST_F(BlobRegistryImplTest, Register_ValidBytesAsFile) {
   EXPECT_EQ(expected_file_count, snapshot->items().size());
   size_t remaining_size = kData.size();
   for (const auto& item : snapshot->items()) {
-    EXPECT_EQ(DataElement::TYPE_FILE, item->type());
+    EXPECT_EQ(BlobDataItem::Type::kFile, item->type());
     EXPECT_EQ(0u, item->offset());
     if (remaining_size > kTestBlobStorageMaxFileSizeBytes)
       EXPECT_EQ(kTestBlobStorageMaxFileSizeBytes, item->length());
@@ -944,9 +925,10 @@ TEST_F(BlobRegistryImplTest,
   const std::string kDepId = "dep-id";
 
   // Create future blob.
-  auto blob_handle = context_->AddFutureBlob(kDepId, "", "");
+  auto blob_handle = context_->AddFutureBlob(
+      kDepId, "", "", BlobStorageContext::BuildAbortedCallback());
   blink::mojom::BlobPtrInfo referenced_blob_info;
-  mojo::MakeStrongBinding(base::MakeUnique<MockBlob>(kDepId),
+  mojo::MakeStrongBinding(std::make_unique<MockBlob>(kDepId),
                           MakeRequest(&referenced_blob_info));
 
   // Create mojo blob depending on future blob.
@@ -972,10 +954,10 @@ TEST_F(BlobRegistryImplTest,
   EXPECT_FALSE(context_->registry().HasEntry(kId));
 
   // Now cause construction to complete, if it would still be going on.
-  BlobDataBuilder builder(kDepId);
-  builder.AppendData(kData);
+  auto builder = std::make_unique<BlobDataBuilder>(kDepId);
+  builder->AppendData(kData);
   context_->BuildPreregisteredBlob(
-      builder, BlobStorageContext::TransportAllowedCallback());
+      std::move(builder), BlobStorageContext::TransportAllowedCallback());
   base::RunLoop().RunUntilIdle();
   EXPECT_EQ(0u, BlobsUnderConstruction());
 }
@@ -1015,42 +997,76 @@ TEST_F(BlobRegistryImplTest,
   EXPECT_EQ(0u, BlobsUnderConstruction());
 }
 
-TEST_F(BlobRegistryImplTest, PublicBlobUrls) {
+TEST_F(BlobRegistryImplTest,
+       Register_DefereferencedWhileBuildingBeforeTransportingByFile) {
   const std::string kId = "id";
-  std::unique_ptr<BlobDataHandle> handle =
-      CreateBlobFromString(kId, "hello world");
+  const std::string kData =
+      base::RandBytesAsString(kTestBlobStorageMaxBlobMemorySize + 42);
+
+  blink::mojom::BytesProviderPtrInfo bytes_provider_info;
+  auto request = MakeRequest(&bytes_provider_info);
+
+  std::vector<blink::mojom::DataElementPtr> elements;
+  elements.push_back(
+      blink::mojom::DataElement::NewBytes(blink::mojom::DataElementBytes::New(
+          kData.size(), base::nullopt, std::move(bytes_provider_info))));
 
   blink::mojom::BlobPtr blob;
-  registry_->GetBlobFromUUID(MakeRequest(&blob), kId);
-  EXPECT_EQ(kId, UUIDFromBlob(blob.get()));
-  EXPECT_FALSE(blob.encountered_error());
+  EXPECT_TRUE(registry_->Register(MakeRequest(&blob), kId, "", "",
+                                  std::move(elements)));
+  EXPECT_TRUE(bad_messages_.empty());
 
-  // Now register a url for that blob.
-  const GURL kUrl("blob:id");
-  blink::mojom::BlobURLHandlePtr url_handle;
-  RegisterURL(std::move(blob), kUrl, &url_handle);
+  EXPECT_TRUE(context_->registry().HasEntry(kId));
+  EXPECT_TRUE(context_->GetBlobDataFromUUID(kId)->IsBeingBuilt());
+  EXPECT_EQ(1u, BlobsUnderConstruction());
 
-  std::unique_ptr<BlobDataHandle> blob_data_handle =
-      context_->GetBlobDataFromPublicURL(kUrl);
-  ASSERT_TRUE(blob_data_handle.get());
-  EXPECT_EQ(kId, blob_data_handle->uuid());
-
-  handle.reset();
+  // Now drop all references to the blob.
+  blob.reset();
   base::RunLoop().RunUntilIdle();
 
-  // The url registration should keep the blob alive even after
-  // explicit references are dropped.
-  blob_data_handle = context_->GetBlobDataFromPublicURL(kUrl);
-  EXPECT_TRUE(blob_data_handle);
-  blob_data_handle.reset();
-
-  // Finally drop the URL handle.
-  url_handle.reset();
-  base::RunLoop().RunUntilIdle();
-
-  blob_data_handle = context_->GetBlobDataFromPublicURL(kUrl);
-  EXPECT_FALSE(blob_data_handle.get());
   EXPECT_FALSE(context_->registry().HasEntry(kId));
+
+  // Now cause construction to complete, if it would still be going on.
+  CreateBytesProvider(kData, std::move(request));
+  scoped_task_environment_.RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
+  EXPECT_EQ(0u, BlobsUnderConstruction());
+}
+
+TEST_F(BlobRegistryImplTest, RegisterFromStream) {
+  const std::string kData = "hello world, this is a blob";
+  const std::string kContentType = "content/type";
+  const std::string kContentDisposition = "disposition";
+
+  FakeProgressClient progress_client;
+  blink::mojom::ProgressClientAssociatedPtrInfo progress_client_ptr;
+  mojo::AssociatedBinding<blink::mojom::ProgressClient> progress_binding(
+      &progress_client, MakeRequest(&progress_client_ptr));
+
+  mojo::DataPipe pipe;
+  blink::mojom::SerializedBlobPtr blob;
+  base::RunLoop loop;
+  registry_->RegisterFromStream(
+      kContentType, kContentDisposition, kData.length(),
+      std::move(pipe.consumer_handle), std::move(progress_client_ptr),
+      base::BindLambdaForTesting([&](blink::mojom::SerializedBlobPtr result) {
+        blob = std::move(result);
+        loop.Quit();
+      }));
+  mojo::BlockingCopyFromString(kData, pipe.producer_handle);
+  pipe.producer_handle.reset();
+  loop.Run();
+
+  ASSERT_TRUE(blob);
+  EXPECT_FALSE(blob->uuid.empty());
+  EXPECT_EQ(kContentType, blob->content_type);
+  EXPECT_EQ(kData.length(), blob->size);
+  ASSERT_TRUE(blob->blob);
+  blink::mojom::BlobPtr blob_ptr(std::move(blob->blob));
+  EXPECT_EQ(blob->uuid, UUIDFromBlob(blob_ptr.get()));
+
+  EXPECT_EQ(kData.length(), progress_client.total_size);
+  EXPECT_GE(progress_client.call_count, 1);
 }
 
 }  // namespace storage

@@ -5,9 +5,10 @@
 #include "components/viz/service/display/display.h"
 
 #include <stddef.h>
+#include <limits>
 
-#include "base/memory/ptr_util.h"
 #include "base/metrics/histogram_macros.h"
+#include "base/numerics/checked_math.h"
 #include "base/timer/elapsed_timer.h"
 #include "base/trace_event/trace_event.h"
 #include "cc/base/math_util.h"
@@ -29,28 +30,22 @@
 #include "components/viz/service/surfaces/surface.h"
 #include "components/viz/service/surfaces/surface_manager.h"
 #include "gpu/command_buffer/client/gles2_interface.h"
-#include "gpu/vulkan/features.h"
+#include "gpu/vulkan/buildflags.h"
 #include "services/viz/public/interfaces/compositing/compositor_frame_sink.mojom.h"
 #include "ui/gfx/buffer_types.h"
 #include "ui/gfx/geometry/rect_conversions.h"
 #include "ui/gfx/presentation_feedback.h"
 
-#if BUILDFLAG(ENABLE_VULKAN)
-#include "cc/output/vulkan_renderer.h"
-#endif
-
 namespace viz {
 
 Display::Display(
     SharedBitmapManager* bitmap_manager,
-    gpu::GpuMemoryBufferManager* gpu_memory_buffer_manager,
     const RendererSettings& settings,
     const FrameSinkId& frame_sink_id,
     std::unique_ptr<OutputSurface> output_surface,
     std::unique_ptr<DisplayScheduler> scheduler,
     scoped_refptr<base::SingleThreadTaskRunner> current_task_runner)
     : bitmap_manager_(bitmap_manager),
-      gpu_memory_buffer_manager_(gpu_memory_buffer_manager),
       settings_(settings),
       frame_sink_id_(frame_sink_id),
       output_surface_(std::move(output_surface)),
@@ -103,8 +98,8 @@ void Display::Initialize(DisplayClient* client,
   InitializeRenderer();
 
   // This depends on assumptions that Display::Initialize will happen on the
-  // same callstack as the ContextProvider being created/initialized or else it
-  // could miss a callback before setting this.
+  // same callstack as the ContextProvider being created/initialized or else
+  // it could miss a callback before setting this.
   if (auto* context = output_surface_->context_provider())
     context->AddObserver(this);
 }
@@ -170,6 +165,23 @@ void Display::Resize(const gfx::Size& size) {
     scheduler_->DisplayResized();
 }
 
+void Display::SetColorMatrix(const SkMatrix44& matrix) {
+  if (output_surface_)
+    output_surface_->set_color_matrix(matrix);
+
+  // Force a redraw.
+  if (aggregator_) {
+    if (current_surface_id_.is_valid())
+      aggregator_->SetFullDamageForSurface(current_surface_id_);
+  }
+
+  if (scheduler_) {
+    BeginFrameAck ack;
+    ack.has_damage = true;
+    scheduler_->ProcessSurfaceDamage(current_surface_id_, ack, true);
+  }
+}
+
 void Display::SetColorSpace(const gfx::ColorSpace& blending_color_space,
                             const gfx::ColorSpace& device_color_space) {
   blending_color_space_ = blending_color_space;
@@ -193,28 +205,27 @@ void Display::SetOutputIsSecure(bool secure) {
 }
 
 void Display::InitializeRenderer() {
-  resource_provider_ = base::MakeUnique<cc::DisplayResourceProvider>(
-      output_surface_->context_provider(), bitmap_manager_,
-      gpu_memory_buffer_manager_, settings_.resource_settings);
+  resource_provider_ = std::make_unique<cc::DisplayResourceProvider>(
+      output_surface_->context_provider(), bitmap_manager_);
 
   if (output_surface_->context_provider()) {
     if (!settings_.use_skia_renderer) {
-      renderer_ = base::MakeUnique<GLRenderer>(
+      renderer_ = std::make_unique<GLRenderer>(
           &settings_, output_surface_.get(), resource_provider_.get(),
           current_task_runner_);
     } else {
-      renderer_ = base::MakeUnique<SkiaRenderer>(
+      renderer_ = std::make_unique<SkiaRenderer>(
           &settings_, output_surface_.get(), resource_provider_.get());
     }
   } else if (output_surface_->vulkan_context_provider()) {
-#if defined(ENABLE_VULKAN)
-    renderer_ = base::MakeUnique<VulkanRenderer>(
+#if BUILDFLAG(ENABLE_VULKAN)
+    renderer_ = std::make_unique<SkiaRenderer>(
         &settings_, output_surface_.get(), resource_provider_.get());
 #else
     NOTREACHED();
 #endif
   } else {
-    auto renderer = base::MakeUnique<SoftwareRenderer>(
+    auto renderer = std::make_unique<SoftwareRenderer>(
         &settings_, output_surface_.get(), resource_provider_.get());
     software_renderer_ = renderer.get();
     renderer_ = std::move(renderer);
@@ -262,7 +273,9 @@ bool Display::DrawAndSwap() {
   }
 
   base::ElapsedTimer aggregate_timer;
-  CompositorFrame frame = aggregator_->Aggregate(current_surface_id_);
+  CompositorFrame frame = aggregator_->Aggregate(
+      current_surface_id_, scheduler_ ? scheduler_->current_frame_display_time()
+                                      : base::TimeTicks::Now());
   UMA_HISTOGRAM_COUNTS_1M("Compositing.SurfaceAggregator.AggregateUs",
                           aggregate_timer.Elapsed().InMicroseconds());
 
@@ -284,9 +297,12 @@ bool Display::DrawAndSwap() {
                                      stored_latency_info_.end());
   stored_latency_info_.clear();
   bool have_copy_requests = false;
+  size_t total_quad_count = 0;
   for (const auto& pass : frame.render_pass_list) {
     have_copy_requests |= !pass->copy_requests.empty();
+    total_quad_count += pass->quad_list.size();
   }
+  UMA_HISTOGRAM_COUNTS_1000("Compositing.Display.Draw.Quads", total_quad_count);
 
   gfx::Size surface_size;
   bool have_damage = false;
@@ -356,6 +372,13 @@ bool Display::DrawAndSwap() {
   if (should_swap) {
     swapped_since_resize_ = true;
 
+    if (scheduler_) {
+      frame.metadata.latency_info.emplace_back(ui::SourceEventType::FRAME);
+      frame.metadata.latency_info.back().AddLatencyNumberWithTimestamp(
+          ui::LATENCY_BEGIN_FRAME_DISPLAY_COMPOSITOR_COMPONENT, 0, 0,
+          scheduler_->current_frame_time(), 1);
+    }
+
     DLOG_IF(WARNING, !presented_callbacks_.empty())
         << "DidReceiveSwapBuffersAck() is not called for the last SwapBuffers!";
     for (const auto& id_entry : aggregator_->previous_contained_surfaces()) {
@@ -365,28 +388,41 @@ bool Display::DrawAndSwap() {
         presented_callbacks_.push_back(std::move(callback));
     }
 
-    for (auto& latency : frame.metadata.latency_info) {
-      TRACE_EVENT_WITH_FLOW1(
-          "input,benchmark", "LatencyInfo.Flow",
-          TRACE_ID_DONT_MANGLE(latency.trace_id()),
-          TRACE_EVENT_FLAG_FLOW_IN | TRACE_EVENT_FLAG_FLOW_OUT, "step",
-          "Display::DrawAndSwap");
-    }
+    ui::LatencyInfo::TraceIntermediateFlowEvents(frame.metadata.latency_info,
+                                                 "Display::DrawAndSwap");
+
     cc::benchmark_instrumentation::IssueDisplayRenderingStatsEvent();
     renderer_->SwapBuffers(std::move(frame.metadata.latency_info));
     if (scheduler_)
       scheduler_->DidSwapBuffers();
   } else {
-    if (have_damage && !size_matches)
-      aggregator_->SetFullDamageForSurface(current_surface_id_);
     TRACE_EVENT_INSTANT0("viz", "Swap skipped.", TRACE_EVENT_SCOPE_THREAD);
 
-    // Do not store more that the allowed size.
-    if (ui::LatencyInfo::Verify(frame.metadata.latency_info,
-                                "Display::DrawAndSwap")) {
-      stored_latency_info_.insert(stored_latency_info_.end(),
-                                  frame.metadata.latency_info.begin(),
-                                  frame.metadata.latency_info.end());
+    if (have_damage && !size_matches)
+      aggregator_->SetFullDamageForSurface(current_surface_id_);
+
+    if (have_damage) {
+      // Do not store more than the allowed size.
+      if (ui::LatencyInfo::Verify(frame.metadata.latency_info,
+                                  "Display::DrawAndSwap")) {
+        stored_latency_info_.swap(frame.metadata.latency_info);
+      }
+    } else {
+      // There was no damage, so tracking latency info at this point isn't
+      // useful unless there's a snapshot request.
+      base::TimeTicks now = base::TimeTicks::Now();
+      while (!frame.metadata.latency_info.empty()) {
+        auto& latency = frame.metadata.latency_info.back();
+        if (latency.FindLatency(ui::BROWSER_SNAPSHOT_FRAME_NUMBER_COMPONENT,
+                                nullptr)) {
+          stored_latency_info_.push_back(std::move(latency));
+        } else {
+          latency.AddLatencyNumberWithTimestamp(
+              ui::INPUT_EVENT_LATENCY_TERMINATED_NO_SWAP_COMPONENT, 0, 0, now,
+              1);
+        }
+        frame.metadata.latency_info.pop_back();
+      }
     }
 
     if (scheduler_) {
@@ -426,6 +462,12 @@ void Display::DidReceiveTextureInUseResponses(
     const gpu::TextureInUseResponses& responses) {
   if (renderer_)
     renderer_->DidReceiveTextureInUseResponses(responses);
+}
+
+void Display::DidReceiveCALayerParams(
+    const gfx::CALayerParams& ca_layer_params) {
+  if (client_)
+    client_->DisplayDidReceiveCALayerParams(ca_layer_params);
 }
 
 void Display::DidReceivePresentationFeedback(
@@ -509,6 +551,16 @@ const SurfaceId& Display::CurrentSurfaceId() {
   return current_surface_id_;
 }
 
+LocalSurfaceId Display::GetSurfaceAtAggregation(
+    const FrameSinkId& frame_sink_id) const {
+  if (!aggregator_)
+    return LocalSurfaceId();
+  auto it = aggregator_->previous_contained_frame_sinks().find(frame_sink_id);
+  if (it == aggregator_->previous_contained_frame_sinks().end())
+    return LocalSurfaceId();
+  return it->second;
+}
+
 void Display::ForceImmediateDrawAndSwapIfPossible() {
   if (scheduler_)
     scheduler_->ForceImmediateSwapIfPossible();
@@ -524,24 +576,55 @@ void Display::RemoveOverdrawQuads(CompositorFrame* frame) {
     return;
 
   const SharedQuadState* last_sqs = nullptr;
-  cc::SimpleEnclosedRegion occlusion_region;
+  cc::SimpleEnclosedRegion occlusion_in_target_space;
   bool current_sqs_intersects_occlusion = false;
+  int minimum_draw_occlusion_height =
+      settings_.kMinimumDrawOcclusionSize.height() * device_scale_factor_;
+  int minimum_draw_occlusion_width =
+      settings_.kMinimumDrawOcclusionSize.width() * device_scale_factor_;
+
+  // Total quad area to be drawn on screen before applying draw occlusion.
+  base::CheckedNumeric<uint64_t> total_quad_area_shown_wo_occlusion_px = 0;
+
+  // Total area not draw skipped by draw occlusion.
+  base::CheckedNumeric<uint64_t> total_area_saved_in_px = 0;
+
   for (const auto& pass : frame->render_pass_list) {
     // TODO(yiyix): Add filter effects to draw occlusion calculation and perform
     // draw occlusion on render pass.
-    if (!pass->filters.IsEmpty() || !pass->background_filters.IsEmpty())
+    if (!pass->filters.IsEmpty() || !pass->background_filters.IsEmpty()) {
+      for (auto* const quad : pass->quad_list) {
+        total_quad_area_shown_wo_occlusion_px +=
+            quad->visible_rect.size().GetCheckedArea();
+      }
       continue;
+    }
 
     // TODO(yiyix): Perform draw occlusion inside the render pass with
     // transparent background.
-    if (pass != frame->render_pass_list.back())
+    if (pass != frame->render_pass_list.back()) {
+      for (auto* const quad : pass->quad_list) {
+        total_quad_area_shown_wo_occlusion_px +=
+            quad->visible_rect.size().GetCheckedArea();
+      }
       continue;
+    }
 
-    auto last_quad = pass->quad_list.end();
-    for (auto quad = pass->quad_list.begin(); quad != last_quad;) {
-      // RenderPassDrawQuad is a special type of DrawQuad where the visible_rect
-      // of shared quad state is not entirely covered by draw quads in it.
-      if (quad->material == ContentDrawQuadBase::Material::RENDER_PASS) {
+    auto quad_list_end = pass->quad_list.end();
+    gfx::Rect occlusion_in_quad_content_space;
+    for (auto quad = pass->quad_list.begin(); quad != quad_list_end;) {
+      total_quad_area_shown_wo_occlusion_px +=
+          quad->visible_rect.size().GetCheckedArea();
+
+      // Skip quad if it is a RenderPassDrawQuad because RenderPassDrawQuad is a
+      // special type of DrawQuad where the visible_rect of shared quad state is
+      // not entirely covered by draw quads in it; or the DrawQuad size is
+      // smaller than the kMinimumDrawOcclusionSize; or the DrawQuad is inside
+      // a 3d objects.
+      if (quad->material == ContentDrawQuadBase::Material::RENDER_PASS ||
+          (quad->visible_rect.width() <= minimum_draw_occlusion_width &&
+           quad->visible_rect.height() <= minimum_draw_occlusion_height) ||
+          quad->shared_quad_state->sorting_context_id != 0) {
         ++quad;
         continue;
       }
@@ -564,15 +647,43 @@ void Display::RemoveOverdrawQuads(CompositorFrame* frame) {
           if (last_sqs->is_clipped)
             sqs_rect_in_target.Intersect(last_sqs->clip_rect);
 
-          occlusion_region.Union(sqs_rect_in_target);
+          occlusion_in_target_space.Union(sqs_rect_in_target);
         }
         // If the visible_rect of the current shared quad state does not
         // intersect with the occlusion rect, we can skip draw occlusion checks
         // for quads in the current SharedQuadState.
         last_sqs = quad->shared_quad_state;
-        current_sqs_intersects_occlusion =
-            occlusion_region.Intersects(cc::MathUtil::MapEnclosingClippedRect(
+        current_sqs_intersects_occlusion = occlusion_in_target_space.Intersects(
+            cc::MathUtil::MapEnclosingClippedRect(
                 transform, last_sqs->visible_quad_layer_rect));
+
+        // Compute the occlusion region in the quad content space for scale and
+        // translation transforms. Note that 0 scale transform will fail the
+        // positive scale check.
+        if (current_sqs_intersects_occlusion &&
+            transform.IsPositiveScaleOrTranslation()) {
+          gfx::Transform reverse_transform;
+          bool is_invertible = transform.GetInverse(&reverse_transform);
+          // Scale transform can be inverted by multiplying 1/scale (given
+          // scale > 0) and translation transform can be inverted by applying
+          // the reversed directional translation. Therefore, |transform| is
+          // always invertible.
+          DCHECK(is_invertible);
+
+          // TODO(yiyix): Make |occlusion_coordinate_space| to work with
+          // occlusion region consists multiple rect.
+          DCHECK_EQ(occlusion_in_target_space.GetRegionComplexity(), 1u);
+
+          // Since transform can only be a scale or a translation matrix, it is
+          // safe to use function MapEnclosedRectWith2dAxisAlignedTransform to
+          // define occluded region in the quad content space with inverted
+          // transform.
+          occlusion_in_quad_content_space =
+              cc::MathUtil::MapEnclosedRectWith2dAxisAlignedTransform(
+                  reverse_transform, occlusion_in_target_space.bounds());
+        } else {
+          occlusion_in_quad_content_space = gfx::Rect();
+        }
       }
 
       if (!current_sqs_intersects_occlusion) {
@@ -580,15 +691,52 @@ void Display::RemoveOverdrawQuads(CompositorFrame* frame) {
         continue;
       }
 
-      // TODO(yiyix): Using profile tools to analyze bottleneck of this
-      // algorithm.
-      if (occlusion_region.Contains(cc::MathUtil::MapEnclosingClippedRect(
-              transform, quad->visible_rect)))
+      if (occlusion_in_quad_content_space.Contains(quad->visible_rect)) {
+        // Case 1: for simple transforms (scale or translation), define the
+        // occlusion region in the quad content space. If the |quad| is not
+        // shown on the screen, then remove |quad| from the compositor frame.
+        total_area_saved_in_px += quad->visible_rect.size().GetCheckedArea();
         quad = pass->quad_list.EraseAndInvalidateAllPointers(quad);
-      else
+
+      } else if (occlusion_in_quad_content_space.Intersects(
+                     quad->visible_rect)) {
+        // Case 2: for simple transforms, if the quad is partially shown on
+        // screen and the region formed by (occlusion region - visible_rect) is
+        // a rect, then update visible_rect to the resulting rect.
+        gfx::Rect origin_rect = quad->visible_rect;
+        quad->visible_rect.Subtract(occlusion_in_quad_content_space);
+        if (origin_rect != quad->visible_rect) {
+          origin_rect.Subtract(quad->visible_rect);
+          total_area_saved_in_px += origin_rect.size().GetCheckedArea();
+        }
         ++quad;
+      } else if (occlusion_in_quad_content_space.IsEmpty() &&
+                 occlusion_in_target_space.Contains(
+                     cc::MathUtil::MapEnclosingClippedRect(
+                         transform, quad->visible_rect))) {
+        // Case 3: for non simple transforms, define the occlusion region in
+        // target space. If the |quad| is not shown on the screen, then remove
+        // |quad| from the compositor frame.
+        total_area_saved_in_px += quad->visible_rect.size().GetCheckedArea();
+        quad = pass->quad_list.EraseAndInvalidateAllPointers(quad);
+      } else {
+        ++quad;
+      }
     }
   }
+
+  UMA_HISTOGRAM_PERCENTAGE(
+      "Compositing.Display.Draw.Occlusion.Percentage.Saved",
+      total_quad_area_shown_wo_occlusion_px.ValueOrDefault(0) == 0
+          ? 0
+          : static_cast<uint64_t>(total_area_saved_in_px.ValueOrDie()) * 100 /
+                static_cast<uint64_t>(
+                    total_quad_area_shown_wo_occlusion_px.ValueOrDie()));
+
+  UMA_HISTOGRAM_COUNTS_1M(
+      "Compositing.Display.Draw.Occlusion.Drawing.Area.Saved2",
+      static_cast<uint64_t>(total_area_saved_in_px.ValueOrDefault(
+          std::numeric_limits<uint64_t>::max())));
 }
 
 }  // namespace viz

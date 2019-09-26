@@ -4,6 +4,7 @@
 
 #include "chrome/browser/ui/views/passwords/auto_signin_first_run_dialog_view.h"
 
+#include "build/build_config.h"
 #include "chrome/browser/ui/browser_dialogs.h"
 #include "chrome/browser/ui/passwords/password_dialog_controller.h"
 #include "chrome/browser/ui/views/harmony/chrome_layout_provider.h"
@@ -11,6 +12,7 @@
 #include "chrome/grit/generated_resources.h"
 #include "components/constrained_window/constrained_window_views.h"
 #include "ui/base/l10n/l10n_util.h"
+#include "ui/base/ui_features.h"
 #include "ui/views/border.h"
 #include "ui/views/controls/styled_label.h"
 #include "ui/views/layout/fill_layout.h"
@@ -19,7 +21,7 @@
 AutoSigninFirstRunDialogView::AutoSigninFirstRunDialogView(
     PasswordDialogController* controller,
     content::WebContents* web_contents)
-    : controller_(controller), web_contents_(web_contents), text_(nullptr) {
+    : controller_(controller), web_contents_(web_contents) {
   chrome::RecordDialogCreation(chrome::DialogIdentifier::AUTO_SIGNIN_FIRST_RUN);
 }
 
@@ -46,6 +48,13 @@ base::string16 AutoSigninFirstRunDialogView::GetWindowTitle() const {
 
 bool AutoSigninFirstRunDialogView::ShouldShowCloseButton() const {
   return false;
+}
+
+gfx::Size AutoSigninFirstRunDialogView::CalculatePreferredSize() const {
+  const int width = ChromeLayoutProvider::Get()->GetDistanceMetric(
+                        DISTANCE_MODAL_DIALOG_PREFERRED_WIDTH) -
+                    margins().width();
+  return gfx::Size(width, GetHeightForWidth(width));
 }
 
 void AutoSigninFirstRunDialogView::WindowClosing() {
@@ -83,24 +92,25 @@ void AutoSigninFirstRunDialogView::StyledLabelLinkClicked(
 }
 
 void AutoSigninFirstRunDialogView::InitWindow() {
-  SetBorder(views::CreateEmptyBorder(
-      ChromeLayoutProvider::Get()->GetDialogInsetsForContentType(views::TEXT,
-                                                                 views::TEXT)));
-  SetLayoutManager(new views::FillLayout());
+  set_margins(ChromeLayoutProvider::Get()->GetDialogInsetsForContentType(
+      views::TEXT, views::TEXT));
+  SetLayoutManager(std::make_unique<views::FillLayout>());
 
   std::pair<base::string16, gfx::Range> text_content =
       controller_->GetAutoSigninText();
-  text_ = new views::StyledLabel(text_content.first, this);
-  text_->SetTextContext(CONTEXT_BODY_TEXT_LARGE);
-  text_->SetDefaultTextStyle(STYLE_SECONDARY);
+  auto text = std::make_unique<views::StyledLabel>(text_content.first, this);
+  text->SetTextContext(CONTEXT_BODY_TEXT_LARGE);
+  text->SetDefaultTextStyle(STYLE_SECONDARY);
   if (!text_content.second.is_empty()) {
-    text_->AddStyleRange(text_content.second,
-                         views::StyledLabel::RangeStyleInfo::CreateForLink());
+    text->AddStyleRange(text_content.second,
+                        views::StyledLabel::RangeStyleInfo::CreateForLink());
   }
-  AddChildView(text_);
+  AddChildView(text.release());
 }
 
+#if !defined(OS_MACOSX) || BUILDFLAG(MAC_VIEWS_BROWSER)
 AutoSigninFirstRunPrompt* CreateAutoSigninPromptView(
     PasswordDialogController* controller, content::WebContents* web_contents) {
   return new AutoSigninFirstRunDialogView(controller, web_contents);
 }
+#endif

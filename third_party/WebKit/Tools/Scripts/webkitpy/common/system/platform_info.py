@@ -74,7 +74,7 @@ class PlatformInfo(object):
         if self.is_mac():
             output = self._executive.run_command(['system_profiler', 'SPDisplaysDataType'],
                                                  error_handler=self._executive.ignore_error)
-            if output and 'Retina: Yes' in output:
+            if output and re.search(r'Resolution:.*Retina$', output, re.MULTILINE):
                 return True
         return False
 
@@ -122,6 +122,9 @@ class PlatformInfo(object):
         if not self.is_linux():
             return None
 
+        # Fedora also has /etc/redhat-release, this check must go first.
+        if self._filesystem.exists('/etc/fedora-release'):
+            return 'fedora'
         if self._filesystem.exists('/etc/redhat-release'):
             return 'redhat'
         if self._filesystem.exists('/etc/debian_version'):

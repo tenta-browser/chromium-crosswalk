@@ -1477,6 +1477,10 @@ function testNestedCrossOriginSubframes() {
     window.console.log('guest.consolemessage ' + e.message);
   };
   webview.onloadstop = function() {
+    // Only consider the first load stop, not the following one due to the
+    // iframe navigation.
+    webview.onloadstop = undefined;
+
     window.onmessage = function(e) {
       if (e.data == 'frames-loaded') {
         embedder.test.succeed();
@@ -1501,6 +1505,10 @@ function testNestedSubframes() {
     window.console.log('guest.consolemessage ' + e.message);
   };
   webview.onloadstop = function() {
+    // Only consider the first load stop, not the following one due to the
+    // iframe navigation.
+    webview.onloadstop = undefined;
+
     window.onmessage = function(e) {
       if (e.data == 'frames-loaded') {
         embedder.test.succeed();
@@ -3148,6 +3156,23 @@ function testWebViewAndEmbedderInNewWindow() {
   document.body.appendChild(webview);
 }
 
+function testSelectPopupPositionInMac() {
+  var webview = document.createElement('webview');
+  webview.id = 'popup-test-mac';
+  webview.partition = 'foobar';
+  // Offset the <webview> location inside the app so that the corner is almost
+  // 250 pixels off from app window's origin.
+  webview.style = 'position: fixed; left: 240px; top: 70px; border: solid;';
+  webview.addEventListener('loadstop', function() {
+    // This lets the browser know that it can start sending down input events
+    // for the remainder of the test.
+    embedder.test.succeed();
+  });
+
+  webview.setAttribute('src', chrome.runtime.getURL('guest_with_select.html'));
+  document.body.appendChild(webview);
+}
+
 embedder.test.testList = {
   'testAllowTransparencyAttribute': testAllowTransparencyAttribute,
   'testAutosizeHeight': testAutosizeHeight,
@@ -3269,7 +3294,8 @@ embedder.test.testList = {
   'testRendererNavigationRedirectWhileUnattached':
        testRendererNavigationRedirectWhileUnattached,
   'testBlobURL': testBlobURL,
-  'testWebViewAndEmbedderInNewWindow': testWebViewAndEmbedderInNewWindow
+  'testWebViewAndEmbedderInNewWindow': testWebViewAndEmbedderInNewWindow,
+  'testSelectPopupPositionInMac': testSelectPopupPositionInMac
 };
 
 onload = function() {

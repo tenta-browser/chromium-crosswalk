@@ -3249,6 +3249,32 @@ void GLES2Implementation::LoseContextCHROMIUM(GLenum current, GLenum other) {
   CheckGLError();
 }
 
+void GLES2Implementation::UnpremultiplyAndDitherCopyCHROMIUM(GLuint source_id,
+                                                             GLuint dest_id,
+                                                             GLint x,
+                                                             GLint y,
+                                                             GLsizei width,
+                                                             GLsizei height) {
+  GPU_CLIENT_SINGLE_THREAD_CHECK();
+  GPU_CLIENT_LOG("[" << GetLogPrefix()
+                     << "] glUnpremultiplyAndDitherCopyCHROMIUM(" << source_id
+                     << ", " << dest_id << ", " << x << ", " << y << ", "
+                     << width << ", " << height << ")");
+  if (width < 0) {
+    SetGLError(GL_INVALID_VALUE, "glUnpremultiplyAndDitherCopyCHROMIUM",
+               "width < 0");
+    return;
+  }
+  if (height < 0) {
+    SetGLError(GL_INVALID_VALUE, "glUnpremultiplyAndDitherCopyCHROMIUM",
+               "height < 0");
+    return;
+  }
+  helper_->UnpremultiplyAndDitherCopyCHROMIUM(source_id, dest_id, x, y, width,
+                                              height);
+  CheckGLError();
+}
+
 void GLES2Implementation::DrawBuffersEXT(GLsizei count, const GLenum* bufs) {
   GPU_CLIENT_SINGLE_THREAD_CHECK();
   GPU_CLIENT_LOG("[" << GetLogPrefix() << "] glDrawBuffersEXT(" << count << ", "
@@ -3285,17 +3311,20 @@ void GLES2Implementation::ScheduleOverlayPlaneCHROMIUM(
     GLfloat uv_x,
     GLfloat uv_y,
     GLfloat uv_width,
-    GLfloat uv_height) {
+    GLfloat uv_height,
+    GLboolean enable_blend) {
   GPU_CLIENT_SINGLE_THREAD_CHECK();
   GPU_CLIENT_LOG(
       "[" << GetLogPrefix() << "] glScheduleOverlayPlaneCHROMIUM("
           << plane_z_order << ", " << GLES2Util::GetStringEnum(plane_transform)
           << ", " << overlay_texture_id << ", " << bounds_x << ", " << bounds_y
           << ", " << bounds_width << ", " << bounds_height << ", " << uv_x
-          << ", " << uv_y << ", " << uv_width << ", " << uv_height << ")");
-  helper_->ScheduleOverlayPlaneCHROMIUM(
-      plane_z_order, plane_transform, overlay_texture_id, bounds_x, bounds_y,
-      bounds_width, bounds_height, uv_x, uv_y, uv_width, uv_height);
+          << ", " << uv_y << ", " << uv_width << ", " << uv_height << ", "
+          << GLES2Util::GetStringBool(enable_blend) << ")");
+  helper_->ScheduleOverlayPlaneCHROMIUM(plane_z_order, plane_transform,
+                                        overlay_texture_id, bounds_x, bounds_y,
+                                        bounds_width, bounds_height, uv_x, uv_y,
+                                        uv_width, uv_height, enable_blend);
   CheckGLError();
 }
 
@@ -3547,22 +3576,22 @@ void GLES2Implementation::SetEnableDCLayersCHROMIUM(GLboolean enabled) {
   CheckGLError();
 }
 
-void GLES2Implementation::BeginRasterCHROMIUM(GLuint texture_id,
-                                              GLuint sk_color,
-                                              GLuint msaa_sample_count,
-                                              GLboolean can_use_lcd_text,
-                                              GLboolean use_distance_field_text,
-                                              GLint pixel_config) {
+void GLES2Implementation::BeginRasterCHROMIUM(
+    GLuint texture_id,
+    GLuint sk_color,
+    GLuint msaa_sample_count,
+    GLboolean can_use_lcd_text,
+    GLint color_type,
+    GLuint color_space_transfer_cache_id) {
   GPU_CLIENT_SINGLE_THREAD_CHECK();
-  GPU_CLIENT_LOG("[" << GetLogPrefix() << "] glBeginRasterCHROMIUM("
-                     << texture_id << ", " << sk_color << ", "
-                     << msaa_sample_count << ", "
-                     << GLES2Util::GetStringBool(can_use_lcd_text) << ", "
-                     << GLES2Util::GetStringBool(use_distance_field_text)
-                     << ", " << pixel_config << ")");
+  GPU_CLIENT_LOG(
+      "[" << GetLogPrefix() << "] glBeginRasterCHROMIUM(" << texture_id << ", "
+          << sk_color << ", " << msaa_sample_count << ", "
+          << GLES2Util::GetStringBool(can_use_lcd_text) << ", " << color_type
+          << ", " << color_space_transfer_cache_id << ")");
   helper_->BeginRasterCHROMIUM(texture_id, sk_color, msaa_sample_count,
-                               can_use_lcd_text, use_distance_field_text,
-                               pixel_config);
+                               can_use_lcd_text, color_type,
+                               color_space_transfer_cache_id);
   CheckGLError();
 }
 
@@ -3571,24 +3600,6 @@ void GLES2Implementation::EndRasterCHROMIUM() {
   GPU_CLIENT_LOG("[" << GetLogPrefix() << "] glEndRasterCHROMIUM("
                      << ")");
   helper_->EndRasterCHROMIUM();
-  CheckGLError();
-}
-
-void GLES2Implementation::DeleteTransferCacheEntryCHROMIUM(GLuint64 handle_id) {
-  GPU_CLIENT_SINGLE_THREAD_CHECK();
-  GPU_CLIENT_LOG("[" << GetLogPrefix()
-                     << "] glDeleteTransferCacheEntryCHROMIUM(" << handle_id
-                     << ")");
-  helper_->DeleteTransferCacheEntryCHROMIUM(handle_id);
-  CheckGLError();
-}
-
-void GLES2Implementation::UnlockTransferCacheEntryCHROMIUM(GLuint64 handle_id) {
-  GPU_CLIENT_SINGLE_THREAD_CHECK();
-  GPU_CLIENT_LOG("[" << GetLogPrefix()
-                     << "] glUnlockTransferCacheEntryCHROMIUM(" << handle_id
-                     << ")");
-  helper_->UnlockTransferCacheEntryCHROMIUM(handle_id);
   CheckGLError();
 }
 
@@ -3640,6 +3651,22 @@ void GLES2Implementation::WindowRectanglesEXT(GLenum mode,
     return;
   }
   helper_->WindowRectanglesEXTImmediate(mode, count, box);
+  CheckGLError();
+}
+
+void GLES2Implementation::WaitGpuFenceCHROMIUM(GLuint gpu_fence_id) {
+  GPU_CLIENT_SINGLE_THREAD_CHECK();
+  GPU_CLIENT_LOG("[" << GetLogPrefix() << "] glWaitGpuFenceCHROMIUM("
+                     << gpu_fence_id << ")");
+  helper_->WaitGpuFenceCHROMIUM(gpu_fence_id);
+  CheckGLError();
+}
+
+void GLES2Implementation::DestroyGpuFenceCHROMIUM(GLuint gpu_fence_id) {
+  GPU_CLIENT_SINGLE_THREAD_CHECK();
+  GPU_CLIENT_LOG("[" << GetLogPrefix() << "] glDestroyGpuFenceCHROMIUM("
+                     << gpu_fence_id << ")");
+  helper_->DestroyGpuFenceCHROMIUM(gpu_fence_id);
   CheckGLError();
 }
 

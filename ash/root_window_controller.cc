@@ -9,8 +9,10 @@
 #include <queue>
 #include <vector>
 
+#include "ash/accessibility/accessibility_panel_layout_manager.h"
+#include "ash/accessibility/touch_exploration_controller.h"
+#include "ash/accessibility/touch_exploration_manager.h"
 #include "ash/ash_constants.h"
-#include "ash/ash_touch_exploration_manager_chromeos.h"
 #include "ash/focus_cycler.h"
 #include "ash/high_contrast/high_contrast_controller.h"
 #include "ash/host/ash_window_tree_host.h"
@@ -32,11 +34,10 @@
 #include "ash/shell_port.h"
 #include "ash/system/status_area_layout_manager.h"
 #include "ash/system/status_area_widget.h"
-#include "ash/touch/touch_devices_controller.h"
 #include "ash/touch/touch_hud_debug.h"
 #include "ash/touch/touch_hud_projection.h"
 #include "ash/touch/touch_observer_hud.h"
-#include "ash/wallpaper/wallpaper_delegate.h"
+#include "ash/virtual_keyboard_container_layout_manager.h"
 #include "ash/wallpaper/wallpaper_widget_controller.h"
 #include "ash/wm/always_on_top_controller.h"
 #include "ash/wm/container_finder.h"
@@ -58,6 +59,7 @@
 #include "ash/wm/workspace_controller.h"
 #include "base/command_line.h"
 #include "base/macros.h"
+#include "base/metrics/histogram_macros.h"
 #include "base/time/time.h"
 #include "chromeos/chromeos_switches.h"
 #include "ui/aura/client/aura_constants.h"
@@ -71,7 +73,6 @@
 #include "ui/aura/window_observer.h"
 #include "ui/aura/window_tracker.h"
 #include "ui/base/models/menu_model.h"
-#include "ui/chromeos/touch_exploration_controller.h"
 #include "ui/compositor/layer.h"
 #include "ui/display/types/display_constants.h"
 #include "ui/events/event_utils.h"
@@ -165,7 +166,7 @@ void ReparentWindow(aura::Window* window, aura::Window* new_parent) {
 
   const bool update_bounds = state->IsNormalOrSnapped() || state->IsMinimized();
   gfx::Rect work_area_in_new_parent =
-      ScreenUtil::GetDisplayWorkAreaBoundsInParent(new_parent);
+      screen_util::GetDisplayWorkAreaBoundsInParent(new_parent);
 
   gfx::Rect local_bounds;
   if (update_bounds) {
@@ -277,7 +278,6 @@ std::vector<RootWindowController*>*
 
 RootWindowController::~RootWindowController() {
   Shutdown();
-  DCHECK(!animating_wallpaper_widget_controller_.get());
   DCHECK(!wallpaper_widget_controller_.get());
   ash_host_.reset();
   mus_window_tree_host_.reset();
@@ -341,22 +341,13 @@ void RootWindowController::InitializeShelf() {
 
   // TODO(jamescook): Pass |shelf_| into the constructors for these layout
   // managers.
-  if (panel_layout_manager_)
-    panel_layout_manager_->SetShelf(shelf_.get());
+  panel_layout_manager_->SetShelf(shelf_.get());
 
   // TODO(jamescook): Eliminate this. Refactor AttachedPanelWidgetTargeter's
   // access to Shelf.
   Shell::Get()->NotifyShelfCreatedForRootWindow(GetRootWindow());
 
   shelf_->shelf_widget()->PostCreateShelf();
-}
-
-void RootWindowController::SetTouchHudProjectionEnabled(bool enable) {
-  // TouchHudProjection manages its own lifetime.
-  if (enable && !touch_hud_projection_)
-    touch_hud_projection_ = new TouchHudProjection(GetRootWindow());
-  else if (!enable && touch_hud_projection_)
-    touch_hud_projection_->Remove();
 }
 
 ShelfLayoutManager* RootWindowController::GetShelfLayoutManager() {
@@ -458,40 +449,11 @@ const aura::Window* RootWindowController::GetContainer(int container_id) const {
   return window_tree_host_->window()->GetChildById(container_id);
 }
 
-void RootWindowController::SetWallpaperWidgetController(
-    WallpaperWidgetController* controller) {
-  wallpaper_widget_controller_.reset(controller);
-}
-
-void RootWindowController::SetAnimatingWallpaperWidgetController(
-    AnimatingWallpaperWidgetController* controller) {
-  if (animating_wallpaper_widget_controller_.get())
-    animating_wallpaper_widget_controller_->StopAnimating();
-  animating_wallpaper_widget_controller_.reset(controller);
-}
-
-void RootWindowController::OnWallpaperAnimationFinished(views::Widget* widget) {
-  // Make sure the wallpaper is visible.
-  system_wallpaper_->SetColor(SK_ColorBLACK);
-  Shell::Get()->wallpaper_delegate()->OnWallpaperAnimationFinished();
-  // Only removes old component when wallpaper animation finished. If we
-  // remove the old one before the new wallpaper is done fading in there will
-  // be a white flash during the animation.
-  if (animating_wallpaper_widget_controller()) {
-    WallpaperWidgetController* controller =
-        animating_wallpaper_widget_controller()->GetController(true);
-    DCHECK_EQ(controller->widget(), widget);
-    // Release the old controller and close its wallpaper widget.
-    SetWallpaperWidgetController(controller);
-  }
-}
-
 void RootWindowController::Shutdown() {
   touch_exploration_manager_.reset();
 
   ResetRootForNewWindowsIfNecessary();
 
-  SetAnimatingWallpaperWidgetController(nullptr);
   wallpaper_widget_controller_.reset();
 
   CloseChildWindows();
@@ -509,17 +471,19 @@ void RootWindowController::Shutdown() {
 }
 
 void RootWindowController::CloseChildWindows() {
-  // NOTE: this may be called multiple times.
+  // Child windows can be closed by secondary monitor disconnection, Shell
+  // shutdown, or both. Avoid running the related cleanup code twice.
+  if (did_close_child_windows_)
+    return;
+  did_close_child_windows_ = true;
 
   // Deactivate keyboard container before closing child windows and shutting
   // down associated layout managers.
   DeactivateKeyboard(keyboard::KeyboardController::GetInstance());
 
   // |panel_layout_manager_| needs to be shut down before windows are destroyed.
-  if (panel_layout_manager_) {
-    panel_layout_manager_->Shutdown();
-    panel_layout_manager_ = nullptr;
-  }
+  panel_layout_manager_->Shutdown();
+  panel_layout_manager_ = nullptr;
 
   shelf_->ShutdownShelfWidget();
 
@@ -544,6 +508,7 @@ void RootWindowController::CloseChildWindows() {
     while (!toplevel_windows.windows().empty())
       delete toplevel_windows.Pop();
   }
+
   // And then remove the containers.
   while (!root->children().empty()) {
     aura::Window* child = root->children()[0];
@@ -553,9 +518,10 @@ void RootWindowController::CloseChildWindows() {
       root->RemoveChild(child);
   }
 
+  // Removing the containers destroys ShelfLayoutManager. ShelfWidget outlives
+  // ShelfLayoutManager because ShelfLayoutManager holds a pointer to it.
   shelf_->DestroyShelfWidget();
 
-  aura::client::SetDragDropClient(GetRootWindow(), nullptr);
   ::wm::SetTooltipClient(GetRootWindow(), nullptr);
 }
 
@@ -573,13 +539,14 @@ void RootWindowController::InitTouchHuds() {
   if (Shell::GetAshConfig() == Config::MASH)
     return;
 
+  // Enable touch debugging features when each display is initialized.
   base::CommandLine* command_line = base::CommandLine::ForCurrentProcess();
   if (command_line->HasSwitch(switches::kAshTouchHud))
     set_touch_hud_debug(new TouchHudDebug(GetRootWindow()));
 
-  // Enable projection on newly attached displays if the pref is set.
-  SetTouchHudProjectionEnabled(
-      Shell::Get()->touch_devices_controller()->IsTouchHudProjectionEnabled());
+  // TouchHudProjection manages its own lifetime.
+  if (command_line->HasSwitch(switches::kShowTaps))
+    touch_hud_projection_ = new TouchHudProjection(GetRootWindow());
 }
 
 aura::Window* RootWindowController::GetWindowForFullscreenMode() {
@@ -588,17 +555,25 @@ aura::Window* RootWindowController::GetWindowForFullscreenMode() {
 
 void RootWindowController::ActivateKeyboard(
     keyboard::KeyboardController* keyboard_controller) {
-  if (!keyboard::IsKeyboardEnabled() ||
-      GetContainer(kShellWindowId_VirtualKeyboardContainer)) {
+  if (!keyboard::IsKeyboardEnabled() || !keyboard_controller)
+    return;
+
+  // keyboard window is already initialized and it's under the root window of
+  // this controller.
+  if (keyboard_controller->keyboard_container_initialized() &&
+      keyboard_controller->GetContainerWindow()->GetRootWindow() ==
+          GetRootWindow()) {
     return;
   }
-  DCHECK(keyboard_controller);
+
+  aura::Window* keyboard_window = keyboard_controller->GetContainerWindow();
+  DCHECK(keyboard_window->parent() == nullptr);
+
   Shell::Get()->NotifyVirtualKeyboardActivated(true, GetRootWindow());
-  aura::Window* parent = GetContainer(kShellWindowId_ImeWindowParentContainer);
-  DCHECK(parent);
-  aura::Window* keyboard_container = keyboard_controller->GetContainerWindow();
-  keyboard_container->set_id(kShellWindowId_VirtualKeyboardContainer);
-  parent->AddChild(keyboard_container);
+  aura::Window* vk_container =
+      GetContainer(kShellWindowId_VirtualKeyboardContainer);
+  DCHECK(vk_container);
+  vk_container->AddChild(keyboard_window);
 
   keyboard_controller->LoadKeyboardUiInBackground();
 }
@@ -609,23 +584,21 @@ void RootWindowController::DeactivateKeyboard(
       !keyboard_controller->keyboard_container_initialized()) {
     return;
   }
-  aura::Window* keyboard_container = keyboard_controller->GetContainerWindow();
-  if (keyboard_container->GetRootWindow() == GetRootWindow()) {
-    aura::Window* parent =
-        GetContainer(kShellWindowId_ImeWindowParentContainer);
-    DCHECK(parent);
+
+  aura::Window* keyboard_window = keyboard_controller->GetContainerWindow();
+  // If the VK is under the root window of this controller.
+  if (keyboard_window->GetRootWindow() == GetRootWindow()) {
     // Virtual keyboard may be deactivated while still showing, hide the
     // keyboard before removing it from view hierarchy.
     keyboard_controller->HideKeyboard(
         keyboard::KeyboardController::HIDE_REASON_AUTOMATIC);
-    parent->RemoveChild(keyboard_container);
+    aura::Window* vk_container =
+        GetContainer(kShellWindowId_VirtualKeyboardContainer);
+    DCHECK(vk_container);
+    DCHECK_EQ(vk_container, keyboard_window->parent());
+    vk_container->RemoveChild(keyboard_window);
     Shell::Get()->NotifyVirtualKeyboardActivated(false, GetRootWindow());
   }
-}
-
-bool RootWindowController::IsVirtualKeyboardWindow(aura::Window* window) {
-  aura::Window* parent = GetContainer(kShellWindowId_ImeWindowParentContainer);
-  return parent ? parent->Contains(window) : false;
 }
 
 void RootWindowController::SetTouchAccessibilityAnchorPoint(
@@ -636,26 +609,33 @@ void RootWindowController::SetTouchAccessibilityAnchorPoint(
 
 void RootWindowController::ShowContextMenu(const gfx::Point& location_in_screen,
                                            ui::MenuSourceType source_type) {
+  // The wallpaper widget may not be set yet if the user clicked on the
+  // status area before the initial animation completion. See crbug.com/222218
+  if (!wallpaper_widget_controller()->GetWidget())
+    return;
+
   const int64_t display_id = display::Screen::GetScreen()
                                  ->GetDisplayNearestWindow(GetRootWindow())
                                  .id();
   menu_model_ = std::make_unique<ShelfContextMenuModel>(
       std::vector<mojom::MenuItemPtr>(), nullptr, display_id);
 
-  menu_model_adapter_ = std::make_unique<views::MenuModelAdapter>(
-      menu_model_.get(),
-      base::Bind(&RootWindowController::OnMenuClosed, base::Unretained(this)));
-
-  // The wallpaper controller may not be set yet if the user clicked on the
-  // status area before the initial animation completion. See crbug.com/222218
-  if (!wallpaper_widget_controller())
-    return;
+  menu_model_->set_histogram_name("Apps.ContextMenuExecuteCommand.NotFromApp");
+  UMA_HISTOGRAM_ENUMERATION("Apps.ContextMenuShowSource.Desktop", source_type,
+                            ui::MENU_SOURCE_TYPE_LAST);
 
   menu_runner_ = std::make_unique<views::MenuRunner>(
-      menu_model_adapter_->CreateMenu(), views::MenuRunner::CONTEXT_MENU);
-  menu_runner_->RunMenuAt(wallpaper_widget_controller()->widget(), nullptr,
+      menu_model_.get(), views::MenuRunner::CONTEXT_MENU,
+      base::Bind(&RootWindowController::OnMenuClosed, base::Unretained(this),
+                 base::TimeTicks::Now()));
+  menu_runner_->RunMenuAt(wallpaper_widget_controller()->GetWidget(), nullptr,
                           gfx::Rect(location_in_screen, gfx::Size()),
                           views::MENU_ANCHOR_TOPLEFT, source_type);
+}
+
+void RootWindowController::HideContextMenu() {
+  if (menu_runner_)
+    menu_runner_->Cancel();
 }
 
 void RootWindowController::UpdateAfterLoginStatusChange(LoginStatus status) {
@@ -692,6 +672,10 @@ RootWindowController::RootWindowController(
   aura::client::SetWindowParentingClient(root_window,
                                          stacking_controller_.get());
   capture_client_.reset(new ::wm::ScopedCaptureClient(root_window));
+
+  wallpaper_widget_controller_ = std::make_unique<WallpaperWidgetController>(
+      base::BindOnce(&RootWindowController::OnFirstWallpaperWidgetSet,
+                     base::Unretained(this)));
 }
 
 void RootWindowController::Init(RootWindowType root_window_type) {
@@ -706,6 +690,7 @@ void RootWindowController::Init(RootWindowType root_window_type) {
 
   InitLayoutManagers();
   InitTouchHuds();
+  InitializeShelf();
 
   if (Shell::GetPrimaryRootWindowController()
           ->GetSystemModalLayoutManager(nullptr)
@@ -720,25 +705,23 @@ void RootWindowController::Init(RootWindowType root_window_type) {
   } else {
     window_tree_host_->Show();
 
-    // At the login screen the shelf will be hidden because its container window
-    // is hidden. InitializeShelf() will make it visible.
-    InitializeShelf();
-
     // Notify shell observers about new root window.
     shell->OnRootWindowAdded(root_window);
   }
 
-  // TODO: AshTouchExplorationManager doesn't work with mus.
+  // TODO: TouchExplorationManager doesn't work with mash.
   // http://crbug.com/679782
   if (!base::CommandLine::ForCurrentProcess()->HasSwitch(
           switches::kAshDisableTouchExplorationMode) &&
       Shell::GetAshConfig() != Config::MASH) {
-    touch_exploration_manager_.reset(new AshTouchExplorationManager(this));
+    touch_exploration_manager_ =
+        std::make_unique<TouchExplorationManager>(this);
   }
 }
 
 void RootWindowController::InitLayoutManagers() {
-  // Create the shelf and status area widgets.
+  // Create the shelf and status area widgets. Creates the ShelfLayoutManager
+  // as a side-effect.
   DCHECK(!shelf_->shelf_widget());
   aura::Window* root = GetRootWindow();
   shelf_->CreateShelfWidget(root);
@@ -884,11 +867,7 @@ void RootWindowController::CreateContainers() {
   wm::SetSnapsChildrenToPhysicalPixelBoundary(app_list_container);
   app_list_container->SetProperty(kUsesScreenCoordinatesKey, true);
 
-  // The shelf should be displayed on lock screen if md-based login/lock UI is
-  // enabled.
-  aura::Window* shelf_container_parent = switches::IsUsingWebUiLock()
-                                             ? non_lock_screen_containers
-                                             : lock_screen_related_containers;
+  aura::Window* shelf_container_parent = lock_screen_related_containers;
   aura::Window* shelf_container = CreateContainer(
       kShellWindowId_ShelfContainer, "ShelfContainer", shelf_container_parent);
   wm::SetSnapsChildrenToPhysicalPixelBoundary(shelf_container);
@@ -944,6 +923,12 @@ void RootWindowController::CreateContainers() {
   status_container->SetProperty(kUsesScreenCoordinatesKey, true);
   status_container->SetProperty(kLockedToRootKey, true);
 
+  aura::Window* power_menu_container =
+      CreateContainer(kShellWindowId_PowerMenuContainer, "PowerMenuContainer",
+                      lock_screen_related_containers);
+  wm::SetSnapsChildrenToPhysicalPixelBoundary(power_menu_container);
+  power_menu_container->SetProperty(kUsesScreenCoordinatesKey, true);
+
   aura::Window* settings_bubble_container =
       CreateContainer(kShellWindowId_SettingBubbleContainer,
                       "SettingBubbleContainer", lock_screen_related_containers);
@@ -952,6 +937,15 @@ void RootWindowController::CreateContainers() {
   settings_bubble_container->SetProperty(kUsesScreenCoordinatesKey, true);
   settings_bubble_container->SetProperty(kLockedToRootKey, true);
 
+  aura::Window* accessibility_panel_container = CreateContainer(
+      kShellWindowId_AccessibilityPanelContainer, "AccessibilityPanelContainer",
+      lock_screen_related_containers);
+  ::wm::SetChildWindowVisibilityChangesAnimated(accessibility_panel_container);
+  accessibility_panel_container->SetProperty(kUsesScreenCoordinatesKey, true);
+  accessibility_panel_container->SetProperty(kLockedToRootKey, true);
+  accessibility_panel_container->SetLayoutManager(
+      new AccessibilityPanelLayoutManager());
+
   aura::Window* virtual_keyboard_parent_container = CreateContainer(
       kShellWindowId_ImeWindowParentContainer, "VirtualKeyboardParentContainer",
       lock_screen_related_containers);
@@ -959,6 +953,14 @@ void RootWindowController::CreateContainers() {
       virtual_keyboard_parent_container);
   virtual_keyboard_parent_container->SetProperty(kUsesScreenCoordinatesKey,
                                                  true);
+  virtual_keyboard_parent_container->SetLayoutManager(
+      new VirtualKeyboardContainerLayoutManager(
+          virtual_keyboard_parent_container));
+  aura::Window* virtual_keyboard_container = CreateContainer(
+      kShellWindowId_VirtualKeyboardContainer, "VirtualKeyboardContainer",
+      virtual_keyboard_parent_container);
+  wm::SetSnapsChildrenToPhysicalPixelBoundary(virtual_keyboard_container);
+  virtual_keyboard_container->SetProperty(kUsesScreenCoordinatesKey, true);
 
   aura::Window* menu_container =
       CreateContainer(kShellWindowId_MenuContainer, "MenuContainer",
@@ -979,6 +981,9 @@ void RootWindowController::CreateContainers() {
                       lock_screen_related_containers);
   wm::SetSnapsChildrenToPhysicalPixelBoundary(overlay_container);
   overlay_container->SetProperty(kUsesScreenCoordinatesKey, true);
+
+  CreateContainer(kShellWindowId_DockedMagnifierContainer,
+                  "DockedMagnifierContainer", lock_screen_related_containers);
 
   aura::Window* mouse_cursor_container =
       CreateContainer(kShellWindowId_MouseCursorContainer,
@@ -1020,11 +1025,22 @@ void RootWindowController::ResetRootForNewWindowsIfNecessary() {
   }
 }
 
-void RootWindowController::OnMenuClosed() {
+void RootWindowController::OnMenuClosed(
+    const base::TimeTicks desktop_context_menu_show_time) {
   menu_runner_.reset();
-  menu_model_adapter_.reset();
   menu_model_.reset();
   shelf_->UpdateVisibilityState();
+  UMA_HISTOGRAM_TIMES("Apps.ContextMenuUserJourneyTime.Desktop",
+                      base::TimeTicks::Now() - desktop_context_menu_show_time);
+}
+
+void RootWindowController::OnFirstWallpaperWidgetSet() {
+  DCHECK(system_wallpaper_.get());
+
+  // Set the system wallpaper color once a wallpaper has been set to ensure the
+  // wallpaper color that might have been set for the Chrome OS boot splash
+  // screen is overriden.
+  system_wallpaper_->SetColor(SK_ColorBLACK);
 }
 
 }  // namespace ash

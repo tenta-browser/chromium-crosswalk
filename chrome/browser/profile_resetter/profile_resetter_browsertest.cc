@@ -14,7 +14,7 @@
 #include "content/public/browser/storage_partition.h"
 #include "content/public/test/test_utils.h"
 #include "net/cookies/canonical_cookie.h"
-#include "services/network/public/interfaces/cookie_manager.mojom.h"
+#include "services/network/public/mojom/cookie_manager.mojom.h"
 
 namespace {
 
@@ -55,7 +55,7 @@ class RemoveCookieTester {
 RemoveCookieTester::RemoveCookieTester(Profile* profile)
     : waiting_callback_(false),
       profile_(profile) {
-  content::mojom::NetworkContext* network_context =
+  network::mojom::NetworkContext* network_context =
       content::BrowserContext::GetDefaultStoragePartition(profile_)
           ->GetNetworkContext();
   network_context->GetCookieManager(mojo::MakeRequest(&cookie_manager_));

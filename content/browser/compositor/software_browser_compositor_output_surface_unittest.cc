@@ -7,7 +7,6 @@
 #include <utility>
 
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/test/test_message_loop.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "cc/test/fake_output_surface_client.h"
@@ -30,6 +29,14 @@ class FakeVSyncProvider : public gfx::VSyncProvider {
     callback.Run(timebase_, interval_);
     call_count_++;
   }
+
+  bool GetVSyncParametersIfAvailable(base::TimeTicks* timebase,
+                                     base::TimeDelta* interval) override {
+    return false;
+  }
+
+  bool SupportGetVSyncParametersIfAvailable() const override { return false; }
+  bool IsHWClock() const override { return false; }
 
   int call_count() const { return call_count_; }
 

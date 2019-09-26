@@ -7,6 +7,7 @@ import hashlib
 import os
 import string
 import win32api
+import win32file
 import win32com.client
 from win32com.shell import shell, shellcon
 import win32security
@@ -16,6 +17,13 @@ def _GetFileVersion(file_path):
   """Returns the file version of the given file."""
   return win32com.client.Dispatch('Scripting.FileSystemObject').GetFileVersion(
       file_path)
+
+
+def _GetFileBitness(file_path):
+  """Returns the bitness of the given file."""
+  if win32file.GetBinaryType(file_path) == win32file.SCS_32BIT_BINARY:
+    return '32'
+  return '64'
 
 
 def _GetProductName(file_path):
@@ -56,7 +64,8 @@ def _GetUserSpecificRegistrySuffix():
 class VariableExpander:
   """Expands variables in strings."""
 
-  def __init__(self, mini_installer_path, next_version_mini_installer_path):
+  def __init__(self, mini_installer_path, next_version_mini_installer_path,
+               chromedriver_path, quiet):
     """Constructor.
 
     The constructor initializes a variable dictionary that maps variables to
@@ -84,12 +93,15 @@ class VariableExpander:
             root key, of Chrome Beta for Google Update.
         * $CHROME_UPDATE_REGISTRY_SUBKEY_SXS: the registry key, excluding the
             root key, of Chrome SxS for Google Update.
+        * $CHROMEDRIVER_PATH: Path to chromedriver.
+        * $QUIET: Supress output
         * $LAUNCHER_UPDATE_REGISTRY_SUBKEY: the registry key, excluding the root
             key, of the app launcher for Google Update if $BRAND is 'Google
         *   Chrome'.
         * $LOCAL_APPDATA: the unquoted path to the Local Application Data
             folder.
         * $MINI_INSTALLER: the unquoted path to the mini_installer.
+        * $MINI_INSTALLER_BITNESS: the bitness of the mini_installer.
         * $MINI_INSTALLER_FILE_VERSION: the file version of $MINI_INSTALLER.
         * $NEXT_VERSION_MINI_INSTALLER: the unquoted path to a mini_installer
             whose version is higher than $MINI_INSTALLER.
@@ -101,6 +113,14 @@ class VariableExpander:
         * $VERSION_[XP/SERVER_2003/VISTA/WIN7/WIN8/WIN8_1/WIN10]: a 2-tuple
             representing the version of the corresponding OS.
         * $WINDOWS_VERSION: a 2-tuple representing the current Windows version.
+        * $CHROME_TOAST_ACTIVATOR_CLSID: NotificationActivator's CLSID for
+            Chrome.
+        * $CHROME_TOAST_ACTIVATOR_CLSID_BETA: NotificationActivator's CLSID for
+            Chrome Beta.
+        * $CHROME_TOAST_ACTIVATOR_CLSID_DEV: NotificationActivator's CLSID for
+            Chrome Dev.
+        * $CHROME_TOAST_ACTIVATOR_CLSID_SXS: NotificationActivator's CLSID for
+            Chrome SxS.
 
     Args:
       mini_installer_path: The path to a mini_installer.
@@ -112,10 +132,13 @@ class VariableExpander:
         next_version_mini_installer_path)
     windows_major_ver, windows_minor_ver, _, _, _ = win32api.GetVersionEx()
     self._variable_mapping = {
+        'CHROMEDRIVER_PATH': chromedriver_path,
+        'QUIET': '-q' if quiet else '',
         'LOCAL_APPDATA': shell.SHGetFolderPath(0, shellcon.CSIDL_LOCAL_APPDATA,
                                                None, 0),
         'MINI_INSTALLER': mini_installer_abspath,
         'MINI_INSTALLER_FILE_VERSION': _GetFileVersion(mini_installer_abspath),
+        'MINI_INSTALLER_BITNESS': _GetFileBitness(mini_installer_abspath),
         'NEXT_VERSION_MINI_INSTALLER': next_version_mini_installer_abspath,
         'NEXT_VERSION_MINI_INSTALLER_FILE_VERSION': _GetFileVersion(
             next_version_mini_installer_abspath),
@@ -142,6 +165,9 @@ class VariableExpander:
             '{4DC8B4CA-1BDA-483e-B5FA-D3C12E15B62D}'),
           'CHROME_DIR': 'Google\\Chrome',
           'CHROME_HTML_PROG_ID': 'ChromeHTML',
+          'CHROME_HTML_PROG_ID_BETA': 'ChromeBHTML',
+          'CHROME_HTML_PROG_ID_DEV': 'ChromeDHTML',
+          'CHROME_HTML_PROG_ID_SXS': 'ChromeSSHTM',
           'CHROME_LONG_NAME': 'Google Chrome',
           'CHROME_SHORT_NAME': 'Chrome',
           'CHROME_UPDATE_REGISTRY_SUBKEY': (
@@ -150,6 +176,8 @@ class VariableExpander:
           'CHROME_CLIENT_STATE_KEY': (
             'Software\\Google\\Update\\ClientState\\'
             '{8A69D345-D564-463c-AFF1-A69D9E530F96}'),
+          'CHROME_TOAST_ACTIVATOR_CLSID': (
+            '{A2C6CB58-C076-425C-ACB7-6D19D64428CD}'),
           'CHROME_DIR_BETA': 'Google\\Chrome Beta',
           'CHROME_DIR_DEV': 'Google\\Chrome Dev',
           'CHROME_DIR_SXS': 'Google\\Chrome SxS',
@@ -170,7 +198,13 @@ class VariableExpander:
             '{4ea16ac7-fd5a-47c3-875b-dbf4a2008c20}'),
           'LAUNCHER_UPDATE_REGISTRY_SUBKEY': (
             'Software\\Google\\Update\\Clients\\'
-            '{FDA71E6F-AC4C-4a00-8B70-9958A68906BF}')
+            '{FDA71E6F-AC4C-4a00-8B70-9958A68906BF}'),
+          'CHROME_TOAST_ACTIVATOR_CLSID_BETA': (
+            '{B89B137F-96AA-4AE2-98C4-6373EAA1EA4D}'),
+          'CHROME_TOAST_ACTIVATOR_CLSID_DEV': (
+            '{F01C03EB-D431-4C83-8D7A-902771E732FA}'),
+          'CHROME_TOAST_ACTIVATOR_CLSID_SXS': (
+            '{FA372A6E-149F-4E95-832D-8F698D40AD7F}'),
       })
     elif mini_installer_product_name == 'Chromium Installer':
       self._variable_mapping.update({
@@ -182,6 +216,8 @@ class VariableExpander:
           'CHROME_SHORT_NAME': 'Chromium',
           'CHROME_UPDATE_REGISTRY_SUBKEY': 'Software\\Chromium',
           'CHROME_CLIENT_STATE_KEY': 'Software\\Chromium',
+          'CHROME_TOAST_ACTIVATOR_CLSID': (
+            '{635EFA6F-08D6-4EC9-BD14-8A0FDE975159}'),
       })
     else:
       raise KeyError("Unknown mini_installer product name '%s'" %

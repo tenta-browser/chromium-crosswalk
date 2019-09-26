@@ -110,6 +110,11 @@ class OAuth2TokenService {
     virtual void OnStartBatchChanges() {}
     // Sent after a batch of refresh token changes is done.
     virtual void OnEndBatchChanges() {}
+    // Called when the authentication error state for |account_id| has changed.
+    // Note: It is always called after |OnRefreshTokenAvailable| when refresh
+    // token is updated. It is not called when the refresh token is revoked.
+    virtual void OnAuthErrorChanged(const std::string& account_id,
+                                    const GoogleServiceAuthError& auth_error) {}
 
    protected:
     virtual ~Observer() {}
@@ -123,7 +128,7 @@ class OAuth2TokenService {
     // Called when receiving request for access token.
     virtual void OnAccessTokenRequested(const std::string& account_id,
                                         const std::string& consumer_id,
-                                        const ScopeSet& scopes) = 0;
+                                        const ScopeSet& scopes) {}
     // Called when access token fetching finished successfully or
     // unsuccessfully. |expiration_time| are only valid with
     // successful completion.
@@ -131,9 +136,9 @@ class OAuth2TokenService {
                                             const std::string& consumer_id,
                                             const ScopeSet& scopes,
                                             GoogleServiceAuthError error,
-                                            base::Time expiration_time) = 0;
+                                            base::Time expiration_time) {}
     virtual void OnTokenRemoved(const std::string& account_id,
-                                const ScopeSet& scopes) = 0;
+                                const ScopeSet& scopes) {}
   };
 
   explicit OAuth2TokenService(
@@ -186,9 +191,13 @@ class OAuth2TokenService {
   // |StartRequest| will result in a Consumer::OnGetTokenFailure callback.
   bool RefreshTokenIsAvailable(const std::string& account_id) const;
 
-  // Returns true if a refresh token exists for |account_id| and it is in an
-  // error state.
+  // Returns true if a refresh token exists for |account_id| and it is in a
+  // persistent error state.
   bool RefreshTokenHasError(const std::string& account_id) const;
+
+  // Returns the auth error associated with |account_id|. Only persistent errors
+  // will be returned.
+  GoogleServiceAuthError GetAuthError(const std::string& account_id) const;
 
   // This method cancels all token requests, revoke all refresh tokens and
   // cached access tokens.
@@ -342,15 +351,10 @@ class OAuth2TokenService {
       const ScopeSet& scopes,
       Consumer* consumer);
 
-  // Returns true if GetCacheEntry would return a valid cache entry for the
-  // given scopes.
-  bool HasCacheEntry(const RequestParameters& client_scopes);
-
-  // Posts a task to fire the Consumer callback with the cached token.  Must
-  // Must only be called if HasCacheEntry() returns true.
-  void StartCacheLookupRequest(RequestImpl* request,
-                               const RequestParameters& client_scopes,
-                               Consumer* consumer);
+  // Posts a task to fire the Consumer callback with the cached token.
+  void InformConsumerWithCacheEntry(const CacheEntry* cache_entry,
+                                    RequestImpl* request,
+                                    const RequestParameters& client_scopes);
 
   // Returns a currently valid OAuth2 access token for the given set of scopes,
   // or NULL if none have been cached. Note the user of this method should

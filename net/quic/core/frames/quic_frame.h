@@ -11,12 +11,17 @@
 #include "net/quic/core/frames/quic_ack_frame.h"
 #include "net/quic/core/frames/quic_blocked_frame.h"
 #include "net/quic/core/frames/quic_connection_close_frame.h"
-#include "net/quic/core/frames/quic_frame.h"
 #include "net/quic/core/frames/quic_goaway_frame.h"
+#include "net/quic/core/frames/quic_ietf_blocked_frame.h"
+#include "net/quic/core/frames/quic_ietf_max_stream_id_frame.h"
+#include "net/quic/core/frames/quic_ietf_stream_id_blocked_frame.h"
 #include "net/quic/core/frames/quic_mtu_discovery_frame.h"
 #include "net/quic/core/frames/quic_padding_frame.h"
+#include "net/quic/core/frames/quic_path_challenge_frame.h"
+#include "net/quic/core/frames/quic_path_response_frame.h"
 #include "net/quic/core/frames/quic_ping_frame.h"
 #include "net/quic/core/frames/quic_rst_stream_frame.h"
+#include "net/quic/core/frames/quic_stop_sending_frame.h"
 #include "net/quic/core/frames/quic_stop_waiting_frame.h"
 #include "net/quic/core/frames/quic_stream_frame.h"
 #include "net/quic/core/frames/quic_window_update_frame.h"
@@ -88,6 +93,10 @@ GetControlFrameId(const QuicFrame& frame);
 // Sets control_frame_id of |frame| to |control_frame_id|.
 QUIC_EXPORT_PRIVATE void SetControlFrameId(QuicControlFrameId control_frame_id,
                                            QuicFrame* frame);
+
+// Returns a copy of |frame|.
+QUIC_EXPORT_PRIVATE QuicFrame
+CopyRetransmittableControlFrame(const QuicFrame& frame);
 
 }  // namespace net
 

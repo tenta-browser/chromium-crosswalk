@@ -10,6 +10,7 @@
 #include "chrome/browser/ui/browser_window.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/test/base/in_process_browser_test.h"
+#include "chrome/test/views/scoped_macviews_browser_mode.h"
 #include "components/autofill/core/browser/suggestion.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -38,6 +39,7 @@ class MockAutofillPopupViewDelegate : public AutofillPopupViewDelegate {
   MOCK_CONST_METHOD0(IsRTL, bool());
   MOCK_METHOD0(GetSuggestions, const std::vector<autofill::Suggestion>());
 #if !defined(OS_ANDROID)
+  MOCK_METHOD1(SetTypesetter, void(gfx::Typesetter typesetter));
   MOCK_METHOD1(GetElidedValueWidthForRow, int(int));
   MOCK_METHOD1(GetElidedLabelWidthForRow, int(int));
 #endif
@@ -79,6 +81,7 @@ class AutofillPopupBaseViewTest : public InProcessBrowserTest {
   }
 
  protected:
+  test::ScopedMacViewsBrowserMode views_mode_{true};
   testing::NiceMock<MockAutofillPopupViewDelegate> mock_delegate_;
   AutofillPopupBaseView* view_;
 };

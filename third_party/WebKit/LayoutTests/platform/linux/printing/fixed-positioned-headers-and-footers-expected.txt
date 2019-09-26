@@ -1,6 +1,6 @@
-layer at (0,0) size 1046x799 scrollHeight 2685
+layer at (0,0) size 800x600 scrollHeight 2685
   LayoutView at (0,0) size 1046x799
-layer at (0,0) size 1046x2685 backgroundClip at (0,0) size 1046x799 clip at (0,0) size 1046x799
+layer at (0,0) size 1046x2685 backgroundClip at (0,0) size 800x600 clip at (0,0) size 800x600
   LayoutBlockFlow {HTML} at (0,0) size 1046x2685
     LayoutBlockFlow {BODY} at (8,16) size 1030x2653
       LayoutBlockFlow {P} at (0,0) size 1030x20
@@ -233,11 +233,11 @@ layer at (8,0) size 516x38
           text run at (0,0) width 516: "crbug.com/303728: Fixed-position header Line should be repeated on every page."
 layer at (8,28) size 516x2 clip at (0,0) size 0x0
   LayoutBlockFlow {HR} at (0,28) size 516x2 [border: (1px inset #EEEEEE)]
-layer at (8,761) size 420x38
+layer at (8,761) size 420x38 backgroundClip at (0,0) size 800x600 clip at (0,0) size 800x600
   LayoutBlockFlow (positioned) {DIV} at (8,761) size 420x38
     LayoutBlockFlow {DIV} at (0,8) size 420x30
       LayoutBlockFlow (anonymous) at (0,10) size 420x20
         LayoutText {#text} at (0,0) size 420x19
           text run at (0,0) width 420: "crbug.com/303728: Footer Line should be repeated on every page."
-layer at (8,769) size 420x2 clip at (0,0) size 0x0
+layer at (8,769) size 420x2 backgroundClip at (0,0) size 0x0 clip at (0,0) size 0x0
   LayoutBlockFlow {HR} at (0,0) size 420x2 [border: (1px inset #EEEEEE)]

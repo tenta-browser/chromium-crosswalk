@@ -6,12 +6,12 @@
 
 #include "content/public/renderer/media_stream_renderer_factory.h"
 #include "media/base/renderer_factory.h"
-#include "third_party/WebKit/public/platform/WebAudioDevice.h"
-#include "third_party/WebKit/public/platform/WebMediaStreamCenter.h"
-#include "third_party/WebKit/public/platform/WebRTCPeerConnectionHandler.h"
-#include "third_party/WebKit/public/platform/WebSocketHandshakeThrottle.h"
-#include "third_party/WebKit/public/platform/WebSpeechSynthesizer.h"
-#include "third_party/WebKit/public/platform/modules/webmidi/WebMIDIAccessor.h"
+#include "third_party/blink/public/platform/modules/webmidi/web_midi_accessor.h"
+#include "third_party/blink/public/platform/web_audio_device.h"
+#include "third_party/blink/public/platform/web_media_stream_center.h"
+#include "third_party/blink/public/platform/web_rtc_peer_connection_handler.h"
+#include "third_party/blink/public/platform/web_socket_handshake_throttle.h"
+#include "third_party/blink/public/platform/web_speech_synthesizer.h"
 #include "ui/gfx/icc_profile.h"
 #include "url/gurl.h"
 
@@ -89,6 +89,12 @@ ContentRendererClient::OverrideSpeechSynthesizer(
   return nullptr;
 }
 
+void ContentRendererClient::PostIOThreadCreated(
+    base::SingleThreadTaskRunner* io_thread_task_runner) {}
+
+void ContentRendererClient::PostCompositorThreadCreated(
+    base::SingleThreadTaskRunner* compositor_thread_task_runner) {}
+
 bool ContentRendererClient::RunIdleHandlerWhenWidgetsHidden() {
   return true;
 }
@@ -128,14 +134,12 @@ bool ContentRendererClient::ShouldFork(blink::WebLocalFrame* frame,
   return false;
 }
 
-bool ContentRendererClient::WillSendRequest(
-    blink::WebLocalFrame* frame,
-    ui::PageTransition transition_type,
-    const blink::WebURL& url,
-    std::vector<std::unique_ptr<URLLoaderThrottle>>* throttles,
-    GURL* new_url) {
-  return false;
-}
+void ContentRendererClient::WillSendRequest(blink::WebLocalFrame* frame,
+                                            ui::PageTransition transition_type,
+                                            const blink::WebURL& url,
+                                            const url::Origin* initiator_origin,
+                                            GURL* new_url,
+                                            bool* attach_same_site_cookies) {}
 
 bool ContentRendererClient::IsPrefetchOnly(
     RenderFrame* render_frame,
@@ -165,6 +169,11 @@ bool ContentRendererClient::ShouldOverridePageVisibilityState(
 
 bool ContentRendererClient::IsExternalPepperPlugin(
     const std::string& module_name) {
+  return false;
+}
+
+bool ContentRendererClient::IsOriginIsolatedPepperPlugin(
+    const base::FilePath& plugin_path) {
   return false;
 }
 
@@ -206,10 +215,6 @@ bool ContentRendererClient::ShouldReportDetailedMessageForSource(
   return false;
 }
 
-bool ContentRendererClient::ShouldGatherSiteIsolationStats() const {
-  return true;
-}
-
 std::unique_ptr<blink::WebContentSettingsClient>
 ContentRendererClient::CreateWorkerContentSettingsClient(
     RenderFrame* render_frame) {
@@ -231,6 +236,7 @@ bool ContentRendererClient::IsPluginAllowedToUseDevChannelAPIs() {
 
 BrowserPluginDelegate* ContentRendererClient::CreateBrowserPluginDelegate(
     RenderFrame* render_frame,
+    const WebPluginInfo& info,
     const std::string& mime_type,
     const GURL& original_url) {
   return nullptr;
@@ -255,9 +261,20 @@ bool ContentRendererClient::AllowIdleMediaSuspend() {
 
 bool ContentRendererClient::OverrideLegacySymantecCertConsoleMessage(
     const GURL& url,
-    base::Time cert_expiration,
     std::string* console_messsage) {
   return false;
+}
+
+std::unique_ptr<URLLoaderThrottleProvider>
+ContentRendererClient::CreateURLLoaderThrottleProvider(
+    URLLoaderThrottleProviderType provider_type) {
+  return nullptr;
+}
+
+blink::WebFrame* ContentRendererClient::FindFrame(
+    blink::WebLocalFrame* relative_to_frame,
+    const std::string& name) {
+  return nullptr;
 }
 
 }  // namespace content
