@@ -5,7 +5,7 @@
 
 #import <LocalAuthentication/LocalAuthentication.h>
 
-#import "base/logging.h"
+#include "base/logging.h"
 #include "base/metrics/histogram_macros.h"
 #include "components/password_manager/core/browser/password_manager_metrics_util.h"
 
@@ -41,7 +41,7 @@ constexpr char kPasscodeArticleURL[] = "https://support.apple.com/HT204060";
 
 - (BOOL)canAttemptReauth {
   LAContext* context = _createLAContext();
-  // The authentication method is Touch ID or passcode.
+  // The authentication method is Touch ID, Face ID or passcode.
   return
       [context canEvaluatePolicy:LAPolicyDeviceOwnerAuthentication error:nil];
 }

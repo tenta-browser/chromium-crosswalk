@@ -17,7 +17,6 @@
 #include "chromeos/account_manager/account_manager.h"
 #include "chromeos/account_manager/account_manager_factory.h"
 #include "components/signin/core/browser/account_tracker_service.h"
-#include "google_apis/gaia/gaia_constants.h"
 #include "google_apis/gaia/gaia_urls.h"
 #include "services/network/public/cpp/shared_url_loader_factory.h"
 
@@ -45,7 +44,7 @@ class SigninHelper : public GaiaAuthConsumer {
         close_dialog_closure_(close_dialog_closure),
         email_(email),
         gaia_auth_fetcher_(this,
-                           GaiaConstants::kChromeSource,
+                           gaia::GaiaSource::kChrome,
                            url_loader_factory) {
     account_key_ = chromeos::AccountManager::AccountKey{
         gaia_id, chromeos::account_manager::AccountType::ACCOUNT_TYPE_GAIA};
@@ -125,8 +124,7 @@ void InlineLoginHandlerChromeOS::CompleteLogin(const std::string& email,
                                                bool skip_for_now,
                                                bool trusted,
                                                bool trusted_found,
-                                               bool choose_what_to_sync,
-                                               const std::string& session_index) {
+                                               bool choose_what_to_sync) {
   CHECK(!auth_code.empty());
   CHECK(!gaia_id.empty());
   CHECK(!email.empty());

@@ -7,15 +7,17 @@
 #include <utility>
 
 #include "base/bind.h"
+#include "base/task/post_task.h"
+#include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
 #include "net/base/address_list.h"
 #include "net/base/ip_endpoint.h"
 #include "net/base/net_errors.h"
 #include "net/base/network_change_notifier.h"
 #include "net/dns/dns_client.h"
-#include "net/dns/dns_protocol.h"
 #include "net/dns/dns_response.h"
 #include "net/dns/dns_transaction.h"
+#include "net/dns/public/dns_protocol.h"
 #include "net/log/net_log_with_source.h"
 
 using base::TimeDelta;
@@ -97,9 +99,9 @@ void DnsProbeRunner::RunProbe(const base::Closure& callback) {
     // If the DnsTransactionFactory is NULL, then the DnsConfig is invalid, so
     // the runner can't run a transaction.  Return UNKNOWN asynchronously.
     result_ = UNKNOWN;
-    BrowserThread::PostTask(BrowserThread::IO, FROM_HERE,
-                            base::BindOnce(&DnsProbeRunner::CallCallback,
-                                           weak_factory_.GetWeakPtr()));
+    base::PostTaskWithTraits(FROM_HERE, {BrowserThread::IO},
+                             base::BindOnce(&DnsProbeRunner::CallCallback,
+                                            weak_factory_.GetWeakPtr()));
     return;
   }
 
@@ -127,9 +129,9 @@ void DnsProbeRunner::OnTransactionComplete(
   result_ = EvaluateResponse(net_error, response);
   transaction_.reset();
 
-  BrowserThread::PostTask(BrowserThread::IO, FROM_HERE,
-                          base::BindOnce(&DnsProbeRunner::CallCallback,
-                                         weak_factory_.GetWeakPtr()));
+  base::PostTaskWithTraits(FROM_HERE, {BrowserThread::IO},
+                           base::BindOnce(&DnsProbeRunner::CallCallback,
+                                          weak_factory_.GetWeakPtr()));
 }
 
 void DnsProbeRunner::CallCallback() {

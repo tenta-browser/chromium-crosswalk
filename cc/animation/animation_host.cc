@@ -12,7 +12,7 @@
 #include "base/memory/ptr_util.h"
 #include "base/stl_util.h"
 #include "base/trace_event/trace_event.h"
-#include "base/trace_event/trace_event_argument.h"
+#include "base/trace_event/traced_value.h"
 #include "cc/animation/animation.h"
 #include "cc/animation/animation_delegate.h"
 #include "cc/animation/animation_events.h"
@@ -158,10 +158,17 @@ void AnimationHost::UnregisterKeyframeEffectForElement(
   scoped_refptr<ElementAnimations> element_animations =
       GetElementAnimationsForElementId(element_id);
   DCHECK(element_animations);
+
+  // |ClearAffectedElementTypes| requires an ElementId map in order to update
+  // the property trees. Generating that map requires walking the keyframe
+  // effects, so we have to do it before removing this one.
+  PropertyToElementIdMap element_id_map =
+      element_animations->GetPropertyToElementIdMap();
+
   element_animations->RemoveKeyframeEffect(keyframe_effect);
 
   if (element_animations->IsEmpty()) {
-    element_animations->ClearAffectedElementTypes();
+    element_animations->ClearAffectedElementTypes(element_id_map);
     element_to_animations_map_.erase(element_animations->element_id());
     element_animations->SetAnimationHost(nullptr);
   }
@@ -279,7 +286,7 @@ bool AnimationHost::NeedsTickAnimations() const {
 bool AnimationHost::TickMutator(base::TimeTicks monotonic_time,
                                 const ScrollTree& scroll_tree,
                                 bool is_active_tree) {
-  if (!mutator_ || !mutator_->HasAnimators())
+  if (!mutator_ || !mutator_->HasMutators())
     return false;
 
   std::unique_ptr<MutatorInputState> state = CollectWorkletAnimationsState(

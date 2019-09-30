@@ -118,7 +118,7 @@ class ProcessManager : public KeyedService,
   // Returns the extension associated with the main frame of the given
   // |web_contents|, or null if there isn't one.
   const Extension* GetExtensionForWebContents(
-      const content::WebContents* web_contents);
+      content::WebContents* web_contents);
 
   // Getter and setter for the lazy background page's keepalive count. This is
   // the count of how many outstanding "things" are keeping the page alive.
@@ -168,7 +168,7 @@ class ProcessManager : public KeyedService,
   // EventPageTracker implementation.
   bool IsEventPageSuspended(const std::string& extension_id) override;
   bool WakeEventPage(const std::string& extension_id,
-                     const base::Callback<void(bool)>& callback) override;
+                     base::OnceCallback<void(bool)> callback) override;
 
   // Sets the time in milliseconds that an extension event page can
   // be idle before it is shut down; must be > 0.

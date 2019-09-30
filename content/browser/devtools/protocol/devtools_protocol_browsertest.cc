@@ -11,9 +11,10 @@
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/command_line.h"
+#include "base/json/json_reader.h"
 #include "base/logging.h"
 #include "base/strings/stringprintf.h"
-#include "base/sys_info.h"
+#include "base/system/sys_info.h"
 #include "base/values.h"
 #include "build/build_config.h"
 #include "components/download/public/common/download_file_factory.h"
@@ -55,6 +56,7 @@
 #include "third_party/skia/include/core/SkBitmap.h"
 #include "third_party/skia/include/core/SkColor.h"
 #include "ui/base/layout.h"
+#include "ui/base/ui_base_features.h"
 #include "ui/compositor/compositor_switches.h"
 #include "ui/gfx/codec/jpeg_codec.h"
 #include "ui/gfx/codec/png_codec.h"
@@ -242,7 +244,8 @@ IN_PROC_BROWSER_TEST_F(SyntheticKeyEventTest, KeyEventSynthesizeKey) {
   EXPECT_EQ("\"Escape\"", key);
 }
 
-IN_PROC_BROWSER_TEST_F(SyntheticKeyEventTest, KeyboardEventAck) {
+// Flaky: https://crbug.com/889878
+IN_PROC_BROWSER_TEST_F(SyntheticKeyEventTest, DISABLED_KeyboardEventAck) {
   NavigateToURLBlockUntilNavigationsComplete(shell(), GURL("about:blank"), 1);
   Attach();
   ASSERT_TRUE(content::ExecuteScript(
@@ -499,6 +502,9 @@ class CaptureScreenshotTest : public DevToolsProtocolTest {
 };
 
 IN_PROC_BROWSER_TEST_F(CaptureScreenshotTest, CaptureScreenshot) {
+  // TODO(crbug.com/877172): CopyOutputRequests not allowed.
+  if (features::IsSingleProcessMash())
+    return;
   // This test fails consistently on low-end Android devices.
   // See crbug.com/653637.
   // TODO(eseckler): Reenable with error limit if necessary.
@@ -521,6 +527,9 @@ IN_PROC_BROWSER_TEST_F(CaptureScreenshotTest, CaptureScreenshot) {
 }
 
 IN_PROC_BROWSER_TEST_F(CaptureScreenshotTest, CaptureScreenshotJpeg) {
+  // TODO(crbug.com/877172): CopyOutputRequests not allowed.
+  if (features::IsSingleProcessMash())
+    return;
   // This test fails consistently on low-end Android devices.
   // See crbug.com/653637.
   // TODO(eseckler): Reenable with error limit if necessary.
@@ -575,6 +584,9 @@ IN_PROC_BROWSER_TEST_F(CaptureScreenshotTest,
 // of a page that does not specify one.
 IN_PROC_BROWSER_TEST_F(CaptureScreenshotTest,
                        SetDefaultBackgroundColorOverride) {
+  // TODO(crbug.com/877172): CopyOutputRequests not allowed.
+  if (features::IsSingleProcessMash())
+    return;
   if (base::SysInfo::IsLowEndDevice())
     return;
 
@@ -615,6 +627,9 @@ IN_PROC_BROWSER_TEST_F(CaptureScreenshotTest,
 // and semi-transparent background, and that setDeviceMetricsOverride doesn't
 // affect it.
 IN_PROC_BROWSER_TEST_F(CaptureScreenshotTest, TransparentScreenshots) {
+  // TODO(crbug.com/877172): CopyOutputRequests not allowed.
+  if (features::IsSingleProcessMash())
+    return;
   if (base::SysInfo::IsLowEndDevice())
     return;
 
@@ -1349,6 +1364,48 @@ IN_PROC_BROWSER_TEST_F(DevToolsProtocolTest, CertificateError) {
   shell()->LoadURL(test_url);
   WaitForNotification("Network.loadingFinished", true);
   continue_observer2.Wait();
+  EXPECT_EQ(test_url, shell()
+                          ->web_contents()
+                          ->GetController()
+                          .GetLastCommittedEntry()
+                          ->GetURL());
+}
+
+IN_PROC_BROWSER_TEST_F(DevToolsProtocolTest,
+                       CertificateErrorRequestInterception) {
+  net::EmbeddedTestServer https_server(net::EmbeddedTestServer::TYPE_HTTPS);
+  https_server.SetSSLConfig(net::EmbeddedTestServer::CERT_EXPIRED);
+  https_server.ServeFilesFromSourceDirectory("content/test/data");
+  ASSERT_TRUE(https_server.Start());
+  GURL test_url = https_server.GetURL("/devtools/navigation.html");
+
+  shell()->LoadURL(GURL("about:blank"));
+  WaitForLoadStop(shell()->web_contents());
+
+  Attach();
+  SendCommand("Network.enable", nullptr, true);
+  SendCommand("Security.enable", nullptr, false);
+  SendCommand(
+      "Network.setRequestInterception",
+      base::JSONReader::Read("{\"patterns\": [{\"urlPattern\": \"*\"}]}"),
+      true);
+
+  SendCommand("Security.setIgnoreCertificateErrors",
+              base::JSONReader::Read("{\"ignore\": true}"), true);
+
+  SendCommand("Network.clearBrowserCache", nullptr, true);
+  SendCommand("Network.clearBrowserCookies", nullptr, true);
+  TestNavigationObserver continue_observer(shell()->web_contents(), 1);
+  shell()->LoadURL(test_url);
+  std::unique_ptr<base::DictionaryValue> params =
+      WaitForNotification("Network.requestIntercepted", false);
+  std::string interceptionId;
+  EXPECT_TRUE(params->GetString("interceptionId", &interceptionId));
+  SendCommand("Network.continueInterceptedRequest",
+              base::JSONReader::Read("{\"interceptionId\": \"" +
+                                     interceptionId + "\"}"),
+              false);
+  continue_observer.Wait();
   EXPECT_EQ(test_url, shell()
                           ->web_contents()
                           ->GetController()

@@ -17,13 +17,14 @@ namespace ash {
 namespace {
 
 // The number of non-Search-based accelerators.
-constexpr int kNonSearchAcceleratorsNum = 88;
+constexpr int kNonSearchAcceleratorsNum = 89;
 // The hash of non-Search-based accelerators. See HashAcceleratorData().
 constexpr char kNonSearchAcceleratorsHash[] =
-    "3543d8dba556b432db56a383e35df6fb";
+    "bb35892635c794d78a20ff5f8a051aab";
 
 struct Cmp {
-  bool operator()(const AcceleratorData& lhs, const AcceleratorData& rhs) {
+  bool operator()(const AcceleratorData& lhs,
+                  const AcceleratorData& rhs) const {
     // Do not check |action|.
     return std::tie(lhs.trigger_on_press, lhs.keycode, lhs.modifiers) <
            std::tie(rhs.trigger_on_press, rhs.keycode, rhs.modifiers);

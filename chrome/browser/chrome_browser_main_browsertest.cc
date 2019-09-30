@@ -9,13 +9,13 @@
 #include "base/command_line.h"
 #include "base/macros.h"
 #include "base/run_loop.h"
+#include "base/test/scoped_feature_list.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/chrome_browser_main_extra_parts.h"
 #include "chrome/test/base/in_process_browser_test.h"
 #include "components/variations/service/variations_service.h"
 #include "components/variations/variations_switches.h"
-#include "net/base/mock_network_change_notifier.h"
-#include "net/base/network_change_notifier_factory.h"
+#include "content/public/test/network_connection_change_simulator.h"
 
 // Friend of ChromeBrowserMainPartsTestApi to poke at internal state.
 class ChromeBrowserMainPartsTestApi {
@@ -36,44 +36,40 @@ class ChromeBrowserMainPartsTestApi {
 
 namespace {
 
-// ChromeBrowserMainExtraParts used to install a MockNetworkChangeNotifier.
+// ChromeBrowserMainExtraParts is used to initialize the network state.
 class ChromeBrowserMainExtraPartsNetFactoryInstaller
     : public ChromeBrowserMainExtraParts {
  public:
-  ChromeBrowserMainExtraPartsNetFactoryInstaller() = default;
-  ~ChromeBrowserMainExtraPartsNetFactoryInstaller() override {
-    // |network_change_notifier_| needs to be destroyed before |net_installer_|.
-    network_change_notifier_.reset();
-  }
-
-  net::test::MockNetworkChangeNotifier* network_change_notifier() {
-    return network_change_notifier_.get();
+  explicit ChromeBrowserMainExtraPartsNetFactoryInstaller(
+      content::NetworkConnectionChangeSimulator* network_change_simulator)
+      : network_change_simulator_(network_change_simulator) {
+    EXPECT_TRUE(network_change_simulator_);
   }
 
   // ChromeBrowserMainExtraParts:
   void PreEarlyInitialization() override {}
-  void PostMainMessageLoopStart() override {
-    ASSERT_TRUE(net::NetworkChangeNotifier::HasNetworkChangeNotifier());
-    net_installer_ =
-        std::make_unique<net::NetworkChangeNotifier::DisableForTest>();
-    network_change_notifier_ =
-        std::make_unique<net::test::MockNetworkChangeNotifier>();
-    network_change_notifier_->SetConnectionType(
-        net::NetworkChangeNotifier::CONNECTION_NONE);
+  void ServiceManagerConnectionStarted(
+      content::ServiceManagerConnection* connection) override {
+    network_change_simulator_->SetConnectionType(
+        network::mojom::ConnectionType::CONNECTION_NONE);
   }
 
  private:
-  std::unique_ptr<net::test::MockNetworkChangeNotifier>
-      network_change_notifier_;
-  std::unique_ptr<net::NetworkChangeNotifier::DisableForTest> net_installer_;
+  content::NetworkConnectionChangeSimulator* network_change_simulator_ =
+      nullptr;
 
   DISALLOW_COPY_AND_ASSIGN(ChromeBrowserMainExtraPartsNetFactoryInstaller);
 };
 
 class ChromeBrowserMainBrowserTest : public InProcessBrowserTest {
  public:
-  ChromeBrowserMainBrowserTest() = default;
-  ~ChromeBrowserMainBrowserTest() override = default;
+  ChromeBrowserMainBrowserTest() {
+    net::NetworkChangeNotifier::SetTestNotificationsOnly(true);
+    // Since the test currently performs an actual request to localhost (which
+    // is expected to fail since no variations server is running), retries are
+    // disabled to prevent race conditions from causing flakiness in tests.
+    scoped_feature_list_.InitAndDisableFeature(variations::kHttpRetryFeature);
+  }
 
  protected:
   // InProcessBrowserTest:
@@ -91,30 +87,37 @@ class ChromeBrowserMainBrowserTest : public InProcessBrowserTest {
         static_cast<ChromeBrowserMainParts*>(browser_main_parts);
     ChromeBrowserMainPartsTestApi(chrome_browser_main_parts)
         .EnableVariationsServiceInit();
-    extra_parts_ = new ChromeBrowserMainExtraPartsNetFactoryInstaller();
+    network_change_simulator_ =
+        std::make_unique<content::NetworkConnectionChangeSimulator>();
+    extra_parts_ = new ChromeBrowserMainExtraPartsNetFactoryInstaller(
+        network_change_simulator_.get());
     chrome_browser_main_parts->AddParts(extra_parts_);
   }
 
+  std::unique_ptr<content::NetworkConnectionChangeSimulator>
+      network_change_simulator_;
   ChromeBrowserMainExtraPartsNetFactoryInstaller* extra_parts_ = nullptr;
+
+ private:
+  base::test::ScopedFeatureList scoped_feature_list_;
 
   DISALLOW_COPY_AND_ASSIGN(ChromeBrowserMainBrowserTest);
 };
 
 // Verifies VariationsService does a request when network status changes from
 // none to connected. This is a regression test for https://crbug.com/826930.
+// TODO(crbug.com/905714): This test should use a mock variations server
+// instead of performing an actual request.
 IN_PROC_BROWSER_TEST_F(ChromeBrowserMainBrowserTest,
                        VariationsServiceStartsRequestOnNetworkChange) {
   const int initial_request_count =
       g_browser_process->variations_service()->request_count();
   ASSERT_TRUE(extra_parts_);
-  extra_parts_->network_change_notifier()->SetConnectionType(
-      net::NetworkChangeNotifier::CONNECTION_WIFI);
-  net::NetworkChangeNotifier::NotifyObserversOfNetworkChangeForTests(
-      net::NetworkChangeNotifier::CONNECTION_WIFI);
+  network_change_simulator_->SetConnectionType(
+      network::mojom::ConnectionType::CONNECTION_WIFI);
   // NotifyObserversOfNetworkChangeForTests uses PostTask, so run the loop until
   // idle to ensure VariationsService processes the network change.
-  base::RunLoop run_loop;
-  run_loop.RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   const int final_request_count =
       g_browser_process->variations_service()->request_count();
   EXPECT_EQ(initial_request_count + 1, final_request_count);

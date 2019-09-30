@@ -5,25 +5,24 @@
 package org.chromium.chrome.browser.preferences;
 
 import android.content.Context;
-import android.content.Intent;
 import android.os.Bundle;
 import android.preference.PreferenceFragment;
 import android.support.annotation.Nullable;
 import android.text.SpannableString;
 import android.text.style.ImageSpan;
 
-import org.chromium.base.VisibleForTesting;
 import org.chromium.base.metrics.RecordUserAction;
 import org.chromium.chrome.R;
+import org.chromium.chrome.browser.ChromeApplication;
 import org.chromium.chrome.browser.ChromeFeatureList;
 import org.chromium.chrome.browser.contextual_suggestions.ContextualSuggestionsBridge;
+import org.chromium.chrome.browser.contextual_suggestions.ContextualSuggestionsEnabledStateUtils;
 import org.chromium.chrome.browser.contextual_suggestions.EnabledStateMonitor;
 import org.chromium.chrome.browser.signin.AccountSigninActivity;
 import org.chromium.chrome.browser.signin.SigninAccessPoint;
 import org.chromium.chrome.browser.signin.SigninActivity;
 import org.chromium.chrome.browser.sync.ProfileSyncService;
 import org.chromium.chrome.browser.sync.ui.SyncCustomizationFragment;
-import org.chromium.chrome.browser.util.IntentUtils;
 import org.chromium.chrome.browser.widget.TintedDrawable;
 import org.chromium.components.signin.ChromeSigninController;
 import org.chromium.ui.text.NoUnderlineClickableSpan;
@@ -40,8 +39,6 @@ public class ContextualSuggestionsPreference
     private static final String PREF_CONTEXTUAL_SUGGESTIONS_MESSAGE =
             "contextual_suggestions_message";
 
-    private static EnabledStateMonitor sEnabledStateMonitorForTesting;
-
     private ChromeSwitchPreference mSwitch;
     private EnabledStateMonitor mEnabledStateMonitor;
 
@@ -52,9 +49,10 @@ public class ContextualSuggestionsPreference
         getActivity().setTitle(R.string.prefs_contextual_suggestions);
 
         mSwitch = (ChromeSwitchPreference) findPreference(PREF_CONTEXTUAL_SUGGESTIONS_SWITCH);
-        mEnabledStateMonitor = sEnabledStateMonitorForTesting != null
-                ? sEnabledStateMonitorForTesting
-                : new EnabledStateMonitor(this);
+        mEnabledStateMonitor =
+                ChromeApplication.getComponent().resolveContextualSuggestionsEnabledStateMonitor();
+        mEnabledStateMonitor.addObserver(this);
+        onSettingsStateChanged(mEnabledStateMonitor.getSettingsEnabled());
         initialize();
     }
 
@@ -67,7 +65,7 @@ public class ContextualSuggestionsPreference
     @Override
     public void onDestroy() {
         super.onDestroy();
-        mEnabledStateMonitor.destroy();
+        mEnabledStateMonitor.removeObserver(this);
     }
 
     @Override
@@ -95,18 +93,17 @@ public class ContextualSuggestionsPreference
             final NoUnderlineClickableSpan span = new NoUnderlineClickableSpan((widget) -> {
                 if (isUnifiedConsentEnabled) {
                     if (isSignedIn) {
-                        Intent intent = PreferencesLauncher.createIntentForSettingsPage(
-                                context, SyncAndServicesPreferences.class.getName());
-                        IntentUtils.safeStartActivity(context, intent);
+                        PreferencesLauncher.launchSettingsPage(context,
+                                SyncAndServicesPreferences.class,
+                                SyncAndServicesPreferences.createArguments(false));
                     } else {
                         startActivity(SigninActivity.createIntentForPromoChooseAccountFlow(
                                 context, SigninAccessPoint.SETTINGS, null));
                     }
                 } else {
                     if (isSignedIn) {
-                        Intent intent = PreferencesLauncher.createIntentForSettingsPage(
-                                context, SyncCustomizationFragment.class.getName());
-                        IntentUtils.safeStartActivity(context, intent);
+                        PreferencesLauncher.launchSettingsPage(
+                                context, SyncCustomizationFragment.class);
                     } else {
                         startActivity(AccountSigninActivity.createIntentForDefaultSigninFlow(
                                 context, SigninAccessPoint.SETTINGS, false));
@@ -144,7 +141,7 @@ public class ContextualSuggestionsPreference
             PrefServiceBridge.getInstance().setBoolean(
                     Pref.CONTEXTUAL_SUGGESTIONS_ENABLED, enabled);
 
-            EnabledStateMonitor.recordPreferenceEnabled(enabled);
+            ContextualSuggestionsEnabledStateUtils.recordPreferenceEnabled(enabled);
             if (enabled) {
                 RecordUserAction.record("ContextualSuggestions.Preference.Enabled");
             } else {
@@ -158,12 +155,7 @@ public class ContextualSuggestionsPreference
 
     /** Helper method to update the enabled state of the switch. */
     private void updateSwitch() {
-        mSwitch.setEnabled(EnabledStateMonitor.getSettingsEnabled());
-        mSwitch.setChecked(EnabledStateMonitor.getEnabledState());
-    }
-
-    @VisibleForTesting
-    static void setEnabledStateMonitorForTesting(EnabledStateMonitor monitor) {
-        sEnabledStateMonitorForTesting = monitor;
+        mSwitch.setEnabled(mEnabledStateMonitor.getSettingsEnabled());
+        mSwitch.setChecked(mEnabledStateMonitor.getEnabledState());
     }
 }

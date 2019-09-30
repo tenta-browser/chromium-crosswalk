@@ -62,6 +62,13 @@ public class CastWebContentsActivityTest {
     }
 
     @Test
+    public void testSetsVolumeControlStream() {
+        mActivityLifecycle.create();
+
+        assertEquals(AudioManager.STREAM_MUSIC, mActivity.getVolumeControlStream());
+    }
+
+    @Test
     public void testNewIntentAfterFinishLaunchesNewActivity() {
         mActivityLifecycle.create();
         mActivity.finishForTesting();
@@ -190,6 +197,26 @@ public class CastWebContentsActivityTest {
         mActivityLifecycle.create().start().resume();
         mActivityLifecycle.pause().userLeaving().stop();
         Assert.assertTrue(mShadowActivity.isFinishing());
+    }
+
+    @Test
+    public void testUserLeaveAndStopDestroysSurfaceHelper() {
+        CastWebContentsSurfaceHelper surfaceHelper = mock(CastWebContentsSurfaceHelper.class);
+        mActivity.setSurfaceHelperForTesting(surfaceHelper);
+        mActivityLifecycle.create().start().resume();
+        mActivityLifecycle.pause().userLeaving().stop();
+        verify(surfaceHelper).onDestroy();
+    }
+
+    @Test
+    public void testOnDestroyDestroysSurfaceHelper() {
+        CastWebContentsSurfaceHelper surfaceHelper = mock(CastWebContentsSurfaceHelper.class);
+        mActivity.setSurfaceHelperForTesting(surfaceHelper);
+        mActivityLifecycle.create().start().resume();
+        mActivityLifecycle.pause().stop();
+        verify(surfaceHelper, never()).onDestroy();
+        mActivityLifecycle.destroy();
+        verify(surfaceHelper).onDestroy();
     }
 
     @Test

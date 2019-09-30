@@ -61,6 +61,7 @@ class DevToolsURLInterceptorRequestJob : public net::URLRequestJob {
   void SetRequestHeadersCallback(net::RequestHeadersCallback callback) override;
   void SetResponseHeadersCallback(
       net::ResponseHeadersCallback callback) override;
+  void ContinueDespiteLastError() override;
 
   // Must be called on IO thread.
   void StopIntercepting();
@@ -134,8 +135,8 @@ class DevToolsURLInterceptorRequestJob : public net::URLRequestJob {
   void ProcessInterceptionResponse(
       std::unique_ptr<DevToolsNetworkInterceptor::Modifications> modification);
 
-  bool ProcessAuthResponse(
-      std::unique_ptr<DevToolsNetworkInterceptor::Modifications> modification);
+  void ProcessAuthResponse(
+      const DevToolsNetworkInterceptor::AuthChallengeResponse& response);
 
   enum class WaitingForUserResponse {
     NOT_WAITING,

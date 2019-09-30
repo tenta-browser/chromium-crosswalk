@@ -46,6 +46,12 @@ class ChromeDevToolsManagerDelegate : public content::DevToolsManagerDelegate {
   static bool AllowInspection(Profile* profile,
                               const extensions::Extension* extension);
 
+  // Resets |device_manager_|.
+  void ResetAndroidDeviceManagerForTesting();
+
+  std::vector<content::BrowserContext*> GetBrowserContexts() override;
+  content::BrowserContext* GetDefaultBrowserContext() override;
+
  private:
   friend class DevToolsManagerDelegateTest;
 
@@ -59,8 +65,6 @@ class ChromeDevToolsManagerDelegate : public content::DevToolsManagerDelegate {
   std::string GetTargetType(content::WebContents* web_contents) override;
   std::string GetTargetTitle(content::WebContents* web_contents) override;
 
-  std::vector<content::BrowserContext*> GetBrowserContexts() override;
-  content::BrowserContext* GetDefaultBrowserContext() override;
   content::BrowserContext* CreateBrowserContext() override;
   void DisposeBrowserContext(content::BrowserContext*,
                              DisposeCallback callback) override;

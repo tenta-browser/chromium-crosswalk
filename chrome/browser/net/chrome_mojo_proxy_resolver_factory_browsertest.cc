@@ -12,8 +12,10 @@
 #include "base/macros.h"
 #include "base/process/process.h"
 #include "base/run_loop.h"
+#include "base/task/post_task.h"
 #include "base/time/time.h"
 #include "chrome/test/base/in_process_browser_test.h"
+#include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/common/service_manager_connection.h"
 #include "mojo/public/cpp/bindings/binding.h"
@@ -143,7 +145,7 @@ class DumbProxyResolverFactoryRequestClient
   void OnError(int32_t line_number, const std::string& error) override {}
   void ResolveDns(
       std::unique_ptr<net::HostResolver::RequestInfo> request_info,
-      ::net::interfaces::HostResolverRequestClientPtr client) override {}
+      proxy_resolver::mojom::HostResolverRequestClientPtr client) override {}
 
   proxy_resolver::mojom::ProxyResolverPtr resolver_;
   mojo::Binding<proxy_resolver::mojom::ProxyResolverFactoryRequestClient>
@@ -200,9 +202,9 @@ IN_PROC_BROWSER_TEST_F(ChromeMojoProxyResolverFactoryBrowserTest,
   // Wait a little bit and check it's still running.
   {
     base::RunLoop run_loop;
-    content::BrowserThread::PostDelayedTask(content::BrowserThread::UI,
-                                            FROM_HERE, run_loop.QuitClosure(),
-                                            kServiceShutdownTimeout);
+    base::PostDelayedTaskWithTraits(FROM_HERE, {content::BrowserThread::UI},
+                                    run_loop.QuitClosure(),
+                                    kServiceShutdownTimeout);
     run_loop.Run();
   }
   ASSERT_TRUE(listener()->service_running());
@@ -243,9 +245,9 @@ IN_PROC_BROWSER_TEST_F(ChromeMojoProxyResolverFactoryBrowserTest,
   // Wait a little bit and check it's still running.
   {
     base::RunLoop run_loop;
-    content::BrowserThread::PostDelayedTask(content::BrowserThread::UI,
-                                            FROM_HERE, run_loop.QuitClosure(),
-                                            kServiceShutdownTimeout);
+    base::PostDelayedTaskWithTraits(FROM_HERE, {content::BrowserThread::UI},
+                                    run_loop.QuitClosure(),
+                                    kServiceShutdownTimeout);
     run_loop.Run();
   }
   ASSERT_TRUE(listener()->service_running());

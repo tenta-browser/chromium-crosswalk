@@ -9,14 +9,15 @@
 #include "base/command_line.h"
 #include "base/containers/flat_set.h"
 #include "base/location.h"
-#include "base/memory/ptr_util.h"
 #include "base/single_thread_task_runner.h"
+#include "base/stl_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "base/trace_event/trace_event.h"
 #include "third_party/skia/include/core/SkPath.h"
+#include "ui/accessibility/platform/atk_util_auralinux.h"
 #include "ui/aura/client/aura_constants.h"
 #include "ui/aura/client/cursor_client.h"
 #include "ui/aura/client/focus_client.h"
@@ -44,7 +45,6 @@
 #include "ui/gfx/geometry/size_conversions.h"
 #include "ui/gfx/image/image_skia.h"
 #include "ui/gfx/image/image_skia_rep.h"
-#include "ui/gfx/path.h"
 #include "ui/gfx/path_x11.h"
 #include "ui/gfx/x/x11.h"
 #include "ui/gfx/x/x11_atom_cache.h"
@@ -223,7 +223,6 @@ void DesktopWindowTreeHostX11::AfterActivationStateChanged() {
 
   if (!was_active_ && IsActive()) {
     FlashFrame(false);
-    OnHostActivated();
     // TODO(thomasanderson): Remove this window shuffling and use XWindowCache
     // instead.
     open_windows().remove(xwindow_);
@@ -429,7 +428,7 @@ void DesktopWindowTreeHostX11::OnNativeWidgetCreated(
 
   SetWindowTransparency();
 
-  native_widget_delegate_->OnNativeWidgetCreated(true);
+  native_widget_delegate_->OnNativeWidgetCreated();
 }
 
 void DesktopWindowTreeHostX11::OnWidgetInitDone() {}
@@ -476,8 +475,7 @@ void DesktopWindowTreeHostX11::CloseNow() {
   // If we have children, close them. Use a copy for iteration because they'll
   // remove themselves.
   std::set<DesktopWindowTreeHostX11*> window_children_copy = window_children_;
-  for (std::set<DesktopWindowTreeHostX11*>::iterator it =
-           window_children_copy.begin(); it != window_children_copy.end();
+  for (auto it = window_children_copy.begin(); it != window_children_copy.end();
        ++it) {
     (*it)->CloseNow();
   }
@@ -519,7 +517,7 @@ void DesktopWindowTreeHostX11::Show(ui::WindowShowState show_state,
   if (compositor())
     SetVisible(true);
 
-  if (!IsVisible())
+  if (!window_mapped_in_client_ || IsMinimized())
     MapWindow(show_state);
 
   switch (show_state) {
@@ -548,7 +546,10 @@ void DesktopWindowTreeHostX11::Show(ui::WindowShowState show_state,
 }
 
 bool DesktopWindowTreeHostX11::IsVisible() const {
-  return window_mapped_in_client_ && !IsMinimized();
+  // On Windows, IsVisible() returns true for minimized windows.  On X11, a
+  // minimized window is not mapped, so an explicit IsMinimized() check is
+  // necessary.
+  return window_mapped_in_client_ || IsMinimized();
 }
 
 void DesktopWindowTreeHostX11::SetSize(const gfx::Size& requested_size) {
@@ -763,7 +764,6 @@ void DesktopWindowTreeHostX11::Activate() {
     // after an Activate(), so just set this state now.
     has_pointer_focus_ = false;
     has_window_focus_ = true;
-    // window_mapped_in_client_ == true based on the IsVisible() check above.
     window_mapped_in_server_ = true;
     XSetErrorHandler(old_error_handler);
   }
@@ -817,7 +817,7 @@ void DesktopWindowTreeHostX11::Maximize() {
 
   // Some WMs do not respect maximization hints on unmapped windows, so we
   // save this one for later too.
-  should_maximize_after_map_ = !IsVisible();
+  should_maximize_after_map_ = !window_mapped_in_client_;
 
   // When we are in the process of requesting to maximize a window, we can
   // accurately keep track of our restored bounds instead of relying on the
@@ -1006,7 +1006,6 @@ void DesktopWindowTreeHostX11::SetFullscreen(bool fullscreen) {
   if (is_fullscreen_ == fullscreen)
     return;
   is_fullscreen_ = fullscreen;
-  OnFullscreenStateChanged();
   if (is_fullscreen_)
     delayed_resize_task_.Cancel();
 
@@ -1211,11 +1210,11 @@ gfx::Rect DesktopWindowTreeHostX11::GetBoundsInPixels() const {
 
 void DesktopWindowTreeHostX11::SetBoundsInPixels(
     const gfx::Rect& requested_bounds_in_pixel,
-    const viz::LocalSurfaceId& local_surface_id) {
+    const viz::LocalSurfaceIdAllocation& local_surface_id_allocation) {
   // On desktop-x11, the callers of SetBoundsInPixels() shouldn't need to (or be
   // able to) allocate LocalSurfaceId for the compositor. Aura itself should
   // allocate the new ids as needed, instead.
-  DCHECK(!local_surface_id.is_valid());
+  DCHECK(!local_surface_id_allocation.IsValid());
 
   gfx::Rect bounds_in_pixels(requested_bounds_in_pixel.origin(),
                              AdjustSize(requested_bounds_in_pixel.size()));
@@ -1268,7 +1267,7 @@ void DesktopWindowTreeHostX11::SetBoundsInPixels(
   if (origin_changed)
     native_widget_delegate_->AsWidget()->OnNativeWidgetMove();
   if (size_changed) {
-    OnHostResizedInPixels(bounds_in_pixels.size(), local_surface_id);
+    OnHostResizedInPixels(bounds_in_pixels.size(), local_surface_id_allocation);
     ResetWindowRegion();
   }
 }
@@ -1320,7 +1319,7 @@ bool DesktopWindowTreeHostX11::CaptureSystemKeyEventsImpl(
   // problems with event routing (i.e. which Hook takes precedence) and
   // destruction ordering.
   DCHECK(!keyboard_hook_);
-  keyboard_hook_ = ui::KeyboardHook::Create(
+  keyboard_hook_ = ui::KeyboardHook::CreateModifierKeyboardHook(
       std::move(dom_codes), GetAcceleratedWidget(),
       base::BindRepeating(&DesktopWindowTreeHostX11::DispatchKeyEvent,
                           base::Unretained(this)));
@@ -1371,10 +1370,6 @@ void DesktopWindowTreeHostX11::OnDisplayMetricsChanged(
     RestartDelayedResizeTask();
   }
 }
-
-void DesktopWindowTreeHostX11::OnMaximizedStateChanged() {}
-
-void DesktopWindowTreeHostX11::OnFullscreenStateChanged() {}
 
 ////////////////////////////////////////////////////////////////////////////////
 // DesktopWindowTreeHostX11, private:
@@ -1588,7 +1583,7 @@ void DesktopWindowTreeHostX11::InitX11Window(
     const unsigned char kDarkGtkThemeVariant[] = "dark";
     XChangeProperty(xdisplay_, xwindow_, gfx::GetAtom("_GTK_THEME_VARIANT"),
                     gfx::GetAtom("UTF8_STRING"), 8, PropModeReplace,
-                    kDarkGtkThemeVariant, arraysize(kDarkGtkThemeVariant) - 1);
+                    kDarkGtkThemeVariant, base::size(kDarkGtkThemeVariant) - 1);
   }
 
   // Always composite Chromium windows if a compositing WM is used.  Sometimes,
@@ -1677,12 +1672,10 @@ void DesktopWindowTreeHostX11::OnWMStateUpdated() {
 void DesktopWindowTreeHostX11::UpdateWindowProperties(
     const base::flat_set<XAtom>& new_window_properties) {
   bool was_minimized = IsMinimized();
-  bool was_maximized = IsMaximized();
 
   window_properties_ = new_window_properties;
 
   bool is_minimized = IsMinimized();
-  bool is_maximized = IsMaximized();
 
   // Propagate the window minimization information to the content window, so
   // the render side can update its visibility properly. OnWMStateUpdated() is
@@ -1728,9 +1721,6 @@ void DesktopWindowTreeHostX11::UpdateWindowProperties(
 
   is_always_on_top_ = ui::HasWMSpecProperty(
       window_properties_, gfx::GetAtom("_NET_WM_STATE_ABOVE"));
-
-  if (was_maximized != is_maximized)
-    OnMaximizedStateChanged();
 
   // Now that we have different window properties, we may need to relayout the
   // window. (The windows code doesn't need this because their window change is
@@ -1830,8 +1820,10 @@ void DesktopWindowTreeHostX11::DispatchMouseEvent(ui::MouseEvent* event) {
   // WindowTreeHost that hosts ash.
   if (content_window() && content_window()->delegate()) {
     int flags = event->flags();
+    gfx::Point location_in_dip = event->location();
+    GetRootTransform().TransformPointReverse(&location_in_dip);
     int hit_test_code =
-        content_window()->delegate()->GetNonClientComponent(event->location());
+        content_window()->delegate()->GetNonClientComponent(location_in_dip);
     if (hit_test_code != HTCLIENT && hit_test_code != HTNOWHERE)
       flags |= ui::EF_IS_NON_CLIENT;
     event->set_flags(flags);
@@ -1886,7 +1878,7 @@ void DesktopWindowTreeHostX11::ResetWindowRegion() {
   window_shape_.reset();
 
   if (!IsMaximized() && !IsFullscreen()) {
-    gfx::Path window_mask;
+    SkPath window_mask;
     Widget* widget = native_widget_delegate_->AsWidget();
     if (widget->non_client_view()) {
       // Some frame views define a custom (non-rectangular) window mask. If
@@ -1935,7 +1927,7 @@ void DesktopWindowTreeHostX11::SerializeImageRepresentation(
   int height = rep.GetHeight();
   data->push_back(height);
 
-  const SkBitmap& bitmap = rep.sk_bitmap();
+  const SkBitmap& bitmap = rep.GetBitmap();
 
   for (int y = 0; y < height; ++y)
     for (int x = 0; x < width; ++x)
@@ -2057,8 +2049,11 @@ uint32_t DesktopWindowTreeHostX11::DispatchEvent(
       break;
     }
     case KeyPress: {
-      ui::KeyEvent keydown_event(xev);
-      DispatchKeyEvent(&keydown_event);
+      if (ui::AtkUtilAuraLinux::HandleKeyEvent(xev) !=
+          ui::DiscardAtkKeyEvent::Discard) {
+        ui::KeyEvent keydown_event(xev);
+        DispatchKeyEvent(&keydown_event);
+      }
       break;
     }
     case KeyRelease: {
@@ -2067,8 +2062,11 @@ uint32_t DesktopWindowTreeHostX11::DispatchEvent(
       if (!IsActive() && !HasCapture())
         break;
 
-      ui::KeyEvent key_event(xev);
-      DispatchKeyEvent(&key_event);
+      if (ui::AtkUtilAuraLinux::HandleKeyEvent(xev) !=
+          ui::DiscardAtkKeyEvent::Discard) {
+        ui::KeyEvent key_event(xev);
+        DispatchKeyEvent(&key_event);
+      }
       break;
     }
     case ButtonPress:
@@ -2367,7 +2365,7 @@ gfx::Rect DesktopWindowTreeHostX11::ToPixelRect(
   return gfx::ToEnclosingRect(rect_in_pixels);
 }
 
-std::unique_ptr<base::OnceClosure>
+std::unique_ptr<base::Closure>
 DesktopWindowTreeHostX11::DisableEventListening() {
   // Allows to open multiple file-pickers. See https://crbug.com/678982
   modal_dialog_counter_++;
@@ -2378,9 +2376,9 @@ DesktopWindowTreeHostX11::DisableEventListening() {
         window(), std::make_unique<aura::NullWindowTargeter>());
   }
 
-  return std::make_unique<base::OnceClosure>(
-      base::BindOnce(&DesktopWindowTreeHostX11::EnableEventListening,
-                     weak_factory_.GetWeakPtr()));
+  return std::make_unique<base::Closure>(
+      base::Bind(&DesktopWindowTreeHostX11::EnableEventListening,
+                 weak_factory_.GetWeakPtr()));
 }
 
 void DesktopWindowTreeHostX11::EnableEventListening() {

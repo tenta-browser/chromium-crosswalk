@@ -7,12 +7,12 @@
 #include <vector>
 
 #include "base/bind.h"
-#include "base/memory/memory_coordinator_client_registry.h"
 #include "base/run_loop.h"
 #include "base/test/simple_test_tick_clock.h"
 #include "base/time/time.h"
 #include "chrome/browser/resource_coordinator/tab_helper.h"
 #include "chrome/browser/resource_coordinator/tab_manager_features.h"
+#include "chrome/browser/sessions/session_restore_test_utils.h"
 #include "chrome/browser/sessions/tab_loader_tester.h"
 #include "chrome/test/base/testing_profile.h"
 #include "components/variations/variations_params_manager.h"
@@ -46,6 +46,7 @@ class TabLoaderTest : public testing::Test {
         &TabLoaderTest::OnTabLoaderCreated, base::Unretained(this));
     TabLoaderTester::SetConstructionCallbackForTesting(&construction_callback_);
     test_web_contents_factory_.reset(new content::TestWebContentsFactory);
+    test_policy_.reset(new testing::ScopedAlwaysLoadSessionRestoreTestPolicy());
   }
 
   void TearDown() override {
@@ -58,6 +59,7 @@ class TabLoaderTest : public testing::Test {
     TabLoaderTester::SetConstructionCallbackForTesting(nullptr);
     test_web_contents_factory_.reset();
     thread_bundle_.RunUntilIdle();
+    test_policy_.reset();
   }
 
   void SimulateLoadTimeout() {
@@ -141,6 +143,8 @@ class TabLoaderTest : public testing::Test {
   std::unique_ptr<content::TestWebContentsFactory> test_web_contents_factory_;
   content::TestBrowserThreadBundle thread_bundle_;
   TestingProfile testing_profile_;
+  std::unique_ptr<testing::ScopedAlwaysLoadSessionRestoreTestPolicy>
+      test_policy_;
 
  private:
   DISALLOW_COPY_AND_ASSIGN(TabLoaderTest);
@@ -246,23 +250,6 @@ TEST_F(TabLoaderTest, LoadsAreStaggered) {
   EXPECT_TRUE(tab_loader_.IsSharedTabLoader());
 }
 
-TEST_F(TabLoaderTest, OnMemoryStateChange) {
-  // Multiple contents are necessary to make sure that the tab loader
-  // doesn't immediately kick off loading of all tabs and detach.
-  CreateMultipleRestoredWebContents(0, 2);
-
-  // Create the tab loader.
-  TabLoader::RestoreTabs(restored_tabs_, clock_.NowTicks());
-  EXPECT_TRUE(tab_loader_.IsSharedTabLoader());
-  EXPECT_EQ(1u, tab_loader_.scheduled_to_load_count());
-
-  // Simulate memory pressure and expect the tab loader to disable loading and
-  // to have initiated a self-destroy.
-  EXPECT_TRUE(tab_loader_.is_loading_enabled());
-  tab_loader_.OnMemoryStateChange(base::MemoryState::THROTTLED);
-  EXPECT_TRUE(TabLoaderTester::shared_tab_loader() == nullptr);
-}
-
 TEST_F(TabLoaderTest, OnMemoryPressure) {
   // Multiple contents are necessary to make sure that the tab loader
   // doesn't immediately kick off loading of all tabs and detach.
@@ -343,6 +330,8 @@ TEST_F(TabLoaderTest, TimeoutCanExceedLoadingSlots) {
 TEST_F(TabLoaderTest, DelegatePolicyIsApplied) {
   namespace rc = resource_coordinator;
 
+  test_policy_.reset();
+
   std::set<std::string> features;
   features.insert(features::kInfiniteSessionRestore.name);
 
@@ -350,16 +339,20 @@ TEST_F(TabLoaderTest, DelegatePolicyIsApplied) {
   // it such that there are 2 max simultaneous tab loads, and 3 maximum tabs to
   // restore.
   std::map<std::string, std::string> params;
-  params[rc::kInfiniteSessionRestore_MinSimultaneousTabLoads] = "2";
-  params[rc::kInfiniteSessionRestore_MaxSimultaneousTabLoads] = "2";
-  params[rc::kInfiniteSessionRestore_CoresPerSimultaneousTabLoad] = "0";
-  params[rc::kInfiniteSessionRestore_MinTabsToRestore] = "1";
-  params[rc::kInfiniteSessionRestore_MaxTabsToRestore] = "3";
+  params[rc::InfiniteSessionRestoreParams::kMinSimultaneousTabLoads.name] = "2";
+  params[rc::InfiniteSessionRestoreParams::kMaxSimultaneousTabLoads.name] = "2";
+  params[rc::InfiniteSessionRestoreParams::kCoresPerSimultaneousTabLoad.name] =
+      "0";
+  params[rc::InfiniteSessionRestoreParams::kMinTabsToRestore.name] = "1";
+  params[rc::InfiniteSessionRestoreParams::kMaxTabsToRestore.name] = "3";
 
   // Disable these policy features.
-  params[rc::kInfiniteSessionRestore_MbFreeMemoryPerTabToRestore] = "0";
-  params[rc::kInfiniteSessionRestore_MaxTimeSinceLastUseToRestore] = "0";
-  params[rc::kInfiniteSessionRestore_MinSiteEngagementToRestore] = "0";
+  params[rc::InfiniteSessionRestoreParams::kMbFreeMemoryPerTabToRestore.name] =
+      "0";
+  params[rc::InfiniteSessionRestoreParams::kMaxTimeSinceLastUseToRestore.name] =
+      "0";
+  params[rc::InfiniteSessionRestoreParams::kMinSiteEngagementToRestore.name] =
+      "0";
 
   variations::testing::VariationParamsManager variations_manager;
   variations_manager.SetVariationParamsWithFeatureAssociations(

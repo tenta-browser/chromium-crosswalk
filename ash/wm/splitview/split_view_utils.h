@@ -5,11 +5,14 @@
 #ifndef ASH_WM_SPLITVIEW_SPLIT_VIEW_UTILS_H_
 #define ASH_WM_SPLITVIEW_SPLIT_VIEW_UTILS_H_
 
+#include "ash/ash_export.h"
+#include "ash/display/screen_orientation_controller.h"
+#include "ui/gfx/geometry/rect.h"
 #include "ui/gfx/transform.h"
 
-namespace gfx {
-class Rect;
-}  // namespace gfx
+namespace aura {
+class Window;
+}  // namespace aura
 
 namespace ui {
 class Layer;
@@ -58,8 +61,9 @@ enum SplitviewAnimationType {
   // Used to slide in the text labels.
   SPLITVIEW_ANIMATION_TEXT_SLIDE_IN,
   SPLITVIEW_ANIMATION_TEXT_SLIDE_OUT,
-  // Used to apply window transform on the selector item after it gets snapped.
-  SPLITVIEW_ANIMATION_RESTORE_OVERVIEW_WINDOW,
+  // Used to apply window transform on the selector item after it gets snapped
+  // or on the dragged window after the drag ends.
+  SPLITVIEW_ANIMATION_SET_WINDOW_TRANSFORM,
 };
 
 // Animates |layer|'s opacity based on |type|.
@@ -70,8 +74,13 @@ void DoSplitviewTransformAnimation(ui::Layer* layer,
                                    SplitviewAnimationType type,
                                    const gfx::Transform& target_transform);
 
-// Transposes the given |rect|.
-void TransposeRect(gfx::Rect* rect);
+// Returns true if split view mode is supported. Currently the split view
+// mode is only supported in tablet mode.
+ASH_EXPORT bool ShouldAllowSplitView();
+
+// Returns true if |window| can be activated and snapped in split screen in
+// tablet mode.
+ASH_EXPORT bool CanSnapInSplitview(aura::Window* window);
 
 }  // namespace ash
 

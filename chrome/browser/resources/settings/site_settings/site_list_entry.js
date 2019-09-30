@@ -11,7 +11,7 @@ Polymer({
 
   behaviors: [
     SiteSettingsBehavior,
-    FocusRowBehavior,
+    cr.ui.FocusRowBehavior,
   ],
 
   properties: {
@@ -38,6 +38,26 @@ Polymer({
      * @type {!SiteException}
      */
     model: Object,
+
+    /**
+     * If the site represented is part of a chooser exception, the chooser type
+     * will be stored here to allow the permission to be manipulated.
+     * @private {!settings.ChooserType}
+     */
+    chooserType: {
+      type: String,
+      value: settings.ChooserType.NONE,
+    },
+
+    /**
+     * If the site represented is part of a chooser exception, the chooser
+     * object will be stored here to allow the permission to be manipulated.
+     * @private
+     */
+    chooserObject: {
+      type: Object,
+      value: null,
+    },
 
     /** @private */
     siteDescription_: {
@@ -68,6 +88,10 @@ Polymer({
    * @private
    */
   shouldHideResetButton_: function() {
+    if (this.model === undefined) {
+      return false;
+    }
+
     return this.model.enforcement ==
         chrome.settingsPrivate.Enforcement.ENFORCED ||
         !(this.readOnlyList || !!this.model.embeddingOrigin);
@@ -78,6 +102,10 @@ Polymer({
    * @private
    */
   shouldHideActionMenu_: function() {
+    if (this.model === undefined) {
+      return false;
+    }
+
     return this.model.enforcement ==
         chrome.settingsPrivate.Enforcement.ENFORCED ||
         this.readOnlyList || !!this.model.embeddingOrigin;
@@ -89,8 +117,9 @@ Polymer({
    * @private
    */
   onOriginTap_: function(event) {
-    if (!this.enableSiteSettings_)
+    if (!this.enableSiteSettings_) {
       return;
+    }
     settings.navigateTo(
         settings.routes.SITE_SETTINGS_SITE_DETAILS,
         new URLSearchParams('site=' + this.model.origin));
@@ -111,9 +140,17 @@ Polymer({
       displayName = loadTimeData.getString('embeddedOnAnyHost');
     }
 
+    // <if expr="chromeos">
+    if (this.model.category === settings.ContentSettingsTypes.NOTIFICATIONS &&
+        this.model.showAndroidSmsNote) {
+      displayName = loadTimeData.getString('androidSmsNote');
+    }
+    // </if>
+
     if (this.model.incognito) {
-      if (displayName.length > 0)
+      if (displayName.length > 0) {
         return loadTimeData.getStringF('embeddedIncognitoSite', displayName);
+      }
       return loadTimeData.getString('incognitoSite');
     }
     return displayName;
@@ -131,6 +168,15 @@ Polymer({
 
   /** @private */
   onResetButtonTap_: function() {
+    // Use the appropriate method to reset a chooser exception.
+    if (this.chooserType !== settings.ChooserType.NONE &&
+        this.chooserObject != null) {
+      this.browserProxy.resetChooserExceptionForSite(
+          this.chooserType, this.model.origin, this.model.embeddingOrigin,
+          this.chooserObject);
+      return;
+    }
+
     this.browserProxy.resetCategoryPermissionForPattern(
         this.model.origin, this.model.embeddingOrigin, this.model.category,
         this.model.incognito);
@@ -138,6 +184,11 @@ Polymer({
 
   /** @private */
   onShowActionMenuTap_: function() {
+    // Chooser exceptions do not support the action menu, so do nothing.
+    if (this.chooserType !== settings.ChooserType.NONE) {
+      return;
+    }
+
     this.fire(
         'show-action-menu',
         {anchor: this.$.actionMenuButton, model: this.model});

@@ -7,7 +7,9 @@
 #include <memory>
 
 #include "base/message_loop/message_loop.h"
+#include "base/run_loop.h"
 #include "chromeos/dbus/fake_power_manager_client.h"
+#include "chromeos/dbus/power_manager/backlight.pb.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace chromeos {
@@ -157,6 +159,18 @@ TEST_F(PowerPolicyControllerTest, Prefs) {
   expected_policy.set_system_wake_lock(true);
   expected_policy.set_reason(std::string(PowerPolicyController::kPrefsReason) +
                              ", Screen");
+  EXPECT_EQ(PowerPolicyController::GetPolicyDebugString(expected_policy),
+            PowerPolicyController::GetPolicyDebugString(
+                fake_power_client_->policy()));
+
+  // Set the "allow wake locks" pref to false and add a screen wake lock.
+  // It should be ignored.
+  prefs.allow_wake_locks = false;
+  policy_controller_->ApplyPrefs(prefs);
+  policy_controller_->AddScreenWakeLock(PowerPolicyController::REASON_OTHER,
+                                        "Screen");
+  expected_policy.clear_system_wake_lock();
+  expected_policy.set_reason(std::string(PowerPolicyController::kPrefsReason));
   EXPECT_EQ(PowerPolicyController::GetPolicyDebugString(expected_policy),
             PowerPolicyController::GetPolicyDebugString(
                 fake_power_client_->policy()));
@@ -325,4 +339,79 @@ TEST_F(PowerPolicyControllerTest, SuspendOnLidClosedWhileSignedOut) {
                 fake_power_client_->policy()));
 }
 
+TEST_F(PowerPolicyControllerTest, PerSessionScreenBrightnessOverride) {
+  const double kAcBrightness = 99.0;
+  const double kBatteryBrightness = 77.0;
+
+  PowerPolicyController::PrefValues prefs;
+  prefs.ac_brightness_percent = kAcBrightness;
+  prefs.battery_brightness_percent = kBatteryBrightness;
+  policy_controller_->ApplyPrefs(prefs);
+
+  EXPECT_EQ(kAcBrightness,
+            fake_power_client_->policy().ac_brightness_percent());
+  EXPECT_EQ(kBatteryBrightness,
+            fake_power_client_->policy().battery_brightness_percent());
+
+  // Simulate model triggered brightness change - shouldn't override the policy.
+  power_manager::SetBacklightBrightnessRequest request;
+  request.set_percent(80.0);
+  request.set_cause(power_manager::SetBacklightBrightnessRequest_Cause_MODEL);
+  fake_power_client_->SetScreenBrightness(request);
+  base::RunLoop().RunUntilIdle();
+  policy_controller_->ApplyPrefs(prefs);
+
+  EXPECT_EQ(kAcBrightness,
+            fake_power_client_->policy().ac_brightness_percent());
+  EXPECT_EQ(kBatteryBrightness,
+            fake_power_client_->policy().battery_brightness_percent());
+
+  // Simulate user triggered brightness change - should override the policy.
+  request.set_percent(80.0);
+  request.set_cause(
+      power_manager::SetBacklightBrightnessRequest_Cause_USER_REQUEST);
+  fake_power_client_->SetScreenBrightness(request);
+  base::RunLoop().RunUntilIdle();
+  policy_controller_->ApplyPrefs(prefs);
+
+  EXPECT_FALSE(fake_power_client_->policy().has_ac_brightness_percent());
+  EXPECT_FALSE(fake_power_client_->policy().has_battery_brightness_percent());
+
+  // Simulate policy values update that should be ignored.
+  prefs.ac_brightness_percent = 98.0;
+  prefs.battery_brightness_percent = 76.0;
+  policy_controller_->ApplyPrefs(prefs);
+
+  EXPECT_FALSE(fake_power_client_->policy().has_ac_brightness_percent());
+  EXPECT_FALSE(fake_power_client_->policy().has_battery_brightness_percent());
+}
+
+TEST_F(PowerPolicyControllerTest, PolicyAutoScreenLockDelay) {
+  PowerPolicyController::PrefValues prefs;
+  policy_controller_->ApplyPrefs(prefs);
+
+  // Autolock disabled.
+  prefs.ac_screen_lock_delay_ms = 4000;
+  prefs.battery_screen_lock_delay_ms = 1000;
+  prefs.enable_auto_screen_lock = false;
+  policy_controller_->ApplyPrefs(prefs);
+  EXPECT_EQ(base::TimeDelta(),
+            policy_controller_->Get()->GetMaxPolicyAutoScreenLockDelay());
+
+  // Autolock enabled.
+
+  // Longer AC delay.
+  prefs.enable_auto_screen_lock = true;
+  policy_controller_->ApplyPrefs(prefs);
+  EXPECT_EQ(base::TimeDelta::FromMilliseconds(prefs.ac_screen_lock_delay_ms),
+            policy_controller_->Get()->GetMaxPolicyAutoScreenLockDelay());
+
+  // Longer battery delay.
+  prefs.ac_screen_lock_delay_ms = 1000;
+  prefs.battery_screen_lock_delay_ms = 4000;
+  policy_controller_->ApplyPrefs(prefs);
+  EXPECT_EQ(
+      base::TimeDelta::FromMilliseconds(prefs.battery_screen_lock_delay_ms),
+      policy_controller_->Get()->GetMaxPolicyAutoScreenLockDelay());
+}
 }  // namespace chromeos

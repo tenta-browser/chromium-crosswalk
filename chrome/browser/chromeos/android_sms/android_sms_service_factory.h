@@ -9,6 +9,10 @@
 #include "chrome/browser/chromeos/android_sms/android_sms_service.h"
 #include "components/keyed_service/content/browser_context_keyed_service_factory.h"
 
+namespace user_prefs {
+class PrefRegistrySyncable;
+}  // namespace user_prefs
+
 namespace chromeos {
 
 namespace android_sms {
@@ -30,6 +34,9 @@ class AndroidSmsServiceFactory : public BrowserContextKeyedServiceFactory {
   KeyedService* BuildServiceInstanceFor(
       content::BrowserContext* context) const override;
   bool ServiceIsCreatedWithBrowserContext() const override;
+  bool ServiceIsNULLWhileTesting() const override;
+  void RegisterProfilePrefs(
+      user_prefs::PrefRegistrySyncable* registry) override;
 
   DISALLOW_COPY_AND_ASSIGN(AndroidSmsServiceFactory);
 };

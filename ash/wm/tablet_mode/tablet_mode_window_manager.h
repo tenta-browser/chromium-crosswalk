@@ -59,6 +59,7 @@ class ASH_EXPORT TabletModeWindowManager
 
   // ShellObserver:
   void OnOverviewModeStarting() override;
+  void OnOverviewModeEnding(OverviewSession* overview_session) override;
   void OnOverviewModeEnded() override;
   void OnSplitViewModeEnded() override;
 
@@ -77,8 +78,6 @@ class ASH_EXPORT TabletModeWindowManager
   // display::DisplayObserver:
   void OnDisplayAdded(const display::Display& display) override;
   void OnDisplayRemoved(const display::Display& display) override;
-  void OnDisplayMetricsChanged(const display::Display& display,
-                               uint32_t metrics) override;
 
   // SplitViewController::Observer:
   void OnSplitViewStateChanged(SplitViewController::State previous_state,
@@ -94,13 +93,17 @@ class ASH_EXPORT TabletModeWindowManager
   TabletModeWindowManager();
 
  private:
+  friend class TabletModeControllerTestApi;
+
   using WindowToState = std::map<aura::Window*, TabletModeWindowState*>;
 
-  // Maximize all windows and restore their current state.
-  void MaximizeAllWindows();
+  // Maximize all windows, except that a snapped active window shall become
+  // represented in split view, along with the previously active window if it is
+  // snapped to the opposite side.
+  void ArrangeWindowsForTabletMode();
 
-  // Restore all windows to their previous state.
-  void RestoreAllWindows();
+  // Revert all windows to how they were arranged before tablet mode.
+  void ArrangeWindowsForDesktopMode();
 
   // Set whether to defer bounds updates for |window|. When set to false bounds
   // will be updated as they may be stale.
@@ -111,7 +114,8 @@ class ASH_EXPORT TabletModeWindowManager
   // state).
   // Note: If the given window cannot be handled by us the function will return
   // immediately.
-  void MaximizeAndTrackWindow(aura::Window* window);
+  void MaximizeAndTrackWindow(aura::Window* window,
+                              bool defer_bounds_updates = false);
 
   // Remove a window from our tracking list. If the window is going to be
   // destroyed, do not restore its old previous window state object as it will
@@ -147,6 +151,9 @@ class ASH_EXPORT TabletModeWindowManager
   std::unordered_set<aura::Window*> added_windows_;
 
   std::unique_ptr<wm::TabletModeEventHandler> event_handler_;
+
+  // True if overview exit type is |kWindowDragged|.
+  bool exit_overview_by_window_drag_ = false;
 
   DISALLOW_COPY_AND_ASSIGN(TabletModeWindowManager);
 };

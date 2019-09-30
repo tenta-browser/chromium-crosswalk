@@ -14,13 +14,15 @@
 #include "third_party/blink/renderer/core/frame/settings.h"
 #include "third_party/blink/renderer/core/html/parser/text_resource_decoder.h"
 #include "third_party/blink/renderer/core/inspector/inspector_trace_events.h"
-#include "third_party/blink/renderer/core/script/classic_pending_script.h"
+#include "third_party/blink/renderer/core/loader/resource/script_resource.h"
+#include "third_party/blink/renderer/platform/bindings/v8_per_isolate_data.h"
 #include "third_party/blink/renderer/platform/cross_thread_functional.h"
 #include "third_party/blink/renderer/platform/instrumentation/tracing/trace_event.h"
 #include "third_party/blink/renderer/platform/loader/fetch/cached_metadata.h"
 #include "third_party/blink/renderer/platform/loader/fetch/resource.h"
 #include "third_party/blink/renderer/platform/runtime_enabled_features.h"
 #include "third_party/blink/renderer/platform/scheduler/public/background_scheduler.h"
+#include "third_party/blink/renderer/platform/scheduler/public/post_cross_thread_task.h"
 #include "third_party/blink/renderer/platform/scheduler/public/thread_scheduler.h"
 #include "third_party/blink/renderer/platform/shared_buffer.h"
 #include "third_party/blink/renderer/platform/wtf/deque.h"
@@ -35,8 +37,7 @@ class SourceStreamDataQueue {
   WTF_MAKE_NONCOPYABLE(SourceStreamDataQueue);
 
  public:
-  SourceStreamDataQueue() : finished_(false) {}
-
+  SourceStreamDataQueue() : finished_(false), have_data_(mutex_) {}
   ~SourceStreamDataQueue() { DiscardQueuedData(); }
 
   void Clear() {
@@ -61,7 +62,7 @@ class SourceStreamDataQueue {
   void Consume(const uint8_t** data, size_t* length) {
     MutexLocker locker(mutex_);
     while (!TryGetData(data, length))
-      have_data_.Wait(mutex_);
+      have_data_.Wait();
   }
 
  private:
@@ -313,8 +314,8 @@ void RunScriptStreamingTask(
     ScriptStreamer* streamer) {
   TRACE_EVENT1(
       "v8,devtools.timeline", "v8.parseOnBackground", "data",
-      InspectorParseScriptEvent::Data(streamer->ScriptResourceIdentifier(),
-                                      streamer->ScriptURLString()));
+      inspector_parse_script_event::Data(streamer->ScriptResourceIdentifier(),
+                                         streamer->ScriptURLString()));
   // Running the task can and will block: SourceStream::GetSomeData will get
   // called and it will block and wait for data from the network.
   task->Run();
@@ -339,16 +340,11 @@ void RunNonBlockingScriptStreamingTask(
 }  // namespace
 
 bool ScriptStreamer::HasEnoughDataForStreaming(size_t resource_buffer_size) {
-  if (RuntimeEnabledFeatures::ScheduledScriptStreamingEnabled()) {
-    // Enable streaming for small scripts, but we must still check the BOM
-    // before starting streaming.
-    return resource_buffer_size >= kMaximumLengthOfBOM;
-  }
   // Only stream larger scripts.
   return resource_buffer_size >= small_script_threshold_;
 }
 
-void ScriptStreamer::NotifyAppendData(ScriptResource* resource) {
+void ScriptStreamer::NotifyAppendData() {
   DCHECK(IsMainThread());
   if (streaming_suppressed_)
     return;
@@ -356,8 +352,8 @@ void ScriptStreamer::NotifyAppendData(ScriptResource* resource) {
     // Even if the first data chunk is small, the script can still be big
     // enough - wait until the next data chunk comes before deciding whether
     // to start the streaming.
-    DCHECK(resource->ResourceBuffer());
-    if (!HasEnoughDataForStreaming(resource->ResourceBuffer()->size()))
+    DCHECK(script_resource_->ResourceBuffer());
+    if (!HasEnoughDataForStreaming(script_resource_->ResourceBuffer()->size()))
       return;
     have_enough_data_for_streaming_ = true;
 
@@ -365,8 +361,8 @@ void ScriptStreamer::NotifyAppendData(ScriptResource* resource) {
       // Check for BOM (byte order marks), because that might change our
       // understanding of the data encoding.
       char maybe_bom[kMaximumLengthOfBOM] = {};
-      if (!resource->ResourceBuffer()->GetBytes(maybe_bom,
-                                                kMaximumLengthOfBOM)) {
+      if (!script_resource_->ResourceBuffer()->GetBytes(maybe_bom,
+                                                        kMaximumLengthOfBOM)) {
         NOTREACHED();
         return;
       }
@@ -374,7 +370,7 @@ void ScriptStreamer::NotifyAppendData(ScriptResource* resource) {
       std::unique_ptr<TextResourceDecoder> decoder(
           TextResourceDecoder::Create(TextResourceDecoderOptions(
               TextResourceDecoderOptions::kPlainTextContent,
-              WTF::TextEncoding(resource->Encoding()))));
+              WTF::TextEncoding(script_resource_->Encoding()))));
       decoder->CheckForBOM(maybe_bom, kMaximumLengthOfBOM);
 
       // The encoding may change when we see the BOM. Check for BOM now
@@ -399,11 +395,6 @@ void ScriptStreamer::NotifyAppendData(ScriptResource* resource) {
       return;
     }
 
-    if (!script_state_->ContextIsValid()) {
-      SuppressStreaming(kContextNotValid);
-      return;
-    }
-
     DCHECK(!stream_);
     DCHECK(!source_);
     stream_ = new SourceStream;
@@ -411,11 +402,11 @@ void ScriptStreamer::NotifyAppendData(ScriptResource* resource) {
     source_ = std::make_unique<v8::ScriptCompiler::StreamedSource>(stream_,
                                                                    encoding_);
 
-    ScriptState::Scope scope(script_state_);
     std::unique_ptr<v8::ScriptCompiler::ScriptStreamingTask>
         script_streaming_task(
             base::WrapUnique(v8::ScriptCompiler::StartStreamingScript(
-                script_state_->GetIsolate(), source_.get(), compile_options_)));
+                V8PerIsolateData::MainThreadIsolate(), source_.get(),
+                compile_options_)));
     if (!script_streaming_task) {
       // V8 cannot stream the script.
       SuppressStreaming(kV8CannotStream);
@@ -434,7 +425,7 @@ void ScriptStreamer::NotifyAppendData(ScriptResource* resource) {
       // cancel the task.
       //
       // TODO(leszeks): Decrease the priority of these tasks where possible.
-      BackgroundScheduler::PostOnBackgroundThreadWithTraits(
+      background_scheduler::PostOnBackgroundThreadWithTraits(
           FROM_HERE, {base::TaskPriority::USER_BLOCKING, base::MayBlock()},
           CrossThreadBind(RunBlockingScriptStreamingTask,
                           WTF::Passed(std::move(script_streaming_task)),
@@ -451,7 +442,7 @@ void ScriptStreamer::NotifyAppendData(ScriptResource* resource) {
 
   }
   if (stream_)
-    stream_->DidReceiveData(resource, this);
+    stream_->DidReceiveData(script_resource_, this);
 }
 
 void ScriptStreamer::NotifyFinished() {
@@ -465,32 +456,34 @@ void ScriptStreamer::NotifyFinished() {
   }
 
   if (stream_) {
+    // Mark the stream as finished loading before potentially re-posting the
+    // task to avoid a race between this finish and the task's first read.
+    stream_->DidFinishLoading();
+
     // If the corresponding blocking task hasn't started yet, cancel it and post
     // a non-blocking task, since we know now that all the data is received and
     // we will no longer block.
     //
-    // TODO(874080): Once we have mutable task traits, simply unmark the
-    // existing task as no longer MayBlock.
+    // TODO(874080): Remove this once blocking and non-blocking pools are
+    // merged.
     if (RuntimeEnabledFeatures::ScheduledScriptStreamingEnabled() &&
+        !RuntimeEnabledFeatures::MergeBlockingNonBlockingPoolsEnabled() &&
         !blocking_task_started_or_cancelled_.test_and_set()) {
-      ScriptState::Scope scope(script_state_);
       std::unique_ptr<v8::ScriptCompiler::ScriptStreamingTask>
           script_streaming_task(
               base::WrapUnique(v8::ScriptCompiler::StartStreamingScript(
-                  script_state_->GetIsolate(), source_.get(),
+                  V8PerIsolateData::MainThreadIsolate(), source_.get(),
                   compile_options_)));
 
       // The task creation shouldn't fail, since it didn't fail before during
       // NotifyAppendData.
       CHECK(script_streaming_task);
-      BackgroundScheduler::PostOnBackgroundThreadWithTraits(
+      background_scheduler::PostOnBackgroundThreadWithTraits(
           FROM_HERE, {base::TaskPriority::USER_BLOCKING},
           CrossThreadBind(RunNonBlockingScriptStreamingTask,
                           WTF::Passed(std::move(script_streaming_task)),
                           WrapCrossThreadPersistent(this)));
     }
-
-    stream_->DidFinishLoading();
   }
   loading_finished_ = true;
 
@@ -498,11 +491,10 @@ void ScriptStreamer::NotifyFinished() {
 }
 
 ScriptStreamer::ScriptStreamer(
-    ClassicPendingScript* script,
-    ScriptState* script_state,
+    ScriptResource* script_resource,
     v8::ScriptCompiler::CompileOptions compile_options,
     scoped_refptr<base::SingleThreadTaskRunner> loading_task_runner)
-    : pending_script_(script),
+    : script_resource_(script_resource),
       detached_(false),
       stream_(nullptr),
       loading_finished_(false),
@@ -511,9 +503,8 @@ ScriptStreamer::ScriptStreamer(
       streaming_suppressed_(false),
       suppressed_reason_(kInvalid),
       compile_options_(compile_options),
-      script_state_(script_state),
-      script_url_string_(script->GetResource()->Url().Copy().GetString()),
-      script_resource_identifier_(script->GetResource()->Identifier()),
+      script_url_string_(script_resource->Url().Copy().GetString()),
+      script_resource_identifier_(script_resource->Identifier()),
       // Unfortunately there's no dummy encoding value in the enum; let's use
       // one we don't stream.
       encoding_(v8::ScriptCompiler::StreamedSource::TWO_BYTE),
@@ -521,9 +512,13 @@ ScriptStreamer::ScriptStreamer(
 
 ScriptStreamer::~ScriptStreamer() = default;
 
+void ScriptStreamer::Prefinalize() {
+  Cancel();
+  prefinalizer_called_ = true;
+}
+
 void ScriptStreamer::Trace(blink::Visitor* visitor) {
-  visitor->Trace(pending_script_);
-  visitor->Trace(script_state_);
+  visitor->Trace(script_resource_);
 }
 
 void ScriptStreamer::StreamingComplete() {
@@ -556,67 +551,33 @@ void ScriptStreamer::NotifyFinishedToClient() {
   if (!IsFinished())
     return;
 
-  pending_script_->StreamingFinished();
+  script_resource_->StreamingFinished();
 }
 
-void ScriptStreamer::StartStreaming(
-    ClassicPendingScript* script,
-    Settings* settings,
-    ScriptState* script_state,
+ScriptStreamer* ScriptStreamer::Create(
+    ScriptResource* resource,
     scoped_refptr<base::SingleThreadTaskRunner> loading_task_runner,
     NotStreamingReason* not_streaming_reason) {
   DCHECK(IsMainThread());
-  DCHECK(script_state->ContextIsValid());
   *not_streaming_reason = kInvalid;
-  ScriptResource* resource = ToScriptResource(script->GetResource());
   if (!resource->Url().ProtocolIsInHTTPFamily()) {
     *not_streaming_reason = kNotHTTP;
-    return;
-  }
-  if (resource->IsCacheValidator()) {
-    // This happens e.g., during reloads. We're actually not going to load
-    // the current Resource of the ClassicPendingScript but switch to another
-    // Resource -> don't stream.
-    *not_streaming_reason = kReload;
-    return;
+    return nullptr;
   }
   if (resource->IsLoaded() && !resource->ResourceBuffer()) {
     // This happens for already loaded resources, e.g. if resource
     // validation fails. In that case, the loading subsystem will discard
     // the resource buffer.
     *not_streaming_reason = kNoResourceBuffer;
-    return;
+    return nullptr;
   }
   // We cannot filter out short scripts, even if we wait for the HTTP headers
   // to arrive: the Content-Length HTTP header is not sent for chunked
   // downloads.
 
-  ScriptStreamer* streamer = new ScriptStreamer(
-      script, script_state, v8::ScriptCompiler::kNoCompileOptions,
+  return MakeGarbageCollected<ScriptStreamer>(
+      resource, v8::ScriptCompiler::kNoCompileOptions,
       std::move(loading_task_runner));
-
-  // If this script was ready when streaming began, no callbacks will be
-  // received to populate the data for the ScriptStreamer, so send them now.
-  // Note that this script may be processing an asynchronous cache hit, in
-  // which case ScriptResource::IsLoaded() will be true, but ready_state_ will
-  // not be kReadyStreaming. In that case, ScriptStreamer can listen to the
-  // async callbacks generated by the cache hit.
-  if (script->IsReady()) {
-    DCHECK(resource->IsLoaded());
-    streamer->NotifyAppendData(resource);
-    if (streamer->StreamingSuppressed()) {
-      *not_streaming_reason = streamer->StreamingSuppressedReason();
-      return;
-    }
-  }
-
-  // The Resource might go out of scope if the script is no longer needed.
-  // This makes ClassicPendingScript notify the ScriptStreamer when it is
-  // destroyed.
-  script->SetStreamer(streamer);
-
-  if (script->IsReady())
-    streamer->NotifyFinished();
 }
 
 }  // namespace blink

@@ -4,9 +4,10 @@
 
 #include "chrome/browser/content_settings/local_shared_objects_container.h"
 
+#include <vector>
+
 #include "chrome/browser/browsing_data/browsing_data_appcache_helper.h"
 #include "chrome/browser/browsing_data/browsing_data_cache_storage_helper.h"
-#include "chrome/browser/browsing_data/browsing_data_channel_id_helper.h"
 #include "chrome/browser/browsing_data/browsing_data_cookie_helper.h"
 #include "chrome/browser/browsing_data/browsing_data_database_helper.h"
 #include "chrome/browser/browsing_data/browsing_data_file_system_helper.h"
@@ -22,6 +23,7 @@
 #include "content/public/common/url_constants.h"
 #include "net/base/registry_controlled_domains/registry_controlled_domain.h"
 #include "net/cookies/canonical_cookie.h"
+#include "third_party/blink/public/mojom/appcache/appcache_info.mojom.h"
 #include "url/gurl.h"
 
 namespace {
@@ -37,7 +39,6 @@ bool SameDomainOrHost(const GURL& gurl1, const GURL& gurl2) {
 
 LocalSharedObjectsContainer::LocalSharedObjectsContainer(Profile* profile)
     : appcaches_(new CannedBrowsingDataAppCacheHelper(profile)),
-      channel_ids_(new CannedBrowsingDataChannelIDHelper()),
       cookies_(new CannedBrowsingDataCookieHelper(
           content::BrowserContext::GetDefaultStoragePartition(profile))),
       databases_(new CannedBrowsingDataDatabaseHelper(profile)),
@@ -63,7 +64,6 @@ LocalSharedObjectsContainer::~LocalSharedObjectsContainer() {
 size_t LocalSharedObjectsContainer::GetObjectCount() const {
   size_t count = 0;
   count += appcaches()->GetAppCacheCount();
-  count += channel_ids()->GetChannelIDCount();
   count += cookies()->GetCookieCount();
   count += databases()->GetDatabaseCount();
   count += file_systems()->GetFileSystemCount();
@@ -88,9 +88,8 @@ size_t LocalSharedObjectsContainer::GetObjectCountForDomain(
   typedef CannedBrowsingDataCookieHelper::OriginCookieSetMap OriginCookieSetMap;
   const OriginCookieSetMap& origin_cookies_set_map =
       cookies()->origin_cookie_set_map();
-  for (OriginCookieSetMap::const_iterator it = origin_cookies_set_map.begin();
-       it != origin_cookies_set_map.end();
-       ++it) {
+  for (auto it = origin_cookies_set_map.begin();
+       it != origin_cookies_set_map.end(); ++it) {
     const canonical_cookie::CookieHashSet* cookie_list = it->second.get();
     for (const auto& cookie : *cookie_list) {
       // Strip leading '.'s.
@@ -111,8 +110,7 @@ size_t LocalSharedObjectsContainer::GetObjectCountForDomain(
   // Count local storages for the domain of the given |origin|.
   const std::set<GURL> local_storage_info =
       local_storages()->GetLocalStorageInfo();
-  for (std::set<GURL>::const_iterator it = local_storage_info.begin();
-       it != local_storage_info.end();
+  for (auto it = local_storage_info.begin(); it != local_storage_info.end();
        ++it) {
     if (SameDomainOrHost(origin, *it))
       ++count;
@@ -120,21 +118,17 @@ size_t LocalSharedObjectsContainer::GetObjectCountForDomain(
 
   // Count session storages for the domain of the given |origin|.
   const std::set<GURL> urls = session_storages()->GetLocalStorageInfo();
-  for (std::set<GURL>::const_iterator it = urls.begin();
-       it != urls.end();
-       ++it) {
+  for (auto it = urls.begin(); it != urls.end(); ++it) {
     if (SameDomainOrHost(origin, *it))
       ++count;
   }
 
   // Count indexed dbs for the domain of the given |origin|.
-  typedef CannedBrowsingDataIndexedDBHelper::PendingIndexedDBInfo IndexedDBInfo;
-  const std::set<IndexedDBInfo>& indexed_db_info =
+  typedef CannedBrowsingDataIndexedDBHelper::PendingIndexedDBInfo
+      StorageUsageInfo;
+  const std::set<StorageUsageInfo>& indexed_db_info =
       indexed_dbs()->GetIndexedDBInfo();
-  for (std::set<IndexedDBInfo>::const_iterator it =
-          indexed_db_info.begin();
-      it != indexed_db_info.end();
-      ++it) {
+  for (auto it = indexed_db_info.begin(); it != indexed_db_info.end(); ++it) {
     if (SameDomainOrHost(origin, it->origin))
       ++count;
   }
@@ -144,10 +138,8 @@ size_t LocalSharedObjectsContainer::GetObjectCountForDomain(
       ServiceWorkerInfo;
   const std::set<ServiceWorkerInfo>& service_worker_info =
       service_workers()->GetServiceWorkerUsageInfo();
-  for (std::set<ServiceWorkerInfo>::const_iterator it =
-          service_worker_info.begin();
-      it != service_worker_info.end();
-      ++it) {
+  for (auto it = service_worker_info.begin(); it != service_worker_info.end();
+       ++it) {
     if (SameDomainOrHost(origin, it->origin))
       ++count;
   }
@@ -176,10 +168,8 @@ size_t LocalSharedObjectsContainer::GetObjectCountForDomain(
   typedef std::list<FileSystemInfo> FileSystemInfoList;
   const FileSystemInfoList& file_system_info =
       file_systems()->GetFileSystemInfo();
-  for (FileSystemInfoList::const_iterator it = file_system_info.begin();
-       it != file_system_info.end();
-       ++it) {
-    if (SameDomainOrHost(origin, it->origin))
+  for (auto it = file_system_info.begin(); it != file_system_info.end(); ++it) {
+    if (SameDomainOrHost(origin, it->origin.GetURL()))
       ++count;
   }
 
@@ -187,10 +177,7 @@ size_t LocalSharedObjectsContainer::GetObjectCountForDomain(
   typedef CannedBrowsingDataDatabaseHelper::PendingDatabaseInfo DatabaseInfo;
   const std::set<DatabaseInfo>& database_list =
       databases()->GetPendingDatabaseInfo();
-  for (std::set<DatabaseInfo>::const_iterator it =
-          database_list.begin();
-      it != database_list.end();
-      ++it) {
+  for (auto it = database_list.begin(); it != database_list.end(); ++it) {
     if (SameDomainOrHost(origin, it->origin))
       ++count;
   }
@@ -199,16 +186,11 @@ size_t LocalSharedObjectsContainer::GetObjectCountForDomain(
   typedef BrowsingDataAppCacheHelper::OriginAppCacheInfoMap
       OriginAppCacheInfoMap;
   const OriginAppCacheInfoMap& map = appcaches()->GetOriginAppCacheInfoMap();
-  for (OriginAppCacheInfoMap::const_iterator it = map.begin();
-       it != map.end();
-       ++it) {
-    const content::AppCacheInfoVector& info_vector = it->second;
-    for (content::AppCacheInfoVector::const_iterator info =
-             info_vector.begin();
-         info != info_vector.end();
-         ++info) {
-       if (SameDomainOrHost(origin, info->manifest_url))
-         ++count;
+  for (auto it = map.begin(); it != map.end(); ++it) {
+    const std::vector<blink::mojom::AppCacheInfo>& info_vector = it->second;
+    for (auto info = info_vector.begin(); info != info_vector.end(); ++info) {
+      if (SameDomainOrHost(origin, info->manifest_url))
+        ++count;
     }
   }
 
@@ -217,7 +199,6 @@ size_t LocalSharedObjectsContainer::GetObjectCountForDomain(
 
 void LocalSharedObjectsContainer::Reset() {
   appcaches_->Reset();
-  channel_ids_->Reset();
   cookies_->Reset();
   databases_->Reset();
   file_systems_->Reset();
@@ -233,8 +214,8 @@ std::unique_ptr<CookiesTreeModel>
 LocalSharedObjectsContainer::CreateCookiesTreeModel() const {
   auto container = std::make_unique<LocalDataContainer>(
       cookies_, databases_, local_storages_, session_storages_, appcaches_,
-      indexed_dbs_, file_systems_, nullptr, channel_ids_, service_workers_,
-      shared_workers_, cache_storages_, nullptr, nullptr);
+      indexed_dbs_, file_systems_, nullptr, service_workers_, shared_workers_,
+      cache_storages_, nullptr, nullptr);
 
   return std::make_unique<CookiesTreeModel>(std::move(container), nullptr);
 }

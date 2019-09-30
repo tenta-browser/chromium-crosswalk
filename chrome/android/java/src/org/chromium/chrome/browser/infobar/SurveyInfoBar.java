@@ -16,6 +16,7 @@ import org.chromium.chrome.R;
 import org.chromium.chrome.browser.survey.SurveyController;
 import org.chromium.chrome.browser.tab.EmptyTabObserver;
 import org.chromium.chrome.browser.tab.Tab;
+import org.chromium.chrome.browser.tab.Tab.TabHidingType;
 import org.chromium.chrome.browser.util.AccessibilityUtil;
 import org.chromium.content_public.browser.WebContents;
 import org.chromium.ui.text.NoUnderlineClickableSpan;
@@ -87,7 +88,7 @@ public class SurveyInfoBar extends InfoBar {
         Tab tab = nativeGetTab(getNativeInfoBarPtr());
         tab.addObserver(new EmptyTabObserver() {
             @Override
-            public void onHidden(Tab tab) {
+            public void onHidden(Tab tab, @TabHidingType int type) {
                 mDelegate.onSurveyInfoBarTabHidden();
                 tab.removeObserver(this);
 
@@ -117,7 +118,7 @@ public class SurveyInfoBar extends InfoBar {
         prompt.setText(infoBarText);
         prompt.setMovementMethod(LinkMovementMethod.getInstance());
         prompt.setGravity(Gravity.CENTER_VERTICAL);
-        ApiCompatibilityUtils.setTextAppearance(prompt, R.style.BlackTitle1);
+        ApiCompatibilityUtils.setTextAppearance(prompt, R.style.TextAppearance_BlackTitle1);
         addAccessibilityClickListener(prompt, tab);
         layout.addContent(prompt, 1f);
     }

@@ -178,14 +178,12 @@ class ImmersiveFullscreenControllerTest : public AshTestBase {
     top_container_->SetFocusBehavior(views::View::FocusBehavior::ALWAYS);
     widget_->GetContentsView()->AddChildView(top_container_);
 
-    delegate_.reset(
-        new MockImmersiveFullscreenControllerDelegate(top_container_));
-    controller_.reset(new ImmersiveFullscreenController);
+    delegate_ = std::make_unique<MockImmersiveFullscreenControllerDelegate>(
+        top_container_);
+    controller_ = std::make_unique<ImmersiveFullscreenController>(
+        Shell::Get()->immersive_context());
     controller_->Init(delegate_.get(), widget_, top_container_);
     ImmersiveFullscreenControllerTestApi(controller_.get()).SetupForTest();
-
-    // Explicitly enable the app window dragging feature for the tests.
-    scoped_feature_list_.InitAndEnableFeature(features::kDragAppsInTabletMode);
 
     // The mouse is moved so that it is not over |top_container_| by
     // AshTestBase.
@@ -193,8 +191,7 @@ class ImmersiveFullscreenControllerTest : public AshTestBase {
 
   // Enables / disables immersive fullscreen.
   void SetEnabled(bool enabled) {
-    controller_->SetEnabled(ImmersiveFullscreenController::WINDOW_TYPE_OTHER,
-                            enabled);
+    ImmersiveFullscreenController::EnableForWidget(widget_, enabled);
   }
 
   // Attempt to reveal the top-of-window views via |modality|.
@@ -370,6 +367,8 @@ TEST_F(ImmersiveFullscreenControllerTest, RevealedLock) {
 
 // Test mouse event processing for top-of-screen reveal triggering.
 TEST_F(ImmersiveFullscreenControllerTest, OnMouseEvent) {
+  // Create 2nd display for off screen test.
+  UpdateDisplay("800x600, 800x600");
   // Set up initial state.
   SetEnabled(true);
   ASSERT_TRUE(controller()->IsEnabled());

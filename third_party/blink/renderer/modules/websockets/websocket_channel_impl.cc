@@ -41,6 +41,7 @@
 #include "third_party/blink/public/platform/web_url.h"
 #include "third_party/blink/public/platform/websocket_handshake_throttle.h"
 #include "third_party/blink/renderer/core/execution_context/execution_context.h"
+#include "third_party/blink/renderer/core/fileapi/file_error.h"
 #include "third_party/blink/renderer/core/fileapi/file_reader_loader.h"
 #include "third_party/blink/renderer/core/fileapi/file_reader_loader_client.h"
 #include "third_party/blink/renderer/core/frame/local_frame.h"
@@ -62,6 +63,7 @@
 #include "third_party/blink/renderer/platform/scheduler/public/frame_scheduler.h"
 #include "third_party/blink/renderer/platform/weborigin/security_origin.h"
 #include "third_party/blink/renderer/platform/wtf/functional.h"
+#include "third_party/blink/renderer/platform/wtf/std_lib_extras.h"
 
 namespace blink {
 
@@ -87,7 +89,7 @@ class WebSocketChannelImpl::BlobLoader final
   void DidStartLoading() override {}
   void DidReceiveData() override {}
   void DidFinishLoading() override;
-  void DidFail(FileError::ErrorCode) override;
+  void DidFail(FileErrorCode) override;
 
   void Trace(blink::Visitor* visitor) { visitor->Trace(channel_); }
 
@@ -138,8 +140,7 @@ void WebSocketChannelImpl::BlobLoader::DidFinishLoading() {
   loader_ = nullptr;
 }
 
-void WebSocketChannelImpl::BlobLoader::DidFail(
-    FileError::ErrorCode error_code) {
+void WebSocketChannelImpl::BlobLoader::DidFail(FileErrorCode error_code) {
   channel_->DidFailLoadingBlob(error_code);
   loader_ = nullptr;
 }
@@ -159,7 +160,7 @@ WebSocketChannelImpl* WebSocketChannelImpl::CreateForTesting(
     std::unique_ptr<SourceLocation> location,
     WebSocketHandle* handle,
     std::unique_ptr<WebSocketHandshakeThrottle> handshake_throttle) {
-  auto* channel = new WebSocketChannelImpl(
+  auto* channel = MakeGarbageCollected<WebSocketChannelImpl>(
       document, client, std::move(location), base::WrapUnique(handle));
   channel->handshake_throttle_ = std::move(handshake_throttle);
   return channel;
@@ -170,9 +171,9 @@ WebSocketChannelImpl* WebSocketChannelImpl::Create(
     ExecutionContext* execution_context,
     WebSocketChannelClient* client,
     std::unique_ptr<SourceLocation> location) {
-  auto* channel =
-      new WebSocketChannelImpl(execution_context, client, std::move(location),
-                               std::make_unique<WebSocketHandleImpl>());
+  auto* channel = MakeGarbageCollected<WebSocketChannelImpl>(
+      execution_context, client, std::move(location),
+      std::make_unique<WebSocketHandleImpl>());
   channel->handshake_throttle_ =
       channel->GetBaseFetchContext()->CreateWebSocketHandshakeThrottle();
   return channel;
@@ -192,8 +193,8 @@ WebSocketChannelImpl::WebSocketChannelImpl(
       sent_size_of_top_message_(0),
       location_at_construction_(std::move(location)),
       throttle_passed_(false) {
-  if (execution_context_->IsWorkerGlobalScope())
-    ToWorkerGlobalScope(execution_context_)->EnsureFetcher();
+  if (auto* scope = DynamicTo<WorkerGlobalScope>(*execution_context_))
+    scope->EnsureFetcher();
 }
 
 WebSocketChannelImpl::~WebSocketChannelImpl() {
@@ -277,12 +278,10 @@ bool WebSocketChannelImpl::Connect(const KURL& url, const String& protocol) {
 
 void WebSocketChannelImpl::Send(const CString& message) {
   NETWORK_DVLOG(1) << this << " Send(" << message << ") (CString argument)";
-  // FIXME: Change the inspector API to show the entire message instead
-  // of individual frames.
-  probe::didSendWebSocketFrame(execution_context_, identifier_,
-                               WebSocketOpCode::kOpCodeText, true,
-                               message.data(), message.length());
-  messages_.push_back(new Message(message));
+  probe::didSendWebSocketMessage(execution_context_, identifier_,
+                                 WebSocketOpCode::kOpCodeText, true,
+                                 message.data(), message.length());
+  messages_.push_back(MakeGarbageCollected<Message>(message));
   ProcessSendQueue();
 }
 
@@ -292,14 +291,13 @@ void WebSocketChannelImpl::Send(
                    << blob_data_handle->GetType() << ", "
                    << blob_data_handle->size() << ") "
                    << "(BlobDataHandle argument)";
-  // FIXME: Change the inspector API to show the entire message instead
-  // of individual frames.
   // FIXME: We can't access the data here.
   // Since Binary data are not displayed in Inspector, this does not
   // affect actual behavior.
-  probe::didSendWebSocketFrame(execution_context_, identifier_,
-                               WebSocketOpCode::kOpCodeBinary, true, "", 0);
-  messages_.push_back(new Message(std::move(blob_data_handle)));
+  probe::didSendWebSocketMessage(execution_context_, identifier_,
+                                 WebSocketOpCode::kOpCodeBinary, true, "", 0);
+  messages_.push_back(
+      MakeGarbageCollected<Message>(std::move(blob_data_handle)));
   ProcessSendQueue();
 }
 
@@ -309,16 +307,14 @@ void WebSocketChannelImpl::Send(const DOMArrayBuffer& buffer,
   NETWORK_DVLOG(1) << this << " Send(" << buffer.Data() << ", " << byte_offset
                    << ", " << byte_length << ") "
                    << "(DOMArrayBuffer argument)";
-  // FIXME: Change the inspector API to show the entire message instead
-  // of individual frames.
-  probe::didSendWebSocketFrame(
+  probe::didSendWebSocketMessage(
       execution_context_, identifier_, WebSocketOpCode::kOpCodeBinary, true,
       static_cast<const char*>(buffer.Data()) + byte_offset, byte_length);
   // buffer.slice copies its contents.
   // FIXME: Reduce copy by sending the data immediately when we don't need to
   // queue the data.
-  messages_.push_back(
-      new Message(buffer.Slice(byte_offset, byte_offset + byte_length)));
+  messages_.push_back(MakeGarbageCollected<Message>(
+      buffer.Slice(byte_offset, byte_offset + byte_length)));
   ProcessSendQueue();
 }
 
@@ -327,13 +323,11 @@ void WebSocketChannelImpl::SendTextAsCharVector(
   NETWORK_DVLOG(1) << this << " SendTextAsCharVector("
                    << static_cast<void*>(data.get()) << ", " << data->size()
                    << ")";
-  // FIXME: Change the inspector API to show the entire message instead
-  // of individual frames.
-  probe::didSendWebSocketFrame(execution_context_, identifier_,
-                               WebSocketOpCode::kOpCodeText, true, data->data(),
-                               data->size());
-  messages_.push_back(
-      new Message(std::move(data), kMessageTypeTextAsCharVector));
+  probe::didSendWebSocketMessage(execution_context_, identifier_,
+                                 WebSocketOpCode::kOpCodeText, true,
+                                 data->data(), data->size());
+  messages_.push_back(MakeGarbageCollected<Message>(
+      std::move(data), kMessageTypeTextAsCharVector));
   ProcessSendQueue();
 }
 
@@ -342,13 +336,11 @@ void WebSocketChannelImpl::SendBinaryAsCharVector(
   NETWORK_DVLOG(1) << this << " SendBinaryAsCharVector("
                    << static_cast<void*>(data.get()) << ", " << data->size()
                    << ")";
-  // FIXME: Change the inspector API to show the entire message instead
-  // of individual frames.
-  probe::didSendWebSocketFrame(execution_context_, identifier_,
-                               WebSocketOpCode::kOpCodeBinary, true,
-                               data->data(), data->size());
-  messages_.push_back(
-      new Message(std::move(data), kMessageTypeBinaryAsCharVector));
+  probe::didSendWebSocketMessage(execution_context_, identifier_,
+                                 WebSocketOpCode::kOpCodeBinary, true,
+                                 data->data(), data->size());
+  messages_.push_back(MakeGarbageCollected<Message>(
+      std::move(data), kMessageTypeBinaryAsCharVector));
   ProcessSendQueue();
 }
 
@@ -357,7 +349,7 @@ void WebSocketChannelImpl::Close(int code, const String& reason) {
   DCHECK(handle_);
   unsigned short code_to_send = static_cast<unsigned short>(
       code == kCloseEventCodeNotSpecified ? kCloseEventCodeNoStatusRcvd : code);
-  messages_.push_back(new Message(code_to_send, reason));
+  messages_.push_back(MakeGarbageCollected<Message>(code_to_send, reason));
   ProcessSendQueue();
 }
 
@@ -365,7 +357,8 @@ void WebSocketChannelImpl::Fail(const String& reason,
                                 MessageLevel level,
                                 std::unique_ptr<SourceLocation> location) {
   NETWORK_DVLOG(1) << this << " Fail(" << reason << ")";
-  probe::didReceiveWebSocketFrameError(execution_context_, identifier_, reason);
+  probe::didReceiveWebSocketMessageError(execution_context_, identifier_,
+                                         reason);
   const String message =
       "WebSocket connection to '" + url_.ElidedString() + "' failed: " + reason;
 
@@ -428,16 +421,16 @@ WebSocketChannelImpl::Message::Message(unsigned short code,
 void WebSocketChannelImpl::SendInternal(
     WebSocketHandle::MessageType message_type,
     const char* data,
-    size_t total_size,
+    wtf_size_t total_size,
     uint64_t* consumed_buffered_amount) {
   WebSocketHandle::MessageType frame_type =
       sent_size_of_top_message_ ? WebSocketHandle::kMessageTypeContinuation
                                 : message_type;
   DCHECK_GE(total_size, sent_size_of_top_message_);
   // The first cast is safe since the result of min() never exceeds
-  // the range of size_t. The second cast is necessary to compile
+  // the range of wtf_size_t. The second cast is necessary to compile
   // min() on ILP32.
-  size_t size = static_cast<size_t>(
+  wtf_size_t size = static_cast<wtf_size_t>(
       std::min(sending_quota_,
                static_cast<uint64_t>(total_size - sent_size_of_top_message_)));
   bool final = (sent_size_of_top_message_ + size == total_size);
@@ -471,7 +464,8 @@ void WebSocketChannelImpl::ProcessSendQueue() {
         CHECK(!blob_loader_);
         CHECK(message);
         CHECK(message->blob_data_handle);
-        blob_loader_ = new BlobLoader(message->blob_data_handle, this);
+        blob_loader_ =
+            MakeGarbageCollected<BlobLoader>(message->blob_data_handle, this);
         break;
       case kMessageTypeArrayBuffer:
         CHECK(message->array_buffer);
@@ -650,20 +644,18 @@ void WebSocketChannelImpl::DidReceiveData(WebSocketHandle* handle,
       break;
   }
 
-  receiving_message_data_.Append(data, size);
+  receiving_message_data_.Append(data, SafeCast<uint32_t>(size));
   received_data_size_for_flow_control_ += size;
   FlowControlIfNecessary();
   if (!fin) {
     return;
   }
-  // FIXME: Change the inspector API to show the entire message instead
-  // of individual frames.
   auto opcode = receiving_message_type_is_text_
                     ? WebSocketOpCode::kOpCodeText
                     : WebSocketOpCode::kOpCodeBinary;
-  probe::didReceiveWebSocketFrame(execution_context_, identifier_, opcode,
-                                  false, receiving_message_data_.data(),
-                                  receiving_message_data_.size());
+  probe::didReceiveWebSocketMessage(execution_context_, identifier_, opcode,
+                                    false, receiving_message_data_.data(),
+                                    receiving_message_data_.size());
   if (receiving_message_type_is_text_) {
     String message = receiving_message_data_.IsEmpty()
                          ? g_empty_string
@@ -761,19 +753,19 @@ void WebSocketChannelImpl::DidFinishLoadingBlob(DOMArrayBuffer* buffer) {
   DCHECK_GT(messages_.size(), 0u);
   DCHECK_EQ(messages_.front()->type, kMessageTypeBlob);
   // We replace it with the loaded blob.
-  messages_.front() = new Message(buffer);
+  messages_.front() = MakeGarbageCollected<Message>(buffer);
   ProcessSendQueue();
 }
 
-void WebSocketChannelImpl::DidFailLoadingBlob(FileError::ErrorCode error_code) {
+void WebSocketChannelImpl::DidFailLoadingBlob(FileErrorCode error_code) {
   blob_loader_.Clear();
-  if (error_code == FileError::kAbortErr) {
+  if (error_code == FileErrorCode::kAbortErr) {
     // The error is caused by cancel().
     return;
   }
   // FIXME: Generate human-friendly reason message.
   FailAsError("Failed to load Blob: error code = " +
-              String::Number(error_code));
+              String::Number(static_cast<unsigned>(error_code)));
 }
 
 void WebSocketChannelImpl::TearDownFailedConnection() {

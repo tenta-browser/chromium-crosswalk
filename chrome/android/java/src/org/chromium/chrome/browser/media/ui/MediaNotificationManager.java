@@ -24,6 +24,7 @@ import android.os.Build;
 import android.os.Handler;
 import android.os.IBinder;
 import android.support.annotation.NonNull;
+import android.support.annotation.Nullable;
 import android.support.v4.app.NotificationCompat;
 import android.support.v4.app.NotificationManagerCompat;
 import android.support.v4.media.MediaMetadataCompat;
@@ -39,22 +40,21 @@ import org.chromium.base.ContextUtils;
 import org.chromium.base.Log;
 import org.chromium.base.SysUtils;
 import org.chromium.base.VisibleForTesting;
-import org.chromium.blink.mojom.MediaSessionAction;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.AppHooks;
+import org.chromium.chrome.browser.ChromeFeatureList;
 import org.chromium.chrome.browser.notifications.ChromeNotificationBuilder;
 import org.chromium.chrome.browser.notifications.NotificationBuilderFactory;
 import org.chromium.chrome.browser.notifications.NotificationConstants;
 import org.chromium.chrome.browser.notifications.NotificationUmaTracker;
 import org.chromium.chrome.browser.notifications.channels.ChannelDefinitions;
-import org.chromium.content_public.common.MediaMetadata;
+import org.chromium.media_session.mojom.MediaSessionAction;
+import org.chromium.services.media_session.MediaMetadata;
 
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
-
-import javax.annotation.Nullable;
 
 /**
  * A class for notifications that provide information and optional media controls for a given media.
@@ -68,7 +68,7 @@ public class MediaNotificationManager {
     static final int MINIMAL_MEDIA_IMAGE_SIZE_PX = 114;
 
     @VisibleForTesting
-    static final int CUSTOM_MEDIA_SESSION_ACTION_STOP = MediaSessionAction.LAST + 1;
+    static final int CUSTOM_MEDIA_SESSION_ACTION_STOP = MediaSessionAction.MAX_VALUE + 1;
 
     // The media artwork image resolution on high-end devices.
     private static final int HIGH_IMAGE_SIZE_PX = 512;
@@ -1070,11 +1070,15 @@ public class MediaNotificationManager {
 
     private void setMediaStyleLayoutForNotificationBuilder(ChromeNotificationBuilder builder) {
         setMediaStyleNotificationText(builder);
+        // Notifications in incognito shouldn't show an icon to avoid leaking information.
+        boolean hideUserData = mMediaNotificationInfo.isPrivate
+                && ChromeFeatureList.isEnabled(
+                           ChromeFeatureList.HIDE_USER_DATA_FROM_INCOGNITO_NOTIFICATIONS);
         if (!mMediaNotificationInfo.supportsPlayPause()) {
             // Non-playback (Cast) notification will not use MediaStyle, so not
             // setting the large icon is fine.
             builder.setLargeIcon(null);
-        } else if (mMediaNotificationInfo.notificationLargeIcon != null) {
+        } else if (mMediaNotificationInfo.notificationLargeIcon != null && !hideUserData) {
             builder.setLargeIcon(mMediaNotificationInfo.notificationLargeIcon);
         } else if (!isRunningAtLeastN()) {
             if (mDefaultNotificationLargeIcon == null
@@ -1133,6 +1137,27 @@ public class MediaNotificationManager {
     }
 
     private void setMediaStyleNotificationText(ChromeNotificationBuilder builder) {
+        boolean hideUserData = mMediaNotificationInfo.isPrivate
+                && ChromeFeatureList.isEnabled(
+                           ChromeFeatureList.HIDE_USER_DATA_FROM_INCOGNITO_NOTIFICATIONS);
+        if (hideUserData) {
+            // Notifications in incognito shouldn't show what is playing to avoid leaking
+            // information.
+            if (isRunningAtLeastN()) {
+                builder.setContentTitle(getContext().getResources().getString(
+                        R.string.media_notification_incognito));
+                builder.setSubText(
+                        getContext().getResources().getString(R.string.notification_incognito_tab));
+            } else {
+                // App name is automatically added to the title from Android N,
+                // but needs to be added explicitly for prior versions.
+                builder.setContentTitle(getContext().getString(R.string.app_name))
+                        .setContentText(getContext().getResources().getString(
+                                R.string.media_notification_incognito));
+            }
+            return;
+        }
+
         builder.setContentTitle(mMediaNotificationInfo.metadata.getTitle());
         String artistAndAlbumText = getArtistAndAlbumText(mMediaNotificationInfo.metadata);
         if (isRunningAtLeastN() || !artistAndAlbumText.isEmpty()) {

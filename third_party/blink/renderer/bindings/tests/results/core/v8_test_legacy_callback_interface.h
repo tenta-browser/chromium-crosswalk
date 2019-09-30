@@ -8,9 +8,8 @@
 // DO NOT MODIFY!
 
 // clang-format off
-
-#ifndef V8TestLegacyCallbackInterface_h
-#define V8TestLegacyCallbackInterface_h
+#ifndef THIRD_PARTY_BLINK_RENDERER_BINDINGS_TESTS_RESULTS_CORE_V8_TEST_LEGACY_CALLBACK_INTERFACE_H_
+#define THIRD_PARTY_BLINK_RENDERER_BINDINGS_TESTS_RESULTS_CORE_V8_TEST_LEGACY_CALLBACK_INTERFACE_H_
 
 #include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/platform/bindings/callback_interface_base.h"
@@ -21,18 +20,26 @@ namespace blink {
 
 class Node;
 
+CORE_EXPORT extern const WrapperTypeInfo _wrapper_type_info;
+
 class CORE_EXPORT V8TestLegacyCallbackInterface final : public CallbackInterfaceBase {
  public:
   // Support of "legacy callback interface"
   static v8::Local<v8::FunctionTemplate> DomTemplate(v8::Isolate*, const DOMWrapperWorld&);
-  static const WrapperTypeInfo wrapperTypeInfo;
+  static constexpr const WrapperTypeInfo* GetWrapperTypeInfo() {
+    return &_wrapper_type_info;
+  }
+
   // Constants
   static constexpr uint16_t CONST_VALUE_USHORT_42 = 42;
 
   static V8TestLegacyCallbackInterface* Create(v8::Local<v8::Object> callback_object) {
-    return new V8TestLegacyCallbackInterface(callback_object);
+    return MakeGarbageCollected<V8TestLegacyCallbackInterface>(callback_object);
   }
 
+  explicit V8TestLegacyCallbackInterface(v8::Local<v8::Object> callback_object)
+      : CallbackInterfaceBase(callback_object,
+                              kSingleOperation) {}
   ~V8TestLegacyCallbackInterface() override = default;
 
   // NameClient overrides:
@@ -41,10 +48,6 @@ class CORE_EXPORT V8TestLegacyCallbackInterface final : public CallbackInterface
   // Performs "call a user object's operation".
   // https://heycam.github.io/webidl/#call-a-user-objects-operation
   v8::Maybe<uint16_t> acceptNode(ScriptWrappable* callback_this_value, Node* node) WARN_UNUSED_RESULT;
-
- private:
-  explicit V8TestLegacyCallbackInterface(v8::Local<v8::Object> callback_object)
-      : CallbackInterfaceBase(callback_object, kSingleOperation) {}
 };
 
 template <>
@@ -52,14 +55,13 @@ class V8PersistentCallbackInterface<V8TestLegacyCallbackInterface> final : publi
   using V8CallbackInterface = V8TestLegacyCallbackInterface;
 
  public:
+  explicit V8PersistentCallbackInterface(V8CallbackInterface* callback_interface)
+      : V8PersistentCallbackInterfaceBase(callback_interface) {}
   ~V8PersistentCallbackInterface() override = default;
 
   CORE_EXPORT v8::Maybe<uint16_t> acceptNode(ScriptWrappable* callback_this_value, Node* node) WARN_UNUSED_RESULT;
 
  private:
-  explicit V8PersistentCallbackInterface(V8CallbackInterface* callback_interface)
-      : V8PersistentCallbackInterfaceBase(callback_interface) {}
-
   V8CallbackInterface* Proxy() {
     return As<V8CallbackInterface>();
   }
@@ -78,4 +80,4 @@ Persistent<V8TestLegacyCallbackInterface> WrapPersistent(V8TestLegacyCallbackInt
 
 }  // namespace blink
 
-#endif  // V8TestLegacyCallbackInterface_h
+#endif  // THIRD_PARTY_BLINK_RENDERER_BINDINGS_TESTS_RESULTS_CORE_V8_TEST_LEGACY_CALLBACK_INTERFACE_H_

@@ -15,6 +15,7 @@
 #include "chrome/browser/ui/app_list/app_list_syncable_service.h"
 #include "chrome/browser/ui/app_list/app_list_syncable_service_factory.h"
 #include "chrome/browser/ui/app_list/internal_app/internal_app_metadata.h"
+#include "chrome/browser/ui/app_list/page_break_constants.h"
 #include "components/browser_sync/profile_sync_service.h"
 #include "extensions/browser/extension_system.h"
 
@@ -124,10 +125,13 @@ IN_PROC_BROWSER_TEST_F(SingleClientAppListSyncTest, AppListSomeApps) {
   app_list::AppListSyncableService* service =
       app_list::AppListSyncableServiceFactory::GetForProfile(verifier());
 
-  // Default apps: chrome + web store + internal apps.
+  // Default apps: chrome + web store + internal apps + number of default page
+  // breaks.
   const size_t kNumDefaultApps =
-      2u + app_list::GetNumberOfInternalAppsShowInLauncherForTest(
-               /*apps_name=*/nullptr, GetProfile(0));
+      2u +
+      app_list::GetNumberOfInternalAppsShowInLauncherForTest(
+          /*apps_name=*/nullptr, GetProfile(0)) +
+      app_list::kDefaultPageBreakAppIdsLength;
   ASSERT_EQ(kNumApps + kNumDefaultApps, service->GetNumSyncItemsForTest());
 
   ASSERT_TRUE(UpdatedProgressMarkerChecker(GetSyncService(0)).Wait());
@@ -167,7 +171,8 @@ IN_PROC_BROWSER_TEST_F(SingleClientAppListSyncTest, LocalStorage) {
   ASSERT_TRUE(UpdatedProgressMarkerChecker(GetSyncService(0)).Wait());
 
   // Disable app sync.
-  sync_service->OnUserChoseDatatypes(false, syncer::ModelTypeSet());
+  sync_service->GetUserSettings()->SetChosenDataTypes(false,
+                                                      syncer::ModelTypeSet());
 
   // Change data when sync is off.
   for (const auto& app_id : app_ids) {
@@ -182,7 +187,8 @@ IN_PROC_BROWSER_TEST_F(SingleClientAppListSyncTest, LocalStorage) {
   EXPECT_FALSE(SyncItemsMatch(service, &compare_service));
 
   // Restore sync and sync data should override local changes.
-  sync_service->OnUserChoseDatatypes(true, syncer::ModelTypeSet());
+  sync_service->GetUserSettings()->SetChosenDataTypes(true,
+                                                      syncer::ModelTypeSet());
   EXPECT_TRUE(AppListSyncUpdateWaiter(service).Wait());
   EXPECT_TRUE(SyncItemsMatch(service, &compare_service));
 }

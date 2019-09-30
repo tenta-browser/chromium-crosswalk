@@ -15,14 +15,17 @@
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
 #include "base/observer_list.h"
+#include "base/optional.h"
 #include "build/build_config.h"
 #include "components/history/core/browser/history_types.h"
 #include "components/keyed_service/core/keyed_service.h"
 #include "components/ntp_tiles/most_visited_sites.h"
 #include "components/ntp_tiles/ntp_tile.h"
+#include "components/prefs/pref_change_registrar.h"
 #include "components/prefs/pref_registry_simple.h"
 #include "content/public/browser/notification_observer.h"
 #include "content/public/browser/notification_registrar.h"
+#include "ui/native_theme/native_theme.h"
 #include "url/gurl.h"
 
 #if defined(OS_ANDROID)
@@ -31,13 +34,14 @@
 
 class InstantIOContext;
 class InstantServiceObserver;
+class NtpBackgroundService;
 class Profile;
 struct InstantMostVisitedItem;
 struct ThemeBackgroundInfo;
 
 namespace content {
 class RenderProcessHost;
-}
+}  // namespace content
 
 // Tracks render process host IDs that are associated with Instant, i.e.
 // processes that are used to render an NTP. Also responsible for keeping
@@ -86,6 +90,8 @@ class InstantService : public KeyedService,
   bool UpdateCustomLink(const GURL& url,
                         const GURL& new_url,
                         const std::string& new_title);
+  // Invoked when the Instant page wants to reorder a custom link.
+  bool ReorderCustomLink(const GURL& url, int new_pos);
   // Invoked when the Instant page wants to delete a custom link.
   bool DeleteCustomLink(const GURL& url);
   // Invoked when the Instant page wants to undo the previous custom link
@@ -126,13 +132,25 @@ class InstantService : public KeyedService,
   // Used for testing.
   ThemeBackgroundInfo* GetThemeInfoForTesting() { return theme_info_.get(); }
 
+  // Used for testing.
+  void SetDarkModeThemeForTesting(ui::NativeTheme* theme);
+
+  // Used for testing.
+  void AddValidBackdropUrlForTesting(const GURL& url) const;
+
+  // Check if a custom background has been set by the user.
+  bool IsCustomBackgroundSet();
+
  private:
   class SearchProviderObserver;
+
+  class DarkModeHandler;
 
   friend class InstantExtendedTest;
   friend class InstantUnitTestBase;
 
   FRIEND_TEST_ALL_PREFIXES(InstantExtendedTest, ProcessIsolation);
+  FRIEND_TEST_ALL_PREFIXES(InstantServiceTest, DeleteThumbnailDataIfExists);
   FRIEND_TEST_ALL_PREFIXES(InstantServiceTest, GetNTPTileSuggestion);
 
   // KeyedService:
@@ -150,6 +168,10 @@ class InstantService : public KeyedService,
   // search provider is not Google.
   void OnSearchProviderChanged(bool is_google);
 
+  // Called when dark mode changes. Updates current theme info as necessary and
+  // notifies that the theme has changed.
+  void OnDarkModeChanged(bool dark_mode);
+
   // ntp_tiles::MostVisitedSites::Observer implementation.
   void OnURLsAvailable(
       const std::map<ntp_tiles::SectionType, ntp_tiles::NTPTilesVector>&
@@ -163,7 +185,26 @@ class InstantService : public KeyedService,
 
   void ApplyOrResetCustomBackgroundThemeInfo();
 
+  void ApplyCustomBackgroundThemeInfo();
+  void ApplyCustomBackgroundThemeInfoFromLocalFile(bool file_exists);
+
   void ResetCustomBackgroundThemeInfo();
+
+  void FallbackToDefaultThemeInfo();
+
+  void RemoveLocalBackgroundImageCopy();
+
+  // Remove old user thumbnail data if it exists. If |callback| is provided,
+  // calls back true if the thumbnail data was deleted. Thumbnails have been
+  // deprecated as of M69.
+  // TODO(crbug.com/893362): Remove after M75.
+  void DeleteThumbnailDataIfExists(
+      const base::FilePath& profile_path,
+      base::Optional<base::OnceCallback<void(bool)>> callback);
+
+  // Returns false if the custom background pref cannot be parsed, otherwise
+  // returns true and sets custom_background_url to the value in the pref.
+  bool IsCustomBackgroundPrefValid(GURL& custom_background_url);
 
   // Update the background pref to point to
   // chrome-search://local-ntp/background.jpg
@@ -191,6 +232,15 @@ class InstantService : public KeyedService,
 
   // Keeps track of any changes in search engine provider. May be null.
   std::unique_ptr<SearchProviderObserver> search_provider_observer_;
+
+  // Keeps track of any changes to system dark mode.
+  std::unique_ptr<DarkModeHandler> dark_mode_handler_;
+
+  PrefChangeRegistrar pref_change_registrar_;
+
+  PrefService* pref_service_;
+
+  NtpBackgroundService* background_service_;
 
   base::WeakPtrFactory<InstantService> weak_ptr_factory_;
 

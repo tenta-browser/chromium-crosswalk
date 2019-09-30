@@ -15,6 +15,7 @@
 #include "extensions/browser/extension_creator.h"
 #include "extensions/browser/extension_registry.h"
 #include "extensions/browser/notification_types.h"
+#include "extensions/common/verifier_formats.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace extensions {
@@ -228,8 +229,7 @@ const Extension* ExtensionServiceTestWithInstall::VerifyCrxInstall(
           << path.value();
     }
 
-    for (std::vector<base::string16>::iterator err = errors.begin();
-      err != errors.end(); ++err) {
+    for (auto err = errors.begin(); err != errors.end(); ++err) {
       LOG(ERROR) << *err;
     }
   } else {
@@ -281,8 +281,8 @@ void ExtensionServiceTestWithInstall::UpdateExtension(
   content::WindowedNotificationObserver observer(
       extensions::NOTIFICATION_CRX_INSTALLER_DONE,
       base::Bind(&IsCrxInstallerDone, &installer));
-  service()->UpdateExtension(extensions::CRXFileInfo(id, path), true,
-                             &installer);
+  service()->UpdateExtension(CRXFileInfo(id, GetTestVerifierFormat(), path),
+                             true, &installer);
 
   if (installer)
     observer.Wait();
@@ -374,13 +374,12 @@ void ExtensionServiceTestWithInstall::OnExtensionUnloaded(
     UnloadedExtensionReason reason) {
   unloaded_id_ = extension->id();
   unloaded_reason_ = reason;
-  extensions::ExtensionList::iterator i =
-      std::find(loaded_.begin(), loaded_.end(), extension);
-      // TODO(erikkay) fix so this can be an assert.  Right now the tests
-      // are manually calling clear() on loaded_, so this isn't doable.
-      if (i == loaded_.end())
-        return;
-      loaded_.erase(i);
+  auto i = std::find(loaded_.begin(), loaded_.end(), extension);
+  // TODO(erikkay) fix so this can be an assert.  Right now the tests
+  // are manually calling clear() on loaded_, so this isn't doable.
+  if (i == loaded_.end())
+    return;
+  loaded_.erase(i);
 }
 
 void ExtensionServiceTestWithInstall::OnExtensionWillBeInstalled(

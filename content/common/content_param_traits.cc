@@ -10,16 +10,17 @@
 #include "base/unguessable_token.h"
 #include "components/viz/common/surfaces/frame_sink_id.h"
 #include "components/viz/common/surfaces/local_surface_id.h"
+#include "components/viz/common/surfaces/local_surface_id_allocation.h"
 #include "components/viz/common/surfaces/surface_id.h"
 #include "components/viz/common/surfaces/surface_info.h"
 #include "content/common/frame_message_structs.h"
 #include "ipc/ipc_mojo_message_helper.h"
 #include "ipc/ipc_mojo_param_traits.h"
 #include "net/base/ip_endpoint.h"
-#include "third_party/blink/public/common/message_port/message_port_channel.h"
-#include "third_party/blink/public/common/message_port/transferable_message.h"
-#include "third_party/blink/public/mojom/message_port/message_port.mojom.h"
-#include "ui/accessibility/ax_modes.h"
+#include "third_party/blink/public/common/messaging/message_port_channel.h"
+#include "third_party/blink/public/common/messaging/transferable_message.h"
+#include "third_party/blink/public/mojom/messaging/transferable_message.mojom.h"
+#include "ui/accessibility/ax_mode.h"
 #include "ui/base/ui_base_features.h"
 #include "ui/events/blink/web_input_event_traits.h"
 // #include "ui/gfx/ipc/geometry/gfx_param_traits.h"
@@ -148,7 +149,7 @@ void ParamTraits<scoped_refptr<storage::BlobHandle>>::Log(const param_type& p,
 void ParamTraits<content::FrameMsg_ViewChanged_Params>::Write(
     base::Pickle* m,
     const param_type& p) {
-  DCHECK(features::IsUsingWindowService() ||
+  DCHECK(features::IsMultiProcessMash() ||
          (p.frame_sink_id.has_value() && p.frame_sink_id->is_valid()));
   WriteParam(m, p.frame_sink_id);
 }
@@ -159,7 +160,7 @@ bool ParamTraits<content::FrameMsg_ViewChanged_Params>::Read(
     param_type* r) {
   if (!ReadParam(m, iter, &(r->frame_sink_id)))
     return false;
-  if (!features::IsUsingWindowService() &&
+  if (!features::IsMultiProcessMash() &&
       (!r->frame_sink_id || !r->frame_sink_id->is_valid())) {
     NOTREACHED();
     return false;
@@ -210,6 +211,7 @@ void ParamTraits<scoped_refptr<base::RefCountedData<
   WriteParam(m, p->data.stack_trace_debugger_id_first);
   WriteParam(m, p->data.stack_trace_debugger_id_second);
   WriteParam(m, p->data.ports);
+  WriteParam(m, p->data.stream_channels);
   WriteParam(m, p->data.has_user_gesture);
   WriteParam(m, !!p->data.user_activation);
   if (p->data.user_activation) {
@@ -240,6 +242,7 @@ bool ParamTraits<
       !ReadParam(m, iter, &(*r)->data.stack_trace_debugger_id_first) ||
       !ReadParam(m, iter, &(*r)->data.stack_trace_debugger_id_second) ||
       !ReadParam(m, iter, &(*r)->data.ports) ||
+      !ReadParam(m, iter, &(*r)->data.stream_channels) ||
       !ReadParam(m, iter, &(*r)->data.has_user_gesture) ||
       !ReadParam(m, iter, &has_activation)) {
     return false;
@@ -330,6 +333,38 @@ void ParamTraits<viz::LocalSurfaceId>::Log(const param_type& p,
   LogParam(p.child_sequence_number(), l);
   l->append(", ");
   LogParam(p.embed_token(), l);
+  l->append(")");
+}
+
+void ParamTraits<viz::LocalSurfaceIdAllocation>::Write(base::Pickle* m,
+                                                       const param_type& p) {
+  DCHECK(p.IsValid());
+  WriteParam(m, p.local_surface_id());
+  WriteParam(m, p.allocation_time());
+}
+
+bool ParamTraits<viz::LocalSurfaceIdAllocation>::Read(
+    const base::Pickle* m,
+    base::PickleIterator* iter,
+    param_type* p) {
+  viz::LocalSurfaceId local_surface_id;
+  if (!ReadParam(m, iter, &local_surface_id))
+    return false;
+
+  base::TimeTicks allocation_time;
+  if (!ReadParam(m, iter, &allocation_time))
+    return false;
+
+  *p = viz::LocalSurfaceIdAllocation(local_surface_id, allocation_time);
+  return p->IsValid();
+}
+
+void ParamTraits<viz::LocalSurfaceIdAllocation>::Log(const param_type& p,
+                                                     std::string* l) {
+  l->append("viz::LocalSurfaceIdAllocation(");
+  LogParam(p.local_surface_id(), l);
+  l->append(", ");
+  LogParam(p.allocation_time(), l);
   l->append(")");
 }
 

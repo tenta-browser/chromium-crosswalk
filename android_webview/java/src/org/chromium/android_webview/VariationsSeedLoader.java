@@ -61,7 +61,7 @@ import java.util.concurrent.TimeoutException;
  * 4. Call finishVariationsInit() with the value returned from startVariationsInit(). This will
  *    block for up to SEED_LOAD_TIMEOUT_MILLIS if the task hasn't fininshed loading the seed. If the
  *    seed is loaded on time, variations will be initialized. finishVariationsInit() must be called
- *    before AwFieldTrialCreator::SetUpFieldTrials() runs.
+ *    before AwFeatureListCreator::SetUpFieldTrials() runs.
  */
 public class VariationsSeedLoader {
     private static final String TAG = "VariationsSeedLoader";
@@ -111,8 +111,6 @@ public class VariationsSeedLoader {
         private volatile boolean mEnabledByExperiment;
 
         private FutureTask<SeedInfo> mLoadTask = new FutureTask<>(() -> {
-            AwMetricsServiceClient.preloadClientId();
-
             File newSeedFile = VariationsUtils.getNewSeedFile();
             File oldSeedFile = VariationsUtils.getSeedFile();
 

@@ -25,8 +25,11 @@ suite('<history-synced-device-manager>', function() {
 
   setup(function() {
     element = document.createElement('history-synced-device-manager');
-    element.signInState = true;
+    // |signInState| is generally set after |searchTerm| in Polymer 2. Set in
+    // the same order in tests, in order to catch regressions like
+    // https://crbug.com/915641.
     element.searchTerm = '';
+    element.signInState = true;
     replaceBody(element);
   });
 
@@ -42,7 +45,6 @@ suite('<history-synced-device-manager>', function() {
           'http://www.google.com',
           Polymer.dom(card.root)
               .querySelectorAll('.website-title')[0]
-              .children[0]
               .textContent.trim());
       assertEquals(2, card.tabs.length);
     });
@@ -108,7 +110,6 @@ suite('<history-synced-device-manager>', function() {
               'http://crbug.com/new',
               Polymer.dom(cards[0].root)
                   .querySelectorAll('.website-title')[1]
-                  .children[0]
                   .textContent.trim());
         });
   });
@@ -157,7 +158,6 @@ suite('<history-synced-device-manager>', function() {
               'http://www.google.com',
               Polymer.dom(cards[0].root)
                   .querySelectorAll('.website-title')[0]
-                  .children[0]
                   .textContent.trim());
 
           element.searchTerm = 'Sans';
@@ -330,6 +330,19 @@ suite('<history-synced-device-manager>', function() {
     return PolymerTest.flushTasks().then(function() {
       assertTrue(element.$['sign-in-guide'].hidden);
     });
+  });
+
+  test('no synced tabs message displays on load', function() {
+    element.syncedDevices_ = [];
+    // Should show no synced tabs message on initial load. Regression test for
+    // https://crbug.com/915641.
+    return Promise
+        .all([PolymerTest.flushTasks(), test_util.waitForRender(element)])
+        .then(() => {
+          assertNoSyncedTabsMessageShown(element, 'noSyncedResults');
+          const cards = getCards(element);
+          assertEquals(0, cards.length);
+        });
   });
 
   teardown(function() {

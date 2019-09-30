@@ -15,12 +15,12 @@ import android.os.StrictMode;
 import android.os.SystemClock;
 import android.text.TextUtils;
 
-import org.chromium.base.AsyncTask;
 import org.chromium.base.ContextUtils;
 import org.chromium.base.FileUtils;
 import org.chromium.base.Log;
 import org.chromium.base.PathUtils;
 import org.chromium.base.metrics.RecordHistogram;
+import org.chromium.base.task.AsyncTask;
 import org.chromium.chrome.browser.document.DocumentUtils;
 import org.chromium.chrome.browser.metrics.WebApkUma;
 
@@ -61,7 +61,6 @@ public class WebappDirectoryManager {
      *
      * @param context         Context to pull info and Files from.
      * @param currentWebappId ID for the currently running web app.
-     * @return                AsyncTask doing the cleaning.
      */
     public void cleanUpDirectories(final Context context, final String currentWebappId) {
         if (mCleanupTask != null) return;

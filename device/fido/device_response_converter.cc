@@ -12,8 +12,8 @@
 #include "base/numerics/safe_conversions.h"
 #include "base/optional.h"
 #include "base/stl_util.h"
-#include "components/cbor/cbor_reader.h"
-#include "components/cbor/cbor_writer.h"
+#include "components/cbor/reader.h"
+#include "components/cbor/writer.h"
 #include "device/fido/authenticator_data.h"
 #include "device/fido/authenticator_supported_options.h"
 #include "device/fido/fido_constants.h"
@@ -36,7 +36,7 @@ ProtocolVersion ConvertStringToProtocolVersion(base::StringPiece version) {
 
 }  // namespace
 
-using CBOR = cbor::CBORValue;
+using CBOR = cbor::Value;
 
 CtapDeviceResponseCode GetResponseCode(base::span<const uint8_t> buffer) {
   if (buffer.empty())
@@ -51,12 +51,12 @@ CtapDeviceResponseCode GetResponseCode(base::span<const uint8_t> buffer) {
 // Decodes byte array response from authenticator to CBOR value object and
 // checks for correct encoding format.
 base::Optional<AuthenticatorMakeCredentialResponse>
-ReadCTAPMakeCredentialResponse(base::span<const uint8_t> buffer) {
+ReadCTAPMakeCredentialResponse(FidoTransportProtocol transport_used,
+                               base::span<const uint8_t> buffer) {
   if (buffer.size() <= kResponseCodeLength)
     return base::nullopt;
 
-  base::Optional<CBOR> decoded_response =
-      cbor::CBORReader::Read(buffer.subspan(1));
+  base::Optional<CBOR> decoded_response = cbor::Reader::Read(buffer.subspan(1));
   if (!decoded_response || !decoded_response->is_map())
     return base::nullopt;
 
@@ -80,6 +80,7 @@ ReadCTAPMakeCredentialResponse(base::span<const uint8_t> buffer) {
     return base::nullopt;
 
   return AuthenticatorMakeCredentialResponse(
+      transport_used,
       AttestationObject(std::move(*authenticator_data),
                         std::make_unique<OpaqueAttestationStatement>(
                             format, it->second.Clone())));
@@ -90,8 +91,7 @@ base::Optional<AuthenticatorGetAssertionResponse> ReadCTAPGetAssertionResponse(
   if (buffer.size() <= kResponseCodeLength)
     return base::nullopt;
 
-  base::Optional<CBOR> decoded_response =
-      cbor::CBORReader::Read(buffer.subspan(1));
+  base::Optional<CBOR> decoded_response = cbor::Reader::Read(buffer.subspan(1));
 
   if (!decoded_response || !decoded_response->is_map())
     return base::nullopt;
@@ -149,8 +149,7 @@ base::Optional<AuthenticatorGetInfoResponse> ReadCTAPGetInfoResponse(
       GetResponseCode(buffer) != CtapDeviceResponseCode::kSuccess)
     return base::nullopt;
 
-  base::Optional<CBOR> decoded_response =
-      cbor::CBORReader::Read(buffer.subspan(1));
+  base::Optional<CBOR> decoded_response = cbor::Reader::Read(buffer.subspan(1));
 
   if (!decoded_response || !decoded_response->is_map())
     return base::nullopt;

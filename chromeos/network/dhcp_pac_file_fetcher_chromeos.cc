@@ -61,12 +61,14 @@ int DhcpPacFileFetcherChromeos::Fetch(
 }
 
 void DhcpPacFileFetcherChromeos::Cancel() {
+  callback_.Reset();
   pac_file_fetcher_->Cancel();
   // Invalidate any pending callbacks (i.e. calls to ContinueFetch).
   weak_ptr_factory_.InvalidateWeakPtrs();
 }
 
 void DhcpPacFileFetcherChromeos::OnShutdown() {
+  callback_.Reset();
   pac_file_fetcher_->OnShutdown();
 }
 

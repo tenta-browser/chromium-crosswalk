@@ -63,7 +63,7 @@ class AnimationDocumentTimelineTest : public PageTestBase {
     document = &GetDocument();
     GetAnimationClock().ResetTimeForTesting();
     element = Element::Create(QualifiedName::Null(), document.Get());
-    platform_timing = new MockPlatformTiming;
+    platform_timing = MakeGarbageCollected<MockPlatformTiming>();
     timeline =
         DocumentTimeline::Create(document.Get(), TimeDelta(), platform_timing);
     timeline->ResetForTesting();
@@ -408,7 +408,7 @@ TEST_F(AnimationDocumentTimelineTest, PauseForTesting) {
 }
 
 TEST_F(AnimationDocumentTimelineTest, DelayBeforeAnimationStart) {
-  timing.iteration_duration = 2;
+  timing.iteration_duration = AnimationTimeDelta::FromSecondsD(2);
   timing.start_delay = 5;
 
   KeyframeEffect* keyframe_effect =
@@ -440,7 +440,7 @@ TEST_F(AnimationDocumentTimelineTest, UseAnimationAfterTimelineDeref) {
 }
 
 TEST_F(AnimationDocumentTimelineTest, PlayAfterDocumentDeref) {
-  timing.iteration_duration = 2;
+  timing.iteration_duration = AnimationTimeDelta::FromSecondsD(2);
   timing.start_delay = 5;
 
   timeline = &document->Timeline();

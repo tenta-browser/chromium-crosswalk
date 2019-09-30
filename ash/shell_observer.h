@@ -16,11 +16,10 @@ class PrefService;
 
 namespace ash {
 
+class OverviewSession;
+
 class ASH_EXPORT ShellObserver {
  public:
-  // Called when the AppList is shown or dismissed.
-  virtual void OnAppListVisibilityChanged(bool shown,
-                                          aura::Window* root_window) {}
 
   // Called when a casting session is started or stopped.
   virtual void OnCastingSessionStartedOrStopped(bool started) {}
@@ -45,16 +44,22 @@ class ASH_EXPORT ShellObserver {
   // get re-arranged).
   virtual void OnOverviewModeStarting() {}
 
+  // Called after the animations that happen when overview mode is started are
+  // complete. If |canceled| it means overview was quit before the start
+  // animations were finished.
+  virtual void OnOverviewModeStartingAnimationComplete(bool canceled) {}
+
   // Called when the overview mode is about to end (bofore the windows restore
-  // themselves).
-  virtual void OnOverviewModeEnding() {}
+  // themselves). |overview_session| will not be null.
+  virtual void OnOverviewModeEnding(OverviewSession* overview_session) {}
 
   // Called after overview mode has ended.
   virtual void OnOverviewModeEnded() {}
 
   // Called after the animations that happen when overview mode is ended are
-  // complete.
-  virtual void OnOverviewModeEndingAnimationComplete() {}
+  // complete. If |canceled| it means overview was reentered before the exit
+  // animations were finished.
+  virtual void OnOverviewModeEndingAnimationComplete(bool canceled) {}
 
   // Called when the split view mode is about to be started before the window
   // gets snapped and activated).
@@ -71,9 +76,6 @@ class ASH_EXPORT ShellObserver {
 
   // Called when dicatation is ended.
   virtual void OnDictationEnded() {}
-
-  // Called when a new KeyboardController is created.
-  virtual void OnKeyboardControllerCreated() {}
 
   // Called at the end of Shell::Init.
   virtual void OnShellInitialized() {}

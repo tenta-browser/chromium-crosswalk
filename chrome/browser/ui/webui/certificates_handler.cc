@@ -450,11 +450,11 @@ void CertificatesHandler::HandleViewCertificate(const base::ListValue* args) {
   CERTCertificate* cert = cert_id_map_->CallbackArgsToCert(args);
   if (!cert)
     return;
+
   net::ScopedCERTCertificateList certs;
   certs.push_back(net::x509_util::DupCERTCertificate(cert));
-  CertificateViewerDialog* dialog =
-      new CertificateViewerDialog(std::move(certs));
-  dialog->Show(web_ui()->GetWebContents(), GetParentWindow());
+  CertificateViewerDialog::ShowConstrained(
+      std::move(certs), web_ui()->GetWebContents(), GetParentWindow());
 }
 
 void CertificatesHandler::AssignWebUICallbackId(const base::ListValue* args) {
@@ -571,8 +571,8 @@ void CertificatesHandler::HandleExportPersonalPasswordSelected(
       selected_cert_list_[0].get(), kCryptoModulePasswordCertExport,
       net::HostPortPair(),  // unused.
       GetParentWindow(),
-      base::Bind(&CertificatesHandler::ExportPersonalSlotsUnlocked,
-                 base::Unretained(this)));
+      base::BindOnce(&CertificatesHandler::ExportPersonalSlotsUnlocked,
+                     base::Unretained(this)));
 }
 
 void CertificatesHandler::ExportPersonalSlotsUnlocked() {
@@ -708,8 +708,8 @@ void CertificatesHandler::HandleImportPersonalPasswordSelected(
       std::move(modules), kCryptoModulePasswordCertImport,
       net::HostPortPair(),  // unused.
       GetParentWindow(),
-      base::Bind(&CertificatesHandler::ImportPersonalSlotUnlocked,
-                 base::Unretained(this)));
+      base::BindOnce(&CertificatesHandler::ImportPersonalSlotUnlocked,
+                     base::Unretained(this)));
 }
 
 void CertificatesHandler::ImportPersonalSlotUnlocked() {
@@ -976,8 +976,10 @@ void CertificatesHandler::CertificateManagerModelReady() {
       certificate_manager_model_->is_user_db_available());
   base::Value tpm_available_value(
       certificate_manager_model_->is_tpm_available());
-  FireWebUIListener("certificates-model-ready", user_db_available_value,
-                    tpm_available_value);
+  if (IsJavascriptAllowed()) {
+    FireWebUIListener("certificates-model-ready", user_db_available_value,
+                      tpm_available_value);
+  }
   certificate_manager_model_->Refresh();
 }
 
@@ -1070,8 +1072,10 @@ void CertificatesHandler::PopulateTree(const std::string& tab_name,
   }
   std::sort(nodes.GetList().begin(), nodes.GetList().end(), comparator);
 
-  FireWebUIListener("certificates-changed", base::Value(tab_name),
-                    std::move(nodes));
+  if (IsJavascriptAllowed()) {
+    FireWebUIListener("certificates-changed", base::Value(tab_name),
+                      std::move(nodes));
+  }
 }
 
 void CertificatesHandler::ResolveCallback(const base::Value& response) {

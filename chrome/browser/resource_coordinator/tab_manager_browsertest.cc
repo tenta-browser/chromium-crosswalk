@@ -5,6 +5,7 @@
 #include "base/base_switches.h"
 #include "base/command_line.h"
 #include "base/feature_list.h"
+#include "base/memory/fake_memory_pressure_monitor.h"
 #include "base/memory/memory_pressure_listener.h"
 #include "base/run_loop.h"
 #include "base/test/metrics/histogram_tester.h"
@@ -195,10 +196,10 @@ class TabManagerTest : public InProcessBrowserTest {
     // The page has 2 iframes, we will use the first one.
     content::RenderFrameHost* child_frame = content->GetAllFrames()[1];
     // Verify that the main frame and subframe are cross-site.
-    EXPECT_FALSE(content::SiteInstance::IsSameWebSite(
-        browser()->profile(), main_frame->GetLastCommittedURL(),
-        child_frame->GetLastCommittedURL()));
+    EXPECT_NE(main_frame->GetLastCommittedURL().GetOrigin(),
+              child_frame->GetLastCommittedURL().GetOrigin());
     if (content::AreAllSitesIsolatedForTesting()) {
+      EXPECT_NE(main_frame->GetSiteInstance(), child_frame->GetSiteInstance());
       EXPECT_NE(main_frame->GetProcess()->GetID(),
                 child_frame->GetProcess()->GetID());
     }
@@ -275,7 +276,7 @@ class TabManagerTest : public InProcessBrowserTest {
   // indicates that the page is frozen. In production, this is sent by the
   // renderer process. This is done to finish a proactive tab discard.
   void SimulateFreezeSignal(content::WebContents* contents) {
-    TabLifecycleUnitSource::GetInstance()
+    GetTabLifecycleUnitSource()
         ->GetTabLifecycleUnit(contents)
         ->UpdateLifecycleState(mojom::LifecycleState::kFrozen);
   }
@@ -288,10 +289,11 @@ class TabManagerTest : public InProcessBrowserTest {
   }
 
   LifecycleUnit* GetLifecycleUnitAt(int index) {
-    return TabLifecycleUnitSource::GetInstance()->GetTabLifecycleUnit(
+    return GetTabLifecycleUnitSource()->GetTabLifecycleUnit(
         GetWebContentsAt(index));
   }
 
+  base::test::FakeMemoryPressureMonitor fake_memory_pressure_monitor_;
   base::SimpleTestTickClock test_clock_;
   ScopedSetTickClockForTesting scoped_set_tick_clock_for_testing_;
   base::test::ScopedFeatureList scoped_feature_list_;
@@ -305,8 +307,7 @@ class TabManagerTestWithTwoTabs : public TabManagerTest {
     TabManagerTest::SetUpOnMainThread();
 
     // Open 2 tabs with default URLs in a focused tab strip.
-    TabLifecycleUnitSource::GetInstance()->SetFocusedTabStripModelForTesting(
-        tsm());
+    GetTabLifecycleUnitSource()->SetFocusedTabStripModelForTesting(tsm());
     OpenTwoTabs(GURL(chrome::kChromeUIAboutURL),
                 GURL(chrome::kChromeUICreditsURL));
   }
@@ -508,13 +509,13 @@ IN_PROC_BROWSER_TEST_F(TabManagerTest, OomPressureListener) {
   test_clock_.Advance(kBackgroundUrgentProtectionTime);
 
   // Nothing should happen with a moderate memory pressure event.
-  base::MemoryPressureListener::NotifyMemoryPressure(
+  fake_memory_pressure_monitor_.SetAndNotifyMemoryPressure(
       base::MemoryPressureListener::MEMORY_PRESSURE_LEVEL_MODERATE);
   EXPECT_FALSE(IsTabDiscarded(GetWebContentsAt(0)));
   EXPECT_FALSE(IsTabDiscarded(GetWebContentsAt(1)));
 
   // A critical memory pressure event should discard a tab.
-  base::MemoryPressureListener::NotifyMemoryPressure(
+  fake_memory_pressure_monitor_.SetAndNotifyMemoryPressure(
       base::MemoryPressureListener::MEMORY_PRESSURE_LEVEL_CRITICAL);
   // Coming here, an asynchronous operation will collect system stats. Once in,
   // a tab should get discarded. As such we need to give it 10s time to discard.
@@ -650,17 +651,17 @@ IN_PROC_BROWSER_TEST_F(TabManagerTest, ProtectVideoTabs) {
   auto* tab = GetWebContentsAt(1);
 
   // Simulate that a video stream is now being captured.
-  content::MediaStreamDevices video_devices(1);
+  blink::MediaStreamDevices video_devices(1);
   video_devices[0] =
-      content::MediaStreamDevice(content::MEDIA_DEVICE_VIDEO_CAPTURE,
-                                 "fake_media_device", "fake_media_device");
+      blink::MediaStreamDevice(blink::MEDIA_DEVICE_VIDEO_CAPTURE,
+                               "fake_media_device", "fake_media_device");
   MediaCaptureDevicesDispatcher* dispatcher =
       MediaCaptureDevicesDispatcher::GetInstance();
   dispatcher->SetTestVideoCaptureDevices(video_devices);
   std::unique_ptr<content::MediaStreamUI> video_stream_ui =
       dispatcher->GetMediaStreamCaptureIndicator()->RegisterMediaStream(
           tab, video_devices);
-  video_stream_ui->OnStarted(base::Closure());
+  video_stream_ui->OnStarted(base::OnceClosure(), base::RepeatingClosure());
 
   // Should not be able to discard a tab.
   ASSERT_FALSE(
@@ -723,17 +724,17 @@ IN_PROC_BROWSER_TEST_F(TabManagerTest, CanPurgeBackgroundedRenderer) {
 
   auto* tab = GetWebContentsAt(1);
   // Simulate that a video stream is now being captured.
-  content::MediaStreamDevices video_devices(1);
+  blink::MediaStreamDevices video_devices(1);
   video_devices[0] =
-      content::MediaStreamDevice(content::MEDIA_DEVICE_VIDEO_CAPTURE,
-                                 "fake_media_device", "fake_media_device");
+      blink::MediaStreamDevice(blink::MEDIA_DEVICE_VIDEO_CAPTURE,
+                               "fake_media_device", "fake_media_device");
   MediaCaptureDevicesDispatcher* dispatcher =
       MediaCaptureDevicesDispatcher::GetInstance();
   dispatcher->SetTestVideoCaptureDevices(video_devices);
   std::unique_ptr<content::MediaStreamUI> video_stream_ui =
       dispatcher->GetMediaStreamCaptureIndicator()->RegisterMediaStream(
           tab, video_devices);
-  video_stream_ui->OnStarted(base::Closure());
+  video_stream_ui->OnStarted(base::OnceClosure(), base::RepeatingClosure());
 
   // Should not be able to suspend a tab which plays a video.
   int render_process_id = tab->GetMainFrame()->GetProcess()->GetID();
@@ -920,11 +921,15 @@ IN_PROC_BROWSER_TEST_F(TabManagerTestWithTwoTabs,
 }
 
 IN_PROC_BROWSER_TEST_F(TabManagerTest, ProactiveFastShutdownSharedTabProcess) {
+  ASSERT_TRUE(embedded_test_server()->Start());
+
   // Set max renderers to 1 before opening tabs to force running out of
   // processes and for both these tabs to share a renderer.
   content::RenderProcessHost::SetMaxRendererProcessCount(1);
-  OpenTwoTabs(GURL(chrome::kChromeUIAboutURL),
-              GURL(chrome::kChromeUICreditsURL));
+  OpenTwoTabs(embedded_test_server()->GetURL("a.com", "/title1.html"),
+              embedded_test_server()->GetURL("a.com", "/title2.html"));
+  EXPECT_EQ(tsm()->GetWebContentsAt(0)->GetMainFrame()->GetProcess(),
+            tsm()->GetWebContentsAt(1)->GetMainFrame()->GetProcess());
 
   // The Tab Manager will not be able to fast-kill either of the tabs since they
   // share the same process regardless of the discard reason. No unsafe attempts
@@ -939,12 +944,18 @@ IN_PROC_BROWSER_TEST_F(TabManagerTest, ProactiveFastShutdownSharedTabProcess) {
 }
 
 IN_PROC_BROWSER_TEST_F(TabManagerTest, UrgentFastShutdownSharedTabProcess) {
+  ASSERT_TRUE(embedded_test_server()->Start());
+
   // Set max renderers to 1 before opening tabs to force running out of
   // processes and for both these tabs to share a renderer.
   content::RenderProcessHost::SetMaxRendererProcessCount(1);
-  // Disable the protection of recent tabs.
-  OpenTwoTabs(GURL(chrome::kChromeUIAboutURL),
-              GURL(chrome::kChromeUICreditsURL));
+  OpenTwoTabs(embedded_test_server()->GetURL("a.com", "/title1.html"),
+              embedded_test_server()->GetURL("a.com", "/title2.html"));
+  EXPECT_EQ(tsm()->GetWebContentsAt(0)->GetMainFrame()->GetProcess(),
+            tsm()->GetWebContentsAt(1)->GetMainFrame()->GetProcess());
+
+  // Advance time so everything is urgent discardable.
+  test_clock_.Advance(kBackgroundUrgentProtectionTime);
 
   // Advance time so everything is urgent discardable.
   test_clock_.Advance(kBackgroundUrgentProtectionTime);
@@ -1371,10 +1382,10 @@ IN_PROC_BROWSER_TEST_F(TabManagerTest,
 
   // Sanity check that in this test page the main frame and the
   // subframe are cross-site.
-  EXPECT_FALSE(content::SiteInstance::IsSameWebSite(
-      browser()->profile(), main_frame->GetLastCommittedURL(),
-      child_frame->GetLastCommittedURL()));
+  EXPECT_NE(main_frame->GetLastCommittedURL().GetOrigin(),
+            child_frame->GetLastCommittedURL().GetOrigin());
   if (content::AreAllSitesIsolatedForTesting()) {
+    EXPECT_NE(main_frame->GetSiteInstance(), child_frame->GetSiteInstance());
     EXPECT_NE(main_frame->GetProcess()->GetID(),
               child_frame->GetProcess()->GetID());
   }

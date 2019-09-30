@@ -87,7 +87,7 @@ public class RecordHistogram {
 
     /**
      * Records a sample in a count histogram. This is the Java equivalent of the
-     * UMA_HISTOGRAM_COUNTS C++ macro.
+     * UMA_HISTOGRAM_COUNTS_1M C++ macro.
      * @param name name of the histogram
      * @param sample sample to be recorded, at least 1 and at most 999999
      */
@@ -168,7 +168,7 @@ public class RecordHistogram {
      * @param sample sample to be recorded. All values of |sample| are valid, including negative
      *        values.
      */
-    public static void recordSparseSlowlyHistogram(String name, int sample) {
+    public static void recordSparseHistogram(String name, int sample) {
         if (sDisabledBy != null) return;
         long key = getCachedHistogramKey(name);
         long result = nativeRecordSparseHistogram(name, key, sample);

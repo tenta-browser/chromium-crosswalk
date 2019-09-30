@@ -11,13 +11,13 @@
 #include <vector>
 
 #include "base/callback.h"
+#include "base/component_export.h"
 #include "base/files/scoped_file.h"
 #include "base/location.h"
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/optional.h"
 #include "base/time/time.h"
-#include "chromeos/chromeos_export.h"
 #include "chromeos/dbus/dbus_client.h"
 #include "chromeos/dbus/dbus_client_implementation_type.h"
 #include "chromeos/dbus/dbus_method_call_status.h"
@@ -29,12 +29,13 @@
 namespace power_manager {
 class BacklightBrightnessChange;
 class ScreenIdleState;
+class SetBacklightBrightnessRequest;
 }  // namespace power_manager
 
 namespace chromeos {
 
 // PowerManagerClient is used to communicate with the power manager.
-class CHROMEOS_EXPORT PowerManagerClient : public DBusClient {
+class COMPONENT_EXPORT(CHROMEOS_DBUS) PowerManagerClient : public DBusClient {
  public:
   using TimerId = int32_t;
 
@@ -151,6 +152,10 @@ class CHROMEOS_EXPORT PowerManagerClient : public DBusClient {
   virtual void RemoveObserver(Observer* observer) = 0;
   virtual bool HasObserver(const Observer* observer) const = 0;
 
+  // Runs the callback as soon as the service becomes available.
+  virtual void WaitForServiceToBeAvailable(
+      WaitForServiceToBeAvailableCallback callback) = 0;
+
   // Interface for managing the power consumption of renderer processes.
   class RenderProcessManagerDelegate {
    public:
@@ -179,9 +184,9 @@ class CHROMEOS_EXPORT PowerManagerClient : public DBusClient {
   // Increases the screen brightness.
   virtual void IncreaseScreenBrightness() = 0;
 
-  // Set the screen brightness to |percent|, in the range [0.0, 100.0].
-  // If |gradual| is true, the transition will be animated.
-  virtual void SetScreenBrightnessPercent(double percent, bool gradual) = 0;
+  // Sets the screen brightness per |request|.
+  virtual void SetScreenBrightness(
+      const power_manager::SetBacklightBrightnessRequest& request) = 0;
 
   // Asynchronously gets the current screen brightness, in the range
   // [0.0, 100.0]. On error (e.g. powerd not running), |callback| will be run

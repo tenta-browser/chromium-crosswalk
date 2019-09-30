@@ -128,8 +128,8 @@ public class CustomNotificationBuilder extends NotificationBuilderBase {
 
             int smallIconId = useMaterial() ? R.id.small_icon_overlay : R.id.small_icon_footer;
             view.setViewVisibility(smallIconId, View.VISIBLE);
-            if (mSmallIconBitmap != null) {
-                view.setImageViewBitmap(smallIconId, mSmallIconBitmap);
+            if (mSmallIconBitmapForContent != null) {
+                view.setImageViewBitmap(smallIconId, mSmallIconBitmapForContent);
             } else {
                 view.setImageViewResource(smallIconId, mSmallIconId);
             }
@@ -142,7 +142,7 @@ public class CustomNotificationBuilder extends NotificationBuilderBase {
         // TODO(crbug.com/697104) We should probably use a Compat builder.
         ChromeNotificationBuilder builder =
                 NotificationBuilderFactory.createChromeNotificationBuilder(
-                        false /* preferCompat */, mChannelId);
+                        false /* preferCompat */, mChannelId, mRemotePackageForBuilderContext);
         builder.setTicker(mTickerText);
         builder.setContentIntent(mContentIntent);
         builder.setDeleteIntent(mDeleteIntent);
@@ -160,7 +160,7 @@ public class CustomNotificationBuilder extends NotificationBuilderBase {
         builder.setContentText(mBody);
         builder.setSubText(mOrigin);
         builder.setLargeIcon(getNormalizedLargeIcon());
-        setSmallIconOnBuilder(builder, mSmallIconId, mSmallIconBitmap);
+        setStatusBarIcon(builder, mSmallIconId, mSmallIconBitmapForStatusBar);
         for (Action action : mActions) {
             addActionToBuilder(builder, action);
         }

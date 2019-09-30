@@ -6,18 +6,15 @@
 
 #include "ash/accelerators/accelerator_controller.h"
 #include "ash/public/cpp/accelerators.h"
-#include "ash/public/cpp/app_list/app_list_features.h"
-#include "ash/public/cpp/app_list/app_list_switches.h"
-#include "ash/public/cpp/ash_features.h"
 #include "ash/root_window_controller.h"
 #include "ash/shell.h"
 #include "ash/system/status_area_widget.h"
-#include "ash/system/tray/system_tray.h"
 #include "ash/system/unified/unified_system_tray.h"
 #include "base/command_line.h"
 #include "base/macros.h"
 #include "base/strings/pattern.h"
 #include "base/strings/string_util.h"
+#include "base/task/post_task.h"
 #include "chrome/app/chrome_command_ids.h"
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/chromeos/accessibility/accessibility_manager.h"
@@ -28,9 +25,8 @@
 #include "chrome/browser/chromeos/profiles/profile_helper.h"
 #include "chrome/browser/extensions/api/automation_internal/automation_event_router.h"
 #include "chrome/browser/extensions/api/braille_display_private/stub_braille_controller.h"
-#include "chrome/browser/speech/tts_controller.h"
-#include "chrome/browser/speech/tts_platform.h"
 #include "chrome/browser/ui/ash/ksv/keyboard_shortcut_viewer_util.h"
+#include "chrome/browser/ui/aura/accessibility/automation_manager_aura.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_commands.h"
 #include "chrome/browser/ui/browser_window.h"
@@ -41,10 +37,12 @@
 #include "chrome/test/base/interactive_test_utils.h"
 #include "chrome/test/base/testing_profile.h"
 #include "chrome/test/base/ui_test_utils.h"
-#include "chromeos/chromeos_switches.h"
+#include "chromeos/constants/chromeos_switches.h"
 #include "components/account_id/account_id.h"
 #include "components/user_manager/user_names.h"
+#include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
+#include "content/public/browser/tts_controller.h"
 #include "content/public/common/url_constants.h"
 #include "content/public/test/browser_test_utils.h"
 #include "content/public/test/test_utils.h"
@@ -76,6 +74,7 @@ class LoggedInSpokenFeedbackTest : public InProcessBrowserTest {
 
   void TearDownOnMainThread() override {
     AccessibilityManager::SetBrailleControllerForTest(nullptr);
+    AutomationManagerAura::GetInstance()->Disable();
   }
 
   void SendKeyPress(ui::KeyboardCode key) {
@@ -246,8 +245,15 @@ IN_PROC_BROWSER_TEST_F(LoggedInSpokenFeedbackTest,
   EXPECT_EQ("Not pressed", speech_monitor_.GetNextUtterance());
 }
 
+#if !defined(NDEBUG)
+// Flaky in debug: http://crbug.com/923090
+#define MAYBE_KeyboardShortcutViewer DISABLED_KeyboardShortcutViewer
+#else
+#define MAYBE_KeyboardShortcutViewer KeyboardShortcutViewer
+#endif
 // Tests the keyboard shortcut viewer, which is an out-of-process mojo app.
-IN_PROC_BROWSER_TEST_F(LoggedInSpokenFeedbackTest, KeyboardShortcutViewer) {
+IN_PROC_BROWSER_TEST_F(LoggedInSpokenFeedbackTest,
+                       MAYBE_KeyboardShortcutViewer) {
   EnableChromeVox();
   keyboard_shortcut_viewer_util::ToggleKeyboardShortcutViewer();
 
@@ -258,10 +264,11 @@ IN_PROC_BROWSER_TEST_F(LoggedInSpokenFeedbackTest, KeyboardShortcutViewer) {
 
   // Capture the destroyed AX tree id when the remote host disconnects.
   base::RunLoop run_loop;
-  int destroyed_tree_id = -1;
+  ui::AXTreeID destroyed_tree_id = ui::AXTreeIDUnknown();
   extensions::AutomationEventRouter::GetInstance()
       ->SetTreeDestroyedCallbackForTest(base::BindRepeating(
-          [](base::RunLoop* run_loop, int* destroyed_tree_id, int tree_id) {
+          [](base::RunLoop* run_loop, ui::AXTreeID* destroyed_tree_id,
+             ui::AXTreeID tree_id) {
             *destroyed_tree_id = tree_id;
             run_loop->Quit();
           },
@@ -273,8 +280,11 @@ IN_PROC_BROWSER_TEST_F(LoggedInSpokenFeedbackTest, KeyboardShortcutViewer) {
   // Wait for the AX tree to be destroyed.
   run_loop.Run();
 
-  // Verify the correct AX tree was destroyed.
-  EXPECT_EQ(views::AXRemoteHost::kRemoteAXTreeID, destroyed_tree_id);
+  // Verify an AX tree was destroyed. It's awkward to get the remote app's
+  // actual tree ID, so just ensure it's a valid ID and not the desktop.
+  EXPECT_NE(ui::AXTreeIDUnknown(), destroyed_tree_id);
+  EXPECT_NE(AutomationManagerAura::GetInstance()->ax_tree_id(),
+            destroyed_tree_id);
 
   extensions::AutomationEventRouter::GetInstance()
       ->SetTreeDestroyedCallbackForTest(base::DoNothing());
@@ -338,6 +348,81 @@ IN_PROC_BROWSER_TEST_P(SpokenFeedbackTest, DISABLED_TypeInOmnibox) {
 
   SendKeyPress(ui::VKEY_BACK);
   EXPECT_EQ("z", speech_monitor_.GetNextUtterance());
+}
+
+IN_PROC_BROWSER_TEST_P(SpokenFeedbackTest, LauncherStateTransition) {
+  EnableChromeVox();
+
+  EXPECT_TRUE(PerformAcceleratorAction(ash::FOCUS_SHELF));
+
+  while (true) {
+    std::string utterance = speech_monitor_.GetNextUtterance();
+    if (base::MatchPattern(utterance, "Launcher"))
+      break;
+  }
+
+  EXPECT_EQ("Button", speech_monitor_.GetNextUtterance());
+  EXPECT_EQ("Shelf", speech_monitor_.GetNextUtterance());
+  EXPECT_EQ("Tool bar", speech_monitor_.GetNextUtterance());
+  EXPECT_EQ(", window", speech_monitor_.GetNextUtterance());
+  EXPECT_EQ("Press Search plus Space to activate.",
+            speech_monitor_.GetNextUtterance());
+
+  // Press space on the launcher button in shelf, this opens peeking launcher.
+  SendKeyPressWithSearch(ui::VKEY_SPACE);
+  EXPECT_EQ("Edit text", speech_monitor_.GetNextUtterance());
+  EXPECT_EQ(", window", speech_monitor_.GetNextUtterance());
+
+  // Check that Launcher, partial view state is announced.
+  EXPECT_EQ("Launcher, partial view", speech_monitor_.GetNextUtterance());
+
+  // Move focus to expand all apps button;
+  SendKeyPressWithSearchAndShift(ui::VKEY_TAB);
+  EXPECT_EQ("Expand to all apps", speech_monitor_.GetNextUtterance());
+  EXPECT_EQ("Button", speech_monitor_.GetNextUtterance());
+  EXPECT_EQ("Press Search plus Space to activate.",
+            speech_monitor_.GetNextUtterance());
+
+  // Press space on expand arrow to go to fullscreen launcher.
+  SendKeyPressWithSearch(ui::VKEY_SPACE);
+  EXPECT_EQ("Edit text", speech_monitor_.GetNextUtterance());
+
+  // Check that Launcher, all apps state is announced.
+  EXPECT_EQ("Launcher, all apps", speech_monitor_.GetNextUtterance());
+}
+
+IN_PROC_BROWSER_TEST_P(SpokenFeedbackTest, DisabledFullscreenExpandButton) {
+  EnableChromeVox();
+
+  EXPECT_TRUE(PerformAcceleratorAction(ash::FOCUS_SHELF));
+
+  while (speech_monitor_.GetNextUtterance() !=
+         "Press Search plus Space to activate.") {
+  }
+
+  // Press space on the launcher button in shelf, this opens peeking launcher.
+  SendKeyPressWithSearch(ui::VKEY_SPACE);
+  while (speech_monitor_.GetNextUtterance() != "Launcher, partial view") {
+  }
+
+  // Move focus to expand all apps button.
+  SendKeyPressWithSearchAndShift(ui::VKEY_TAB);
+  while (speech_monitor_.GetNextUtterance() !=
+         "Press Search plus Space to activate.") {
+  }
+
+  // Press space on expand arrow to go to fullscreen launcher.
+  SendKeyPressWithSearch(ui::VKEY_SPACE);
+  while (speech_monitor_.GetNextUtterance() != "Launcher, all apps") {
+  }
+
+  // Make sure the first traversal left is not the expand arrow button.
+  SendKeyPressWithSearch(ui::VKEY_LEFT);
+  EXPECT_NE("Expand to all apps", speech_monitor_.GetNextUtterance());
+
+  // Make sure the second traversal left is not the expand arrow button.
+  SendKeyPressWithSearch(ui::VKEY_LEFT);
+  EXPECT_NE("Expand to all apps", speech_monitor_.GetNextUtterance());
 }
 
 IN_PROC_BROWSER_TEST_P(SpokenFeedbackTest, FocusShelf) {
@@ -528,12 +613,6 @@ IN_PROC_BROWSER_TEST_P(SpokenFeedbackTest, OverviewMode) {
   EXPECT_TRUE(PerformAcceleratorAction(ash::TOGGLE_OVERVIEW));
   while (true) {
     std::string utterance = speech_monitor_.GetNextUtterance();
-    if (base::MatchPattern(utterance, "Edit text"))
-      break;
-  }
-
-  while (true) {
-    std::string utterance = speech_monitor_.GetNextUtterance();
     if (utterance == "Entered window overview mode")
       break;
   }
@@ -549,8 +628,9 @@ IN_PROC_BROWSER_TEST_P(SpokenFeedbackTest, OverviewMode) {
   EXPECT_EQ("Button", speech_monitor_.GetNextUtterance());
 }
 
-#if defined(MEMORY_SANITIZER)
+#if defined(MEMORY_SANITIZER) || defined(OS_CHROMEOS)
 // Fails under MemorySanitizer: http://crbug.com/472125
+// Test is flaky under ChromeOS: http://crbug.com/897249
 #define MAYBE_ChromeVoxShiftSearch DISABLED_ChromeVoxShiftSearch
 #else
 #define MAYBE_ChromeVoxShiftSearch ChromeVoxShiftSearch
@@ -628,8 +708,8 @@ IN_PROC_BROWSER_TEST_P(SpokenFeedbackTest, DISABLED_ChromeVoxNextStickyMode) {
 
   // Sticky key has a minimum 100 ms check to prevent key repeat from toggling
   // it.
-  content::BrowserThread::PostDelayedTask(
-      content::BrowserThread::UI, FROM_HERE,
+  base::PostDelayedTaskWithTraits(
+      FROM_HERE, {content::BrowserThread::UI},
       base::Bind(&LoggedInSpokenFeedbackTest::SendKeyPress,
                  base::Unretained(this), ui::VKEY_LWIN),
       base::TimeDelta::FromMilliseconds(200));
@@ -644,8 +724,8 @@ IN_PROC_BROWSER_TEST_P(SpokenFeedbackTest, DISABLED_ChromeVoxNextStickyMode) {
 
   // Sticky key has a minimum 100 ms check to prevent key repeat from toggling
   // it.
-  content::BrowserThread::PostDelayedTask(
-      content::BrowserThread::UI, FROM_HERE,
+  base::PostDelayedTaskWithTraits(
+      FROM_HERE, {content::BrowserThread::UI},
       base::Bind(&LoggedInSpokenFeedbackTest::SendKeyPress,
                  base::Unretained(this), ui::VKEY_LWIN),
       base::TimeDelta::FromMilliseconds(200));
@@ -661,15 +741,10 @@ IN_PROC_BROWSER_TEST_P(SpokenFeedbackTest, DISABLED_TouchExploreStatusTray) {
 
   // Send an accessibility hover event on the system tray, which is
   // what we get when you tap it on a touch screen when ChromeVox is on.
-  ash::TrayBackgroundView* tray =
-      ash::features::IsSystemTrayUnifiedEnabled()
-          ? static_cast<ash::TrayBackgroundView*>(
-                ash::Shell::Get()
-                    ->GetPrimaryRootWindowController()
-                    ->GetStatusAreaWidget()
-                    ->unified_system_tray())
-          : static_cast<ash::TrayBackgroundView*>(
-                ash::Shell::Get()->GetPrimarySystemTray());
+  ash::TrayBackgroundView* tray = ash::Shell::Get()
+                                      ->GetPrimaryRootWindowController()
+                                      ->GetStatusAreaWidget()
+                                      ->unified_system_tray();
   tray->NotifyAccessibilityEvent(ax::mojom::Event::kHover, true);
 
   EXPECT_EQ("Status tray,", speech_monitor_.GetNextUtterance());
@@ -756,7 +831,8 @@ IN_PROC_BROWSER_TEST_F(GuestSpokenFeedbackTest, FocusToolbar) {
 
 class OobeSpokenFeedbackTest : public LoginManagerTest {
  protected:
-  OobeSpokenFeedbackTest() : LoginManagerTest(false) {}
+  OobeSpokenFeedbackTest()
+      : LoginManagerTest(false, true /* should_initialize_webui */) {}
   ~OobeSpokenFeedbackTest() override {}
 
   void SetUpCommandLine(base::CommandLine* command_line) override {
@@ -784,7 +860,7 @@ IN_PROC_BROWSER_TEST_F(OobeSpokenFeedbackTest, DISABLED_SpokenFeedbackInOobe) {
 
   // We expect to be in the language select dropdown for this test to work,
   // so make sure that's the case.
-  js_checker().ExecuteAsync("$('language-select').focus()");
+  test::OobeJS().ExecuteAsync("$('language-select').focus()");
   AccessibilityManager::Get()->EnableSpokenFeedback(true);
   ASSERT_TRUE(speech_monitor_.SkipChromeVoxEnabledMessage());
   // There's no guarantee that ChromeVox speaks anything when injected after

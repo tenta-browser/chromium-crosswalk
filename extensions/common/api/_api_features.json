@@ -7,7 +7,7 @@
 // well as feature.h, simple_feature.h, and feature_provider.h.
 //
 // Note that specifying "web_page", "blessed_web_page", or "all" as a context
-// type will require manually updating chrome/renderer/resources/dispatcher.cc.
+// type will require manually updating extensions/renderer/extension_bindings_system.cc.
 
 {
   "alarms": {
@@ -200,10 +200,12 @@
       "contexts": ["webui"],
       "matches": [
         "chrome://cast/*",
+        "chrome://discards/*",
         "chrome://extensions-frame/*",
         "chrome://extensions/*",
         "chrome://home/*",
         "chrome://chrome-signin/*",
+        "chrome://hats/*",
         "chrome://media-router/*",
         "chrome://mobilesetup/*",
         "chrome://oobe/*",
@@ -223,6 +225,9 @@
   "idle": {
     "dependencies": ["permission:idle"],
     "contexts": ["blessed_extension"]
+  },
+  "idle.getAutoLockDelay": {
+    "platforms": ["chromeos"]
   },
   "lockScreen.data": {
     "dependencies": ["permission:lockScreen"],
@@ -373,7 +378,7 @@
   "runtime": {
     "channel": "stable",
     "extension_types": ["extension", "legacy_packaged_app", "platform_app"],
-    "contexts": ["blessed_extension", "lock_screen_extension"]
+    "contexts": ["blessed_extension", "lock_screen_extension", "extension_service_worker"]
   },
   "runtime.getManifest": {
     "contexts": [
@@ -571,6 +576,8 @@
     "contexts": ["webui"],
     "matches": [
       "chrome://chrome-signin/*",
+      "chrome://discards/*",
+      "chrome://hats/*",
       "chrome://home/*",
       "chrome://media-router/*",
       "chrome://mobilesetup/*",
@@ -588,6 +595,8 @@
     "contexts": ["webui"],
     "matches": [
       "chrome://chrome-signin/*",
+      "chrome://discards/*",
+      "chrome://hats/*",
       "chrome://home/*",
       "chrome://media-router/*",
       "chrome://mobilesetup/*",
@@ -603,6 +612,8 @@
     "contexts": ["webui"],
     "matches": [
       "chrome://chrome-signin/*",
+      "chrome://discards/*",
+      "chrome://hats/*",
       "chrome://home/*",
       "chrome://media-router/*",
       "chrome://mobilesetup/*",

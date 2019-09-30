@@ -47,14 +47,15 @@ class TestLocalCardMigrationManager : public LocalCardMigrationManager {
 
   // Override the base function. When called, represent the main prompt is
   // shown. Set the |main_prompt_was_shown_|.
-  void OnUserAcceptedMainMigrationDialog() override;
+  void OnUserAcceptedMainMigrationDialog(
+      const std::vector<std::string>& selected_cards) override;
 
  private:
   void OnDidGetUploadDetails(
       bool is_from_settings_page,
       AutofillClient::PaymentsRpcResult result,
       const base::string16& context_token,
-      std::unique_ptr<base::DictionaryValue> legal_message) override;
+      std::unique_ptr<base::Value> legal_message) override;
 
   bool local_card_migration_was_triggered_ = false;
 

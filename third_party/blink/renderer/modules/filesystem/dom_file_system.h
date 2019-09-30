@@ -62,16 +62,21 @@ class MODULES_EXPORT DOMFileSystem final
   static DOMFileSystem* CreateIsolatedFileSystem(ExecutionContext*,
                                                  const String& filesystem_id);
 
+  DOMFileSystem(ExecutionContext*,
+                const String& name,
+                mojom::blink::FileSystemType,
+                const KURL& root_url);
+
   DirectoryEntry* root() const;
 
   // DOMFileSystemBase overrides.
   void AddPendingCallbacks() override;
   void RemovePendingCallbacks() override;
-  void ReportError(ErrorCallbackBase*, FileError::ErrorCode) override;
+  void ReportError(ErrorCallbackBase*, base::File::Error error) override;
 
   static void ReportError(ExecutionContext*,
                           ErrorCallbackBase*,
-                          FileError::ErrorCode);
+                          base::File::Error error);
 
   // ScriptWrappable overrides.
   bool HasPendingActivity() const final;
@@ -91,11 +96,6 @@ class MODULES_EXPORT DOMFileSystem final
   void Trace(blink::Visitor*) override;
 
  private:
-  DOMFileSystem(ExecutionContext*,
-                const String& name,
-                mojom::blink::FileSystemType,
-                const KURL& root_url);
-
   static String TaskNameForInstrumentation() { return "FileSystem"; }
 
   int number_of_pending_callbacks_;

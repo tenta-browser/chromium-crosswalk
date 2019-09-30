@@ -6,13 +6,12 @@ package org.chromium.chrome.browser.omnibox.geo;
 
 import android.content.Context;
 import android.os.SystemClock;
+import android.support.annotation.Nullable;
 
-import org.chromium.base.AsyncTask;
 import org.chromium.base.Log;
 import org.chromium.base.ThreadUtils;
 import org.chromium.base.VisibleForTesting;
-
-import javax.annotation.Nullable;
+import org.chromium.base.task.AsyncTask;
 
 /**
  * VisibleNetworksTracker keeps track of the visible networks.

@@ -53,7 +53,7 @@ ArrayBufferContents::ArrayBufferContents()
     : holder_(base::AdoptRef(new DataHolder())) {}
 
 ArrayBufferContents::ArrayBufferContents(
-    unsigned num_elements,
+    size_t num_elements,
     unsigned element_byte_size,
     SharingType is_shared,
     ArrayBufferContents::InitializationPolicy policy)
@@ -108,11 +108,12 @@ void ArrayBufferContents::CopyTo(ArrayBufferContents& other) {
 void* ArrayBufferContents::AllocateMemoryWithFlags(size_t size,
                                                    InitializationPolicy policy,
                                                    int flags) {
+  if (policy == kZeroInitialize) {
+    flags |= base::PartitionAllocZeroFill;
+  }
   void* data = PartitionAllocGenericFlags(
       Partitions::ArrayBufferPartition(), flags, size,
       WTF_HEAP_PROFILER_TYPE_NAME(ArrayBufferContents));
-  if (policy == kZeroInitialize && data)
-    memset(data, '\0', size);
   return data;
 }
 

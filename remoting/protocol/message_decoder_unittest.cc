@@ -10,7 +10,7 @@
 #include <memory>
 #include <string>
 
-#include "base/macros.h"
+#include "base/stl_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "remoting/proto/event.pb.h"
 #include "remoting/proto/internal.pb.h"
@@ -72,7 +72,8 @@ void SimulateReadSequence(const int read_sequence[], int sequence_size) {
     int read = std::min(size - pos, read_sequence[pos % sequence_size]);
 
     // And then prepare an IOBuffer for feeding it.
-    scoped_refptr<net::IOBuffer> buffer(new net::IOBuffer(read));
+    scoped_refptr<net::IOBuffer> buffer =
+        base::MakeRefCounted<net::IOBuffer>(read);
     memcpy(buffer->data(), test_data + pos, read);
     decoder.AddData(buffer, read);
     while (true) {
@@ -108,17 +109,17 @@ void SimulateReadSequence(const int read_sequence[], int sequence_size) {
 
 TEST(MessageDecoderTest, SmallReads) {
   const int kReads[] = {1, 2, 3, 1};
-  SimulateReadSequence(kReads, arraysize(kReads));
+  SimulateReadSequence(kReads, base::size(kReads));
 }
 
 TEST(MessageDecoderTest, LargeReads) {
   const int kReads[] = {50, 50, 5};
-  SimulateReadSequence(kReads, arraysize(kReads));
+  SimulateReadSequence(kReads, base::size(kReads));
 }
 
 TEST(MessageDecoderTest, EmptyReads) {
   const int kReads[] = {4, 0, 50, 0};
-  SimulateReadSequence(kReads, arraysize(kReads));
+  SimulateReadSequence(kReads, base::size(kReads));
 }
 
 }  // namespace protocol

@@ -6,7 +6,7 @@
 #define ASH_WS_ASH_GPU_INTERFACE_PROVIDER_H_
 
 #include "components/discardable_memory/public/interfaces/discardable_shared_memory_manager.mojom.h"
-#include "services/ws/gpu_interface_provider.h"
+#include "services/ws/public/cpp/host/gpu_interface_provider.h"
 #include "services/ws/public/mojom/arc.mojom.h"
 #include "services/ws/public/mojom/gpu.mojom.h"
 
@@ -33,8 +33,8 @@ class AshGpuInterfaceProvider : public ws::GpuInterfaceProvider {
   // ws::GpuInterfaceProvider:
   void RegisterGpuInterfaces(
       service_manager::BinderRegistry* registry) override;
-  void RegisterOzoneGpuInterfaces(
-      service_manager::BinderRegistry* registry) override;
+  void BindOzoneGpuInterface(const std::string& interface_name,
+                             mojo::ScopedMessagePipeHandle handle) override;
 
  private:
   void BindArcRequest(ws::mojom::ArcRequest request);

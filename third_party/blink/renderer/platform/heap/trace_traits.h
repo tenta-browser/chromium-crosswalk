@@ -30,8 +30,6 @@ class CrossThreadWeakPersistent;
 template <typename T>
 class HeapDoublyLinkedList;
 template <typename T>
-class HeapTerminatedArray;
-template <typename T>
 class Member;
 template <typename T>
 class TraceEagerlyTrait;
@@ -39,6 +37,8 @@ template <typename T>
 class TraceTrait;
 template <typename T>
 class WeakMember;
+template <typename T>
+class Persistent;
 template <typename T>
 class WeakPersistent;
 
@@ -382,12 +382,6 @@ template <typename T>
 class TraceEagerlyTrait<CrossThreadWeakPersistent<T>> {
   STATIC_ONLY(TraceEagerlyTrait);
 
- public:
-  static const bool value = TraceEagerlyTrait<T>::value;
-};
-
-template <typename T>
-class TraceEagerlyTrait<HeapTerminatedArray<T>> {
  public:
   static const bool value = TraceEagerlyTrait<T>::value;
 };

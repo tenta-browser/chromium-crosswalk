@@ -52,6 +52,8 @@ class PendingBookmarkAppManager final : public web_app::PendingAppManager,
                    const RepeatingInstallCallback& callback) override;
   void UninstallApps(std::vector<GURL> apps_to_uninstall,
                      const UninstallCallback& callback) override;
+  std::vector<GURL> GetInstalledAppUrls(
+      web_app::InstallSource install_source) const override;
 
   void SetFactoriesForTesting(WebContentsFactory web_contents_factory,
                               TaskFactory task_factory);
@@ -60,10 +62,16 @@ class PendingBookmarkAppManager final : public web_app::PendingAppManager,
  private:
   struct TaskAndCallback;
 
+  // Returns (as the base::Optional part) whether or not there is already a
+  // known extension for the given ID. The bool inside the base::Optional is,
+  // when known, whether the extension is installed (true) or uninstalled
+  // (false).
   base::Optional<bool> IsExtensionPresentAndInstalled(
       const std::string& extension_id);
 
   void MaybeStartNextInstallation();
+
+  void StartInstallationTask(std::unique_ptr<TaskAndCallback> task);
 
   void CreateWebContentsIfNecessary();
 

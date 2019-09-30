@@ -15,7 +15,9 @@ import org.chromium.base.VisibleForTesting;
 import org.chromium.chrome.browser.ntp.NewTabPage;
 import org.chromium.chrome.browser.tab.EmptyTabObserver;
 import org.chromium.chrome.browser.tab.Tab;
+import org.chromium.chrome.browser.tab.Tab.TabHidingType;
 import org.chromium.chrome.browser.tab.TabObserver;
+import org.chromium.chrome.browser.tabmodel.TabSelectionType;
 import org.chromium.content_public.browser.NavigationController;
 import org.chromium.content_public.browser.NavigationEntry;
 
@@ -83,12 +85,12 @@ class StreamLifecycleManager implements ApplicationStatus.ActivityStateListener 
             }
 
             @Override
-            public void onShown(Tab tab) {
+            public void onShown(Tab tab, @TabSelectionType int type) {
                 show();
             }
 
             @Override
-            public void onHidden(Tab tab) {
+            public void onHidden(Tab tab, @TabHidingType int type) {
                 hide();
             }
 
@@ -134,8 +136,11 @@ class StreamLifecycleManager implements ApplicationStatus.ActivityStateListener 
     /** @return Whether the {@link Stream} can be shown. */
     private boolean canShow() {
         final int state = ApplicationStatus.getStateForActivity(mActivity);
+        // We don't call Stream#onShow to prevent feed services from being warmed up if the user
+        // has opted out from article suggestions during the previous session.
         return (mStreamState == CREATED || mStreamState == HIDDEN) && !mTab.isHidden()
-                && (state == ActivityState.STARTED || state == ActivityState.RESUMED);
+                && (state == ActivityState.STARTED || state == ActivityState.RESUMED)
+                && FeedProcessScopeFactory.areArticlesVisibleDuringSession();
     }
 
     /** Calls {@link Stream#onShow()}. */
@@ -148,15 +153,17 @@ class StreamLifecycleManager implements ApplicationStatus.ActivityStateListener 
 
     /** @return Whether the {@link Stream} can be activated. */
     private boolean canActivate() {
-        return mStreamState != ACTIVE && mStreamState != DESTROYED && mTab.isUserInteractable()
-                && ApplicationStatus.getStateForActivity(mActivity) == ActivityState.RESUMED;
+        return (mStreamState == SHOWN || mStreamState == INACTIVE) && mTab.isUserInteractable()
+                && ApplicationStatus.getStateForActivity(mActivity) == ActivityState.RESUMED
+                && FeedProcessScopeFactory.areArticlesVisibleDuringSession();
     }
 
     /** Calls {@link Stream#onActive()}. */
-    private void activate() {
+    void activate() {
+        // Make sure the Stream can be shown and is set shown before setting it to active state.
+        show();
         if (!canActivate()) return;
 
-        show();
         mStreamState = ACTIVE;
         mStream.onActive();
     }
@@ -173,6 +180,7 @@ class StreamLifecycleManager implements ApplicationStatus.ActivityStateListener 
     private void hide() {
         if (mStreamState == HIDDEN || mStreamState == CREATED || mStreamState == DESTROYED) return;
 
+        // Make sure the Stream is inactive before setting it to hidden state.
         deactivate();
         mStreamState = HIDDEN;
         // Save instance state as the Stream begins to hide. This matches the activity lifecycle
@@ -188,6 +196,7 @@ class StreamLifecycleManager implements ApplicationStatus.ActivityStateListener 
     void destroy() {
         if (mStreamState == DESTROYED) return;
 
+        // Make sure the Stream is hidden before setting it to destroyed state.
         hide();
         mStreamState = DESTROYED;
         mTab.removeObserver(mTabObserver);

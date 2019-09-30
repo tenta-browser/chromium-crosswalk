@@ -8,6 +8,10 @@
 #include "media/base/test_data_util.h"
 #include "media/media_buildflags.h"
 
+#if defined(OS_ANDROID)
+#include "base/android/build_info.h"
+#endif
+
 namespace content {
 
 class MediaColorTest : public MediaBrowserTest {
@@ -50,12 +54,19 @@ IN_PROC_BROWSER_TEST_F(MediaColorTest, Yuv444pVp9) {
 #if BUILDFLAG(USE_PROPRIETARY_CODECS)
 
 IN_PROC_BROWSER_TEST_F(MediaColorTest, Yuv420pH264) {
+#if defined(OS_ANDROID)
+  // https://crbug.com/907572
+  if (base::android::BuildInfo::GetInstance()->sdk_int() <=
+      base::android::SDK_VERSION_KITKAT) {
+    DVLOG(0) << "Skipping test - Yuv420pH264 is flaky on KitKat devices.";
+    return;
+  }
+#endif
   RunColorTest("yuv420p.mp4");
 }
 
-// This test fails on Android: http://crbug.com/647818 and OSX:
-// http://crbug.com/647838
-#if defined(OS_MACOSX) || defined(OS_ANDROID)
+// This test fails on Android: http://crbug.com/647818
+#if defined(OS_ANDROID)
 #define MAYBE_Yuvj420pH264 DISABLED_Yuvj420pH264
 #else
 #define MAYBE_Yuvj420pH264 Yuvj420pH264
@@ -71,6 +82,14 @@ IN_PROC_BROWSER_TEST_F(MediaColorTest, MAYBE_Yuvj420pH264) {
 #define MAYBE_Yuv420pRec709H264 Yuv420pRec709H264
 #endif
 IN_PROC_BROWSER_TEST_F(MediaColorTest, MAYBE_Yuv420pRec709H264) {
+#if defined(OS_ANDROID)
+  // https://crbug.com/907572
+  if (base::android::BuildInfo::GetInstance()->sdk_int() <=
+      base::android::SDK_VERSION_KITKAT) {
+    DVLOG(0) << "Skipping test - Yuv420pRec709H264 is flaky on KitKat devices.";
+    return;
+  }
+#endif
   RunColorTest("yuv420p_rec709.mp4");
 }
 

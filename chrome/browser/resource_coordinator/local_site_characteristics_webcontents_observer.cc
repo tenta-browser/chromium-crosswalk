@@ -44,7 +44,7 @@ LocalSiteCharacteristicsWebContentsObserver::
     DCHECK(PageSignalReceiver::IsEnabled());
 
     TabLoadTracker::Get()->AddObserver(this);
-    page_signal_receiver_ = PageSignalReceiver::GetInstance();
+    page_signal_receiver_ = GetPageSignalReceiver();
     DCHECK(page_signal_receiver_);
     page_signal_receiver_->AddObserver(this);
   }
@@ -111,11 +111,14 @@ void LocalSiteCharacteristicsWebContentsObserver::DidFinishNavigation(
   DCHECK(profile);
   SiteCharacteristicsDataStore* data_store =
       LocalSiteCharacteristicsDataStoreFactory::GetForProfile(profile);
-  DCHECK(data_store);
-  auto rc_visibility =
-      ContentVisibilityToRCVisibility(web_contents()->GetVisibility());
-  writer_ = data_store->GetWriterForOrigin(new_origin, rc_visibility);
-  UpdateBackgroundedTime(rc_visibility);
+
+  // A data store might not be available in some unit tests.
+  if (data_store) {
+    auto rc_visibility =
+        ContentVisibilityToRCVisibility(web_contents()->GetVisibility());
+    writer_ = data_store->GetWriterForOrigin(new_origin, rc_visibility);
+    UpdateBackgroundedTime(rc_visibility);
+  }
 
   // The writer is initially in an unloaded state, load it if necessary.
   if (TabLoadTracker::Get()->GetLoadingState(web_contents()) ==
@@ -213,6 +216,7 @@ void LocalSiteCharacteristicsWebContentsObserver::
 void LocalSiteCharacteristicsWebContentsObserver::OnLoadTimePerformanceEstimate(
     content::WebContents* contents,
     const PageNavigationIdentity& page_navigation_id,
+    base::TimeDelta load_duration,
     base::TimeDelta cpu_usage_estimate,
     uint64_t private_footprint_kb_estimate) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
@@ -236,7 +240,7 @@ void LocalSiteCharacteristicsWebContentsObserver::OnLoadTimePerformanceEstimate(
                                 .IsSameOriginWith(writer_origin_)) {
     if (writer_) {
       writer_->NotifyLoadTimePerformanceMeasurement(
-          cpu_usage_estimate, private_footprint_kb_estimate);
+          load_duration, cpu_usage_estimate, private_footprint_kb_estimate);
     }
   }
 }

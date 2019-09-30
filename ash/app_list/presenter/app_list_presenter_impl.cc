@@ -25,6 +25,7 @@
 #include "ui/compositor/scoped_layer_animation_settings.h"
 #include "ui/display/screen.h"
 #include "ui/display/types/display_constants.h"
+#include "ui/gfx/geometry/vector2d_conversions.h"
 #include "ui/gfx/presentation_feedback.h"
 #include "ui/keyboard/keyboard_controller.h"
 #include "ui/views/widget/widget.h"
@@ -45,7 +46,8 @@ inline ui::Layer* GetLayer(views::Widget* widget) {
 }
 
 void UpdateOverviewSettings(ui::AnimationMetricsReporter* reporter,
-                            ui::ScopedLayerAnimationSettings* settings) {
+                            ui::ScopedLayerAnimationSettings* settings,
+                            bool observe) {
   settings->SetTransitionDuration(kOverviewAnimationDuration);
   settings->SetTweenType(gfx::Tween::FAST_OUT_SLOW_IN);
   settings->SetPreemptionStrategy(
@@ -99,7 +101,6 @@ AppListPresenterImpl::AppListPresenterImpl(
 
 AppListPresenterImpl::~AppListPresenterImpl() {
   Dismiss(base::TimeTicks());
-  delegate_.reset();
   // Ensures app list view goes before the controller since pagination model
   // lives in the controller and app list view would access it on destruction.
   if (view_) {
@@ -118,10 +119,14 @@ void AppListPresenterImpl::Show(int64_t display_id,
   if (is_visible_) {
     // Launcher is always visible on the internal display when home launcher is
     // enabled in tablet mode.
-    if (display_id != GetDisplayId() &&
-        !delegate_->IsHomeLauncherEnabledInTabletMode()) {
+    if (display_id != GetDisplayId() && !delegate_->IsTabletMode()) {
       Dismiss(event_time_stamp);
     }
+    return;
+  }
+
+  if (!delegate_->GetRootWindowForDisplayId(display_id)) {
+    LOG(ERROR) << "Root window does not exist for display: " << display_id;
     return;
   }
 
@@ -135,6 +140,7 @@ void AppListPresenterImpl::Show(int64_t display_id,
     delegate_->Init(view, display_id, current_apps_page_);
     SetView(view);
   }
+  view_->ShowWhenReady();
   delegate_->OnShown(display_id);
   NotifyTargetVisibilityChanged(GetTargetVisibility());
   NotifyVisibilityChanged(GetTargetVisibility(), display_id);
@@ -159,10 +165,9 @@ void AppListPresenterImpl::Dismiss(base::TimeTicks event_time_stamp) {
   if (view_->GetWidget()->IsActive())
     view_->GetWidget()->Deactivate();
 
-  delegate_->OnDismissed();
+  delegate_->OnClosing();
   ScheduleAnimation();
   NotifyTargetVisibilityChanged(GetTargetVisibility());
-  NotifyVisibilityChanged(GetTargetVisibility(), display_id);
   base::RecordAction(base::UserMetricsAction("Launcher_Dismiss"));
 }
 
@@ -176,13 +181,15 @@ bool AppListPresenterImpl::CloseOpenedPage() {
   return view_->CloseOpenedPage();
 }
 
-void AppListPresenterImpl::ToggleAppList(int64_t display_id,
-                                         base::TimeTicks event_time_stamp) {
+ash::ShelfAction AppListPresenterImpl::ToggleAppList(
+    int64_t display_id,
+    base::TimeTicks event_time_stamp) {
   if (IsVisible()) {
     Dismiss(event_time_stamp);
-    return;
+    return ash::SHELF_ACTION_APP_LIST_DISMISSED;
   }
   Show(display_id, event_time_stamp);
+  return ash::SHELF_ACTION_APP_LIST_SHOWN;
 }
 
 bool AppListPresenterImpl::IsVisible() const {
@@ -202,8 +209,7 @@ void AppListPresenterImpl::UpdateYPositionAndOpacity(int y_position_in_screen,
     view_->UpdateYPositionAndOpacity(y_position_in_screen, background_opacity);
 }
 
-void AppListPresenterImpl::EndDragFromShelf(
-    app_list::AppListViewState app_list_state) {
+void AppListPresenterImpl::EndDragFromShelf(AppListViewState app_list_state) {
   if (view_) {
     if (app_list_state == AppListViewState::CLOSED ||
         view_->app_list_state() == AppListViewState::CLOSED) {
@@ -212,13 +218,14 @@ void AppListPresenterImpl::EndDragFromShelf(
       view_->SetState(AppListViewState(app_list_state));
     }
     view_->SetIsInDrag(false);
-    view_->DraggingLayout();
+    view_->UpdateChildViewsYPositionAndOpacity();
   }
 }
 
-void AppListPresenterImpl::ProcessMouseWheelOffset(int y_scroll_offset) {
+void AppListPresenterImpl::ProcessMouseWheelOffset(
+    const gfx::Vector2d& scroll_offset_vector) {
   if (view_)
-    view_->HandleScroll(y_scroll_offset, ui::ET_MOUSEWHEEL);
+    view_->HandleScroll(scroll_offset_vector, ui::ET_MOUSEWHEEL);
 }
 
 void AppListPresenterImpl::UpdateYPositionAndOpacityForHomeLauncher(
@@ -232,20 +239,19 @@ void AppListPresenterImpl::UpdateYPositionAndOpacityForHomeLauncher(
                                    static_cast<float>(y_position_in_screen));
   // We want to animate the expand arrow, suggestion chips and apps grid in
   // app_list_main_view, and the search box.
-  std::vector<ui::Layer*> animation_layers = {
-      view_->app_list_main_view()->layer(),
-      view_->search_box_widget()->GetNativeWindow()->layer()};
-  for (auto* layer : animation_layers) {
-    layer->GetAnimator()->StopAnimating();
-    std::unique_ptr<ui::ScopedLayerAnimationSettings> settings;
-    if (!callback.is_null()) {
-      settings = std::make_unique<ui::ScopedLayerAnimationSettings>(
-          layer->GetAnimator());
-      callback.Run(settings.get());
-    }
-    layer->SetOpacity(opacity);
-    layer->SetTransform(translation);
+  ui::Layer* layer = view_->GetWidget()->GetNativeWindow()->layer();
+  layer->GetAnimator()->StopAnimating();
+  std::unique_ptr<ui::ScopedLayerAnimationSettings> settings;
+  if (!callback.is_null()) {
+    settings = std::make_unique<ui::ScopedLayerAnimationSettings>(
+        layer->GetAnimator());
+    callback.Run(settings.get(), /*observe=*/false);
   }
+  layer->SetOpacity(opacity);
+  layer->SetTransform(translation);
+
+  // Update child views' y positions to target state to avoid stale positions.
+  view_->app_list_main_view()->contents_view()->UpdateYPositionAndOpacity();
 }
 
 void AppListPresenterImpl::ScheduleOverviewModeAnimation(bool start,
@@ -279,7 +285,6 @@ void AppListPresenterImpl::SetView(AppListView* view) {
   // Sync the |onscreen_keyboard_shown_| in case |view_| is not initiated when
   // the on-screen is shown.
   view_->set_onscreen_keyboard_shown(delegate_->GetOnScreenKeyboardShown());
-  view_->ShowWhenReady();
 }
 
 void AppListPresenterImpl::ResetView() {
@@ -306,8 +311,9 @@ void AppListPresenterImpl::ScheduleAnimation() {
   aura::Window* root_window = widget->GetNativeView()->GetRootWindow();
   const gfx::Vector2d offset =
       delegate_->GetVisibilityAnimationOffset(root_window);
-  base::TimeDelta animation_duration =
-      delegate_->GetVisibilityAnimationDuration(root_window, is_visible_);
+  const base::TimeDelta animation_duration =
+      delegate_->GetVisibilityAnimationDuration(root_window,
+                                                view_->is_fullscreen());
   gfx::Rect target_bounds = widget->GetNativeView()->bounds();
   target_bounds.Offset(offset);
   widget->GetNativeView()->SetBounds(target_bounds);
@@ -345,8 +351,7 @@ void AppListPresenterImpl::NotifyVisibilityChanged(bool visible,
   last_display_id_ = display_id;
 
   // Notify the Shell and its observers of the app list visibility change.
-  delegate_->OnVisibilityChanged(
-      visible, delegate_->GetRootWindowForDisplayId(display_id));
+  delegate_->OnVisibilityChanged(visible, display_id);
 }
 
 void AppListPresenterImpl::NotifyTargetVisibilityChanged(bool visible) {
@@ -368,17 +373,14 @@ void AppListPresenterImpl::OnWindowFocused(aura::Window* gained_focus,
     aura::Window* applist_container = applist_window->parent();
     if (applist_container->Contains(lost_focus) &&
         (!gained_focus || !applist_container->Contains(gained_focus)) &&
-        !switches::ShouldNotDismissOnBlur() &&
-        !delegate_->IsHomeLauncherEnabledInTabletMode()) {
+        !switches::ShouldNotDismissOnBlur() && !delegate_->IsTabletMode()) {
       Dismiss(base::TimeTicks());
     }
     if (applist_container->Contains(gained_focus) &&
         keyboard::KeyboardController::HasInstance()) {
       auto* const keyboard_controller = keyboard::KeyboardController::Get();
-      if (keyboard_controller->enabled() &&
-          keyboard_controller->IsKeyboardVisible()) {
+      if (keyboard_controller->IsKeyboardVisible())
         keyboard_controller->HideKeyboardImplicitlyBySystem();
-      }
     }
   }
 }
@@ -387,6 +389,8 @@ void AppListPresenterImpl::OnWindowFocused(aura::Window* gained_focus,
 // AppListPresenterImpl, ui::ImplicitAnimationObserver implementation:
 
 void AppListPresenterImpl::OnImplicitAnimationsCompleted() {
+  NotifyVisibilityChanged(GetTargetVisibility(), GetDisplayId());
+
   if (is_visible_) {
     view_->GetWidget()->Activate();
   } else {
@@ -402,6 +406,10 @@ void AppListPresenterImpl::OnWidgetDestroying(views::Widget* widget) {
   if (is_visible_)
     Dismiss(base::TimeTicks());
   ResetView();
+}
+
+void AppListPresenterImpl::OnWidgetDestroyed(views::Widget* widget) {
+  delegate_->OnClosed();
 }
 
 void AppListPresenterImpl::OnWidgetVisibilityChanged(views::Widget* widget,

@@ -59,7 +59,6 @@ namespace net {
 
 class CTPolicyEnforcer;
 class CertVerifier;
-class ChannelIDService;
 class ClientSocketFactory;
 class CTVerifier;
 class HostResolver;
@@ -123,6 +122,7 @@ class NET_EXPORT_PRIVATE QuicStreamRequest {
               const GURL& url,
               const NetLogWithSource& net_log,
               NetErrorDetails* net_error_details,
+              CompletionOnceCallback failed_on_default_network_callback,
               CompletionOnceCallback callback);
 
   // This function must be called after Request() returns ERR_IO_PENDING.
@@ -144,9 +144,18 @@ class NET_EXPORT_PRIVATE QuicStreamRequest {
 
   void OnRequestComplete(int rv);
 
+  // Called when the original connection created on the default network for
+  // |this| fails and a new connection has been created on the alternate
+  // network.
+  void OnConnectionFailedOnDefaultNetwork();
+
   // Helper method that calls |factory_|'s GetTimeDelayForWaitingJob(). It
   // returns the amount of time waiting job should be delayed.
   base::TimeDelta GetTimeDelayForWaitingJob() const;
+
+  // If host resolution is underway, changes the priority of the host resolver
+  // request.
+  void SetPriority(RequestPriority priority);
 
   // Releases the handle to the QUIC session retrieved as a result of Request().
   std::unique_ptr<QuicChromiumClientSession::Handle> ReleaseSessionHandle();
@@ -165,6 +174,7 @@ class NET_EXPORT_PRIVATE QuicStreamRequest {
   QuicSessionKey session_key_;
   NetLogWithSource net_log_;
   CompletionOnceCallback callback_;
+  CompletionOnceCallback failed_on_default_network_callback_;
   NetErrorDetails* net_error_details_;  // Unowned.
   std::unique_ptr<QuicChromiumClientSession::Handle> session_;
 
@@ -223,7 +233,6 @@ class NET_EXPORT_PRIVATE QuicStreamFactory
       HttpServerProperties* http_server_properties,
       CertVerifier* cert_verifier,
       CTPolicyEnforcer* ct_policy_enforcer,
-      ChannelIDService* channel_id_service,
       TransportSecurityState* transport_security_state,
       CTVerifier* cert_transparency_verifier,
       SocketPerformanceWatcherFactory* socket_performance_watcher_factory,
@@ -243,6 +252,7 @@ class NET_EXPORT_PRIVATE QuicStreamFactory
       bool migrate_sessions_on_network_change_v2,
       bool migrate_sessions_early_v2,
       bool retry_on_alternate_network_before_handshake,
+      bool race_stale_dns_on_connection,
       bool go_away_on_path_degrading,
       base::TimeDelta max_time_on_non_default_network,
       int max_migrations_to_non_default_network_on_write_error,
@@ -253,8 +263,6 @@ class NET_EXPORT_PRIVATE QuicStreamFactory
       bool headers_include_h2_stream_dependency,
       const quic::QuicTagVector& connection_options,
       const quic::QuicTagVector& client_connection_options,
-      bool enable_token_binding,
-      bool enable_channel_id,
       bool enable_socket_recv_optimization);
   ~QuicStreamFactory() override;
 
@@ -291,7 +299,11 @@ class NET_EXPORT_PRIVATE QuicStreamFactory
   // Cancels a pending request.
   void CancelRequest(QuicStreamRequest* request);
 
-  // Closes all current sessions with specified network and QUIC error codes.
+  // Sets priority of a request.
+  void SetRequestPriority(QuicStreamRequest* request, RequestPriority priority);
+
+  // Closes all current sessions with specified network, QUIC error codes.
+  // It sends connection close packet when closing connections.
   void CloseAllSessions(int error, quic::QuicErrorCode quic_error);
 
   std::unique_ptr<base::Value> QuicStreamFactoryInfoToValue() const;
@@ -539,6 +551,10 @@ class NET_EXPORT_PRIVATE QuicStreamFactory
   // Set if a new connection may be kicked off on an alternate network when a
   // connection fails on the default network before handshake is confirmed.
   const bool retry_on_alternate_network_before_handshake_;
+
+  // Set if stale DNS result may be speculatively used to connect and then
+  // compared with the original DNS result.
+  const bool race_stale_dns_on_connection_;
 
   // Set if client should mark the session as GOAWAY when the connection
   // experiences poor connectivity

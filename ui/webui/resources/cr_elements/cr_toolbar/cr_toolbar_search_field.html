@@ -150,12 +150,11 @@
           on-keydown="onSearchTermKeydown_"
           on-focus="onInputFocus_"
           on-blur="onInputBlur_"
-          incremental
           autofocus
           spellcheck="false">
     </div>
     <template is="dom-if" if="[[hasSearchText]]">
-      <paper-icon-button-light class="icon-cancel-toolbar">
+      <paper-icon-button-light class="icon-toolbar-cancel">
         <button id="clearSearch" title="[[clearLabel]]" on-tap="clearSearch_">
         </button>
       </paper-icon-button-light>

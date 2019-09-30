@@ -12,20 +12,20 @@
 #include <string>
 #include <vector>
 
+#include "base/macros.h"
 #include "base/memory/shared_memory.h"
 #include "base/values.h"
 #include "content/public/common/common_param_traits.h"
 #include "content/public/common/socket_permission_request.h"
 #include "extensions/common/api/messaging/message.h"
 #include "extensions/common/api/messaging/port_id.h"
-#include "extensions/common/constants.h"
 #include "extensions/common/common_param_traits.h"
+#include "extensions/common/constants.h"
 #include "extensions/common/draggable_region.h"
 #include "extensions/common/event_filtering_info.h"
 #include "extensions/common/extension.h"
 #include "extensions/common/extensions_client.h"
 #include "extensions/common/host_id.h"
-#include "extensions/common/permissions/media_galleries_permission_data.h"
 #include "extensions/common/permissions/permission_set.h"
 #include "extensions/common/permissions/socket_permission_data.h"
 #include "extensions/common/permissions/usb_device_permission_data.h"
@@ -264,10 +264,6 @@ IPC_STRUCT_TRAITS_BEGIN(extensions::UsbDevicePermissionData)
   IPC_STRUCT_TRAITS_MEMBER(interface_class())
 IPC_STRUCT_TRAITS_END()
 
-IPC_STRUCT_TRAITS_BEGIN(extensions::MediaGalleriesPermissionData)
-  IPC_STRUCT_TRAITS_MEMBER(permission())
-IPC_STRUCT_TRAITS_END()
-
 IPC_STRUCT_TRAITS_BEGIN(extensions::Message)
   IPC_STRUCT_TRAITS_MEMBER(data)
   IPC_STRUCT_TRAITS_MEMBER(user_gesture)
@@ -311,9 +307,11 @@ struct ExtensionMsg_PermissionSetStruct {
   ExtensionMsg_PermissionSetStruct();
   explicit ExtensionMsg_PermissionSetStruct(
       const extensions::PermissionSet& permissions);
-  ExtensionMsg_PermissionSetStruct(
-      const ExtensionMsg_PermissionSetStruct& other);
   ~ExtensionMsg_PermissionSetStruct();
+
+  ExtensionMsg_PermissionSetStruct(ExtensionMsg_PermissionSetStruct&& other);
+  ExtensionMsg_PermissionSetStruct& operator=(
+      ExtensionMsg_PermissionSetStruct&& other);
 
   std::unique_ptr<const extensions::PermissionSet> ToPermissionSet() const;
 
@@ -321,6 +319,8 @@ struct ExtensionMsg_PermissionSetStruct {
   extensions::ManifestPermissionSet manifest_permissions;
   extensions::URLPatternSet explicit_hosts;
   extensions::URLPatternSet scriptable_hosts;
+
+  DISALLOW_COPY_AND_ASSIGN(ExtensionMsg_PermissionSetStruct);
 };
 
 struct ExtensionMsg_Loaded_Params {
@@ -646,12 +646,11 @@ IPC_MESSAGE_ROUTED1(ExtensionMsg_ValidateMessagePort,
                     extensions::PortId /* port_id */)
 
 // Dispatch the Port.onConnect event for message channels.
-IPC_MESSAGE_ROUTED5(ExtensionMsg_DispatchOnConnect,
+IPC_MESSAGE_ROUTED4(ExtensionMsg_DispatchOnConnect,
                     extensions::PortId /* target_port_id */,
                     std::string /* channel_name */,
                     ExtensionMsg_TabConnectionInfo /* source */,
-                    ExtensionMsg_ExternalConnectionInfo,
-                    std::string /* tls_channel_id */)
+                    ExtensionMsg_ExternalConnectionInfo)
 
 // Deliver a message sent with ExtensionHostMsg_PostMessage.
 IPC_MESSAGE_ROUTED2(ExtensionMsg_DeliverMessage,
@@ -691,6 +690,10 @@ IPC_MESSAGE_CONTROL1(ExtensionMsg_TransferBlobs,
 // Report the WebView partition ID to the WebView guest renderer process.
 IPC_MESSAGE_CONTROL1(ExtensionMsg_SetWebViewPartitionID,
                      std::string /* webview_partition_id */)
+
+// Enable or disable spatial navigation.
+IPC_MESSAGE_ROUTED1(ExtensionMsg_SetSpatialNavigationEnabled,
+                    bool /* spatial_nav_enabled */)
 
 // Messages sent from the renderer to the browser:
 
@@ -778,11 +781,10 @@ IPC_MESSAGE_ROUTED1(ExtensionHostMsg_EventAck, int /* message_id */)
 // Open a channel to all listening contexts owned by the extension with
 // the given ID. This responds asynchronously with ExtensionMsg_AssignPortId.
 // If an error occurred, the opener will be notified asynchronously.
-IPC_MESSAGE_CONTROL5(ExtensionHostMsg_OpenChannelToExtension,
+IPC_MESSAGE_CONTROL4(ExtensionHostMsg_OpenChannelToExtension,
                      int /* frame_routing_id */,
                      ExtensionMsg_ExternalConnectionInfo,
                      std::string /* channel_name */,
-                     bool /* include_tls_channel_id */,
                      extensions::PortId /* port_id */)
 
 IPC_MESSAGE_CONTROL3(ExtensionHostMsg_OpenChannelToNativeApp,
@@ -1001,5 +1003,115 @@ IPC_MESSAGE_CONTROL2(ExtensionHostMsg_DecrementServiceWorkerActivity,
 IPC_MESSAGE_CONTROL2(ExtensionHostMsg_EventAckWorker,
                      int64_t /* service_worker_version_id */,
                      int /* event_id */)
+
+// Tells the browser that an extension service worker context has started and
+// finished executing its top-level JavaScript.
+// Start corresponds to EmbeddedWorkerInstance::OnStarted notification.
+//
+// TODO(lazyboy): This is a workaround: ideally this IPC should be redundant
+// because it directly corresponds to EmbeddedWorkerInstance::OnStarted message.
+// However, because OnStarted message is on different mojo IPC pipe, and most
+// extension IPCs are on legacy IPC pipe, this IPC is necessary to ensure FIFO
+// ordering of this message with rest of the extension IPCs.
+// Two possible solutions to this:
+//   - Associate extension IPCs with Service Worker IPCs. This can be done (and
+//     will be a requirement) when extension IPCs are moved to mojo, but
+//     requires resolving or defining ordering dependencies amongst the
+//     extension messages, and any additional messages in Chrome.
+//   - Make Service Worker IPCs channel-associated so that there's FIFO
+//     guarantee between extension IPCs and Service Worker IPCs. This isn't
+//     straightforward as it changes SW IPC ordering with respect of rest of
+//     Chrome.
+// See https://crbug.com/879015#c4 for details.
+IPC_MESSAGE_CONTROL2(ExtensionHostMsg_DidStartServiceWorkerContext,
+                     std::string /* extension_id */,
+                     int64_t /* service_worker_version_id */)
+
+// Tells the browser that an extension service worker context has been
+// destroyed.
+IPC_MESSAGE_CONTROL2(ExtensionHostMsg_DidStopServiceWorkerContext,
+                     std::string /* extension_id */,
+                     int64_t /* service_worker_version_id */)
+
+IPC_STRUCT_TRAITS_BEGIN(ui::AXNodeData)
+  IPC_STRUCT_TRAITS_MEMBER(id)
+  IPC_STRUCT_TRAITS_MEMBER(role)
+  IPC_STRUCT_TRAITS_MEMBER(state)
+  IPC_STRUCT_TRAITS_MEMBER(actions)
+  IPC_STRUCT_TRAITS_MEMBER(string_attributes)
+  IPC_STRUCT_TRAITS_MEMBER(int_attributes)
+  IPC_STRUCT_TRAITS_MEMBER(float_attributes)
+  IPC_STRUCT_TRAITS_MEMBER(bool_attributes)
+  IPC_STRUCT_TRAITS_MEMBER(intlist_attributes)
+  IPC_STRUCT_TRAITS_MEMBER(stringlist_attributes)
+  IPC_STRUCT_TRAITS_MEMBER(html_attributes)
+  IPC_STRUCT_TRAITS_MEMBER(child_ids)
+  IPC_STRUCT_TRAITS_MEMBER(relative_bounds)
+IPC_STRUCT_TRAITS_END()
+
+IPC_STRUCT_TRAITS_BEGIN(ui::AXTreeData)
+  IPC_STRUCT_TRAITS_MEMBER(tree_id)
+  IPC_STRUCT_TRAITS_MEMBER(parent_tree_id)
+  IPC_STRUCT_TRAITS_MEMBER(focused_tree_id)
+  IPC_STRUCT_TRAITS_MEMBER(url)
+  IPC_STRUCT_TRAITS_MEMBER(title)
+  IPC_STRUCT_TRAITS_MEMBER(mimetype)
+  IPC_STRUCT_TRAITS_MEMBER(doctype)
+  IPC_STRUCT_TRAITS_MEMBER(loaded)
+  IPC_STRUCT_TRAITS_MEMBER(loading_progress)
+  IPC_STRUCT_TRAITS_MEMBER(focus_id)
+  IPC_STRUCT_TRAITS_MEMBER(sel_anchor_object_id)
+  IPC_STRUCT_TRAITS_MEMBER(sel_anchor_offset)
+  IPC_STRUCT_TRAITS_MEMBER(sel_anchor_affinity)
+  IPC_STRUCT_TRAITS_MEMBER(sel_focus_object_id)
+  IPC_STRUCT_TRAITS_MEMBER(sel_focus_offset)
+  IPC_STRUCT_TRAITS_MEMBER(sel_focus_affinity)
+IPC_STRUCT_TRAITS_END()
+
+IPC_STRUCT_TRAITS_BEGIN(ui::AXTreeUpdate)
+  IPC_STRUCT_TRAITS_MEMBER(has_tree_data)
+  IPC_STRUCT_TRAITS_MEMBER(tree_data)
+  IPC_STRUCT_TRAITS_MEMBER(node_id_to_clear)
+  IPC_STRUCT_TRAITS_MEMBER(root_id)
+  IPC_STRUCT_TRAITS_MEMBER(nodes)
+  IPC_STRUCT_TRAITS_MEMBER(event_from)
+IPC_STRUCT_TRAITS_END()
+
+IPC_STRUCT_BEGIN(ExtensionMsg_AccessibilityEventBundleParams)
+  // ID of the accessibility tree that this event applies to.
+  IPC_STRUCT_MEMBER(ui::AXTreeID, tree_id)
+
+  // Zero or more updates to the accessibility tree to apply first.
+  IPC_STRUCT_MEMBER(std::vector<ui::AXTreeUpdate>, updates)
+
+  // Zero or more events to fire after the tree updates have been applied.
+  IPC_STRUCT_MEMBER(std::vector<ui::AXEvent>, events)
+
+  // The mouse location in screen coordinates.
+  IPC_STRUCT_MEMBER(gfx::Point, mouse_location)
+IPC_STRUCT_END()
+
+IPC_STRUCT_BEGIN(ExtensionMsg_AccessibilityLocationChangeParams)
+  // ID of the accessibility tree that this event applies to.
+  IPC_STRUCT_MEMBER(ui::AXTreeID, tree_id)
+
+  // ID of the object whose location is changing.
+  IPC_STRUCT_MEMBER(int, id)
+
+  // The object's new location info.
+  IPC_STRUCT_MEMBER(ui::AXRelativeBounds, new_location)
+IPC_STRUCT_END()
+
+// Forward an accessibility message to an extension process where an
+// extension is using the automation API to listen for accessibility events.
+IPC_MESSAGE_CONTROL2(ExtensionMsg_AccessibilityEventBundle,
+                     ExtensionMsg_AccessibilityEventBundleParams /* events */,
+                     bool /* is_active_profile */)
+
+// Forward an accessibility location change message to an extension process
+// where an extension is using the automation API to listen for
+// accessibility events.
+IPC_MESSAGE_CONTROL1(ExtensionMsg_AccessibilityLocationChange,
+                     ExtensionMsg_AccessibilityLocationChangeParams)
 
 #endif  // EXTENSIONS_COMMON_EXTENSION_MESSAGES_H_

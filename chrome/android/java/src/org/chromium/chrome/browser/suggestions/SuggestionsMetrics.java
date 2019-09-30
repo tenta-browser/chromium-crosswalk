@@ -9,7 +9,6 @@ import android.support.v7.widget.RecyclerView;
 import org.chromium.base.Callback;
 import org.chromium.base.metrics.RecordHistogram;
 import org.chromium.base.metrics.RecordUserAction;
-import org.chromium.chrome.browser.ChromeFeatureList;
 import org.chromium.chrome.browser.ntp.NewTabPage;
 import org.chromium.chrome.browser.ntp.snippets.CategoryInt;
 import org.chromium.chrome.browser.ntp.snippets.FaviconFetchResult;
@@ -98,11 +97,6 @@ public abstract class SuggestionsMetrics {
      * Records whether article suggestions are set visible by user.
      */
     public static void recordArticlesListVisible() {
-        if (!ChromeFeatureList.isEnabled(
-                    ChromeFeatureList.NTP_ARTICLE_SUGGESTIONS_EXPANDABLE_HEADER)) {
-            return;
-        }
-
         RecordHistogram.recordBooleanHistogram("NewTabPage.ContentSuggestions.ArticlesListVisible",
                 PrefServiceBridge.getInstance().getBoolean(Pref.NTP_ARTICLES_LIST_VISIBLE));
     }
@@ -145,7 +139,7 @@ public abstract class SuggestionsMetrics {
     public static DurationTracker getSpinnerVisibilityReporter() {
         return new DurationTracker((duration) -> {
             RecordHistogram.recordTimesHistogram(
-                    "ContentSuggestions.FetchPendingSpinner.VisibleDuration", duration,
+                    "ContentSuggestions.Feed.FetchPendingSpinner.VisibleDuration", duration,
                     TimeUnit.MILLISECONDS);
         });
     }

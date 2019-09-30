@@ -11,7 +11,7 @@
 #include "base/logging.h"
 #include "base/macros.h"
 #include "base/process/memory.h"
-#include "base/sys_info.h"
+#include "base/system/sys_info.h"
 #include "base/test/launcher/test_launcher.h"
 #include "base/test/test_suite.h"
 #include "base/test/test_timeouts.h"
@@ -21,10 +21,9 @@
 #include "content/shell/app/shell_main_delegate.h"
 #include "content/shell/common/shell_switches.h"
 #include "media/base/media_switches.h"
-#include "services/catalog/catalog.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "ui/base/buildflags.h"
 #include "ui/base/ui_base_switches.h"
-#include "ui/base/ui_features.h"
 
 #ifdef V8_USE_EXTERNAL_STARTUP_DATA
 #include "gin/v8_initializer.h"
@@ -39,10 +38,6 @@
 #include "content/shell/browser/shell_content_browser_client.h"
 #include "content/shell/common/shell_content_client.h"
 #include "ui/base/ui_base_paths.h"
-#endif
-
-#if defined(OS_CHROMEOS)
-#include "content/test/content_browsertests_catalog_source.h"
 #endif
 
 namespace content {
@@ -91,11 +86,6 @@ class ContentBrowserTestSuite : public ContentTestSuiteBase {
     RegisterInProcessThreads();
 
     InitializeMojo();
-#endif
-
-#if defined(OS_CHROMEOS)
-    catalog::Catalog::SetDefaultCatalogManifest(
-        content::CreateContentBrowserTestsCatalog());
 #endif
 
     // Browser tests are expected not to tear-down various globals.

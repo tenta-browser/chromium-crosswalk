@@ -8,9 +8,13 @@
 
 #include "base/bind.h"
 #include "ui/base/cursor/ozone/bitmap_cursor_factory_ozone.h"
+#include "ui/base/dragdrop/drag_drop_types.h"
+#include "ui/base/dragdrop/os_exchange_data.h"
+#include "ui/base/hit_test.h"
 #include "ui/events/event.h"
 #include "ui/events/event_utils.h"
 #include "ui/events/ozone/events_ozone.h"
+#include "ui/gfx/geometry/point_f.h"
 #include "ui/ozone/platform/wayland/wayland_connection.h"
 #include "ui/ozone/platform/wayland/wayland_pointer.h"
 #include "ui/ozone/platform/wayland/xdg_popup_wrapper_v5.h"
@@ -71,11 +75,24 @@ WaylandWindow::WaylandWindow(PlatformWindowDelegate* delegate,
     : delegate_(delegate),
       connection_(connection),
       xdg_shell_objects_factory_(new XDGShellObjectFactory()),
-      state_(PlatformWindowState::PLATFORM_WINDOW_STATE_NORMAL) {}
+      state_(PlatformWindowState::PLATFORM_WINDOW_STATE_NORMAL),
+      pending_state_(PlatformWindowState::PLATFORM_WINDOW_STATE_UNKNOWN) {
+  // Set a class property key, which allows |this| to be used for interactive
+  // events, e.g. move or resize.
+  SetWmMoveResizeHandler(this, AsWmMoveResizeHandler());
+
+  // Set a class property key, which allows |this| to be used for drag action.
+  SetWmDragHandler(this, this);
+}
 
 WaylandWindow::~WaylandWindow() {
+  if (drag_closed_callback_) {
+    std::move(drag_closed_callback_)
+        .Run(DragDropTypes::DragOperation::DRAG_NONE);
+  }
+
   PlatformEventSource::GetInstance()->RemovePlatformEventDispatcher(this);
-  connection_->RemoveWindow(surface_.id());
+  connection_->RemoveWindow(GetWidget());
 
   if (parent_window_)
     parent_window_->set_child_window(nullptr);
@@ -123,11 +140,17 @@ bool WaylandWindow::Initialize(PlatformWindowInitProperties properties) {
 
   connection_->ScheduleFlush();
 
-  connection_->AddWindow(surface_.id(), this);
+  connection_->AddWindow(GetWidget(), this);
   PlatformEventSource::GetInstance()->AddPlatformEventDispatcher(this);
-  delegate_->OnAcceleratedWidgetAvailable(surface_.id());
+  delegate_->OnAcceleratedWidgetAvailable(GetWidget());
 
   return true;
+}
+
+gfx::AcceleratedWidget WaylandWindow::GetWidget() const {
+  if (!surface_)
+    return gfx::kNullAcceleratedWidget;
+  return surface_.id();
 }
 
 void WaylandWindow::CreateXdgPopup() {
@@ -194,7 +217,33 @@ void WaylandWindow::ApplyPendingBounds() {
   connection_->ScheduleFlush();
 }
 
+void WaylandWindow::DispatchHostWindowDragMovement(
+    int hittest,
+    const gfx::Point& pointer_location) {
+  DCHECK(xdg_surface_);
+
+  connection_->ResetPointerFlags();
+  if (hittest == HTCAPTION)
+    xdg_surface_->SurfaceMove(connection_);
+  else
+    xdg_surface_->SurfaceResize(connection_, hittest);
+
+  connection_->ScheduleFlush();
+}
+
+void WaylandWindow::StartDrag(const ui::OSExchangeData& data,
+                              int operation,
+                              gfx::NativeCursor cursor,
+                              base::OnceCallback<void(int)> callback) {
+  DCHECK(!drag_closed_callback_);
+  drag_closed_callback_ = std::move(callback);
+  connection_->StartDrag(data, operation);
+}
+
 void WaylandWindow::Show() {
+  if (!is_tooltip_)  // Tooltip windows should not get keyboard focus
+    set_keyboard_focus(true);
+
   if (xdg_surface_)
     return;
   if (is_tooltip_) {
@@ -271,6 +320,17 @@ bool WaylandWindow::HasCapture() const {
 
 void WaylandWindow::ToggleFullscreen() {
   DCHECK(xdg_surface_);
+
+  // There are some cases, when Chromium triggers a fullscreen state change
+  // before the surface is activated. In such cases, Wayland may ignore state
+  // changes and such flags as --kiosk or --start-fullscreen will be ignored.
+  // To overcome this, set a pending state, and once the surface is activated,
+  // trigger the change.
+  if (!is_active_) {
+    DCHECK(!IsFullscreen());
+    pending_state_ = PlatformWindowState::PLATFORM_WINDOW_STATE_FULLSCREEN;
+    return;
+  }
 
   // TODO(msisov, tonikitoo): add multiscreen support. As the documentation says
   // if xdg_surface_set_fullscreen() is not provided with wl_output, it's up to
@@ -444,7 +504,7 @@ void WaylandWindow::HandleSurfaceConfigure(int32_t width,
 
   // Ensure that manually handled state changes to fullscreen correspond to the
   // configuration events from a compositor.
-  DCHECK(is_fullscreen == IsFullscreen());
+  DCHECK_EQ(is_fullscreen, IsFullscreen());
 
   // There are two cases, which must be handled for the minimized state.
   // The first one is the case, when the surface goes into the minimized state
@@ -501,6 +561,8 @@ void WaylandWindow::HandleSurfaceConfigure(int32_t width,
 
   if (did_active_change)
     delegate_->OnActivationChanged(is_active_);
+
+  MaybeTriggerPendingStateChange();
 }
 
 void WaylandWindow::OnCloseRequest() {
@@ -508,6 +570,31 @@ void WaylandWindow::OnCloseRequest() {
   // only then call OnCloseRequest().
   DCHECK(!xdg_popup_);
   delegate_->OnCloseRequest();
+}
+
+void WaylandWindow::OnDragEnter(const gfx::PointF& point,
+                                std::unique_ptr<OSExchangeData> data,
+                                int operation) {
+  NOTIMPLEMENTED_LOG_ONCE();
+}
+
+int WaylandWindow::OnDragMotion(const gfx::PointF& point,
+                                uint32_t time,
+                                int operation) {
+  NOTIMPLEMENTED_LOG_ONCE();
+  return 0;
+}
+
+void WaylandWindow::OnDragDrop(std::unique_ptr<OSExchangeData> data) {
+  NOTIMPLEMENTED_LOG_ONCE();
+}
+
+void WaylandWindow::OnDragLeave() {
+  NOTIMPLEMENTED_LOG_ONCE();
+}
+
+void WaylandWindow::OnDragSessionClose(uint32_t dnd_action) {
+  std::move(drag_closed_callback_).Run(dnd_action);
 }
 
 bool WaylandWindow::IsMinimized() const {
@@ -520,6 +607,16 @@ bool WaylandWindow::IsMaximized() const {
 
 bool WaylandWindow::IsFullscreen() const {
   return state_ == PlatformWindowState::PLATFORM_WINDOW_STATE_FULLSCREEN;
+}
+
+void WaylandWindow::MaybeTriggerPendingStateChange() {
+  if (pending_state_ == PlatformWindowState::PLATFORM_WINDOW_STATE_UNKNOWN ||
+      !is_active_)
+    return;
+  DCHECK_EQ(pending_state_,
+            PlatformWindowState::PLATFORM_WINDOW_STATE_FULLSCREEN);
+  pending_state_ = PlatformWindowState::PLATFORM_WINDOW_STATE_UNKNOWN;
+  ToggleFullscreen();
 }
 
 WaylandWindow* WaylandWindow::GetParentWindow(
@@ -540,6 +637,10 @@ WaylandWindow* WaylandWindow::GetParentWindow(
   if (!parent_window)
     return connection_->GetCurrentFocusedWindow();
   return parent_window;
+}
+
+WmMoveResizeHandler* WaylandWindow::AsWmMoveResizeHandler() {
+  return static_cast<WmMoveResizeHandler*>(this);
 }
 
 }  // namespace ui

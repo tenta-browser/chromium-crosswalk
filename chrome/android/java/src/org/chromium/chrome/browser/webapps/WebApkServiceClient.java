@@ -6,9 +6,13 @@ package org.chromium.chrome.browser.webapps;
 
 import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageManager;
+import android.content.res.Resources;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
 import android.os.Build;
 import android.os.IBinder;
 import android.os.RemoteException;
+import android.support.annotation.Nullable;
 
 import org.chromium.base.ContextUtils;
 import org.chromium.base.Log;
@@ -80,10 +84,8 @@ public class WebApkServiceClient {
         final ApiUseCallback connectionCallback = new ApiUseCallback() {
             @Override
             public void useApi(IWebApkApi api) throws RemoteException {
-                if (!notificationBuilder.hasSmallIconBitmap()) {
-                    notificationBuilder.setSmallIconForRemoteApp(
-                            api.getSmallIconId(), webApkPackage);
-                }
+                fallbackToWebApkIconIfNecessary(notificationBuilder, webApkPackage,
+                        api.getSmallIconId());
 
                 boolean notificationPermissionEnabled = api.notificationPermissionEnabled();
                 if (notificationPermissionEnabled) {
@@ -102,6 +104,17 @@ public class WebApkServiceClient {
 
         mConnectionManager.connect(
                 ContextUtils.getApplicationContext(), webApkPackage, connectionCallback);
+    }
+
+    private void fallbackToWebApkIconIfNecessary(NotificationBuilderBase builder,
+            String webApkPackage, int iconId) {
+        Bitmap icon = decodeImageResourceFromPackage(webApkPackage, iconId);
+        if (!builder.hasSmallIconForContent()) {
+            builder.setContentSmallIconForRemoteApp(icon);
+        }
+        if (!builder.hasStatusBarIconBitmap()) {
+            builder.setStatusBarIconForRemoteApp(iconId, icon, webApkPackage);
+        }
     }
 
     /** Cancels notification previously shown by WebAPK. */
@@ -136,5 +149,17 @@ public class WebApkServiceClient {
         }
 
         return false;
+    }
+
+    /** Decodes into a Bitmap an Image resource stored in an APK with the given package name. */
+    @Nullable
+    private static Bitmap decodeImageResourceFromPackage(String packageName, int resourceId) {
+        PackageManager packageManager = ContextUtils.getApplicationContext().getPackageManager();
+        try {
+            Resources resources = packageManager.getResourcesForApplication(packageName);
+            return BitmapFactory.decodeResource(resources, resourceId);
+        } catch (PackageManager.NameNotFoundException e) {
+            return null;
+        }
     }
 }

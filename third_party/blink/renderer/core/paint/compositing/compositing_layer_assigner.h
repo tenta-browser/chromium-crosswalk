@@ -74,7 +74,7 @@ class CompositingLayerAssigner {
 
     // Counter that tracks what index the next Layer would be if it gets
     // squashed to the current squashing layer.
-    size_t next_squashed_layer_index = 0;
+    wtf_size_t next_squashed_layer_index;
 
     // The absolute bounding rect of all the squashed layers.
     IntRect bounding_rect;

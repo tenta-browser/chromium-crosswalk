@@ -7,7 +7,8 @@
 #include <algorithm>
 #include <string>
 
-#include "base/bind.h"
+#include "base/bind_helpers.h"
+#include "base/callback.h"
 #include "base/memory/weak_ptr.h"
 #include "chrome/browser/chromeos/smb_client/discovery/in_memory_host_locator.h"
 #include "chrome/browser/chromeos/smb_client/smb_constants.h"
@@ -30,17 +31,12 @@ constexpr char kDefaultResolvedUrl[] = "smb://1.2.3.4";
 class SmbShareFinderTest : public testing::Test {
  public:
   SmbShareFinderTest() {
-    auto host_locator = std::make_unique<InMemoryHostLocator>();
-    host_locator_ = host_locator.get();
-
-    fake_client_ = std::make_unique<FakeSmbProviderClient>();
-    share_finder_ = std::make_unique<SmbShareFinder>(fake_client_.get());
-
-    share_finder_->RegisterHostLocator(std::move(host_locator));
+    SetupShareFinderTest(true /* should_run_synchronously */);
   }
 
   ~SmbShareFinderTest() override = default;
 
+ protected:
   void TearDown() override { fake_client_->ClearShares(); }
 
   // Adds host with |hostname| and |address| as the resolved url.
@@ -66,15 +62,39 @@ class SmbShareFinderTest : public testing::Test {
   }
 
   // Helper function when expecting shares to be found in the network.
-  void ExpectSharesFound() {
-    share_finder_->GatherSharesInNetwork(base::BindRepeating(
-        &SmbShareFinderTest::SharesFoundCallback, base::Unretained(this)));
+  void StartDiscoveryWhileExpectingSharesFound() {
+    share_finder_->GatherSharesInNetwork(
+        base::BindOnce(&SmbShareFinderTest::HostsDiscoveredCallback,
+                       base::Unretained(this)),
+        base::BindOnce(&SmbShareFinderTest::SharesFoundCallback,
+                       base::Unretained(this)));
+    EXPECT_TRUE(discovery_callback_called_);
   }
 
   // Helper function when expecting no shares to be found in the network.
   void ExpectNoSharesFound() {
-    share_finder_->GatherSharesInNetwork(base::BindRepeating(
-        &SmbShareFinderTest::EmptySharesCallback, base::Unretained(this)));
+    StartDiscoveryWhileExpectingEmptyShares();
+    EXPECT_TRUE(discovery_callback_called_);
+  }
+
+  // Helper function to call SmbShareFinder::GatherSharesInNetwork. Asserts that
+  // there are no shares discovered from the EmptySharesCallback.
+  void StartDiscoveryWhileExpectingEmptyShares() {
+    share_finder_->GatherSharesInNetwork(
+        base::BindOnce(&SmbShareFinderTest::HostsDiscoveredCallback,
+                       base::Unretained(this)),
+        base::BindOnce(&SmbShareFinderTest::EmptySharesCallback,
+                       base::Unretained(this)));
+  }
+
+  // Helper function to call SmbShareFinder::GatherSharesInNetwork. Asserts that
+  // shares are found, but does not remove them.
+  void StartDiscoveryWhileGatheringShares() {
+    share_finder_->GatherSharesInNetwork(
+        base::BindOnce(&SmbShareFinderTest::HostsDiscoveredCallback,
+                       base::Unretained(this)),
+        base::BindOnce(&SmbShareFinderTest::SharesFoundSizeCallback,
+                       base::Unretained(this)));
   }
 
   // Helper function that expects expected_shares_ to be empty.
@@ -85,8 +105,35 @@ class SmbShareFinderTest : public testing::Test {
     EXPECT_EQ(expected, share_finder_->GetResolvedUrl(url));
   }
 
+  void ExpectDiscoveryCalled(int32_t expected) {
+    EXPECT_EQ(expected, discovery_callback_counter_);
+  }
+
+  void FinishHostDiscoveryOnHostLocator() { host_locator_->RunCallback(); }
+
+  void FinishShareDiscoveryOnSmbProviderClient() {
+    fake_client_->RunStoredReadDirCallback();
+  }
+
+  void SetupShareFinderTest(bool should_run_synchronously) {
+    auto host_locator =
+        std::make_unique<InMemoryHostLocator>(should_run_synchronously);
+    host_locator_ = host_locator.get();
+
+    fake_client_ =
+        std::make_unique<FakeSmbProviderClient>(should_run_synchronously);
+    share_finder_ = std::make_unique<SmbShareFinder>(fake_client_.get());
+
+    share_finder_->RegisterHostLocator(std::move(host_locator));
+  }
+
  private:
-  // Removes shares discovered from expected_shares_.
+  void HostsDiscoveredCallback() {
+    discovery_callback_called_ = true;
+    ++discovery_callback_counter_;
+  }
+
+  // Removes shares discovered from |expected_shares_|.
   void SharesFoundCallback(const std::vector<SmbUrl>& shares_found) {
     EXPECT_GE(shares_found.size(), 0u);
 
@@ -95,12 +142,20 @@ class SmbShareFinderTest : public testing::Test {
     }
   }
 
+  void SharesFoundSizeCallback(const std::vector<SmbUrl>& shares_found) {
+    EXPECT_GE(shares_found.size(), 0u);
+  }
+
   void EmptySharesCallback(const std::vector<SmbUrl>& shares_found) {
     EXPECT_EQ(0u, shares_found.size());
   }
 
+  bool discovery_callback_called_ = false;
+
   // Keeps track of expected shares across multiple hosts.
   std::set<std::string> expected_shares_;
+
+  int32_t discovery_callback_counter_ = 0;
 
   InMemoryHostLocator* host_locator_;
   std::unique_ptr<FakeSmbProviderClient> fake_client_;
@@ -129,7 +184,7 @@ TEST_F(SmbShareFinderTest, SharesFoundWithSingleHost) {
   AddShareToDefaultHost("share1");
   AddShareToDefaultHost("share2");
 
-  ExpectSharesFound();
+  StartDiscoveryWhileExpectingSharesFound();
   ExpectAllSharesHaveBeenFound();
 }
 
@@ -145,7 +200,7 @@ TEST_F(SmbShareFinderTest, SharesFoundWithMultipleHosts) {
   AddHost(host2, address2);
   AddShare(resolved_server_url2, server_url2, share2);
 
-  ExpectSharesFound();
+  StartDiscoveryWhileExpectingSharesFound();
   ExpectAllSharesHaveBeenFound();
 }
 
@@ -155,7 +210,7 @@ TEST_F(SmbShareFinderTest, SharesFoundOnOneHostWithMultipleHosts) {
 
   AddHost("host2", "4.5.6.7");
 
-  ExpectSharesFound();
+  StartDiscoveryWhileExpectingSharesFound();
   ExpectAllSharesHaveBeenFound();
 }
 
@@ -164,7 +219,7 @@ TEST_F(SmbShareFinderTest, ResolvesHostToOriginalUrlIfNoHostFound) {
   SmbUrl smb_url(url);
 
   // Trigger the NetworkScanner to scan the network with its HostLocators.
-  ExpectSharesFound();
+  StartDiscoveryWhileExpectingSharesFound();
 
   ExpectResolvedHost(smb_url, url);
 }
@@ -173,7 +228,7 @@ TEST_F(SmbShareFinderTest, ResolvesHost) {
   AddDefaultHost();
 
   // Trigger the NetworkScanner to scan the network with its HostLocators.
-  ExpectSharesFound();
+  StartDiscoveryWhileExpectingSharesFound();
 
   SmbUrl url(std::string(kDefaultUrl) + "share");
   ExpectResolvedHost(url, std::string(kDefaultResolvedUrl) + "/share");
@@ -184,10 +239,54 @@ TEST_F(SmbShareFinderTest, ResolvesHostWithMultipleHosts) {
   AddHost("host2", "4.5.6.7");
 
   // Trigger the NetworkScanner to scan the network with its HostLocators.
-  ExpectSharesFound();
+  StartDiscoveryWhileExpectingSharesFound();
 
   SmbUrl url("smb://host2/share");
   ExpectResolvedHost(url, "smb://4.5.6.7/share");
+}
+
+TEST_F(SmbShareFinderTest, TestNonEmptyDiscoveryWithNonEmptyShareCallback) {
+  SetupShareFinderTest(false /* should_run_synchronoulsy */);
+
+  AddDefaultHost();
+
+  // Start discovery twice before host discovery is compeleted.
+  StartDiscoveryWhileExpectingEmptyShares();
+  StartDiscoveryWhileExpectingEmptyShares();
+
+  // Assert discovery callback has not been called.
+  ExpectDiscoveryCalled(0 /* expected */);
+
+  FinishHostDiscoveryOnHostLocator();
+
+  ExpectDiscoveryCalled(2 /* expected */);
+}
+
+TEST_F(SmbShareFinderTest, TestEmptyDiscoveryWithNonEmptyShareCallback) {
+  SetupShareFinderTest(false /* should_run_synchronoulsy */);
+
+  AddDefaultHost();
+  AddShareToDefaultHost("share1");
+  AddShareToDefaultHost("share2");
+
+  // Makes call to start discovery once. Share discovery will not run and be in
+  // a pending state.
+  StartDiscoveryWhileGatheringShares();
+
+  FinishHostDiscoveryOnHostLocator();
+
+  ExpectDiscoveryCalled(1 /* expected */);
+
+  // Host discovery will complete immediately while share discoveries will
+  // remain pending.
+  StartDiscoveryWhileExpectingSharesFound();
+
+  ExpectDiscoveryCalled(2 /* expected */);
+
+  // Run shares callback.
+  FinishShareDiscoveryOnSmbProviderClient();
+
+  ExpectAllSharesHaveBeenFound();
 }
 
 }  // namespace smb_client

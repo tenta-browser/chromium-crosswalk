@@ -8,17 +8,17 @@
 #include <map>
 #include <string>
 
-#include "ash/system/system_tray_focus_observer.h"
+#include "ash/public/cpp/system_tray_focus_observer.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/observer_list.h"
 #include "chrome/browser/chromeos/lock_screen_apps/focus_cycler_delegate.h"
+#include "chrome/browser/ui/ash/keyboard/chrome_keyboard_controller_client.h"
 #include "chrome/browser/ui/chrome_web_modal_dialog_manager_delegate.h"
 #include "components/web_modal/web_contents_modal_dialog_host.h"
 #include "content/public/browser/notification_observer.h"
 #include "content/public/browser/notification_registrar.h"
 #include "content/public/browser/web_contents_delegate.h"
-#include "ui/keyboard/keyboard_controller_observer.h"
 #include "ui/views/controls/webview/unhandled_keyboard_event_handler.h"
 #include "ui/views/widget/widget.h"
 #include "ui/views/widget/widget_delegate.h"
@@ -41,7 +41,7 @@ class OobeUI;
 // View used to render a WebUI supporting Widget. This widget is used for the
 // WebUI based start up and lock screens. It contains a WebView.
 class WebUILoginView : public views::View,
-                       public keyboard::KeyboardControllerObserver,
+                       public ChromeKeyboardControllerClient::Observer,
                        public content::WebContentsDelegate,
                        public content::NotificationObserver,
                        public ChromeWebModalDialogManagerDelegate,
@@ -145,12 +145,12 @@ class WebUILoginView : public views::View,
   // Map type for the accelerator-to-identifier map.
   typedef std::map<ui::Accelerator, std::string> AccelMap;
 
-  // keyboard::KeyboardControllerObserver:
-  void OnKeyboardVisibilityStateChanged(bool is_visible) override;
+  // ChromeKeyboardControllerClient::Observer:
+  void OnKeyboardVisibilityChanged(bool visible) override;
 
   // Overridden from content::WebContentsDelegate.
   bool HandleContextMenu(const content::ContextMenuParams& params) override;
-  void HandleKeyboardEvent(
+  bool HandleKeyboardEvent(
       content::WebContents* source,
       const content::NativeWebKeyboardEvent& event) override;
   bool TakeFocus(content::WebContents* source, bool reverse) override;
@@ -160,7 +160,7 @@ class WebUILoginView : public views::View,
       content::MediaResponseCallback callback) override;
   bool CheckMediaAccessPermission(content::RenderFrameHost* render_frame_host,
                                   const GURL& security_origin,
-                                  content::MediaStreamType type) override;
+                                  blink::MediaStreamType type) override;
   bool PreHandleGestureEvent(content::WebContents* source,
                              const blink::WebGestureEvent& event) override;
 
@@ -221,6 +221,8 @@ class WebUILoginView : public views::View,
   // Whether this was set as lock_screen_apps::StateController's
   // FocusCyclerDelegate.
   bool delegates_lock_screen_app_focus_cycle_ = false;
+
+  bool observing_system_tray_focus_ = false;
 
   base::ObserverList<web_modal::ModalDialogHostObserver>::Unchecked
       observer_list_;

@@ -17,10 +17,9 @@
 
 class FakeSigninManagerBase : public SigninManagerBase {
  public:
-  FakeSigninManagerBase(
-      SigninClient* client,
-      AccountTrackerService* account_tracker_service,
-      SigninErrorController* signin_error_controller = nullptr);
+  FakeSigninManagerBase(SigninClient* client,
+                        ProfileOAuth2TokenService* token_service,
+                        AccountTrackerService* account_tracker_service);
   ~FakeSigninManagerBase() override;
 
   void SignIn(const std::string& account_id);
@@ -41,13 +40,6 @@ class FakeSigninManager : public SigninManager {
                     ProfileOAuth2TokenService* token_service,
                     AccountTrackerService* account_tracker_service,
                     GaiaCookieManagerService* cookie_manager_service,
-                    SigninErrorController* signin_error_controller);
-
-  FakeSigninManager(SigninClient* client,
-                    ProfileOAuth2TokenService* token_service,
-                    AccountTrackerService* account_tracker_service,
-                    GaiaCookieManagerService* cookie_manager_service,
-                    SigninErrorController* signin_error_controller,
                     signin::AccountConsistencyMethod account_consistency);
 
   ~FakeSigninManager() override;
@@ -71,14 +63,16 @@ class FakeSigninManager : public SigninManager {
       const std::string& gaia_id,
       const std::string& username,
       const std::string& password,
-      const OAuthTokenFetchedCallback& oauth_fetched_callback) override;
+      OAuthTokenFetchedCallback oauth_fetched_callback) override;
 
   void CompletePendingSignin() override;
 
  protected:
-  void DoSignOut(signin_metrics::ProfileSignout signout_source_metric,
-                 signin_metrics::SignoutDelete signout_delete_metric,
-                 RemoveAccountsOption remove_option) override;
+  void OnSignoutDecisionReached(
+      signin_metrics::ProfileSignout signout_source_metric,
+      signin_metrics::SignoutDelete signout_delete_metric,
+      RemoveAccountsOption remove_option,
+      SigninClient::SignoutDecision signout_decision) override;
 
   // Username specified in StartSignInWithRefreshToken() call.
   std::string username_;

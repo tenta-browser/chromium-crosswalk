@@ -36,6 +36,12 @@ class MockGpuVideoAcceleratorFactories : public GpuVideoAcceleratorFactories {
   MOCK_METHOD0(GetChannelToken, base::UnguessableToken());
   MOCK_METHOD0(GetCommandBufferRouteId, int32_t());
 
+  MOCK_METHOD1(IsDecoderConfigSupported, bool(const VideoDecoderConfig&));
+  MOCK_METHOD3(CreateVideoDecoder,
+               std::unique_ptr<media::VideoDecoder>(MediaLog*,
+                                                    const RequestOverlayInfoCB&,
+                                                    const gfx::ColorSpace&));
+
   // CreateVideo{Decode,Encode}Accelerator returns scoped_ptr, which the mocking
   // framework does not want.  Trampoline them.
   MOCK_METHOD0(DoCreateVideoDecodeAccelerator, VideoDecodeAccelerator*());
@@ -61,6 +67,7 @@ class MockGpuVideoAcceleratorFactories : public GpuVideoAcceleratorFactories {
                VideoEncodeAccelerator::SupportedProfiles());
   MOCK_METHOD0(GetMediaContextProvider,
                scoped_refptr<ws::ContextProviderCommandBuffer>());
+  MOCK_METHOD0(GetMediaContextProviderContextSupport, gpu::ContextSupport*());
   MOCK_METHOD1(SetRenderingColorSpace, void(const gfx::ColorSpace&));
 
   std::unique_ptr<gfx::GpuMemoryBuffer> CreateGpuMemoryBuffer(

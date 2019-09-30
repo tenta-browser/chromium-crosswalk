@@ -4,7 +4,8 @@
 
 #include "chrome/browser/ui/views/tabs/tab_strip.h"
 
-#include "base/command_line.h"
+#include <string>
+
 #include "base/macros.h"
 #include "chrome/browser/ui/layout_constants.h"
 #include "chrome/browser/ui/views/tabs/fake_base_tab_strip_controller.h"
@@ -14,17 +15,20 @@
 #include "chrome/browser/ui/views/tabs/tab_renderer_data.h"
 #include "chrome/browser/ui/views/tabs/tab_strip_controller.h"
 #include "chrome/browser/ui/views/tabs/tab_strip_observer.h"
+#include "chrome/browser/ui/views/tabs/tab_style.h"
 #include "chrome/test/base/testing_profile.h"
-#include "chrome/test/views/chrome_test_views_delegate.h"
 #include "chrome/test/views/chrome_views_test_base.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/base/material_design/material_design_controller.h"
-#include "ui/base/ui_base_switches.h"
+#include "ui/base/test/material_design_controller_test_api.h"
 #include "ui/events/base_event_utils.h"
+#include "ui/gfx/animation/animation_test_api.h"
 #include "ui/gfx/canvas.h"
 #include "ui/gfx/geometry/rect_conversions.h"
-#include "ui/gfx/path.h"
 #include "ui/gfx/skia_util.h"
+#include "ui/views/accessibility/ax_event_manager.h"
+#include "ui/views/accessibility/ax_event_observer.h"
+#include "ui/views/controls/label.h"
 #include "ui/views/view.h"
 #include "ui/views/view_targeter.h"
 #include "ui/views/widget/widget.h"
@@ -41,18 +45,16 @@ views::View* FindTabView(views::View* view) {
   return current;
 }
 
-// Generates the test names suffixes based on the value of the test param.
-std::string TouchOptimizedUiStatusToString(
-    const ::testing::TestParamInfo<bool>& info) {
-  return info.param ? "TouchOptimizedUiEnabled" : "TouchOptimizedUiDisabled";
-}
-
-class TabStripTestViewsDelegate : public ChromeTestViewsDelegate {
+class TestAXEventObserver : public views::AXEventObserver {
  public:
-  TabStripTestViewsDelegate() = default;
-  ~TabStripTestViewsDelegate() override = default;
-  void NotifyAccessibilityEvent(views::View* view,
-                                ax::mojom::Event event_type) override {
+  TestAXEventObserver() { views::AXEventManager::Get()->AddObserver(this); }
+
+  ~TestAXEventObserver() override {
+    views::AXEventManager::Get()->RemoveObserver(this);
+  }
+
+  // views::AXEventObserver:
+  void OnViewEvent(views::View* view, ax::mojom::Event event_type) override {
     if (event_type == ax::mojom::Event::kSelectionRemove) {
       remove_count_++;
     }
@@ -67,7 +69,8 @@ class TabStripTestViewsDelegate : public ChromeTestViewsDelegate {
  private:
   int add_count_ = 0;
   int remove_count_ = 0;
-  DISALLOW_COPY_AND_ASSIGN(TabStripTestViewsDelegate);
+
+  DISALLOW_COPY_AND_ASSIGN(TestAXEventObserver);
 };
 
 class AnimationWaiter {
@@ -143,24 +146,22 @@ class TestTabStripObserver : public TabStripObserver {
 class TabStripTest : public ChromeViewsTestBase,
                      public testing::WithParamInterface<bool> {
  public:
-  TabStripTest() {}
+  TabStripTest()
+      : test_api_(GetParam()),
+        animation_mode_reset_(gfx::AnimationTestApi::SetRichAnimationRenderMode(
+            gfx::Animation::RichAnimationRenderMode::FORCE_ENABLED)) {}
 
   ~TabStripTest() override {}
 
   void SetUp() override {
-    if (GetParam()) {
-      base::CommandLine::ForCurrentProcess()->AppendSwitchASCII(
-          switches::kTopChromeMD, switches::kTopChromeMDMaterialTouchOptimized);
-    }
-
     ChromeViewsTestBase::SetUp();
 
     controller_ = new FakeBaseTabStripController;
     tab_strip_ = new TabStrip(std::unique_ptr<TabStripController>(controller_));
     controller_->set_tab_strip(tab_strip_);
     // Do this to force TabStrip to create the buttons.
-    parent_.AddChildView(tab_strip_);
-    parent_.set_owned_by_client();
+    auto* parent = new views::View;
+    parent->AddChildView(tab_strip_);
 
     widget_.reset(new views::Widget);
     views::Widget::InitParams init_params =
@@ -169,32 +170,15 @@ class TabStripTest : public ChromeViewsTestBase,
         views::Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET;
     init_params.bounds = gfx::Rect(0, 0, 200, 200);
     widget_->Init(init_params);
-    widget_->SetContentsView(&parent_);
+    widget_->SetContentsView(parent);
   }
 
   void TearDown() override {
-    TabStrip::ResetTabSizeInfoForTesting();
     widget_.reset();
     ChromeViewsTestBase::TearDown();
   }
 
  protected:
-  std::unique_ptr<views::TestViewsDelegate> CreateTestViewsDelegate() override {
-    std::unique_ptr<TabStripTestViewsDelegate> delegate =
-        std::make_unique<TabStripTestViewsDelegate>();
-    test_views_delegate_ = delegate.get();
-    return delegate;
-  }
-
-  bool IsTabShowingCloseButton(Tab* tab) {
-    ui::MouseEvent event(ui::ET_MOUSE_ENTERED, gfx::Point(0, 0),
-                         gfx::Point(0, 0), ui::EventTimeForNow(), 0, 0);
-    // In Refresh, close buttons on inactive tabs are never visible until the
-    // tab is hovered. It's harmless to do this in other cases.
-    tab->OnMouseEntered(event);
-    return tab->showing_close_button_;
-  }
-
   bool IsShowingAttentionIndicator(Tab* tab) {
     return tab->icon_->ShowingAttentionIndicator();
   }
@@ -237,13 +221,14 @@ class TabStripTest : public ChromeViewsTestBase,
 
   // Owned by TabStrip.
   FakeBaseTabStripController* controller_ = nullptr;
-  // Owns |tab_strip_|.
-  views::View parent_;
   TabStrip* tab_strip_ = nullptr;
-  TabStripTestViewsDelegate* test_views_delegate_ = nullptr;
   std::unique_ptr<views::Widget> widget_;
 
  private:
+  ui::test::MaterialDesignControllerTestAPI test_api_;
+  std::unique_ptr<base::AutoReset<gfx::Animation::RichAnimationRenderMode>>
+      animation_mode_reset_;
+
   DISALLOW_COPY_AND_ASSIGN(TabStripTest);
 };
 
@@ -252,6 +237,8 @@ TEST_P(TabStripTest, GetModelCount) {
 }
 
 TEST_P(TabStripTest, AccessibilityEvents) {
+  TestAXEventObserver observer;
+
   // When adding tabs, SetSelection() is called after AddTabAt(), as
   // otherwise the index would not be meaningful.
   tab_strip_->AddTabAt(0, TabRendererData(), false);
@@ -259,16 +246,16 @@ TEST_P(TabStripTest, AccessibilityEvents) {
   ui::ListSelectionModel selection;
   selection.SetSelectedIndex(1);
   tab_strip_->SetSelection(selection);
-  EXPECT_EQ(1, test_views_delegate_->add_count());
-  EXPECT_EQ(0, test_views_delegate_->remove_count());
+  EXPECT_EQ(1, observer.add_count());
+  EXPECT_EQ(0, observer.remove_count());
 
   // When removing tabs, SetSelection() is called before RemoveTabAt(), as
   // otherwise the index would not be meaningful.
   selection.SetSelectedIndex(0);
   tab_strip_->SetSelection(selection);
   tab_strip_->RemoveTabAt(nullptr, 1, true);
-  EXPECT_EQ(2, test_views_delegate_->add_count());
-  EXPECT_EQ(1, test_views_delegate_->remove_count());
+  EXPECT_EQ(2, observer.add_count());
+  EXPECT_EQ(1, observer.remove_count());
 }
 
 TEST_P(TabStripTest, IsValidModelIndex) {
@@ -325,6 +312,40 @@ TEST_P(TabStripTest, RemoveTab) {
   // the TabStrip is destroyed and an animation is ongoing.
   controller_->RemoveTab(0);
   EXPECT_EQ(0, observer.last_tab_removed());
+}
+
+namespace {
+
+bool TabViewsInOrder(TabStrip* tab_strip) {
+  for (int i = 1; i < tab_strip->tab_count(); ++i) {
+    Tab* left = tab_strip->tab_at(i - 1);
+    Tab* right = tab_strip->tab_at(i);
+
+    if (tab_strip->GetIndexOf(right) < tab_strip->GetIndexOf(left)) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+}  // namespace
+
+// Verifies child view order matches model order.
+TEST_P(TabStripTest, TabViewOrder) {
+  controller_->AddTab(0, false);
+  controller_->AddTab(1, false);
+  controller_->AddTab(2, false);
+  EXPECT_TRUE(TabViewsInOrder(tab_strip_));
+
+  tab_strip_->MoveTab(0, 1, TabRendererData());
+  EXPECT_TRUE(TabViewsInOrder(tab_strip_));
+  tab_strip_->MoveTab(1, 2, TabRendererData());
+  EXPECT_TRUE(TabViewsInOrder(tab_strip_));
+  tab_strip_->MoveTab(1, 0, TabRendererData());
+  EXPECT_TRUE(TabViewsInOrder(tab_strip_));
+  tab_strip_->MoveTab(0, 2, TabRendererData());
+  EXPECT_TRUE(TabViewsInOrder(tab_strip_));
 }
 
 TEST_P(TabStripTest, VisibilityInOverflow) {
@@ -388,12 +409,6 @@ TEST_P(TabStripTest, VisibilityInOverflow) {
 // across the strip at the top, middle, and bottom, events will target each tab
 // in order.
 TEST_P(TabStripTest, TabForEventWhenStacked) {
-  if (GetParam()) {
-    // TODO(malaykeshav): Fix test failure in touch-optimized UI mode.
-    // https://crbug.com/814847.
-    return;
-  }
-
   tab_strip_->SetBounds(0, 0, 250, GetLayoutConstant(TAB_HEIGHT));
 
   controller_->AddTab(0, false);
@@ -425,13 +440,9 @@ TEST_P(TabStripTest, TabForEventWhenStacked) {
 // Tests that the tab close buttons of non-active tabs are hidden when
 // the tabstrip is in stacked tab mode.
 TEST_P(TabStripTest, TabCloseButtonVisibilityWhenStacked) {
-  if (GetParam()) {
-    // TODO(malaykeshav): Fix test failure in touch-optimized UI mode.
-    // https://crbug.com/814847.
-    return;
-  }
-
-  tab_strip_->SetBounds(0, 0, 360, 20);
+  // Touch-optimized UI requires a larger width for tabs to show close buttons.
+  const bool touch_ui = ui::MaterialDesignController::touch_ui();
+  tab_strip_->SetBounds(0, 0, touch_ui ? 442 : 346, 20);
   controller_->AddTab(0, false);
   controller_->AddTab(1, true);
   controller_->AddTab(2, false);
@@ -443,9 +454,9 @@ TEST_P(TabStripTest, TabCloseButtonVisibilityWhenStacked) {
   Tab* tab2 = tab_strip_->tab_at(2);
 
   // Ensure that all tab close buttons are initially visible.
-  EXPECT_TRUE(IsTabShowingCloseButton(tab0));
-  EXPECT_TRUE(IsTabShowingCloseButton(tab1));
-  EXPECT_TRUE(IsTabShowingCloseButton(tab2));
+  EXPECT_TRUE(tab0->showing_close_button_);
+  EXPECT_TRUE(tab1->showing_close_button_);
+  EXPECT_TRUE(tab2->showing_close_button_);
 
   // Enter stacked layout mode and verify this sets |touch_layout_|.
   ASSERT_FALSE(touch_layout());
@@ -454,18 +465,18 @@ TEST_P(TabStripTest, TabCloseButtonVisibilityWhenStacked) {
 
   // Only the close button of the active tab should be visible in stacked
   // layout mode.
-  EXPECT_FALSE(IsTabShowingCloseButton(tab0));
-  EXPECT_TRUE(IsTabShowingCloseButton(tab1));
-  EXPECT_FALSE(IsTabShowingCloseButton(tab2));
+  EXPECT_FALSE(tab0->showing_close_button_);
+  EXPECT_TRUE(tab1->showing_close_button_);
+  EXPECT_FALSE(tab2->showing_close_button_);
 
   // An inactive tab added to the tabstrip should not show
   // its tab close button.
   controller_->AddTab(3, false);
   Tab* tab3 = tab_strip_->tab_at(3);
-  EXPECT_FALSE(IsTabShowingCloseButton(tab0));
-  EXPECT_TRUE(IsTabShowingCloseButton(tab1));
-  EXPECT_FALSE(IsTabShowingCloseButton(tab2));
-  EXPECT_FALSE(IsTabShowingCloseButton(tab3));
+  EXPECT_FALSE(tab0->showing_close_button_);
+  EXPECT_TRUE(tab1->showing_close_button_);
+  EXPECT_FALSE(tab2->showing_close_button_);
+  EXPECT_FALSE(tab3->showing_close_button_);
 
   // After switching tabs, the previously-active tab should have its
   // tab close button hidden and the newly-active tab should show
@@ -473,41 +484,37 @@ TEST_P(TabStripTest, TabCloseButtonVisibilityWhenStacked) {
   tab_strip_->SelectTab(tab2);
   ASSERT_FALSE(tab1->IsActive());
   ASSERT_TRUE(tab2->IsActive());
-  EXPECT_FALSE(IsTabShowingCloseButton(tab0));
-  EXPECT_FALSE(IsTabShowingCloseButton(tab1));
-  EXPECT_TRUE(IsTabShowingCloseButton(tab2));
-  EXPECT_FALSE(IsTabShowingCloseButton(tab3));
+  EXPECT_FALSE(tab0->showing_close_button_);
+  EXPECT_FALSE(tab1->showing_close_button_);
+  EXPECT_TRUE(tab2->showing_close_button_);
+  EXPECT_FALSE(tab3->showing_close_button_);
 
   // After closing the active tab, the tab which becomes active should
   // show its tab close button.
   tab_strip_->CloseTab(tab1, CLOSE_TAB_FROM_TOUCH);
   tab1 = nullptr;
   ASSERT_TRUE(tab2->IsActive());
-  EXPECT_FALSE(IsTabShowingCloseButton(tab0));
-  EXPECT_TRUE(IsTabShowingCloseButton(tab2));
-  EXPECT_FALSE(IsTabShowingCloseButton(tab3));
+  EXPECT_FALSE(tab0->showing_close_button_);
+  EXPECT_TRUE(tab2->showing_close_button_);
+  EXPECT_FALSE(tab3->showing_close_button_);
 
   // All tab close buttons should be shown when disengaging stacked tab mode.
   tab_strip_->SetStackedLayout(false);
   ASSERT_FALSE(touch_layout());
-  EXPECT_TRUE(IsTabShowingCloseButton(tab0));
-  EXPECT_TRUE(IsTabShowingCloseButton(tab2));
-  EXPECT_TRUE(IsTabShowingCloseButton(tab3));
+  EXPECT_TRUE(tab0->showing_close_button_);
+  EXPECT_TRUE(tab2->showing_close_button_);
+  EXPECT_TRUE(tab3->showing_close_button_);
 }
 
 // Tests that the tab close buttons of non-active tabs are hidden when
 // the tabstrip is not in stacked tab mode and the tab sizes are shrunk
 // into small sizes.
 TEST_P(TabStripTest, TabCloseButtonVisibilityWhenNotStacked) {
-  if (GetParam()) {
-    // TODO(malaykeshav): Fix test failure in touch-optimized UI mode.
-    // https://crbug.com/814847.
-    return;
-  }
-
   // Set the tab strip width to be wide enough for three tabs to show all
   // three icons, but not enough for five tabs to show all three icons.
-  tab_strip_->SetBounds(0, 0, 360, 20);
+  // Touch-optimized UI requires a larger width for tabs to show close buttons.
+  const bool touch_ui = ui::MaterialDesignController::touch_ui();
+  tab_strip_->SetBounds(0, 0, touch_ui ? 442 : 346, 20);
   controller_->AddTab(0, false);
   controller_->AddTab(1, true);
   controller_->AddTab(2, false);
@@ -524,9 +531,9 @@ TEST_P(TabStripTest, TabCloseButtonVisibilityWhenNotStacked) {
   ASSERT_FALSE(touch_layout());
 
   // Ensure that all tab close buttons are initially visible.
-  EXPECT_TRUE(IsTabShowingCloseButton(tab0));
-  EXPECT_TRUE(IsTabShowingCloseButton(tab1));
-  EXPECT_TRUE(IsTabShowingCloseButton(tab2));
+  EXPECT_TRUE(tab0->showing_close_button_);
+  EXPECT_TRUE(tab1->showing_close_button_);
+  EXPECT_TRUE(tab2->showing_close_button_);
 
   // Shrink the tab sizes by adding more tabs.
   // An inactive tab added to the tabstrip, now each tab size is not
@@ -534,7 +541,7 @@ TEST_P(TabStripTest, TabCloseButtonVisibilityWhenNotStacked) {
   // tab close button.
   controller_->AddTab(3, false);
   Tab* tab3 = tab_strip_->tab_at(3);
-  EXPECT_FALSE(IsTabShowingCloseButton(tab3));
+  EXPECT_FALSE(tab3->showing_close_button_);
 
   // This inactive tab doesn't have alert button, but its favicon and
   // title would be shown.
@@ -543,18 +550,18 @@ TEST_P(TabStripTest, TabCloseButtonVisibilityWhenNotStacked) {
   EXPECT_TRUE(tab3->title_->visible());
 
   // The active tab's close button still shows.
-  EXPECT_TRUE(IsTabShowingCloseButton(tab1));
+  EXPECT_TRUE(tab1->showing_close_button_);
 
   // An active tab added to the tabstrip should show its tab close
   // button.
   controller_->AddTab(4, true);
   Tab* tab4 = tab_strip_->tab_at(4);
   ASSERT_TRUE(tab4->IsActive());
-  EXPECT_TRUE(IsTabShowingCloseButton(tab4));
+  EXPECT_TRUE(tab4->showing_close_button_);
 
   // The previous active button is now inactive so its close
   // button should not show.
-  EXPECT_FALSE(IsTabShowingCloseButton(tab1));
+  EXPECT_FALSE(tab1->showing_close_button_);
 
   // After switching tabs, the previously-active tab should have its
   // tab close button hidden and the newly-active tab should show
@@ -562,11 +569,11 @@ TEST_P(TabStripTest, TabCloseButtonVisibilityWhenNotStacked) {
   tab_strip_->SelectTab(tab2);
   ASSERT_FALSE(tab4->IsActive());
   ASSERT_TRUE(tab2->IsActive());
-  EXPECT_FALSE(IsTabShowingCloseButton(tab0));
-  EXPECT_FALSE(IsTabShowingCloseButton(tab1));
-  EXPECT_TRUE(IsTabShowingCloseButton(tab2));
-  EXPECT_FALSE(IsTabShowingCloseButton(tab3));
-  EXPECT_FALSE(IsTabShowingCloseButton(tab4));
+  EXPECT_FALSE(tab0->showing_close_button_);
+  EXPECT_FALSE(tab1->showing_close_button_);
+  EXPECT_TRUE(tab2->showing_close_button_);
+  EXPECT_FALSE(tab3->showing_close_button_);
+  EXPECT_FALSE(tab4->showing_close_button_);
 
   // After closing the active tab, the tab which becomes active should
   // show its tab close button.
@@ -574,10 +581,10 @@ TEST_P(TabStripTest, TabCloseButtonVisibilityWhenNotStacked) {
   tab2 = nullptr;
   ASSERT_TRUE(tab3->IsActive());
   DoLayout();
-  EXPECT_FALSE(IsTabShowingCloseButton(tab0));
-  EXPECT_FALSE(IsTabShowingCloseButton(tab1));
-  EXPECT_TRUE(IsTabShowingCloseButton(tab3));
-  EXPECT_FALSE(IsTabShowingCloseButton(tab4));
+  EXPECT_FALSE(tab0->showing_close_button_);
+  EXPECT_FALSE(tab1->showing_close_button_);
+  EXPECT_TRUE(tab3->showing_close_button_);
+  EXPECT_FALSE(tab4->showing_close_button_);
 }
 
 TEST_P(TabStripTest, GetEventHandlerForOverlappingArea) {
@@ -732,7 +739,7 @@ TEST_P(TabStripTest, ActiveTabWidthWhenTabsAreTiny) {
   tab_strip_->SetBounds(0, 0, 200, 20);
 
   // Create a lot of tabs in order to make inactive tabs tiny.
-  const int min_inactive_width = Tab::GetMinimumInactiveWidth();
+  const int min_inactive_width = TabStyle::GetMinimumInactiveWidth();
   while (current_inactive_width() != min_inactive_width)
     controller_->CreateNewTab();
 
@@ -745,7 +752,7 @@ TEST_P(TabStripTest, ActiveTabWidthWhenTabsAreTiny) {
   // During mouse-based tab closure, the active tab should remain at least as
   // wide as it's minium width.
   controller_->SelectTab(0);
-  for (const int min_active_width = Tab::GetMinimumActiveWidth();
+  for (const int min_active_width = TabStyle::GetMinimumActiveWidth();
        tab_strip_->tab_count();) {
     const int active_index = controller_->GetActiveIndex();
     EXPECT_GE(tab_strip_->ideal_bounds(active_index).width(), min_active_width);
@@ -761,8 +768,8 @@ TEST_P(TabStripTest, InactiveTabWidthWhenTabsAreTiny) {
 
   // Create a lot of tabs in order to make inactive tabs smaller than active
   // tab but not the minimum.
-  const int min_inactive_width = Tab::GetMinimumInactiveWidth();
-  const int min_active_width = Tab::GetMinimumActiveWidth();
+  const int min_inactive_width = TabStyle::GetMinimumInactiveWidth();
+  const int min_active_width = TabStyle::GetMinimumActiveWidth();
   while (current_inactive_width() >=
          (min_inactive_width + min_active_width) / 2)
     controller_->CreateNewTab();
@@ -784,11 +791,11 @@ TEST_P(TabStripTest, ResetBoundsForDraggedTabs) {
   tab_strip_->SetBounds(0, 0, 200, 20);
 
   // Create a lot of tabs in order to make inactive tabs tiny.
-  const int min_inactive_width = Tab::GetMinimumInactiveWidth();
+  const int min_inactive_width = TabStyle::GetMinimumInactiveWidth();
   while (current_inactive_width() != min_inactive_width)
     controller_->CreateNewTab();
 
-  const int min_active_width = Tab::GetMinimumActiveWidth();
+  const int min_active_width = TabStyle::GetMinimumActiveWidth();
 
   int dragged_tab_index = controller_->GetActiveIndex();
   EXPECT_GE(tab_strip_->ideal_bounds(dragged_tab_index).width(),
@@ -854,11 +861,7 @@ TEST_P(TabStripTest, TabNeedsAttentionGeneric) {
   EXPECT_TRUE(IsShowingAttentionIndicator(tab1));
 }
 
-// Defines an alias to be used for tests that are only relevant to the touch-
-// optimized UI mode.
-using TabStripTouchOptimizedUiOnlyTest = TabStripTest;
-
-TEST_P(TabStripTouchOptimizedUiOnlyTest, NewTabButtonInkDrop) {
+TEST_P(TabStripTest, NewTabButtonInkDrop) {
   constexpr int kTabStripWidth = 500;
   tab_strip_->SetBounds(0, 0, kTabStripWidth, GetLayoutConstant(TAB_HEIGHT));
 
@@ -876,12 +879,19 @@ TEST_P(TabStripTouchOptimizedUiOnlyTest, NewTabButtonInkDrop) {
   }
 }
 
-INSTANTIATE_TEST_CASE_P(,
-                        TabStripTest,
-                        ::testing::Values(true, false),
-                        &TouchOptimizedUiStatusToString);
+// Closing tab should be targeted during event dispatching.
+TEST_P(TabStripTest, EventsOnClosingTab) {
+  tab_strip_->SetBounds(0, 0, 200, 20);
 
-INSTANTIATE_TEST_CASE_P(,
-                        TabStripTouchOptimizedUiOnlyTest,
-                        ::testing::Values(true),
-                        &TouchOptimizedUiStatusToString);
+  controller_->AddTab(0, false);
+  controller_->AddTab(1, true);
+
+  Tab* first_tab = tab_strip_->tab_at(0);
+  gfx::Point tab_center = first_tab->bounds().CenterPoint();
+
+  EXPECT_EQ(first_tab, tab_strip_->GetEventHandlerForPoint(tab_center));
+  tab_strip_->CloseTab(first_tab, CLOSE_TAB_FROM_MOUSE);
+  EXPECT_EQ(first_tab, tab_strip_->GetEventHandlerForPoint(tab_center));
+}
+
+INSTANTIATE_TEST_CASE_P(, TabStripTest, ::testing::Values(false, true));

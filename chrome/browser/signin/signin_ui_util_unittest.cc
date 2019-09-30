@@ -4,6 +4,7 @@
 
 #include "chrome/browser/signin/signin_ui_util.h"
 
+#include "base/bind.h"
 #include "base/macros.h"
 #include "base/test/metrics/histogram_tester.h"
 #include "base/test/metrics/user_action_tester.h"
@@ -18,7 +19,7 @@
 #include "chrome/browser/signin/signin_manager_factory.h"
 #include "chrome/browser/signin/signin_promo.h"
 #include "chrome/test/base/browser_with_test_window_test.h"
-#include "components/signin/core/browser/profile_management_switches.h"
+#include "components/signin/core/browser/account_consistency_method.h"
 #include "components/signin/core/browser/signin_buildflags.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -131,11 +132,12 @@ class DiceSigninUiUtilTest : public BrowserWithTestWindowTest {
 
   // BrowserWithTestWindowTest:
   TestingProfile::TestingFactories GetTestingFactories() override {
-    return {{SigninManagerFactory::GetInstance(), BuildFakeSigninManagerBase},
+    return {{SigninManagerFactory::GetInstance(),
+             base::BindRepeating(&BuildFakeSigninManagerForTesting)},
             {ProfileOAuth2TokenServiceFactory::GetInstance(),
-             BuildFakeProfileOAuth2TokenService},
+             base::BindRepeating(&BuildFakeProfileOAuth2TokenService)},
             {GaiaCookieManagerServiceFactory::GetInstance(),
-             BuildFakeGaiaCookieManagerServiceNoFakeUrlFetcher}};
+             base::BindRepeating(&BuildFakeGaiaCookieManagerService)}};
   }
 
   // BrowserWithTestWindowTest:

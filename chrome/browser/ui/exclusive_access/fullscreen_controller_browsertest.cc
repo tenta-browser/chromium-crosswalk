@@ -7,6 +7,7 @@
 #include "base/time/time.h"
 #include "build/build_config.h"
 #include "chrome/browser/content_settings/host_content_settings_map_factory.h"
+#include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_commands.h"
 #include "chrome/browser/ui/browser_tabstrip.h"
@@ -560,41 +561,41 @@ IN_PROC_BROWSER_TEST_F(FullscreenControllerTest, TopViewStatusChange) {
 
   // Test Normal state <--> Tab fullscreen mode.
   EXPECT_FALSE(context->IsFullscreen());
-  EXPECT_FALSE(context->ShouldHideUIForFullscreen());
+  EXPECT_TRUE(browser()->window()->IsToolbarVisible());
 
   EnterActiveTabFullscreen();
   EXPECT_TRUE(context->IsFullscreen());
-  EXPECT_TRUE(context->ShouldHideUIForFullscreen());
+  EXPECT_FALSE(browser()->window()->IsToolbarVisible());
 
   SendEscapeToFullscreenController();
   EXPECT_FALSE(context->IsFullscreen());
-  EXPECT_FALSE(context->ShouldHideUIForFullscreen());
+  EXPECT_TRUE(browser()->window()->IsToolbarVisible());
 
   // Test Normal state <--> Browser fullscreen mode <--> Tab fullscreen mode.
   ToggleBrowserFullscreen();
   EXPECT_TRUE(context->IsFullscreen());
 #if defined(OS_MACOSX) || defined(OS_CHROMEOS)
-  bool should_hide_top_ui = false;
+  bool should_show_top_ui = true;
 #else
-  bool should_hide_top_ui = true;
+  bool should_show_top_ui = false;
 #endif
-  EXPECT_EQ(should_hide_top_ui, context->ShouldHideUIForFullscreen());
+  EXPECT_EQ(should_show_top_ui, browser()->window()->IsToolbarVisible());
 
   EnterActiveTabFullscreen();
   EXPECT_TRUE(context->IsFullscreen());
 #if defined(OS_CHROMEOS)
-  EXPECT_FALSE(context->ShouldHideUIForFullscreen());
+  EXPECT_TRUE(browser()->window()->IsToolbarVisible());
 #else
-  EXPECT_TRUE(context->ShouldHideUIForFullscreen());
+  EXPECT_FALSE(browser()->window()->IsToolbarVisible());
 #endif
 
   SendEscapeToFullscreenController();
   EXPECT_TRUE(context->IsFullscreen());
-  EXPECT_EQ(should_hide_top_ui, context->ShouldHideUIForFullscreen());
+  EXPECT_EQ(should_show_top_ui, browser()->window()->IsToolbarVisible());
 
   ToggleBrowserFullscreen();
   EXPECT_FALSE(context->IsFullscreen());
-  EXPECT_FALSE(context->ShouldHideUIForFullscreen());
+  EXPECT_TRUE(browser()->window()->IsToolbarVisible());
 
   // Test exiting tab fullscreen mode by toggling browser fullscreen mode.
   // This is to simulate pressing fullscreen shortcut key during tab fullscreen
@@ -603,13 +604,13 @@ IN_PROC_BROWSER_TEST_F(FullscreenControllerTest, TopViewStatusChange) {
   // tab fullscreen.
   EnterActiveTabFullscreen();
   EXPECT_TRUE(context->IsFullscreen());
-  EXPECT_TRUE(context->ShouldHideUIForFullscreen());
+  EXPECT_FALSE(browser()->window()->IsToolbarVisible());
 
   ToggleBrowserFullscreen();
   EXPECT_FALSE(context->IsFullscreen());
-  EXPECT_FALSE(context->ShouldHideUIForFullscreen());
+  EXPECT_TRUE(browser()->window()->IsToolbarVisible());
 
   ToggleBrowserFullscreen();
   EXPECT_TRUE(context->IsFullscreen());
-  EXPECT_EQ(should_hide_top_ui, context->ShouldHideUIForFullscreen());
+  EXPECT_EQ(should_show_top_ui, browser()->window()->IsToolbarVisible());
 }

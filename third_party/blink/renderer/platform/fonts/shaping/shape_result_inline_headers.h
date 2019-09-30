@@ -46,7 +46,7 @@ class SimpleFontData;
 // This struct should be TriviallyCopyable so that std::copy() is equivalent to
 // memcpy.
 struct HarfBuzzRunGlyphData {
-  DISALLOW_NEW_EXCEPT_PLACEMENT_NEW();
+  DISALLOW_NEW();
 
   static constexpr unsigned kCharacterIndexBits = 15;
   static constexpr unsigned kMaxCharacterIndex = (1 << kCharacterIndexBits) - 1;
@@ -55,6 +55,12 @@ struct HarfBuzzRunGlyphData {
   uint16_t glyph;
   unsigned character_index : kCharacterIndexBits;
   unsigned safe_to_break_before : 1;
+
+  // LayoutUnit like fixed-point values, with 6 fractional and 10 integear bits.
+  // Can represent values between -1023.98 and 1023.96 which should be enough in
+  // the vast majority of cases. Max value is reserved to indicate invalid.
+  int16_t bounds_before_raw_value;
+  int16_t bounds_after_raw_value;
   float advance;
   FloatSize offset;
 
@@ -63,12 +69,43 @@ struct HarfBuzzRunGlyphData {
                             float advance,
                             const FloatSize& offset,
                             bool safe_to_break_before);
+  void SetGlyphBounds(LayoutUnit bounds_before, LayoutUnit bounds_after);
+  bool HasValidGlyphBounds() const {
+    return bounds_before_raw_value != std::numeric_limits<int16_t>::max() &&
+           bounds_after_raw_value != std::numeric_limits<int16_t>::max();
+  }
+
+  LayoutUnit GlyphBoundsBefore() const {
+    LayoutUnit bounds;
+    bounds.SetRawValue(static_cast<int>(bounds_before_raw_value));
+    return bounds;
+  }
+  LayoutUnit GlyphBoundsAfter() const {
+    LayoutUnit bounds;
+    bounds.SetRawValue(static_cast<int>(bounds_after_raw_value));
+    return bounds;
+  }
 };
 
-struct ShapeResult::RunInfo {
+struct ShapeResult::RunInfo : public RefCounted<ShapeResult::RunInfo> {
   USING_FAST_MALLOC(RunInfo);
 
  public:
+  static scoped_refptr<RunInfo> Create(const SimpleFontData* font,
+                                       hb_direction_t dir,
+                                       CanvasRotationInVertical canvas_rotation,
+                                       hb_script_t script,
+                                       unsigned start_index,
+                                       unsigned num_glyphs,
+                                       unsigned num_characters) {
+    return base::AdoptRef(new RunInfo(font, dir, canvas_rotation, script,
+                                      start_index, num_glyphs, num_characters));
+  }
+
+  static scoped_refptr<RunInfo> Create(const RunInfo& other) {
+    return base::AdoptRef(new RunInfo(other));
+  }
+
   RunInfo(const SimpleFontData* font,
           hb_direction_t dir,
           CanvasRotationInVertical canvas_rotation,
@@ -118,7 +155,7 @@ struct ShapeResult::RunInfo {
                             float offset_x,
                             float offset_y);
 
-  size_t GlyphToCharacterIndex(size_t i) const {
+  unsigned GlyphToCharacterIndex(unsigned i) const {
     return start_index_ + glyph_data_[i].character_index;
   }
 
@@ -171,15 +208,16 @@ struct ShapeResult::RunInfo {
   }
 
   // Creates a new RunInfo instance representing a subset of the current run.
-  std::unique_ptr<RunInfo> CreateSubRun(unsigned start, unsigned end) {
+  scoped_refptr<RunInfo> CreateSubRun(unsigned start, unsigned end) {
     DCHECK(end > start);
     unsigned number_of_characters = std::min(end - start, num_characters_);
     auto glyphs = FindGlyphDataRange(start, end);
-    unsigned number_of_glyphs = std::distance(glyphs.begin, glyphs.end);
+    unsigned number_of_glyphs =
+        static_cast<unsigned>(std::distance(glyphs.begin, glyphs.end));
 
-    auto run = std::make_unique<RunInfo>(
-        font_data_.get(), direction_, canvas_rotation_, script_,
-        start_index_ + start, number_of_glyphs, number_of_characters);
+    auto run =
+        Create(font_data_.get(), direction_, canvas_rotation_, script_,
+               start_index_ + start, number_of_glyphs, number_of_characters);
 
     static_assert(base::is_trivially_copyable<HarfBuzzRunGlyphData>::value,
                   "HarfBuzzRunGlyphData should be trivially copyable");
@@ -195,60 +233,6 @@ struct ShapeResult::RunInfo {
     run->num_characters_ = number_of_characters;
 
     return run;
-  }
-
-  // Iterates over, and applies the functor to all the glyphs in this run.
-  // Also tracks (and returns) a seeded total advance.
-  //
-  // Functor signature:
-  //
-  //   bool func(const HarfBuzzRunGlyphData& glyphData, float totalAdvance)
-  //
-  // where the returned bool signals whether iteration should continue (true)
-  // or stop (false).
-  template <typename Func>
-  float ForEachGlyph(float initial_advance, Func func) const {
-    float total_advance = initial_advance;
-
-    for (const auto& glyph_data : glyph_data_) {
-      if (!func(glyph_data, total_advance))
-        break;
-      total_advance += glyph_data.advance;
-    }
-
-    return total_advance;
-  }
-
-  // Same as the above, except it only applies the functor to glyphs in the
-  // specified range, and stops after the range.
-  template <typename Func>
-  float ForEachGlyphInRange(float initial_advance,
-                            unsigned from,
-                            unsigned to,
-                            unsigned index_offset,
-                            Func func) const {
-    return ForEachGlyph(
-        initial_advance,
-        [&](const HarfBuzzRunGlyphData& glyph_data,
-            float total_advance) -> bool {
-          const unsigned character_index =
-              start_index_ + glyph_data.character_index + index_offset;
-
-          if (character_index < from) {
-            // Glyph out-of-range; before the range (and must continue
-            // accumulating advance) in LTR.
-            return !Rtl();
-          }
-
-          if (character_index >= to) {
-            // Glyph out-of-range; before the range (and must continue
-            // accumulating advance) in RTL.
-            return Rtl();
-          }
-
-          // Glyph in range; apply functor.
-          return func(glyph_data, total_advance, character_index);
-        });
   }
 
   void ExpandRangeToIncludePartialGlyphs(int offset, int* from, int* to) const {

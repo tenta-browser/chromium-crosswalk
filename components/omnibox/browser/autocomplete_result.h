@@ -7,6 +7,7 @@
 
 #include <stddef.h>
 
+#include <list>
 #include <map>
 
 #include "base/macros.h"
@@ -54,6 +55,13 @@ class AutocompleteResult {
   // suggestions.
   void SortAndCull(const AutocompleteInput& input,
                    TemplateURLService* template_url_service);
+
+  // Creates and adds any dedicated Pedal matches triggered by existing match.
+  void AppendDedicatedPedalMatches(AutocompleteProviderClient* client,
+                                   const AutocompleteInput& input);
+
+  // Sets |pedal| in matches that have Pedal-triggering text.
+  void ConvertInSuggestionPedalMatches(AutocompleteProviderClient* client);
 
   // Sets |has_tab_match| in matches whose URL matches an open tab's URL.
   // Also, fixes up the description if not using another UI element to
@@ -128,7 +136,6 @@ class AutocompleteResult {
   size_t EstimateMemoryUsage() const;
 
  private:
-  friend class AutocompleteProviderTest;
   FRIEND_TEST_ALL_PREFIXES(AutocompleteResultTest, ConvertsOpenTabsCorrectly);
 
   typedef std::map<AutocompleteProvider*, ACMatches> ProviderToMatches;
@@ -140,6 +147,15 @@ class AutocompleteResult {
 #else
   typedef ACMatches::iterator::difference_type matches_difference_type;
 #endif
+
+  // Examines |first| and |second| and returns the one that is preferred based
+  // on the constraints we want to enforce when deduping. Note that this may
+  // modify the relevance, allowed_to_be_default_match, or inline_autocompletion
+  // values of the returned match.
+  static std::list<ACMatches::iterator>::iterator BetterMatch(
+      std::list<ACMatches::iterator>::iterator first,
+      std::list<ACMatches::iterator>::iterator second,
+      metrics::OmniboxEventProto::PageClassification page_classification);
 
   // Returns true if |matches| contains a match with the same destination as
   // |match|.
@@ -160,6 +176,14 @@ class AutocompleteResult {
       metrics::OmniboxEventProto::PageClassification page_classification,
       const ACMatches& old_matches,
       const ACMatches& new_matches);
+
+  // This pulls the relevant fields out of a match for comparison with other
+  // matches for the purpose of deduping. It uses the stripped URL, so that we
+  // collapse similar URLs if necessary, and whether the match is a calculator
+  // suggestion, because we don't want to dedupe them against URLs that simply
+  // happen to go to the same destination.
+  static std::pair<GURL, bool> GetMatchComparisonFields(
+      const AutocompleteMatch& match);
 
   ACMatches matches_;
 

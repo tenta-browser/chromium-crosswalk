@@ -20,7 +20,6 @@
 #include "content/public/browser/navigation_handle.h"
 #include "content/public/browser/navigation_throttle.h"
 #include "content/public/browser/web_contents_observer.h"
-#include "content/public/common/browser_side_navigation_policy.h"
 #include "content/public/test/test_navigation_throttle.h"
 #include "content/public/test/test_navigation_throttle_inserter.h"
 #include "content/test/test_render_frame_host.h"
@@ -119,6 +118,9 @@ class CancellingNavigationSimulatorTest
 
   void DidFinishNavigation(content::NavigationHandle* handle) override {
     did_finish_navigation_ = true;
+    if (handle->GetResponseHeaders()) {
+      response_headers_ = handle->GetResponseHeaders()->raw_headers();
+    }
   }
 
   void OnWillFailRequestCalled() { will_fail_request_called_ = true; }
@@ -128,6 +130,7 @@ class CancellingNavigationSimulatorTest
   std::unique_ptr<NavigationSimulator> simulator_;
   bool did_finish_navigation_ = false;
   bool will_fail_request_called_ = false;
+  std::string response_headers_;
   base::WeakPtrFactory<CancellingNavigationSimulatorTest> weak_ptr_factory_;
 
  private:
@@ -284,6 +287,21 @@ TEST_P(NavigationSimulatorTestCancelFail, Fail) {
   EXPECT_TRUE(will_fail_request_called_);
   EXPECT_EQ(NavigationThrottle::CANCEL,
             simulator_->GetLastThrottleCheckResult());
+}
+
+// Test canceling the simulated navigation with response headers.
+TEST_P(NavigationSimulatorTestCancelFail, FailWithResponseHeaders) {
+  simulator_->Start();
+
+  using namespace std::string_literals;
+  std::string header =
+      "HTTP/1.1 404 Not Found\0"
+      "content-encoding: gzip\0\0"s;
+
+  simulator_->FailWithResponseHeaders(
+      net::ERR_CERT_DATE_INVALID,
+      base::MakeRefCounted<net::HttpResponseHeaders>(header));
+  EXPECT_EQ(response_headers_, header);
 }
 
 INSTANTIATE_TEST_CASE_P(

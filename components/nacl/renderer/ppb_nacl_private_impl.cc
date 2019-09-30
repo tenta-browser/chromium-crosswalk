@@ -337,7 +337,7 @@ blink::WebURLRequest CreateWebURLRequest(const blink::WebDocument& document,
     request.SetFetchCredentialsMode(
         network::mojom::FetchCredentialsMode::kSameOrigin);
   } else {
-    request.SetFetchRequestMode(network::mojom::FetchRequestMode::kCORS);
+    request.SetFetchRequestMode(network::mojom::FetchRequestMode::kCors);
     request.SetFetchCredentialsMode(
         network::mojom::FetchCredentialsMode::kOmit);
   }
@@ -1740,7 +1740,7 @@ void PPBNaClPrivate::StreamPexe(PP_Instance instance,
   url_request.AddHTTPHeaderField(
       blink::WebString::FromUTF8("Accept"),
       blink::WebString::FromUTF8("application/x-pnacl, */*"));
-  url_request.SetRequestContext(blink::WebURLRequest::kRequestContextObject);
+  url_request.SetRequestContext(blink::mojom::RequestContextType::OBJECT);
   downloader->Load(url_request);
 }
 

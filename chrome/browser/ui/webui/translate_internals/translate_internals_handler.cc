@@ -217,13 +217,15 @@ void TranslateInternalsHandler::SendPrefsToJs() {
       prefs::kOfferTranslateEnabled,
       translate::TranslatePrefs::kPrefTranslateRecentTarget,
       translate::TranslatePrefs::kPrefTranslateBlockedLanguages,
-      translate::TranslatePrefs::kPrefTranslateSiteBlacklist,
+      translate::TranslatePrefs::kPrefTranslateSiteBlacklistDeprecated,
+      translate::TranslatePrefs::kPrefTranslateSiteBlacklistWithTime,
       translate::TranslatePrefs::kPrefTranslateWhitelists,
       translate::TranslatePrefs::kPrefTranslateDeniedCount,
       translate::TranslatePrefs::kPrefTranslateIgnoredCount,
       translate::TranslatePrefs::kPrefTranslateAcceptedCount,
       translate::TranslatePrefs::kPrefTranslateLastDeniedTimeForLanguage,
       translate::TranslatePrefs::kPrefTranslateTooOftenDeniedForLanguage,
+      prefs::kAcceptLanguages,
   };
   for (const char* key : keys) {
     const PrefService::Preference* pref = prefs->FindPreference(key);

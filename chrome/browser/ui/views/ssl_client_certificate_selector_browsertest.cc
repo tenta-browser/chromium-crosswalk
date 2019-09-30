@@ -5,6 +5,7 @@
 #include "base/bind.h"
 #include "base/files/file_path.h"
 #include "base/synchronization/waitable_event.h"
+#include "base/task/post_task.h"
 #include "build/build_config.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ssl/ssl_client_auth_requestor_mock.h"
@@ -15,7 +16,7 @@
 #include "chrome/test/base/in_process_browser_test.h"
 #include "chrome/test/base/interactive_test_utils.h"
 #include "chrome/test/base/ui_test_utils.h"
-#include "chrome/test/views/scoped_macviews_browser_mode.h"
+#include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/client_certificate_delegate.h"
 #include "content/public/browser/web_contents.h"
@@ -48,7 +49,6 @@ class SSLClientCertificateSelectorTest : public InProcessBrowserTest {
       : io_loop_finished_event_(
             base::WaitableEvent::ResetPolicy::AUTOMATIC,
             base::WaitableEvent::InitialState::NOT_SIGNALED),
-        url_request_(NULL),
         selector_(NULL) {}
 
   void SetUpInProcessBrowserTestFixture() override {
@@ -66,10 +66,8 @@ class SSLClientCertificateSelectorTest : public InProcessBrowserTest {
   }
 
   void SetUpOnMainThread() override {
-    url_request_context_getter_ = browser()->profile()->GetRequestContext();
-
-    BrowserThread::PostTask(
-        BrowserThread::IO, FROM_HERE,
+    base::PostTaskWithTraits(
+        FROM_HERE, {BrowserThread::IO},
         base::BindOnce(&SSLClientCertificateSelectorTest::SetUpOnIOThread,
                        base::Unretained(this)));
 
@@ -93,10 +91,7 @@ class SSLClientCertificateSelectorTest : public InProcessBrowserTest {
   }
 
   virtual void SetUpOnIOThread() {
-    url_request_ = MakeURLRequest(url_request_context_getter_.get()).release();
-
     auth_requestor_ = new StrictMock<SSLClientAuthRequestorMock>(
-        url_request_,
         cert_request_info_);
 
     io_loop_finished_event_.Signal();
@@ -105,8 +100,8 @@ class SSLClientCertificateSelectorTest : public InProcessBrowserTest {
   // Have to release our reference to the auth handler during the test to allow
   // it to be destroyed while the Browser and its IO thread still exist.
   void TearDownOnMainThread() override {
-    BrowserThread::PostTask(
-        BrowserThread::IO, FROM_HERE,
+    base::PostTaskWithTraits(
+        FROM_HERE, {BrowserThread::IO},
         base::BindOnce(&SSLClientCertificateSelectorTest::CleanUpOnIOThread,
                        base::Unretained(this)));
 
@@ -116,8 +111,6 @@ class SSLClientCertificateSelectorTest : public InProcessBrowserTest {
   }
 
   virtual void CleanUpOnIOThread() {
-    delete url_request_;
-
     io_loop_finished_event_.Signal();
   }
 
@@ -130,9 +123,6 @@ class SSLClientCertificateSelectorTest : public InProcessBrowserTest {
   }
 
   base::WaitableEvent io_loop_finished_event_;
-
-  scoped_refptr<net::URLRequestContextGetter> url_request_context_getter_;
-  net::URLRequest* url_request_;
 
   std::unique_ptr<net::FakeClientCertIdentity> cert_identity_1_;
   std::unique_ptr<net::FakeClientCertIdentity> cert_identity_2_;
@@ -197,16 +187,9 @@ class SSLClientCertificateSelectorMultiTabTest
   }
 
   void SetUpOnIOThread() override {
-    url_request_1_ =
-        MakeURLRequest(url_request_context_getter_.get()).release();
-    url_request_2_ =
-        MakeURLRequest(url_request_context_getter_.get()).release();
-
     auth_requestor_1_ = new StrictMock<SSLClientAuthRequestorMock>(
-        url_request_1_,
         cert_request_info_1_);
     auth_requestor_2_ = new StrictMock<SSLClientAuthRequestorMock>(
-        url_request_2_,
         cert_request_info_2_);
 
     SSLClientCertificateSelectorTest::SetUpOnIOThread();
@@ -219,14 +202,10 @@ class SSLClientCertificateSelectorMultiTabTest
   }
 
   void CleanUpOnIOThread() override {
-    delete url_request_1_;
-    delete url_request_2_;
     SSLClientCertificateSelectorTest::CleanUpOnIOThread();
   }
 
  protected:
-  net::URLRequest* url_request_1_;
-  net::URLRequest* url_request_2_;
   scoped_refptr<net::SSLCertRequestInfo> cert_request_info_1_;
   scoped_refptr<net::SSLCertRequestInfo> cert_request_info_2_;
   scoped_refptr<StrictMock<SSLClientAuthRequestorMock> > auth_requestor_1_;
@@ -250,7 +229,6 @@ class SSLClientCertificateSelectorMultiProfileTest
 
   void SetUpOnMainThread() override {
     browser_1_ = CreateIncognitoBrowser();
-    url_request_context_getter_1_ = browser_1_->profile()->GetRequestContext();
 
     // Also calls SetUpOnIOThread.
     SSLClientCertificateSelectorTest::SetUpOnMainThread();
@@ -277,11 +255,7 @@ class SSLClientCertificateSelectorMultiProfileTest
   }
 
   void SetUpOnIOThread() override {
-    url_request_1_ =
-        MakeURLRequest(url_request_context_getter_1_.get()).release();
-
     auth_requestor_1_ = new StrictMock<SSLClientAuthRequestorMock>(
-        url_request_1_,
         cert_request_info_1_);
 
     SSLClientCertificateSelectorTest::SetUpOnIOThread();
@@ -293,21 +267,16 @@ class SSLClientCertificateSelectorMultiProfileTest
   }
 
   void CleanUpOnIOThread() override {
-    delete url_request_1_;
     SSLClientCertificateSelectorTest::CleanUpOnIOThread();
   }
 
  protected:
   Browser* browser_1_;
-  scoped_refptr<net::URLRequestContextGetter> url_request_context_getter_1_;
-  net::URLRequest* url_request_1_;
   scoped_refptr<net::SSLCertRequestInfo> cert_request_info_1_;
   scoped_refptr<StrictMock<SSLClientAuthRequestorMock> > auth_requestor_1_;
   SSLClientCertificateSelector* selector_1_;
 
  private:
-  test::ScopedMacViewsBrowserMode views_mode_{true};
-
   DISALLOW_COPY_AND_ASSIGN(SSLClientCertificateSelectorMultiProfileTest);
 };
 

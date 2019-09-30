@@ -7,12 +7,12 @@
 #include <memory>
 #include "base/location.h"
 #include "third_party/blink/public/platform/platform.h"
-#include "third_party/blink/public/platform/web_thread.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_streamer.h"
 #include "third_party/blink/renderer/core/inspector/inspector_trace_events.h"
 #include "third_party/blink/renderer/platform/instrumentation/tracing/trace_event.h"
 #include "third_party/blink/renderer/platform/runtime_enabled_features.h"
-#include "third_party/blink/renderer/platform/web_task_runner.h"
+#include "third_party/blink/renderer/platform/scheduler/public/post_cross_thread_task.h"
+#include "third_party/blink/renderer/platform/scheduler/public/thread.h"
 
 namespace blink {
 
@@ -55,10 +55,10 @@ void ScriptStreamerThread::TaskDone() {
   running_task_ = false;
 }
 
-WebThread& ScriptStreamerThread::PlatformThread() {
+Thread& ScriptStreamerThread::PlatformThread() {
   if (!IsRunning()) {
     thread_ = Platform::Current()->CreateThread(
-        WebThreadCreationParams(WebThreadType::kScriptStreamerThread));
+        ThreadCreationParams(WebThreadType::kScriptStreamerThread));
   }
   return *thread_;
 }
@@ -69,8 +69,8 @@ void ScriptStreamerThread::RunScriptStreamingTask(
   DCHECK(!RuntimeEnabledFeatures::ScheduledScriptStreamingEnabled());
   TRACE_EVENT1(
       "v8,devtools.timeline", "v8.parseOnBackground", "data",
-      InspectorParseScriptEvent::Data(streamer->ScriptResourceIdentifier(),
-                                      streamer->ScriptURLString()));
+      inspector_parse_script_event::Data(streamer->ScriptResourceIdentifier(),
+                                         streamer->ScriptURLString()));
   // Running the task can and will block: SourceStream::GetSomeData will get
   // called and it will block and wait for data from the network.
   task->Run();

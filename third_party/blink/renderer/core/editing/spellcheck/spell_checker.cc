@@ -59,12 +59,10 @@
 
 namespace blink {
 
-using namespace HTMLNames;
-
 namespace {
 
 static bool IsWhiteSpaceOrPunctuation(UChar c) {
-  return IsSpaceOrNewline(c) || WTF::Unicode::IsPunct(c);
+  return IsSpaceOrNewline(c) || WTF::unicode::IsPunct(c);
 }
 
 bool IsAmbiguousBoundaryCharacter(UChar character) {
@@ -81,7 +79,7 @@ bool IsAmbiguousBoundaryCharacter(UChar character) {
 }  // namespace
 
 SpellChecker* SpellChecker::Create(LocalFrame& frame) {
-  return new SpellChecker(frame);
+  return MakeGarbageCollected<SpellChecker>(frame);
 }
 
 static WebSpellCheckPanelHostClient& GetEmptySpellCheckPanelHostClient() {
@@ -165,8 +163,9 @@ void SpellChecker::AdvanceToNextMisspelling(bool start_before_selection) {
 
     if (!GetFrame().GetDocument()->documentElement())
       return;
-    position = FirstEditableVisiblePositionAfterPositionInRoot(
-                   position, *GetFrame().GetDocument()->documentElement())
+    position = CreateVisiblePosition(
+                   FirstEditablePositionAfterPositionInRoot(
+                       position, *GetFrame().GetDocument()->documentElement()))
                    .DeepEquivalent();
     if (position.IsNull())
       return;
@@ -269,7 +268,7 @@ static void AddMarker(Document* document,
     return;
 
   String description;
-  for (size_t i = 0; i < descriptions.size(); ++i) {
+  for (wtf_size_t i = 0; i < descriptions.size(); ++i) {
     if (i != 0)
       description.append('\n');
     description.append(descriptions[i]);
@@ -416,9 +415,10 @@ void SpellChecker::RemoveSpellingAndGrammarMarkers(const HTMLElement& element,
   GetFrame().GetDocument()->UpdateStyleAndLayoutTreeForNode(&element);
 
   for (Node& node : NodeTraversal::InclusiveDescendantsOf(element)) {
-    if (elements_type == ElementsType::kAll || !HasEditableStyle(node)) {
+    if ((elements_type == ElementsType::kAll || !HasEditableStyle(node)) &&
+        node.IsTextNode()) {
       GetFrame().GetDocument()->Markers().RemoveMarkersForNode(
-          &node, DocumentMarker::MarkerTypes::Misspelling());
+          ToText(node), DocumentMarker::MarkerTypes::Misspelling());
     }
   }
 }
@@ -433,32 +433,14 @@ SpellChecker::GetSpellCheckMarkerUnderSelection() const {
   // Caret and range selections always return valid normalized ranges.
   const EphemeralRange& selection_range = FirstEphemeralRangeOf(selection);
 
-  Node* const selection_start_container =
-      selection_range.StartPosition().ComputeContainerNode();
-  Node* const selection_end_container =
-      selection_range.EndPosition().ComputeContainerNode();
-
-  // We don't currently support the case where a misspelling spans multiple
-  // nodes. See crbug.com/720065
-  if (selection_start_container != selection_end_container)
-    return {};
-
-  if (!selection_start_container->IsTextNode())
-    return {};
-
-  const unsigned selection_start_offset =
-      selection_range.StartPosition().ComputeOffsetInContainerNode();
-  const unsigned selection_end_offset =
-      selection_range.EndPosition().ComputeOffsetInContainerNode();
-
   DocumentMarker* const marker =
-      GetFrame().GetDocument()->Markers().FirstMarkerIntersectingOffsetRange(
-          ToText(*selection_start_container), selection_start_offset,
-          selection_end_offset, DocumentMarker::MarkerTypes::Misspelling());
+      GetFrame().GetDocument()->Markers().FirstMarkerIntersectingEphemeralRange(
+          selection_range, DocumentMarker::MarkerTypes::Misspelling());
   if (!marker)
     return {};
 
-  return std::make_pair(selection_start_container, ToSpellCheckMarker(marker));
+  return std::make_pair(selection_range.StartPosition().ComputeContainerNode(),
+                        ToSpellCheckMarker(marker));
 }
 
 std::pair<String, String> SpellChecker::SelectMisspellingAsync() {
@@ -593,7 +575,7 @@ bool SpellChecker::SelectionStartHasMarkerFor(
   unsigned end_offset = static_cast<unsigned>(from + length);
   DocumentMarkerVector markers =
       GetFrame().GetDocument()->Markers().MarkersFor(ToText(*node));
-  for (size_t i = 0; i < markers.size(); ++i) {
+  for (wtf_size_t i = 0; i < markers.size(); ++i) {
     DocumentMarker* marker = markers[i];
     if (marker->StartOffset() <= start_offset &&
         end_offset <= marker->EndOffset() && marker->GetType() == marker_type)
@@ -617,8 +599,8 @@ void SpellChecker::CancelCheck() {
   spell_check_requester_->CancelCheck();
 }
 
-void SpellChecker::DocumentAttached(Document* document) {
-  idle_spell_check_controller_->DocumentAttached(document);
+void SpellChecker::DidAttachDocument(Document* document) {
+  idle_spell_check_controller_->DidAttachDocument(document);
 }
 
 void SpellChecker::Trace(blink::Visitor* visitor) {
@@ -773,7 +755,7 @@ bool SpellChecker::IsSpellCheckingEnabledAt(const Position& position) {
     if (auto* input = ToHTMLInputElementOrNull(text_control)) {
       // TODO(tkent): The following password type check should be done in
       // HTMLElement::spellcheck(). crbug.com/371567
-      if (input->type() == InputTypeNames::password)
+      if (input->type() == input_type_names::kPassword)
         return false;
       if (!input->IsFocusedElementInDocument())
         return false;

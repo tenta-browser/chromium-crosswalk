@@ -348,7 +348,7 @@ class CookieMonsterTestBase : public CookieStoreTest<T> {
                            const std::string& domain,
                            const std::string& name) {
     CookieList cookies = this->GetAllCookies(cm);
-    for (CookieList::iterator it = cookies.begin(); it != cookies.end(); ++it)
+    for (auto it = cookies.begin(); it != cookies.end(); ++it)
       if (it->Domain() == domain && it->Name() == name)
         return this->DeleteCanonicalCookie(cm, *it);
     return false;
@@ -838,7 +838,7 @@ class CookieMonsterTestBase : public CookieStoreTest<T> {
   }
 
   bool IsCookieInList(const CanonicalCookie& cookie, const CookieList& list) {
-    for (CookieList::const_iterator it = list.begin(); it != list.end(); ++it) {
+    for (auto it = list.begin(); it != list.end(); ++it) {
       if (it->Name() == cookie.Name() && it->Value() == cookie.Value() &&
           it->Domain() == cookie.Domain() && it->Path() == cookie.Path() &&
           it->CreationDate() == cookie.CreationDate() &&
@@ -1507,7 +1507,7 @@ TEST_F(CookieMonsterTest, TestLastAccess) {
 
   // Getting all cookies for a URL doesn't update the accessed time either.
   CookieList cookies = GetAllCookiesForURL(cm.get(), http_www_foo_.url());
-  CookieList::iterator it = cookies.begin();
+  auto it = cookies.begin();
   ASSERT_TRUE(it != cookies.end());
   EXPECT_EQ(http_www_foo_.host(), it->Domain());
   EXPECT_EQ("A", it->Name());
@@ -1581,7 +1581,7 @@ TEST_F(CookieMonsterTest, GetAllCookiesForURL) {
 
   // Check cookies for url.
   CookieList cookies = GetAllCookiesForURL(cm.get(), http_www_foo_.url());
-  CookieList::iterator it = cookies.begin();
+  auto it = cookies.begin();
 
   ASSERT_TRUE(it != cookies.end());
   EXPECT_EQ(http_www_foo_.host(), it->Domain());
@@ -1639,7 +1639,7 @@ TEST_F(CookieMonsterTest, GetAllCookiesForURLPathMatching) {
       SetCookieWithOptions(cm.get(), http_www_foo_.url(), "E=F;", options));
 
   CookieList cookies = GetAllCookiesForURL(cm.get(), www_foo_foo_.url());
-  CookieList::iterator it = cookies.begin();
+  auto it = cookies.begin();
 
   ASSERT_TRUE(it != cookies.end());
   EXPECT_EQ("A", it->Name());
@@ -1737,7 +1737,7 @@ TEST_F(CookieMonsterTest, DeleteCookieByName) {
   CookieList cookies = GetAllCookies(cm.get());
   size_t expected_size = 4;
   EXPECT_EQ(expected_size, cookies.size());
-  for (CookieList::iterator it = cookies.begin(); it != cookies.end(); ++it) {
+  for (auto it = cookies.begin(); it != cookies.end(); ++it) {
     EXPECT_NE("A1", it->Value());
     EXPECT_NE("A2", it->Value());
   }
@@ -2498,7 +2498,7 @@ TEST_F(CookieMonsterTest, SetAllCookies) {
   CookieList cookies = GetAllCookies(cm.get());
   size_t expected_size = 3;  // "A", "W" and "Y". "U" is gone.
   EXPECT_EQ(expected_size, cookies.size());
-  CookieList::iterator it = cookies.begin();
+  auto it = cookies.begin();
 
   ASSERT_TRUE(it != cookies.end());
   EXPECT_EQ("W", it->Name());
@@ -2889,6 +2889,8 @@ TEST_F(CookieMonsterTest, SetSecureCookies) {
   GURL http_url("http://www.foo.com");
   GURL http_superdomain_url("http://foo.com");
   GURL https_url("https://www.foo.com");
+  GURL https_foo_url("https://www.foo.com/foo");
+  GURL http_foo_url("http://www.foo.com/foo");
 
   // A non-secure cookie can be created from either a URL with a secure or
   // insecure scheme.
@@ -2931,6 +2933,36 @@ TEST_F(CookieMonsterTest, SetSecureCookies) {
   EXPECT_TRUE(SetCookie(cm.get(), http_url, "WITH_PATH=C; path=/your/path"));
   EXPECT_FALSE(SetCookie(cm.get(), http_url, "WITH_PATH=C; path=/my/path"));
   EXPECT_FALSE(SetCookie(cm.get(), http_url, "WITH_PATH=C; path=/my/path/sub"));
+
+  DeleteAll(cm.get());
+
+  // If a secure cookie is set on top of an existing insecure cookie but with a
+  // different path, both are retained.
+  EXPECT_TRUE(SetCookie(cm.get(), http_url, "A=B; path=/foo"));
+  EXPECT_TRUE(SetCookie(cm.get(), https_url, "A=C; Secure; path=/"));
+
+  // Querying from an insecure url gets only the insecure cookie, but querying
+  // from a secure url returns both.
+  EXPECT_EQ("A=B", GetCookies(cm.get(), http_foo_url));
+  EXPECT_THAT(GetCookies(cm.get(), https_foo_url), testing::HasSubstr("A=B"));
+  EXPECT_THAT(GetCookies(cm.get(), https_foo_url), testing::HasSubstr("A=C"));
+
+  // Attempting to set an insecure cookie (from an insecure scheme) that domain-
+  // matches and path-matches the secure cookie fails i.e. the secure cookie is
+  // left alone...
+  EXPECT_FALSE(SetCookie(cm.get(), http_url, "A=D; path=/foo"));
+  EXPECT_FALSE(SetCookie(cm.get(), http_url, "A=D; path=/"));
+  EXPECT_THAT(GetCookies(cm.get(), https_foo_url), testing::HasSubstr("A=C"));
+
+  // ...but the original insecure cookie is still retained.
+  EXPECT_THAT(GetCookies(cm.get(), https_foo_url), testing::HasSubstr("A=B"));
+  EXPECT_THAT(GetCookies(cm.get(), https_foo_url),
+              testing::Not(testing::HasSubstr("A=D")));
+
+  // Deleting the secure cookie leaves only the original insecure cookie.
+  EXPECT_TRUE(SetCookie(cm.get(), https_url,
+                        "A=C; path=/; Expires=Thu, 01-Jan-1970 00:00:01 GMT"));
+  EXPECT_EQ("A=B", GetCookies(cm.get(), https_foo_url));
 
   // If a non-secure cookie is created from a URL with an insecure scheme, and
   // a secure cookie with the same name already exists, if the domain strings
@@ -3187,6 +3219,45 @@ TEST_F(CookieMonsterTest, DeleteDuplicateCTime) {
       EXPECT_NE(cookie.Name(), kNames[run]);
     }
   }
+}
+
+TEST_F(CookieMonsterTest, DeleteCookieWithInheritedTimestamps) {
+  Time t1 = Time::Now();
+  Time t2 = t1 + base::TimeDelta::FromSeconds(1);
+  GURL url("http://www.example.com");
+  std::string cookie_line = "foo=bar";
+  CookieOptions options;
+  CookieMonster cm(nullptr, nullptr, nullptr);
+
+  // Write a cookie created at |t1|.
+  auto cookie = CanonicalCookie::Create(url, cookie_line, t1, options);
+  ResultSavingCookieCallback<bool> set_callback_1;
+  cm.SetCanonicalCookieAsync(
+      std::move(cookie), url.SchemeIsCryptographic(),
+      !options.exclude_httponly(),
+      base::BindOnce(&ResultSavingCookieCallback<bool>::Run,
+                     base::Unretained(&set_callback_1)));
+  set_callback_1.WaitUntilDone();
+
+  // Overwrite the cookie at |t2|.
+  cookie = CanonicalCookie::Create(url, cookie_line, t2, options);
+  ResultSavingCookieCallback<bool> set_callback_2;
+  cm.SetCanonicalCookieAsync(
+      std::move(cookie), url.SchemeIsCryptographic(),
+      !options.exclude_httponly(),
+      base::BindOnce(&ResultSavingCookieCallback<bool>::Run,
+                     base::Unretained(&set_callback_2)));
+  set_callback_2.WaitUntilDone();
+
+  // The second cookie overwrites the first one but it will inherit the creation
+  // timestamp |t1|. Test that deleting the new cookie still works.
+  cookie = CanonicalCookie::Create(url, cookie_line, t2, options);
+  ResultSavingCookieCallback<unsigned int> delete_callback;
+  cm.DeleteCanonicalCookieAsync(
+      *cookie, base::BindOnce(&ResultSavingCookieCallback<unsigned int>::Run,
+                              base::Unretained(&delete_callback)));
+  delete_callback.WaitUntilDone();
+  EXPECT_EQ(1U, delete_callback.result());
 }
 
 class CookieMonsterNotificationTest : public CookieMonsterTest {

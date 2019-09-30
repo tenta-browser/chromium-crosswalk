@@ -14,6 +14,8 @@
 Polymer({
   is: 'settings-multidevice-tether-item',
 
+  behaviors: [MultiDeviceFeatureBehavior],
+
   properties: {
     /**
      * Interface for networkingPrivate calls.
@@ -37,10 +39,18 @@ Polymer({
      * @private {?CrOnc.NetworkStateProperties|undefined}
      */
     activeNetworkState_: Object,
+
+    /**
+     * Alias for allowing Polymer bindings to settings.routes.
+     * @type {?SettingsRoutes}
+     */
+    routes: {
+      type: Object,
+      value: settings.routes,
+    },
   },
 
   listeners: {
-    'device-enabled-toggled': 'onDeviceEnabledToggled_',
     'network-list-changed': 'updateTetherNetworkState_',
     // network-changed is fired by the settings-multidevice-subpage element's
     // CrNetworkListenerBehavior.
@@ -81,14 +91,15 @@ Polymer({
    * triggering updateTetherNetworkState_ and rendering this callback
    * redundant. As a result, we return early if the active network is not
    * changed.
-   * @param {{detail: Array<string>}} event stores an array of the GUIDs of all
-   *     networks that changed in its detail property.
+   * @param {!CustomEvent<!Array<string>>} event stores an array of the GUIDs of
+   *     all networks that changed in its detail property.
    * @private
    */
   onNetworksChanged_: function(event) {
     const id = this.activeNetworkState_.GUID;
-    if (!event.detail.includes(id))
+    if (!event.detail.includes(id)) {
       return;
+    }
     this.networkingPrivate_.getState(id, newNetworkState => {
       if (chrome.runtime.lastError) {
         const message = chrome.runtime.lastError.message;
@@ -102,18 +113,6 @@ Polymer({
       }
       this.activeNetworkState_ = newNetworkState;
     });
-  },
-
-  /**
-   * Event triggered by a device state enabled toggle.
-   * @param {!{detail: {enabled: boolean, type: CrOnc.Type}}} event
-   * @private
-   */
-  onDeviceEnabledToggled_: function(event) {
-    if (event.detail.enabled)
-      this.networkingPrivate_.enableNetworkType(CrOnc.Type.TETHER);
-    else
-      this.networkingPrivate_.disableNetworkType(CrOnc.Type.TETHER);
   },
 
   /**
@@ -159,5 +158,13 @@ Polymer({
    */
   getNetworkStateList_: function() {
     return this.activeNetworkState_.GUID ? [this.activeNetworkState_] : [];
+  },
+
+  /**
+   * @return {!URLSearchParams}
+   * @private
+   */
+  getTetherNetworkUrlSearchParams_: function() {
+    return new URLSearchParams('type=' + CrOnc.Type.TETHER);
   },
 });

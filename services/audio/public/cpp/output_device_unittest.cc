@@ -140,9 +140,8 @@ class AudioServiceOutputDeviceTest : public testing::Test {
     service_manager::mojom::ConnectorRequest connector_request;
     connector_ = service_manager::Connector::Create(&connector_request);
     stream_factory_ = std::make_unique<FakeOutputStreamFactory>();
-    service_manager::Connector::TestApi connector_test_api(connector_.get());
-    connector_test_api.OverrideBinderForTesting(
-        service_manager::Identity(audio::mojom::kServiceName),
+    connector_->OverrideBinderForTesting(
+        service_manager::ServiceFilter::ByName(audio::mojom::kServiceName),
         audio::mojom::StreamFactory::Name_,
         base::BindRepeating(&AudioServiceOutputDeviceTest::BindStreamFactory,
                             base::Unretained(this)));
@@ -182,7 +181,13 @@ TEST_F(AudioServiceOutputDeviceTest, CreatePlayPause) {
   task_env_.RunUntilIdle();
 }
 
-TEST_F(AudioServiceOutputDeviceTest, VerifyDataFlow) {
+// Flaky on Linux Chromium OS ASan LSan (https://crbug.com/889845)
+#if defined(OS_CHROMEOS) && defined(ADDRESS_SANITIZER)
+#define MAYBE_VerifyDataFlow DISABLED_VerifyDataFlow
+#else
+#define MAYBE_VerifyDataFlow VerifyDataFlow
+#endif
+TEST_F(AudioServiceOutputDeviceTest, MAYBE_VerifyDataFlow) {
   auto params(media::AudioParameters::UnavailableDeviceParams());
   params.set_frames_per_buffer(kFrames);
   ASSERT_EQ(2, params.channels());

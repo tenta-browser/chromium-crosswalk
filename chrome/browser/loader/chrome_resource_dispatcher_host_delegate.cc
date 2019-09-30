@@ -15,24 +15,21 @@
 #include "base/memory/ptr_util.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/strings/string_util.h"
+#include "base/task/post_task.h"
 #include "build/build_config.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/chrome_notification_types.h"
-#include "chrome/browser/client_hints/client_hints.h"
 #include "chrome/browser/component_updater/component_updater_resource_throttle.h"
 #include "chrome/browser/download/download_request_limiter.h"
 #include "chrome/browser/download/download_resource_throttle.h"
 #include "chrome/browser/loader/chrome_navigation_data.h"
-#include "chrome/browser/loader/predictor_resource_throttle.h"
 #include "chrome/browser/loader/safe_browsing_resource_throttle.h"
 #include "chrome/browser/page_load_metrics/metrics_web_contents_observer.h"
 #include "chrome/browser/plugins/plugin_prefs.h"
 #include "chrome/browser/plugins/plugin_utils.h"
 #include "chrome/browser/prerender/prerender_manager.h"
 #include "chrome/browser/prerender/prerender_manager_factory.h"
-#include "chrome/browser/prerender/prerender_resource_throttle.h"
 #include "chrome/browser/prerender/prerender_util.h"
-#include "chrome/browser/previews/previews_lite_page_navigation_throttle.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_io_data.h"
 #include "chrome/browser/renderer_host/chrome_navigation_ui_data.h"
@@ -55,13 +52,9 @@
 #include "components/offline_pages/buildflags/buildflags.h"
 #include "components/offline_pages/core/request_header/offline_page_navigation_ui_data.h"
 #include "components/policy/content/policy_blacklist_navigation_throttle.h"
-#include "components/previews/content/previews_content_util.h"
-#include "components/previews/content/previews_decider_impl.h"
-#include "components/previews/core/previews_decider.h"
-#include "components/previews/core/previews_experiments.h"
-#include "components/previews/core/previews_user_data.h"
 #include "components/safe_browsing/features.h"
 #include "components/variations/net/variations_http_headers.h"
+#include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/navigation_data.h"
 #include "content/public/browser/notification_service.h"
@@ -76,9 +69,7 @@
 #include "content/public/browser/service_worker_context.h"
 #include "content/public/browser/stream_info.h"
 #include "content/public/browser/web_contents.h"
-#include "content/public/common/browser_side_navigation_policy.h"
 #include "content/public/common/content_features.h"
-#include "content/public/common/previews_state.h"
 #include "extensions/buildflags/buildflags.h"
 #include "net/base/host_port_pair.h"
 #include "net/base/ip_endpoint.h"
@@ -98,6 +89,7 @@
 #if BUILDFLAG(ENABLE_EXTENSIONS)
 #include "chrome/browser/extensions/api/streams_private/streams_private_api.h"
 #include "extensions/browser/guest_view/web_view/web_view_renderer_state.h"
+#include "extensions/common/extension.h"
 #include "extensions/common/extension_urls.h"
 #include "extensions/common/user_script.h"
 #endif
@@ -111,12 +103,6 @@
 #if defined(OS_ANDROID)
 #include "chrome/browser/android/download/intercept_download_resource_throttle.h"
 #include "chrome/browser/loader/data_reduction_proxy_resource_throttle_android.h"
-#include "components/navigation_interception/intercept_navigation_delegate.h"
-#endif
-
-#if defined(OS_CHROMEOS)
-#include "chrome/browser/chromeos/login/signin/merge_session_resource_throttle.h"
-#include "chrome/browser/chromeos/login/signin/merge_session_throttling_utils.h"
 #endif
 
 using content::BrowserThread;
@@ -128,10 +114,6 @@ using content::ResourceType;
 #if BUILDFLAG(ENABLE_EXTENSIONS)
 using extensions::Extension;
 using extensions::StreamsPrivateAPI;
-#endif
-
-#if defined(OS_ANDROID)
-using navigation_interception::InterceptNavigationDelegate;
 #endif
 
 namespace {
@@ -305,28 +287,6 @@ void NotifyUIThreadOfRequestComplete(
   }
 }
 
-void LogCommittedPreviewsDecision(
-    ProfileIOData* io_data,
-    const GURL& url,
-    previews::PreviewsUserData* previews_user_data) {
-  previews::PreviewsDeciderImpl* previews_decider_impl =
-      io_data->previews_decider_impl();
-  if (previews_decider_impl && previews_user_data) {
-    std::vector<previews::PreviewsEligibilityReason> passed_reasons;
-    if (previews_user_data->cache_control_no_transform_directive()) {
-      previews_decider_impl->LogPreviewDecisionMade(
-          previews::PreviewsEligibilityReason::CACHE_CONTROL_NO_TRANSFORM, url,
-          base::Time::Now(), previews::PreviewsType::UNSPECIFIED,
-          std::move(passed_reasons), previews_user_data->page_id());
-    } else {
-      previews_decider_impl->LogPreviewDecisionMade(
-          previews::PreviewsEligibilityReason::COMMITTED, url,
-          base::Time::Now(), previews_user_data->committed_previews_type(),
-          std::move(passed_reasons), previews_user_data->page_id());
-    }
-  }
-}
-
 }  // namespace
 
 ChromeResourceDispatcherHostDelegate::ChromeResourceDispatcherHostDelegate()
@@ -348,7 +308,6 @@ void ChromeResourceDispatcherHostDelegate::RequestBeginning(
   if (safe_browsing_.get())
     safe_browsing_->OnResourceRequest(request);
   ProfileIOData* io_data = ProfileIOData::FromResourceContext(resource_context);
-  client_hints::RequestBeginning(request, io_data->GetCookieSettings());
 
 #if BUILDFLAG(ENABLE_OFFLINE_PAGES) || BUILDFLAG(ENABLE_NACL)
   const ResourceRequestInfo* info = ResourceRequestInfo::ForRequest(request);
@@ -358,31 +317,12 @@ void ChromeResourceDispatcherHostDelegate::RequestBeginning(
   // TODO(petewil): Unify the safe browsing request and the metrics observer
   // request if possible so we only have to cross to the main thread once.
   // http://crbug.com/712312.
-  BrowserThread::PostTask(BrowserThread::UI, FROM_HERE,
-                          base::BindOnce(&NotifyUIThreadOfRequestStarted,
-                                         info->GetWebContentsGetterForRequest(),
-                                         info->GetResourceType()));
+  base::PostTaskWithTraits(
+      FROM_HERE, {BrowserThread::UI},
+      base::BindOnce(&NotifyUIThreadOfRequestStarted,
+                     info->GetWebContentsGetterForRequest(),
+                     info->GetResourceType()));
 #endif  // BUILDFLAG(ENABLE_OFFLINE_PAGES)
-
-#if defined(OS_ANDROID)
-  if (resource_type != content::RESOURCE_TYPE_MAIN_FRAME)
-    InterceptNavigationDelegate::UpdateUserGestureCarryoverInfo(request);
-#endif
-
-#if defined(OS_CHROMEOS)
-  // Check if we need to add merge session throttle. This throttle will postpone
-  // loading of XHR requests.
-  if (resource_type == content::RESOURCE_TYPE_XHR) {
-    // Add interstitial page while merge session process (cookie
-    // reconstruction from OAuth2 refresh token in ChromeOS login) is still in
-    // progress while we are attempting to load a google property.
-    if (!merge_session_throttling_utils::AreAllSessionMergedAlready() &&
-        request->url().SchemeIsHTTPOrHTTPS()) {
-      throttles->push_back(
-          std::make_unique<MergeSessionResourceThrottle>(request));
-    }
-  }
-#endif
 
   // Don't attempt to append headers to requests that have already started.
   // TODO(stevet): Remove this once the request ordering issues are resolved
@@ -483,23 +423,6 @@ void ChromeResourceDispatcherHostDelegate::AppendStandardResourceThrottles(
 
   if (first_throttle)
     throttles->push_back(base::WrapUnique(first_throttle));
-
-  const ResourceRequestInfo* info = ResourceRequestInfo::ForRequest(request);
-  if (info->IsPrerendering()) {
-    // TODO(jam): remove this throttle once http://crbug.com/740130 is fixed and
-    // PrerendererURLLoaderThrottle can be used for frame requests in the
-    // network-service-disabled mode.
-    if (!base::FeatureList::IsEnabled(network::features::kNetworkService) &&
-        content::IsResourceTypeFrame(info->GetResourceType())) {
-      throttles->push_back(
-          std::make_unique<prerender::PrerenderResourceThrottle>(request));
-    }
-  }
-
-  std::unique_ptr<PredictorResourceThrottle> predictor_throttle =
-      PredictorResourceThrottle::MaybeCreate(request, io_data);
-  if (predictor_throttle)
-    throttles->push_back(std::move(predictor_throttle));
 }
 
 bool ChromeResourceDispatcherHostDelegate::ShouldInterceptResourceAsStream(
@@ -529,17 +452,16 @@ void ChromeResourceDispatcherHostDelegate::OnStreamCreated(
     std::unique_ptr<content::StreamInfo> stream) {
 #if BUILDFLAG(ENABLE_EXTENSIONS)
   const ResourceRequestInfo* info = ResourceRequestInfo::ForRequest(request);
-  std::map<net::URLRequest*, StreamTargetInfo>::iterator ix =
-      stream_target_info_.find(request);
+  auto ix = stream_target_info_.find(request);
   CHECK(ix != stream_target_info_.end());
   bool embedded = info->GetResourceType() != content::RESOURCE_TYPE_MAIN_FRAME;
-  content::BrowserThread::PostTask(
-      content::BrowserThread::UI, FROM_HERE,
+  base::PostTaskWithTraits(
+      FROM_HERE, {content::BrowserThread::UI},
       base::BindOnce(
           &extensions::StreamsPrivateAPI::SendExecuteMimeTypeHandlerEvent,
-          request->GetExpectedContentSize(), ix->second.extension_id,
-          ix->second.view_id, embedded, info->GetFrameTreeNodeId(),
-          info->GetChildID(), info->GetRenderFrameID(), std::move(stream),
+          ix->second.extension_id, ix->second.view_id, embedded,
+          info->GetFrameTreeNodeId(), info->GetChildID(),
+          info->GetRenderFrameID(), std::move(stream),
           nullptr /* transferrable_loader */, GURL()));
   stream_target_info_.erase(request);
 #endif
@@ -549,7 +471,6 @@ void ChromeResourceDispatcherHostDelegate::OnResponseStarted(
     net::URLRequest* request,
     content::ResourceContext* resource_context,
     network::ResourceResponse* response) {
-  ResourceRequestInfo* info = ResourceRequestInfo::ForRequest(request);
   ProfileIOData* io_data = ProfileIOData::FromResourceContext(resource_context);
 
   signin::ResponseAdapter signin_response_adapter(request);
@@ -570,48 +491,6 @@ void ChromeResourceDispatcherHostDelegate::OnResponseStarted(
     }
   }
 #endif
-
-  // Update the PreviewsState for main frame response if needed.
-  if (previews::HasEnabledPreviews(info->GetPreviewsState()) &&
-      info->GetResourceType() == content::RESOURCE_TYPE_MAIN_FRAME &&
-      request->url().SchemeIsHTTPOrHTTPS()) {
-    // Annotate request if no-transform directive found in response headers.
-    if (request->response_headers() &&
-        request->response_headers()->HasHeaderValue("cache-control",
-                                                    "no-transform")) {
-      previews::PreviewsUserData* previews_user_data =
-          previews::PreviewsUserData::GetData(*request);
-      if (previews_user_data)
-        previews_user_data->SetCacheControlNoTransformDirective();
-    }
-
-    // Determine effective PreviewsState for this committed main frame response.
-    content::PreviewsState committed_state = DetermineCommittedPreviews(
-        request, io_data->previews_decider_impl(), info->GetPreviewsState());
-
-    // Update previews state in ResourceRequestInfo before it is sent to
-    // renderer.
-    info->SetPreviewsState(committed_state);
-
-    // Update previews state in nav data to UI.
-    ChromeNavigationData* data =
-        ChromeNavigationData::GetDataAndCreateIfNecessary(request);
-    data->set_previews_state(committed_state);
-
-    // Capture committed previews type, if any, in PreviewsUserData.
-    // Note: this is for the subset of previews types that are decided upon
-    // navigation commit. Previews types that are determined prior to
-    // navigation (such as for offline pages or for redirecting to another
-    // url), are not set here.
-    previews::PreviewsType committed_type =
-        previews::GetMainFramePreviewsType(committed_state);
-    previews::PreviewsUserData* previews_user_data =
-        previews::PreviewsUserData::GetData(*request);
-    if (previews_user_data) {
-      previews_user_data->SetCommittedPreviewsType(committed_type);
-      LogCommittedPreviewsDecision(io_data, request->url(), previews_user_data);
-    }
-  }
 }
 
 void ChromeResourceDispatcherHostDelegate::OnRequestRedirected(
@@ -686,8 +565,8 @@ void ChromeResourceDispatcherHostDelegate::RequestComplete(
   auto load_timing_info = std::make_unique<net::LoadTimingInfo>();
   url_request->GetLoadTimingInfo(load_timing_info.get());
 
-  BrowserThread::PostTask(
-      BrowserThread::UI, FROM_HERE,
+  base::PostTaskWithTraits(
+      FROM_HERE, {BrowserThread::UI},
       base::BindOnce(
           &NotifyUIThreadOfRequestComplete,
           info->GetWebContentsGetterForRequest(),
@@ -697,52 +576,7 @@ void ChromeResourceDispatcherHostDelegate::RequestComplete(
           url_request->was_cached(), std::move(data_reduction_proxy_data),
           net_error, url_request->GetTotalReceivedBytes(),
           url_request->GetRawBodyBytes(), original_content_length,
-          url_request->creation_time(),
-          std::move(load_timing_info)));
-}
-
-content::PreviewsState
-ChromeResourceDispatcherHostDelegate::DetermineEnabledPreviews(
-    net::URLRequest* url_request,
-    content::ResourceContext* resource_context,
-    content::PreviewsState previews_to_allow) {
-  ProfileIOData* io_data = ProfileIOData::FromResourceContext(resource_context);
-  data_reduction_proxy::DataReductionProxyIOData* data_reduction_proxy_io_data =
-      io_data->data_reduction_proxy_io_data();
-
-  content::PreviewsState previews_state = content::PREVIEWS_UNSPECIFIED;
-
-  previews::PreviewsDeciderImpl* previews_decider_impl =
-      io_data->previews_decider_impl();
-  if (data_reduction_proxy_io_data && previews_decider_impl) {
-    previews::PreviewsUserData::Create(url_request,
-                                       previews_decider_impl->GeneratePageId());
-    if (data_reduction_proxy_io_data->ShouldAcceptServerPreview(
-            *url_request, previews_decider_impl)) {
-      previews_state |= content::SERVER_LOFI_ON;
-      previews_state |= content::SERVER_LITE_PAGE_ON;
-    }
-
-    // Check for enabled client-side previews if data saver is enabled.
-    if (data_reduction_proxy_io_data->IsEnabled()) {
-      previews_state |= previews::DetermineEnabledClientPreviewsState(
-          *url_request, previews_decider_impl);
-    }
-  }
-
-  if (previews_state == content::PREVIEWS_UNSPECIFIED)
-    return content::PREVIEWS_OFF;
-
-  // If the allowed previews are limited, ensure we honor those limits.
-  if (previews_to_allow != content::PREVIEWS_UNSPECIFIED &&
-      previews_state != content::PREVIEWS_OFF &&
-      previews_state != content::PREVIEWS_NO_TRANSFORM) {
-    previews_state = previews_state & previews_to_allow;
-    // If no valid previews are left, set the state explictly to PREVIEWS_OFF.
-    if (previews_state == 0)
-      previews_state = content::PREVIEWS_OFF;
-  }
-  return previews_state;
+          url_request->creation_time(), std::move(load_timing_info)));
 }
 
 content::NavigationData*
@@ -762,34 +596,5 @@ ChromeResourceDispatcherHostDelegate::GetNavigationData(
   if (data_reduction_proxy_data)
     data->SetDataReductionProxyData(data_reduction_proxy_data->DeepCopy());
 
-  previews::PreviewsUserData* previews_user_data =
-      previews::PreviewsUserData::GetData(*request);
-  if (previews_user_data)
-    data->set_previews_user_data(previews_user_data->DeepCopy());
-
   return data;
-}
-
-// static
-content::PreviewsState
-ChromeResourceDispatcherHostDelegate::DetermineCommittedPreviews(
-    const net::URLRequest* request,
-    const previews::PreviewsDecider* previews_decider,
-    content::PreviewsState initial_state) {
-  DCHECK_CURRENTLY_ON(content::BrowserThread::IO);
-  if (!previews::HasEnabledPreviews(initial_state))
-    return content::PREVIEWS_OFF;
-
-  content::PreviewsState previews_state =
-      data_reduction_proxy::ContentLoFiDecider::
-          DetermineCommittedServerPreviewsState(*request, initial_state);
-
-  // TODO(crbug.com/842233): This should be removed in the previews s13n work.
-  if (PreviewsLitePageNavigationThrottle::GetOriginalURL(
-          request->url(), nullptr /* original_url */)) {
-    previews_state = previews_state & content::LITE_PAGE_REDIRECT_ON;
-  }
-
-  return previews::DetermineCommittedClientPreviewsState(
-      *request, previews_state, previews_decider);
 }

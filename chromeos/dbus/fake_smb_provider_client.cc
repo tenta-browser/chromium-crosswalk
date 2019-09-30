@@ -30,6 +30,9 @@ void AddDirectoryEntryToList(smbprovider::DirectoryEntryListProto* entry_list,
 
 FakeSmbProviderClient::FakeSmbProviderClient() {}
 
+FakeSmbProviderClient::FakeSmbProviderClient(bool should_run_synchronously)
+    : should_run_synchronously_(should_run_synchronously) {}
+
 FakeSmbProviderClient::~FakeSmbProviderClient() {}
 
 void FakeSmbProviderClient::AddNetBiosPacketParsingForTesting(
@@ -41,6 +44,7 @@ void FakeSmbProviderClient::AddNetBiosPacketParsingForTesting(
 void FakeSmbProviderClient::Init(dbus::Bus* bus) {}
 
 void FakeSmbProviderClient::Mount(const base::FilePath& share_path,
+                                  bool ntlm_enabled,
                                   const std::string& workgroup,
                                   const std::string& username,
                                   base::ScopedFD password_fd,
@@ -51,6 +55,7 @@ void FakeSmbProviderClient::Mount(const base::FilePath& share_path,
 
 void FakeSmbProviderClient::Remount(const base::FilePath& share_path,
                                     int32_t mount_id,
+                                    bool ntlm_enabled,
                                     const std::string& workgroup,
                                     const std::string& username,
                                     base::ScopedFD password_fd,
@@ -182,7 +187,12 @@ void FakeSmbProviderClient::GetShares(const base::FilePath& server_url,
     AddDirectoryEntryToList(&entry_list, share);
   }
 
-  std::move(callback).Run(smbprovider::ERROR_OK, entry_list);
+  if (should_run_synchronously_) {
+    std::move(callback).Run(smbprovider::ERROR_OK, entry_list);
+  } else {
+    stored_readdir_callback_ =
+        base::BindOnce(std::move(callback), smbprovider::ERROR_OK, entry_list);
+  }
 }
 
 void FakeSmbProviderClient::SetupKerberos(const std::string& account_id,
@@ -227,8 +237,51 @@ void FakeSmbProviderClient::ContinueCopy(int32_t mount_id,
       FROM_HERE, base::BindOnce(std::move(callback), smbprovider::ERROR_OK));
 }
 
+void FakeSmbProviderClient::StartReadDirectory(
+    int32_t mount_id,
+    const base::FilePath& directory_path,
+    StartReadDirectoryCallback callback) {
+  smbprovider::DirectoryEntryListProto entry_list;
+  // Simulate a ReadDirectory that completes during the StartReadDirectory call.
+  // read_dir_token is unset and error is set to ERROR_OK.
+  base::ThreadTaskRunnerHandle::Get()->PostTask(
+      FROM_HERE, base::BindOnce(std::move(callback), smbprovider::ERROR_OK,
+                                -1 /* read_dir_token */, entry_list));
+}
+
+void FakeSmbProviderClient::ContinueReadDirectory(
+    int32_t mount_id,
+    int32_t read_dir_token,
+    ReadDirectoryCallback callback) {
+  smbprovider::DirectoryEntryListProto entry_list;
+  base::ThreadTaskRunnerHandle::Get()->PostTask(
+      FROM_HERE,
+      base::BindOnce(std::move(callback), smbprovider::ERROR_OK, entry_list));
+}
+
+void FakeSmbProviderClient::UpdateMountCredentials(int32_t mount_id,
+                                                   std::string workgroup,
+                                                   std::string username,
+                                                   base::ScopedFD password_fd,
+                                                   StatusCallback callback) {
+  base::ThreadTaskRunnerHandle::Get()->PostTask(
+      FROM_HERE, base::BindOnce(std::move(callback), smbprovider::ERROR_OK));
+}
+
+void FakeSmbProviderClient::Premount(const base::FilePath& share_path,
+                                     bool ntlm_enabled,
+                                     MountCallback callback) {
+  base::ThreadTaskRunnerHandle::Get()->PostTask(
+      FROM_HERE, base::BindOnce(std::move(callback), smbprovider::ERROR_OK,
+                                1 /* mount_id */));
+}
+
 void FakeSmbProviderClient::ClearShares() {
   shares_.clear();
+}
+
+void FakeSmbProviderClient::RunStoredReadDirCallback() {
+  std::move(stored_readdir_callback_).Run();
 }
 
 }  // namespace chromeos

@@ -26,6 +26,7 @@
 #include "headless/public/headless_web_contents.h"
 #include "headless/test/headless_browser_test.h"
 #include "net/test/spawned_test_server/spawned_test_server.h"
+#include "services/network/public/cpp/network_switches.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "url/url_util.h"
 
@@ -43,8 +44,24 @@ class HeadlessProtocolBrowserTest
  public:
   HeadlessProtocolBrowserTest() {
     embedded_test_server()->ServeFilesFromSourceDirectory(
-        "third_party/WebKit/LayoutTests/http/tests/inspector-protocol");
+        "third_party/blink/web_tests/http/tests/inspector-protocol");
     EXPECT_TRUE(embedded_test_server()->Start());
+  }
+
+ protected:
+  void SetUpCommandLine(base::CommandLine* command_line) override {
+    command_line->AppendSwitchASCII(::network::switches::kHostResolverRules,
+                                    "MAP *.test 127.0.0.1");
+    HeadlessAsyncDevTooledBrowserTest::SetUpCommandLine(command_line);
+
+    // Make sure the navigations spawn new processes. We run test harness
+    // in one process (harness.test) and tests in another.
+    command_line->AppendSwitch(::switches::kSitePerProcess);
+    // TODO(yoichio): This is temporary switch to support chrome internal
+    // components migration from the old web APIs.
+    // After completion of the migration, we should remove this.
+    // See crbug.com/911943 for detail.
+    command_line->AppendSwitchASCII("enable-blink-features", "HTMLImports");
   }
 
  private:
@@ -167,15 +184,6 @@ class HeadlessProtocolBrowserTest
     FinishAsynchronousTest();
   }
 
-  // HeadlessBrowserTest overrides.
-  void CustomizeHeadlessBrowserContext(
-      HeadlessBrowserContext::Builder& builder) override {
-    // Make sure the navigations spawn new processes. We run test harness
-    // in one process (harness.test) and tests in another.
-    builder.SetSitePerProcess(true);
-    builder.SetHostResolverRules("MAP *.test 127.0.0.1");
-  }
-
  protected:
   bool test_finished_ = false;
   std::string test_folder_;
@@ -199,6 +207,8 @@ class HeadlessProtocolBrowserTest
 // Headless-specific tests
 HEADLESS_PROTOCOL_TEST(VirtualTimeAdvance, "emulation/virtual-time-advance.js");
 HEADLESS_PROTOCOL_TEST(VirtualTimeBasics, "emulation/virtual-time-basics.js");
+HEADLESS_PROTOCOL_TEST(VirtualTimeInterrupt,
+                       "emulation/virtual-time-interrupt.js");
 HEADLESS_PROTOCOL_TEST(VirtualTimeCrossProcessNavigation,
                        "emulation/virtual-time-cross-process-navigation.js");
 HEADLESS_PROTOCOL_TEST(VirtualTimeDetachFrame,
@@ -219,6 +229,8 @@ HEADLESS_PROTOCOL_TEST(VirtualTimeStarvation,
 HEADLESS_PROTOCOL_TEST(VirtualTimeVideo, "emulation/virtual-time-video.js");
 HEADLESS_PROTOCOL_TEST(VirtualTimeErrorLoop,
                        "emulation/virtual-time-error-loop.js");
+HEADLESS_PROTOCOL_TEST(VirtualTimeFetchStream,
+                       "emulation/virtual-time-fetch-stream.js");
 
 // Flaky Test crbug.com/859382
 HEADLESS_PROTOCOL_TEST(DISABLED_VirtualTimeHistoryNavigation,

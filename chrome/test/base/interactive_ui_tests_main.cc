@@ -20,10 +20,6 @@
 #endif
 #endif
 
-#if defined(OS_CHROMEOS)
-#include "ash/test/ui_controls_factory_ash.h"
-#endif
-
 #if defined(OS_WIN)
 #include "base/win/scoped_com_initializer.h"
 #include "chrome/test/base/always_on_top_window_killer_win.h"
@@ -47,7 +43,8 @@ class InteractiveUITestSuite : public ChromeTestSuite {
     ui_controls::EnableUIControls();
 
 #if defined(OS_CHROMEOS)
-    ui_controls::InstallUIControlsAura(ash::test::CreateAshUIControls());
+    // Do not InstallUIControlsAura in ChromeOS, it will be installed in
+    // InProcessBrowserTest::PreRunTestOnMainThread().
 #elif defined(USE_AURA)
 #if defined(OS_WIN)
     com_initializer_.reset(new base::win::ScopedCOMInitializer());
@@ -141,6 +138,14 @@ class InteractiveUITestSuiteRunner : public ChromeTestSuiteRunner {
 
 int main(int argc, char** argv) {
   base::CommandLine::Init(argc, argv);
+
+#if defined(OS_CHROMEOS) && defined(MEMORY_SANITIZER)
+  // Force software-gl. This is necessary for mus tests to avoid an msan warning
+  // in gl init.
+  base::CommandLine::ForCurrentProcess()->AppendSwitch(
+      switches::kOverrideUseSoftwareGLForTests);
+#endif
+
   // TODO(sky): this causes a crash in an autofill test on macosx, figure out
   // why: http://crbug.com/641969.
 #if !defined(OS_MACOSX)

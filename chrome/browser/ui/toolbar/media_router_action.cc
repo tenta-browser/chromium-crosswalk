@@ -8,6 +8,7 @@
 #include "base/location.h"
 #include "base/metrics/user_metrics.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/task/post_task.h"
 #include "chrome/browser/media/router/media_router.h"
 #include "chrome/browser/media/router/media_router_factory.h"
 #include "chrome/browser/media/router/media_router_metrics.h"
@@ -18,12 +19,12 @@
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/browser/ui/toolbar/component_toolbar_actions_factory.h"
 #include "chrome/browser/ui/toolbar/media_router_action_controller.h"
-#include "chrome/browser/ui/toolbar/media_router_action_platform_delegate.h"
 #include "chrome/browser/ui/toolbar/toolbar_action_view_delegate.h"
 #include "chrome/common/media_router/issue.h"
 #include "chrome/common/media_router/media_route.h"
 #include "chrome/grit/generated_resources.h"
 #include "components/vector_icons/vector_icons.h"
+#include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/gfx/color_palette.h"
@@ -52,9 +53,9 @@ MediaRouterAction::MediaRouterAction(Browser* browser,
       delegate_(nullptr),
       browser_(browser),
       toolbar_actions_bar_(toolbar_actions_bar),
-      platform_delegate_(MediaRouterActionPlatformDelegate::Create(browser)),
       tab_strip_model_observer_(this),
       toolbar_actions_bar_observer_(this),
+      skip_close_overflow_menu_for_testing_(false),
       weak_ptr_factory_(this) {
   DCHECK(browser_);
   DCHECK(toolbar_actions_bar_);
@@ -70,15 +71,12 @@ MediaRouterAction::~MediaRouterAction() {
 SkColor MediaRouterAction::GetIconColor(const gfx::VectorIcon& icon_id) {
   if (&icon_id == &vector_icons::kMediaRouterIdleIcon)
     return gfx::kChromeIconGrey;
-  else if (&icon_id == &vector_icons::kMediaRouterActiveIcon)
+  if (&icon_id == &vector_icons::kMediaRouterActiveIcon)
     return gfx::kGoogleBlue500;
-  else if (&icon_id == &vector_icons::kMediaRouterWarningIcon)
+  if (&icon_id == &vector_icons::kMediaRouterWarningIcon)
     return gfx::kGoogleYellow700;
-  else if (&icon_id == &vector_icons::kMediaRouterErrorIcon)
-    return gfx::kGoogleRed700;
-
-  NOTREACHED();
-  return gfx::kPlaceholderColor;
+  DCHECK_EQ(&vector_icons::kMediaRouterErrorIcon, &icon_id);
+  return gfx::kGoogleRed700;
 }
 
 std::string MediaRouterAction::GetId() const {
@@ -130,6 +128,11 @@ bool MediaRouterAction::HasPopup(
   return true;
 }
 
+bool MediaRouterAction::IsShowingPopup() const {
+  auto* controller = GetMediaRouterDialogController();
+  return controller && controller->IsShowingMediaRouterDialog();
+}
+
 void MediaRouterAction::HidePopup() {
   GetMediaRouterDialogController()->HideMediaRouterDialog();
 }
@@ -156,16 +159,15 @@ ui::MenuModel* MediaRouterAction::GetContextMenu() {
 }
 
 void MediaRouterAction::OnContextMenuClosed() {
-  if (toolbar_actions_bar_->popped_out_action() == this &&
-      !GetMediaRouterDialogController()->IsShowingMediaRouterDialog()) {
+  if (toolbar_actions_bar_->popped_out_action() == this && !IsShowingPopup())
     toolbar_actions_bar_->UndoPopOut();
-  }
+
   // We must destroy the context menu asynchronously to prevent it from being
   // destroyed before the command execution.
   // TODO(takumif): Using task sequence to order operations is fragile. Consider
   // other ways to do so when we move the icon to the trusted area.
-  content::BrowserThread::PostTask(
-      content::BrowserThread::UI, FROM_HERE,
+  base::PostTaskWithTraits(
+      FROM_HERE, {content::BrowserThread::UI},
       base::BindOnce(&MediaRouterAction::DestroyContextMenu,
                      weak_ptr_factory_.GetWeakPtr()));
 }
@@ -173,17 +175,20 @@ void MediaRouterAction::OnContextMenuClosed() {
 bool MediaRouterAction::ExecuteAction(bool by_user) {
   base::RecordAction(base::UserMetricsAction("MediaRouter_Icon_Click"));
 
-  if (GetMediaRouterDialogController()->IsShowingMediaRouterDialog()) {
-    GetMediaRouterDialogController()->HideMediaRouterDialog();
+  if (IsShowingPopup()) {
+    HidePopup();
     return false;
   }
 
   GetMediaRouterDialogController()->ShowMediaRouterDialog();
-  if (GetPlatformDelegate()) {
+  if (!skip_close_overflow_menu_for_testing_) {
+    // TODO(karandeepb): Instead of checking the return value of
+    // CloseOverflowMenuIfOpen, just check
+    // ToolbarActionsBar::IsActionVisibleOnMainBar.
     media_router::MediaRouterMetrics::RecordMediaRouterDialogOrigin(
-        GetPlatformDelegate()->CloseOverflowMenuIfOpen() ?
-        media_router::MediaRouterDialogOpenOrigin::OVERFLOW_MENU :
-        media_router::MediaRouterDialogOpenOrigin::TOOLBAR);
+        toolbar_actions_bar_->CloseOverflowMenuIfOpen()
+            ? media_router::MediaRouterDialogOpenOrigin::OVERFLOW_MENU
+            : media_router::MediaRouterDialogOpenOrigin::TOOLBAR);
   }
   return true;
 }
@@ -217,10 +222,13 @@ void MediaRouterAction::OnRoutesUpdated(
   MaybeUpdateIcon();
 }
 
-void MediaRouterAction::ActiveTabChanged(content::WebContents* old_contents,
-                                         content::WebContents* new_contents,
-                                         int index,
-                                         int reason) {
+void MediaRouterAction::OnTabStripModelChanged(
+    TabStripModel* tab_strip_model,
+    const TabStripModelChange& change,
+    const TabStripSelectionChange& selection) {
+  if (!selection.active_tab_changed() || tab_strip_model->empty())
+    return;
+
   RegisterWithDialogController();
   UpdateDialogState();
 }
@@ -266,7 +274,7 @@ void MediaRouterAction::UpdateDialogState() {
   if (!delegate_->GetCurrentWebContents())
     return;
 
-  if (GetMediaRouterDialogController()->IsShowingMediaRouterDialog())
+  if (IsShowingPopup())
     OnDialogShown();
   else
     OnDialogHidden();
@@ -281,8 +289,12 @@ MediaRouterAction::GetMediaRouterDialogController() {
       web_contents);
 }
 
-MediaRouterActionPlatformDelegate* MediaRouterAction::GetPlatformDelegate() {
-  return platform_delegate_.get();
+const MediaRouterDialogControllerImplBase*
+MediaRouterAction::GetMediaRouterDialogController() const {
+  DCHECK(delegate_);
+  content::WebContents* web_contents = delegate_->GetCurrentWebContents();
+  DCHECK(web_contents);
+  return MediaRouterDialogControllerImplBase::FromWebContents(web_contents);
 }
 
 void MediaRouterAction::MaybeUpdateIcon() {

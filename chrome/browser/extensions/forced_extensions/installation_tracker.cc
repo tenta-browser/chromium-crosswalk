@@ -7,8 +7,11 @@
 #include "base/bind.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/values.h"
+#include "chrome/browser/extensions/forced_extensions/installation_failures.h"
+#include "chrome/browser/profiles/profile.h"
 #include "components/prefs/pref_service.h"
 #include "extensions/browser/extension_registry.h"
+#include "extensions/browser/install/crx_install_error.h"
 #include "extensions/browser/pref_names.h"
 
 namespace {
@@ -21,10 +24,11 @@ namespace extensions {
 
 InstallationTracker::InstallationTracker(
     ExtensionRegistry* registry,
-    PrefService* pref_service,
+    Profile* profile,
     std::unique_ptr<base::OneShotTimer> timer)
     : registry_(registry),
-      pref_service_(pref_service),
+      profile_(profile),
+      pref_service_(profile->GetPrefs()),
       start_time_(base::Time::Now()),
       observer_(this),
       timer_(std::move(timer)) {
@@ -93,9 +97,22 @@ void InstallationTracker::ReportResults(bool succeeded) {
       UMA_HISTOGRAM_COUNTS_100(
           "Extensions.ForceInstalledTimedOutAndNotInstalledCount",
           installed_missing_count);
+      for (const auto& extension_id : pending_forced_extensions_) {
+        std::pair<InstallationFailures::Reason,
+                  base::Optional<CrxInstallErrorDetail>>
+            reason = InstallationFailures::Get(profile_, extension_id);
+        UMA_HISTOGRAM_ENUMERATION("Extensions.ForceInstalledFailureReason",
+                                  reason.first);
+        if (reason.second) {
+          CrxInstallErrorDetail detail = reason.second.value();
+          UMA_HISTOGRAM_ENUMERATION(
+              "Extensions.ForceInstalledFailureCrxInstallError", detail);
+        }
+      }
     }
   }
   reported_ = true;
+  InstallationFailures::Clear(profile_);
   observer_.RemoveAll();
   pref_change_registrar_.RemoveAll();
   timer_->Stop();

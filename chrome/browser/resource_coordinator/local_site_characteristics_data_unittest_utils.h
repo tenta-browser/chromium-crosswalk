@@ -12,6 +12,7 @@
 #include "chrome/browser/resource_coordinator/local_site_characteristics_data_store_factory.h"
 #include "chrome/browser/resource_coordinator/local_site_characteristics_database.h"
 #include "chrome/test/base/chrome_render_view_host_test_harness.h"
+#include "content/public/common/service_manager_connection.h"
 #include "testing/gmock/include/gmock/gmock.h"
 
 namespace content {
@@ -72,6 +73,7 @@ class NoopLocalSiteCharacteristicsDatabase
   void RemoveSiteCharacteristicsFromDB(
       const std::vector<url::Origin>& site_origins) override;
   void ClearDatabase() override;
+  void GetDatabaseSize(GetDatabaseSizeCallback callback) override;
 
  private:
   DISALLOW_COPY_AND_ASSIGN(NoopLocalSiteCharacteristicsDatabase);
@@ -84,10 +86,13 @@ class ChromeTestHarnessWithLocalDB : public ChromeRenderViewHostTestHarness {
   ChromeTestHarnessWithLocalDB();
   ~ChromeTestHarnessWithLocalDB() override;
 
+ protected:
   void SetUp() override;
+  void TearDown() override;
 
  private:
   base::test::ScopedFeatureList scoped_feature_list_;
+  service_manager::mojom::ServicePtr service_;
 };
 
 }  // namespace testing

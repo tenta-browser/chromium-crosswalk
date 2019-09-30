@@ -12,9 +12,12 @@
 #include "base/strings/sys_string_conversions.h"
 #include "base/strings/utf_string_conversions.h"
 #import "third_party/mozilla/NSPasteboard+Utils.h"
+#include "ui/base/clipboard/clipboard_constants.h"
+#include "ui/base/clipboard/clipboard_format_type.h"
 #import "ui/base/clipboard/clipboard_util_mac.h"
 #include "ui/base/clipboard/custom_data_helper.h"
 #import "ui/base/dragdrop/cocoa_dnd_util.h"
+#include "ui/base/dragdrop/file_info.h"
 #include "url/gurl.h"
 
 namespace ui {
@@ -64,11 +67,20 @@ void OSExchangeDataProviderMac::SetFilename(const base::FilePath& path) {
 
 void OSExchangeDataProviderMac::SetFilenames(
     const std::vector<FileInfo>& filenames) {
-  NOTIMPLEMENTED();
+  if (filenames.empty())
+    return;
+
+  NSMutableArray* paths = [NSMutableArray arrayWithCapacity:filenames.size()];
+
+  for (const auto& filename : filenames) {
+    NSString* path = base::SysUTF8ToNSString(filename.path.value());
+    [paths addObject:path];
+  }
+  [pasteboard_->get() setPropertyList:paths forType:NSFilenamesPboardType];
 }
 
 void OSExchangeDataProviderMac::SetPickledData(
-    const Clipboard::FormatType& format,
+    const ClipboardFormatType& format,
     const base::Pickle& data) {
   NSData* ns_data = [NSData dataWithBytes:data.data() length:data.size()];
   [pasteboard_->get() setData:ns_data forType:format.ToNSString()];
@@ -131,18 +143,26 @@ bool OSExchangeDataProviderMac::GetFilename(base::FilePath* path) const {
   if ([paths count] == 0)
     return false;
 
-  *path = base::FilePath([[paths objectAtIndex:0] UTF8String]);
+  *path = base::FilePath(base::SysNSStringToUTF8(paths[0]));
   return true;
 }
 
 bool OSExchangeDataProviderMac::GetFilenames(
     std::vector<FileInfo>* filenames) const {
-  NOTIMPLEMENTED();
-  return false;
+  NSArray* paths =
+      [pasteboard_->get() propertyListForType:NSFilenamesPboardType];
+  if ([paths count] == 0)
+    return false;
+
+  for (NSString* path in paths)
+    filenames->push_back(
+        {base::FilePath(base::SysNSStringToUTF8(path)), base::FilePath()});
+
+  return true;
 }
 
 bool OSExchangeDataProviderMac::GetPickledData(
-    const Clipboard::FormatType& format,
+    const ClipboardFormatType& format,
     base::Pickle* data) const {
   DCHECK(data);
   NSData* ns_data = [pasteboard_->get() dataForType:format.ToNSString()];
@@ -171,7 +191,7 @@ bool OSExchangeDataProviderMac::HasFile() const {
 }
 
 bool OSExchangeDataProviderMac::HasCustomFormat(
-    const Clipboard::FormatType& format) const {
+    const ClipboardFormatType& format) const {
   return [[pasteboard_->get() types] containsObject:format.ToNSString()];
 }
 
@@ -192,6 +212,10 @@ gfx::Vector2d OSExchangeDataProviderMac::GetDragImageOffset() const {
 
 NSData* OSExchangeDataProviderMac::GetNSDataForType(NSString* type) const {
   return [pasteboard_->get() dataForType:type];
+}
+
+NSPasteboard* OSExchangeDataProviderMac::GetPasteboard() const {
+  return pasteboard_->get();
 }
 
 NSArray* OSExchangeDataProviderMac::GetAvailableTypes() const {

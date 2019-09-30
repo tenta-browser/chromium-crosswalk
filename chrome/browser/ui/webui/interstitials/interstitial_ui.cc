@@ -131,8 +131,7 @@ class CaptivePortalBlockingPageWithNetInfo : public CaptivePortalBlockingPage {
 };
 #endif
 
-SSLBlockingPage* CreateSSLBlockingPage(content::WebContents* web_contents,
-                                       bool is_superfish) {
+SSLBlockingPage* CreateSSLBlockingPage(content::WebContents* web_contents) {
   // Random parameters for SSL blocking page.
   int cert_error = net::ERR_CERT_CONTAINS_ERRORS;
   GURL request_url("https://example.com");
@@ -177,7 +176,7 @@ SSLBlockingPage* CreateSSLBlockingPage(content::WebContents* web_contents,
     options_mask |= security_interstitials::SSLErrorUI::STRICT_ENFORCEMENT;
   return SSLBlockingPage::Create(
       web_contents, cert_error, ssl_info, request_url, options_mask,
-      time_triggered_, GURL(), nullptr, is_superfish,
+      time_triggered_, GURL(), nullptr,
       base::Callback<void(content::CertificateRequestResultType)>());
 }
 
@@ -330,6 +329,8 @@ TestSafeBrowsingBlockingPageQuiet* CreateSafeBrowsingQuietBlockingPage(
       threat_type = safe_browsing::SB_THREAT_TYPE_URL_PHISHING;
     } else if (type_param == "unwanted") {
       threat_type = safe_browsing::SB_THREAT_TYPE_URL_UNWANTED;
+    } else if (type_param == "billing") {
+      threat_type = safe_browsing::SB_THREAT_TYPE_BILLING;
     } else if (type_param == "giant") {
       threat_type = safe_browsing::SB_THREAT_TYPE_URL_MALWARE;
       is_giant_webview = true;
@@ -407,8 +408,7 @@ CaptivePortalBlockingPage* CreateCaptivePortalBlockingPage(
 
 InterstitialUI::InterstitialUI(content::WebUI* web_ui)
     : WebUIController(web_ui) {
-  Profile* profile = Profile::FromWebUI(web_ui);
-  content::URLDataSource::Add(profile,
+  content::URLDataSource::Add(Profile::FromWebUI(web_ui),
                               std::make_unique<InterstitialHTMLSource>());
 }
 
@@ -457,11 +457,7 @@ void InterstitialHTMLSource::StartDataRequest(
       GURL(chrome::kChromeUIInterstitialURL).GetWithEmptyPath().Resolve(path);
   std::string path_without_query = url.path();
   if (path_without_query == "/ssl") {
-    interstitial_delegate.reset(
-        CreateSSLBlockingPage(web_contents, false /* is superfish */));
-  } else if (path_without_query == "/superfish-ssl") {
-    interstitial_delegate.reset(
-        CreateSSLBlockingPage(web_contents, true /* is superfish */));
+    interstitial_delegate.reset(CreateSSLBlockingPage(web_contents));
   } else if (path_without_query == "/mitm-software-ssl") {
     interstitial_delegate.reset(CreateMITMSoftwareBlockingPage(web_contents));
   } else if (path_without_query == "/safebrowsing") {

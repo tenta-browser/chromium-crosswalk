@@ -21,14 +21,6 @@ class TabletModeWindowDragDelegate;
 class ASH_EXPORT TabletModeAppWindowDragController
     : public display::DisplayObserver {
  public:
-  // Threshold of the fling velocity to drop the dragged window into overview if
-  // fling from the top of the display.
-  static constexpr float kFlingToOverviewThreshold = 2000.f;
-
-  // Threshold of the fling velocity to drop the dragged window into overview if
-  // fling inside preview area or when splitview is active.
-  static constexpr float kFlingToOverviewFromSnappingAreaThreshold = 1000.f;
-
   TabletModeAppWindowDragController();
   ~TabletModeAppWindowDragController() override;
 
@@ -38,9 +30,7 @@ class ASH_EXPORT TabletModeAppWindowDragController
   // window may be 1) maximized, or 2) snapped in splitscren.
   bool DragWindowFromTop(ui::GestureEvent* event);
 
-  TabletModeWindowDragDelegate* drag_delegate_for_testing() {
-    return drag_delegate_.get();
-  }
+  TabletModeWindowDragDelegate* drag_delegate() { return drag_delegate_.get(); }
 
  private:
   // Gesture window drag related functions. Used in DragWindowFromTop.
@@ -48,9 +38,7 @@ class ASH_EXPORT TabletModeAppWindowDragController
   void UpdateWindowDrag(ui::GestureEvent* event);
   void EndWindowDrag(ui::GestureEvent* event,
                      wm::WmToplevelWindowEventHandler::DragResult result);
-
-  // Returns true if fling event should drop the window into overview grid.
-  bool ShouldFlingIntoOverview(ui::GestureEvent* event);
+  void FlingOrSwipe(ui::GestureEvent* event);
 
   // display::DisplayObserver:
   void OnDisplayMetricsChanged(const display::Display& display,

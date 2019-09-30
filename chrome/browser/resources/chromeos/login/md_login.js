@@ -41,7 +41,6 @@ cr.define('cr.ui.Oobe', function() {
       login.ErrorMessageScreen.register();
       login.TPMErrorMessageScreen.register();
       login.PasswordChangedScreen.register();
-      login.SupervisedUserCreationScreen.register();
       login.TermsOfServiceScreen.register();
       login.SyncConsentScreen.register();
       login.FingerprintSetupScreen.register();
@@ -56,12 +55,12 @@ cr.define('cr.ui.Oobe', function() {
       login.UnrecoverableCryptohomeErrorScreen.register();
       login.ActiveDirectoryPasswordChangeScreen.register(/* lazyInit= */ true);
       login.EncryptionMigrationScreen.register();
-      login.VoiceInteractionValuePropScreen.register();
-      login.WaitForContainerReadyScreen.register();
+      login.SupervisionTransitionScreen.register();
       login.UpdateRequiredScreen.register();
       login.DiscoverScreen.register();
       login.MarketingOptInScreen.register();
       login.AssistantOptInFlowScreen.register();
+      login.MultiDeviceSetupScreen.register();
 
       cr.ui.Bubble.decorate($('bubble-persistent'));
       $('bubble-persistent').persistent = true;
@@ -108,7 +107,7 @@ cr.define('cr.ui.Oobe', function() {
 
     /**
      * Updates OOBE configuration when it is loaded.
-     * @param {dictionary} configuration OOBE configuration.
+     * @param {!OobeTypes.OobeConfiguration} configuration OOBE configuration.
      */
     updateOobeConfiguration: function(configuration) {
       Oobe.getInstance().updateOobeConfiguration_(configuration);

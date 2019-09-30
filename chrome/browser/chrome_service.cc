@@ -6,10 +6,12 @@
 
 #include "base/no_destructor.h"
 #include "base/single_thread_task_runner.h"
+#include "base/task/post_task.h"
 #include "chrome/browser/chrome_browser_main_extra_parts.h"
 #include "chrome/common/constants.mojom.h"
 #include "components/spellcheck/spellcheck_buildflags.h"
 #include "components/startup_metric_utils/browser/startup_metric_host_impl.h"
+#include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/content_browser_client.h"
 #include "content/public/common/content_client.h"
@@ -17,7 +19,7 @@
 #include "services/service_manager/public/cpp/binder_registry.h"
 #include "services/service_manager/public/cpp/connector.h"
 #include "services/service_manager/public/cpp/service.h"
-#include "services/service_manager/public/cpp/service_context.h"
+#include "services/service_manager/public/cpp/service_binding.h"
 
 #if defined(OS_CHROMEOS)
 #include "chrome/browser/chromeos/launchable.h"
@@ -36,8 +38,8 @@ class ChromeService::IOThreadContext : public service_manager::Service {
  public:
   IOThreadContext() {
     scoped_refptr<base::SingleThreadTaskRunner> ui_task_runner =
-        content::BrowserThread::GetTaskRunnerForThread(
-            content::BrowserThread::UI);
+        base::CreateSingleThreadTaskRunnerWithTraits(
+            {content::BrowserThread::UI});
 
 #if defined(OS_CHROMEOS)
 #if defined(USE_OZONE)
@@ -60,6 +62,10 @@ class ChromeService::IOThreadContext : public service_manager::Service {
   }
   ~IOThreadContext() override = default;
 
+  void BindServiceRequest(service_manager::mojom::ServiceRequest request) {
+    service_binding_.Bind(std::move(request));
+  }
+
   void BindConnector(
       service_manager::mojom::ConnectorRequest connector_request) {
     DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
@@ -68,7 +74,7 @@ class ChromeService::IOThreadContext : public service_manager::Service {
     // on the IO thread. Post a task instead. As long as this task is posted
     // before any code attempts to connect to the chrome service, there's no
     // race.
-    content::BrowserThread::GetTaskRunnerForThread(content::BrowserThread::IO)
+    base::CreateSingleThreadTaskRunnerWithTraits({content::BrowserThread::IO})
         ->PostTask(FROM_HERE,
                    base::BindOnce(&IOThreadContext::BindConnectorOnIOThread,
                                   base::Unretained(this),
@@ -86,7 +92,8 @@ class ChromeService::IOThreadContext : public service_manager::Service {
   void OnStart() override {
     DCHECK_CURRENTLY_ON(content::BrowserThread::IO);
     DCHECK(connector_request_.is_pending());
-    context()->connector()->BindConnectorRequest(std::move(connector_request_));
+    service_binding_.GetConnector()->BindConnectorRequest(
+        std::move(connector_request_));
   }
 
   void OnBindInterface(const service_manager::BindSourceInfo& remote_info,
@@ -103,6 +110,7 @@ class ChromeService::IOThreadContext : public service_manager::Service {
 
   service_manager::mojom::ConnectorRequest connector_request_;
 
+  service_manager::ServiceBinding service_binding_{this};
   service_manager::BinderRegistry registry_;
   service_manager::BinderRegistryWithArgs<
       const service_manager::BindSourceInfo&>
@@ -127,12 +135,13 @@ class ChromeService::ExtraParts : public ChromeBrowserMainExtraParts {
   void ServiceManagerConnectionStarted(
       content::ServiceManagerConnection* connection) override {
     // Initializing the connector asynchronously configures the Connector on the
-    // IO thread. This needs to be done before StartService() is called or
+    // IO thread. This needs to be done before WarmService() is called or
     // ChromeService::BindConnector() can race with ChromeService::OnStart().
     ChromeService::GetInstance()->InitConnector();
 
-    connection->GetConnector()->StartService(
-        service_manager::Identity(chrome::mojom::kServiceName));
+    // TODO(https://crbug.com/904148): This should not use |WarmService()|.
+    connection->GetConnector()->WarmService(
+        service_manager::ServiceFilter::ByName(chrome::mojom::kServiceName));
   }
 
   DISALLOW_COPY_AND_ASSIGN(ExtraParts);
@@ -148,9 +157,9 @@ ChromeBrowserMainExtraParts* ChromeService::CreateExtraParts() {
   return new ExtraParts;
 }
 
-service_manager::EmbeddedServiceInfo::ServiceFactory
-ChromeService::CreateChromeServiceFactory() {
-  return base::BindRepeating(&ChromeService::CreateChromeServiceWrapper,
+content::ServiceManagerConnection::ServiceRequestHandler
+ChromeService::CreateChromeServiceRequestHandler() {
+  return base::BindRepeating(&ChromeService::BindChromeServiceRequest,
                              base::Unretained(this));
 }
 
@@ -165,9 +174,8 @@ void ChromeService::InitConnector() {
   io_thread_context_->BindConnector(std::move(request));
 }
 
-std::unique_ptr<service_manager::Service>
-ChromeService::CreateChromeServiceWrapper() {
+void ChromeService::BindChromeServiceRequest(
+    service_manager::mojom::ServiceRequest request) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::IO);
-  return std::make_unique<service_manager::ForwardingService>(
-      io_thread_context_.get());
+  io_thread_context_->BindServiceRequest(std::move(request));
 }

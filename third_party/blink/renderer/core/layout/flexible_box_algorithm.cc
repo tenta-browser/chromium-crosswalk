@@ -31,6 +31,7 @@
 #include "third_party/blink/renderer/core/layout/flexible_box_algorithm.h"
 
 #include "third_party/blink/renderer/core/layout/layout_box.h"
+#include "third_party/blink/renderer/core/layout/layout_flexible_box.h"
 #include "third_party/blink/renderer/core/layout/min_max_size.h"
 
 namespace blink {
@@ -40,7 +41,9 @@ FlexItem::FlexItem(LayoutBox* box,
                    MinMaxSize min_max_sizes,
                    LayoutUnit main_axis_border_and_padding,
                    LayoutUnit main_axis_margin)
-    : box(box),
+    : algorithm(nullptr),
+      line_number(0),
+      box(box),
       flex_base_content_size(flex_base_content_size),
       min_max_sizes(min_max_sizes),
       hypothetical_main_content_size(
@@ -54,8 +57,8 @@ FlexItem::FlexItem(LayoutBox* box,
       << "Use LayoutUnit::Max() for no max size";
 }
 
-bool FlexItem::HasOrthogonalFlow() const {
-  return algorithm->IsHorizontalFlow() != box->IsHorizontalWritingMode();
+bool FlexItem::MainAxisIsInlineAxis() const {
+  return algorithm->IsHorizontalFlow() == box->IsHorizontalWritingMode();
 }
 
 LayoutUnit FlexItem::FlowAwareMarginStart() const {
@@ -103,10 +106,9 @@ LayoutUnit FlexItem::MarginBoxAscent() const {
   return ascent + FlowAwareMarginBefore();
 }
 
-LayoutUnit FlexItem::AvailableAlignmentSpace(
-    LayoutUnit line_cross_axis_extent) const {
+LayoutUnit FlexItem::AvailableAlignmentSpace() const {
   LayoutUnit cross_extent = CrossAxisMarginExtent() + cross_axis_size;
-  return line_cross_axis_extent - cross_extent;
+  return Line()->cross_axis_extent - cross_extent;
 }
 
 bool FlexItem::HasAutoMarginsInCrossAxis() const {
@@ -139,7 +141,33 @@ void FlexItem::UpdateAutoMarginsInMainAxis(LayoutUnit auto_margin_offset) {
   }
 }
 
-void FlexLine::FreezeViolations(Vector<FlexItem*>& violations) {
+void FlexItem::ComputeStretchedSize() {
+  // TODO(dgrogan): Pass resolved cross-axis MinMaxSize to FlexItem
+  // constructor. Then use cross_axis_min_max.ClampSizeToMinAndMax instead of
+  // relying on legacy in this method.
+  DCHECK_EQ(Alignment(), ItemPosition::kStretch);
+  if (MainAxisIsInlineAxis() && box->StyleRef().LogicalHeight().IsAuto()) {
+    LayoutUnit stretched_logical_height =
+        std::max(box->BorderAndPaddingLogicalHeight(),
+                 Line()->cross_axis_extent - CrossAxisMarginExtent());
+    cross_axis_size = box->ConstrainLogicalHeightByMinMax(
+        stretched_logical_height, box->IntrinsicContentLogicalHeight());
+  } else if (!MainAxisIsInlineAxis() &&
+             box->StyleRef().LogicalWidth().IsAuto()) {
+    // This doesn't work in NG because CrossAxisContentExtent() isn't yet
+    // implemented there.
+    if (box->Parent()->IsLayoutNGFlexibleBox())
+      return;
+    LayoutUnit child_width =
+        (Line()->cross_axis_extent - CrossAxisMarginExtent())
+            .ClampNegativeToZero();
+    LayoutFlexibleBox* flexbox = ToLayoutFlexibleBox(box->Parent());
+    cross_axis_size = box->ConstrainLogicalWidthByMinMax(
+        child_width, flexbox->CrossAxisContentExtent(), flexbox);
+  }
+}
+
+void FlexLine::FreezeViolations(ViolationsVector& violations) {
   for (size_t i = 0; i < violations.size(); ++i) {
     DCHECK(!violations[i]->frozen) << i;
     LayoutBox* child = violations[i]->box;
@@ -166,7 +194,7 @@ void FlexLine::FreezeInflexibleItems() {
   FlexSign flex_sign = Sign();
   remaining_free_space = container_main_inner_size - sum_flex_base_size;
 
-  Vector<FlexItem*> new_inflexible_items;
+  ViolationsVector new_inflexible_items;
   for (size_t i = 0; i < line_items.size(); ++i) {
     FlexItem& flex_item = line_items[i];
     LayoutBox* child = flex_item.box;
@@ -193,8 +221,8 @@ void FlexLine::FreezeInflexibleItems() {
 bool FlexLine::ResolveFlexibleLengths() {
   LayoutUnit total_violation;
   LayoutUnit used_free_space;
-  Vector<FlexItem*> min_violations;
-  Vector<FlexItem*> max_violations;
+  ViolationsVector min_violations;
+  ViolationsVector max_violations;
 
   FlexSign flex_sign = Sign();
   double sum_flex_factors =
@@ -334,7 +362,8 @@ void FlexLine::ComputeLineItemsPosition(LayoutUnit main_axis_offset,
 
     LayoutUnit child_main_extent = flex_item.FlexedBorderBoxSize();
     // In an RTL column situation, this will apply the margin-right/margin-end
-    // on the left. This will be fixed later in flipForRightToLeftColumn.
+    // on the left. This will be fixed later in
+    // LayoutFlexibleBox::FlipForRightToLeftColumn.
     flex_item.desired_location = LayoutPoint(
         should_flip_main_axis
             ? container_logical_width - main_axis_offset - child_main_extent
@@ -359,19 +388,13 @@ void FlexLine::ComputeLineItemsPosition(LayoutUnit main_axis_offset,
 }
 
 FlexLayoutAlgorithm::FlexLayoutAlgorithm(const ComputedStyle* style,
-                                         LayoutUnit line_break_length,
-                                         Vector<FlexItem>& all_items)
+                                         LayoutUnit line_break_length)
     : style_(style),
       line_break_length_(line_break_length),
-      all_items_(all_items),
-      next_item_index_(0) {
-  for (FlexItem& item : all_items_)
-    item.algorithm = this;
-}
+      next_item_index_(0) {}
 
 FlexLine* FlexLayoutAlgorithm::ComputeNextFlexLine(
     LayoutUnit container_logical_width) {
-  Vector<FlexItem> line_items;
   LayoutUnit sum_flex_base_size;
   double total_flex_grow = 0;
   double total_flex_shrink = 0;
@@ -380,16 +403,18 @@ FlexLine* FlexLayoutAlgorithm::ComputeNextFlexLine(
 
   bool line_has_in_flow_item = false;
 
+  wtf_size_t start_index = next_item_index_;
+
   for (; next_item_index_ < all_items_.size(); ++next_item_index_) {
-    const FlexItem& flex_item = all_items_[next_item_index_];
+    FlexItem& flex_item = all_items_[next_item_index_];
     DCHECK(!flex_item.box->IsOutOfFlowPositioned());
     if (IsMultiline() &&
         sum_hypothetical_main_size +
                 flex_item.HypotheticalMainAxisMarginBoxSize() >
             line_break_length_ &&
-        line_has_in_flow_item)
+        line_has_in_flow_item) {
       break;
-    line_items.push_back(flex_item);
+    }
     line_has_in_flow_item = true;
     sum_flex_base_size += flex_item.FlexBaseMarginBoxSize();
     total_flex_grow += flex_item.box->StyleRef().FlexGrow();
@@ -397,13 +422,16 @@ FlexLine* FlexLayoutAlgorithm::ComputeNextFlexLine(
     total_weighted_flex_shrink += flex_item.box->StyleRef().FlexShrink() *
                                   flex_item.flex_base_content_size;
     sum_hypothetical_main_size += flex_item.HypotheticalMainAxisMarginBoxSize();
+    flex_item.line_number = flex_lines_.size();
   }
-  DCHECK(line_items.size() > 0 || next_item_index_ == all_items_.size());
-  if (line_items.size() > 0) {
-    // This will std::move line_items.
+
+  DCHECK(next_item_index_ > start_index ||
+         next_item_index_ == all_items_.size());
+  if (next_item_index_ > start_index) {
     return &flex_lines_.emplace_back(
-        this, line_items, container_logical_width, sum_flex_base_size,
-        total_flex_grow, total_flex_shrink, total_weighted_flex_shrink,
+        this, FlexItemVectorView(&all_items_, start_index, next_item_index_),
+        container_logical_width, sum_flex_base_size, total_flex_grow,
+        total_flex_shrink, total_weighted_flex_shrink,
         sum_hypothetical_main_size);
   }
   return nullptr;
@@ -411,6 +439,10 @@ FlexLine* FlexLayoutAlgorithm::ComputeNextFlexLine(
 
 bool FlexLayoutAlgorithm::IsHorizontalFlow() const {
   return IsHorizontalFlow(*style_);
+}
+
+bool FlexLayoutAlgorithm::IsColumnFlow() const {
+  return StyleRef().IsColumnFlexDirection();
 }
 
 bool FlexLayoutAlgorithm::IsHorizontalFlow(const ComputedStyle& style) {
@@ -437,6 +469,25 @@ FlexLayoutAlgorithm::ContentAlignmentNormalBehavior() {
   static const StyleContentAlignmentData kNormalBehavior = {
       ContentPosition::kNormal, ContentDistributionType::kStretch};
   return kNormalBehavior;
+}
+
+bool FlexLayoutAlgorithm::ShouldApplyMinSizeAutoForChild(
+    const LayoutBox& child) const {
+  // css-flexbox section 4.5
+  const Length& min = IsHorizontalFlow() ? child.StyleRef().MinWidth()
+                                         : child.StyleRef().MinHeight();
+  if (!min.IsAuto())
+    return false;
+
+  // TODO(crbug.com/927066): We calculate an incorrect intrinsic logical height
+  // when percentages are involved, so for now don't apply min-height: auto
+  // in such cases.
+  if (IsColumnFlow() && child.IsFlexibleBox() &&
+      ToLayoutBlock(child).HasPercentHeightDescendants())
+    return false;
+
+  return !child.ShouldApplySizeContainment() &&
+         MainAxisOverflowForChild(child) == EOverflow::kVisible;
 }
 
 TransformedWritingMode FlexLayoutAlgorithm::GetTransformedWritingMode() const {
@@ -563,6 +614,13 @@ LayoutUnit FlexLayoutAlgorithm::ContentDistributionSpaceBetweenChildren(
       return available_free_space / (number_of_items + 1);
   }
   return LayoutUnit();
+}
+
+EOverflow FlexLayoutAlgorithm::MainAxisOverflowForChild(
+    const LayoutBox& child) const {
+  if (IsHorizontalFlow())
+    return child.StyleRef().OverflowX();
+  return child.StyleRef().OverflowY();
 }
 
 }  // namespace blink

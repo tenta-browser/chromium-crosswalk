@@ -39,13 +39,13 @@
 #include "chrome/browser/ui/extensions/application_launch.h"
 #include "chrome/browser/ui/extensions/hosted_app_browser_controller.h"
 #include "chrome/browser/ui/page_info/page_info_dialog.h"
+#include "chrome/browser/ui/singleton_tabs.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/browser/ui/webui/inspect_ui.h"
 #include "chrome/common/content_restriction.h"
 #include "chrome/common/pref_names.h"
-#include "chrome/common/profiling.h"
+#include "chrome/common/url_constants.h"
 #include "components/bookmarks/common/bookmark_pref_names.h"
-#include "components/browser_sync/profile_sync_service.h"
 #include "components/dom_distiller/core/dom_distiller_switches.h"
 #include "components/feature_engagement/buildflags.h"
 #include "components/prefs/pref_service.h"
@@ -57,6 +57,7 @@
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_contents_observer.h"
+#include "content/public/common/profiling.h"
 #include "content/public/common/service_manager_connection.h"
 #include "content/public/common/url_constants.h"
 #include "extensions/browser/extension_system.h"
@@ -347,7 +348,7 @@ bool BrowserCommandController::ExecuteCommandWithDisposition(
       NewWindow(browser_);
       break;
     case IDC_NEW_INCOGNITO_WINDOW:
-      NewIncognitoWindow(browser_);
+      NewIncognitoWindow(profile());
       break;
     case IDC_CLOSE_WINDOW:
       base::RecordAction(base::UserMetricsAction("CloseWindowByKey"));
@@ -447,9 +448,7 @@ bool BrowserCommandController::ExecuteCommandWithDisposition(
       chrome::ToggleFullscreenToolbar(browser_);
       break;
     case IDC_TOGGLE_JAVASCRIPT_APPLE_EVENTS: {
-      PrefService* prefs = profile()->GetPrefs();
-      prefs->SetBoolean(prefs::kAllowJavascriptAppleEvents,
-                        !prefs->GetBoolean(prefs::kAllowJavascriptAppleEvents));
+      chrome::ToggleJavaScriptFromAppleEventsAllowed(browser_);
       break;
     }
 #endif
@@ -508,6 +507,9 @@ bool BrowserCommandController::ExecuteCommandWithDisposition(
       break;
     case IDC_MANAGE_PASSWORDS_FOR_PAGE:
       ManagePasswordsForPage(browser_);
+      break;
+    case IDC_SEND_TO_MY_DEVICES:
+      SendToMyDevices(browser_);
       break;
 
     // Clipboard commands
@@ -613,7 +615,7 @@ bool BrowserCommandController::ExecuteCommandWithDisposition(
       ToggleBookmarkBar(browser_);
       break;
     case IDC_PROFILING_ENABLED:
-      Profiling::Toggle();
+      content::Profiling::Toggle();
       break;
 
     case IDC_SHOW_BOOKMARK_MANAGER:
@@ -684,6 +686,9 @@ bool BrowserCommandController::ExecuteCommandWithDisposition(
     case IDC_WINDOW_PIN_TAB:
       PinTab(browser_);
       break;
+    case IDC_MANAGED_UI_HELP:
+      ShowSingletonTab(browser_, GURL(kManagedUiLearnMoreUrl));
+      break;
 
     // Hosted App commands
     case IDC_COPY_URL:
@@ -744,25 +749,32 @@ void BrowserCommandController::OnSigninAllowedPrefChange() {
 
 // BrowserCommandController, TabStripModelObserver implementation:
 
-void BrowserCommandController::TabInsertedAt(TabStripModel* tab_strip_model,
-                                             WebContents* contents,
-                                             int index,
-                                             bool foreground) {
-  AddInterstitialObservers(contents);
-}
+void BrowserCommandController::OnTabStripModelChanged(
+    TabStripModel* tab_strip_model,
+    const TabStripModelChange& change,
+    const TabStripSelectionChange& selection) {
+  if (change.type() != TabStripModelChange::kInserted &&
+      change.type() != TabStripModelChange::kReplaced &&
+      change.type() != TabStripModelChange::kRemoved)
+    return;
 
-void BrowserCommandController::TabDetachedAt(WebContents* contents,
-                                             int index,
-                                             bool was_active) {
-  RemoveInterstitialObservers(contents);
-}
+  for (const auto& delta : change.deltas()) {
+    content::WebContents* new_contents = nullptr;
+    content::WebContents* old_contents = nullptr;
+    if (change.type() == TabStripModelChange::kInserted) {
+      new_contents = delta.insert.contents;
+    } else if (change.type() == TabStripModelChange::kReplaced) {
+      new_contents = delta.replace.new_contents;
+      old_contents = delta.replace.old_contents;
+    } else {
+      old_contents = delta.remove.contents;
+    }
 
-void BrowserCommandController::TabReplacedAt(TabStripModel* tab_strip_model,
-                                             WebContents* old_contents,
-                                             WebContents* new_contents,
-                                             int index) {
-  RemoveInterstitialObservers(old_contents);
-  AddInterstitialObservers(new_contents);
+    if (old_contents)
+      RemoveInterstitialObservers(old_contents);
+    if (new_contents)
+      AddInterstitialObservers(new_contents);
+  }
 }
 
 void BrowserCommandController::TabBlockedStateChanged(
@@ -819,8 +831,11 @@ class BrowserCommandController::InterstitialObserver
 };
 
 bool BrowserCommandController::IsShowingMainUI() {
-  bool should_hide_ui = window() && window()->ShouldHideUIForFullscreen();
-  return browser_->is_type_tabbed() && !should_hide_ui;
+  return browser_->SupportsWindowFeature(Browser::FEATURE_TABSTRIP);
+}
+
+bool BrowserCommandController::IsShowingLocationBar() {
+  return browser_->SupportsWindowFeature(Browser::FEATURE_LOCATIONBAR);
 }
 
 void BrowserCommandController::InitCommandState() {
@@ -867,6 +882,7 @@ void BrowserCommandController::InitCommandState() {
   // Page-related commands
   command_updater_.UpdateCommandEnabled(IDC_EMAIL_PAGE_LOCATION, true);
   command_updater_.UpdateCommandEnabled(IDC_MANAGE_PASSWORDS_FOR_PAGE, true);
+  command_updater_.UpdateCommandEnabled(IDC_SEND_TO_MY_DEVICES, true);
 
   // Zoom
   command_updater_.UpdateCommandEnabled(IDC_ZOOM_MENU, true);
@@ -1153,6 +1169,8 @@ void BrowserCommandController::UpdateCommandsForFullscreenMode() {
 
   const bool is_fullscreen = window() && window()->IsFullscreen();
   const bool show_main_ui = IsShowingMainUI();
+  const bool show_location_bar = IsShowingLocationBar();
+
   const bool main_not_fullscreen = show_main_ui && !is_fullscreen;
 
   // Navigation commands
@@ -1165,7 +1183,7 @@ void BrowserCommandController::UpdateCommandsForFullscreenMode() {
 
   // Focus various bits of UI
   command_updater_.UpdateCommandEnabled(IDC_FOCUS_TOOLBAR, show_main_ui);
-  command_updater_.UpdateCommandEnabled(IDC_FOCUS_LOCATION, show_main_ui);
+  command_updater_.UpdateCommandEnabled(IDC_FOCUS_LOCATION, show_location_bar);
   command_updater_.UpdateCommandEnabled(IDC_FOCUS_SEARCH, show_main_ui);
   command_updater_.UpdateCommandEnabled(
       IDC_FOCUS_MENU_BAR, main_not_fullscreen);
@@ -1189,6 +1207,7 @@ void BrowserCommandController::UpdateCommandsForFullscreenMode() {
   command_updater_.UpdateCommandEnabled(IDC_VIEW_PASSWORDS, show_main_ui);
   command_updater_.UpdateCommandEnabled(IDC_ABOUT, show_main_ui);
   command_updater_.UpdateCommandEnabled(IDC_SHOW_APP_MENU, show_main_ui);
+  command_updater_.UpdateCommandEnabled(IDC_MANAGED_UI_HELP, true);
 
   if (base::debug::IsProfilingSupported())
     command_updater_.UpdateCommandEnabled(IDC_PROFILING_ENABLED, show_main_ui);
@@ -1230,11 +1249,7 @@ namespace {
 // Makes sure that all commands that are not whitelisted are disabled. DCHECKs
 // otherwise. Compiled only in debug mode.
 void NonWhitelistedCommandsAreDisabled(CommandUpdaterImpl* command_updater) {
-  constexpr int kWhitelistedIds[] = {
-    IDC_CUT, IDC_COPY, IDC_PASTE,
-    IDC_FIND, IDC_FIND_NEXT, IDC_FIND_PREVIOUS,
-    IDC_ZOOM_PLUS, IDC_ZOOM_NORMAL, IDC_ZOOM_MINUS,
-  };
+  constexpr int kWhitelistedIds[] = {IDC_CUT, IDC_COPY, IDC_PASTE};
 
   // Go through all the command ids, skip the whitelisted ones.
   for (int id : command_updater->GetAllIds()) {
@@ -1261,10 +1276,7 @@ void BrowserCommandController::UpdateCommandsForLockedFullscreenMode() {
     // Update the state of whitelisted commands:
     // IDC_CUT/IDC_COPY/IDC_PASTE,
     UpdateCommandsForContentRestrictionState();
-    // IDC_FIND/IDC_FIND_NEXT/IDC_FIND_PREVIOUS,
-    UpdateCommandsForFind();
-    // IDC_ZOOM_PLUS/IDC_ZOOM_NORMAL/IDC_ZOOM_MINUS.
-    UpdateCommandsForZoomState();
+    // TODO(crbug.com/904637): Re-enable Find and Zoom in locked fullscreen.
     // All other commands will be disabled (there is an early return in their
     // corresponding UpdateCommandsFor* functions).
 #if DCHECK_IS_ON()
@@ -1365,7 +1377,7 @@ void BrowserCommandController::UpdateShowSyncState(bool show_main_ui) {
     return;
 
   command_updater_.UpdateCommandEnabled(
-      IDC_SHOW_SYNC_SETUP, show_main_ui && pref_signin_allowed_.GetValue());
+      IDC_SHOW_SIGNIN, show_main_ui && pref_signin_allowed_.GetValue());
 }
 
 // static

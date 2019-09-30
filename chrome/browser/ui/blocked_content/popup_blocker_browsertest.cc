@@ -28,7 +28,6 @@
 #include "chrome/browser/ui/login/login_handler.h"
 #include "chrome/browser/ui/login/login_handler_test_utils.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
-#include "chrome/browser/ui/views_mode_controller.h"
 #include "chrome/common/chrome_features.h"
 #include "chrome/common/chrome_paths.h"
 #include "chrome/common/chrome_switches.h"
@@ -428,16 +427,23 @@ IN_PROC_BROWSER_TEST_F(PopupBlockerBrowserTest,
   ASSERT_EQ(1, GetBlockedContentsCount());
 }
 
-IN_PROC_BROWSER_TEST_F(PopupBlockerBrowserTest, PopupsLaunchWhenTabIsClosed) {
+// Popups during page unloading is a feature being put behind a policy and
+// needing an easily-mergeable change. See https://crbug.com/936080 .
+#if 0
+IN_PROC_BROWSER_TEST_F(PopupBlockerBrowserTest, NoPopupsLaunchWhenTabIsClosed) {
   base::CommandLine::ForCurrentProcess()->AppendSwitch(
       switches::kDisablePopupBlocking);
   GURL url(
       embedded_test_server()->GetURL("/popup_blocker/popup-on-unload.html"));
   ui_test_utils::NavigateToURL(browser(), url);
 
-  NavigateAndCheckPopupShown(embedded_test_server()->GetURL("/popup_blocker/"),
-                             kExpectPopup);
+  GURL url2(embedded_test_server()->GetURL("/popup_blocker/"));
+  ui_test_utils::NavigateToURL(browser(), url2);
+
+  // Expect no popup.
+  ASSERT_EQ(1u, chrome::GetBrowserCount(browser()->profile()));
 }
+#endif
 
 // Verify that when you unblock popup, the popup shows in history and omnibox.
 IN_PROC_BROWSER_TEST_F(PopupBlockerBrowserTest,
@@ -494,13 +500,11 @@ IN_PROC_BROWSER_TEST_F(PopupBlockerBrowserTest, MAYBE_WindowFeatures) {
   // Check that the new popup has (roughly) the requested size.
   gfx::Size window_size = popup->GetContainerBounds().size();
   EXPECT_TRUE(349 <= window_size.width() && window_size.width() <= 351);
-#if defined(OS_MACOSX)
+#if !defined(OS_MACOSX)
   // Window height computation is off in MacViews: https://crbug.com/846329
-  if (!views_mode_controller::IsViewsBrowserCocoa())
-    return;
-#endif
   EXPECT_GE(window_size.height(), 249);
   EXPECT_LE(window_size.height(), 253);
+#endif
 }
 
 IN_PROC_BROWSER_TEST_F(PopupBlockerBrowserTest, CorrectReferrer) {
@@ -572,7 +576,7 @@ IN_PROC_BROWSER_TEST_F(PopupBlockerBrowserTest, WebUI) {
                    kDontCheckTitle);
 
   // Check that the new popup displays about:blank.
-  EXPECT_EQ(GURL(url::kAboutBlankURL), popup->GetURL());
+  EXPECT_EQ(GURL(content::kBlockedURL), popup->GetURL());
 }
 
 // Verify that the renderer can't DOS the browser by creating arbitrarily many

@@ -7,7 +7,9 @@ package org.chromium.chrome.browser.modaldialog;
 import android.animation.Animator;
 import android.animation.AnimatorListenerAdapter;
 import android.content.res.Resources;
+import android.view.ContextThemeWrapper;
 import android.view.Gravity;
+import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.ViewGroup.MarginLayoutParams;
@@ -26,15 +28,21 @@ import org.chromium.chrome.browser.widget.bottomsheet.BottomSheetObserver;
 import org.chromium.chrome.browser.widget.bottomsheet.EmptyBottomSheetObserver;
 import org.chromium.content_public.browser.SelectionPopupController;
 import org.chromium.content_public.browser.WebContents;
+import org.chromium.content_public.common.BrowserControlsState;
 import org.chromium.ui.UiUtils;
 import org.chromium.ui.interpolators.BakedBezierInterpolator;
+import org.chromium.ui.modaldialog.DialogDismissalCause;
+import org.chromium.ui.modaldialog.ModalDialogManager;
+import org.chromium.ui.modaldialog.ModalDialogProperties;
+import org.chromium.ui.modelutil.PropertyKey;
+import org.chromium.ui.modelutil.PropertyModel;
+import org.chromium.ui.modelutil.PropertyModelChangeProcessor;
 
 /**
  * The presenter that displays a single tab modal dialog.
  */
 public class TabModalPresenter
         extends ModalDialogManager.Presenter implements TabBrowserControlsOffsetHelper.Observer {
-    // TODO(huayinz): Confirm duration with UX.
     private static final int ENTER_EXIT_ANIMATION_DURATION_MS = 200;
 
     /** The activity displaying the dialogs. */
@@ -58,8 +66,11 @@ public class TabModalPresenter
     /** The container view that a dialog to be shown will be attached to. */
     private ViewGroup mDialogContainer;
 
-    /** The view that is the direct parent of the dialog view. */
-    private ViewGroup mViewContainer;
+    private ModalDialogView mDialogView;
+
+    /** The model change processor that binds properties for the dialog view. */
+    private PropertyModelChangeProcessor<PropertyModel, ModalDialogView, PropertyKey>
+            mModelChangeProcessor;
 
     /** Whether the dialog container is brought to the front in its parent. */
     private boolean mContainerIsAtFront;
@@ -82,6 +93,24 @@ public class TabModalPresenter
 
     /** Enter and exit animation duration that can be overwritten in tests. */
     private int mEnterExitAnimationDurationMs;
+
+    private class ViewBinder extends ModalDialogViewBinder {
+        @Override
+        public void bind(PropertyModel model, ModalDialogView view, PropertyKey propertyKey) {
+            if (ModalDialogProperties.CANCEL_ON_TOUCH_OUTSIDE == propertyKey) {
+                assert mDialogContainer != null;
+                if (model.get(ModalDialogProperties.CANCEL_ON_TOUCH_OUTSIDE)) {
+                    mDialogContainer.setOnClickListener((v) -> {
+                        dismissCurrentDialog(DialogDismissalCause.NAVIGATE_BACK_OR_TOUCH_OUTSIDE);
+                    });
+                } else {
+                    mDialogContainer.setOnClickListener(null);
+                }
+            } else {
+                super.bind(model, view, propertyKey);
+            }
+        }
+    }
 
     /**
      * Constructor for initializing dialog container.
@@ -107,13 +136,22 @@ public class TabModalPresenter
         }
     }
 
+    // ModalDialogManager.Presenter implementation.
+
     @Override
-    protected void addDialogView(View dialogView) {
+    protected void addDialogView(PropertyModel model) {
         if (mDialogContainer == null) initDialogContainer();
+        mDialogView =
+                (ModalDialogView) LayoutInflater
+                        .from(new ContextThemeWrapper(mChromeActivity, R.style.ModalDialogTheme))
+                        .inflate(R.layout.modal_dialog_view, null);
+        mModelChangeProcessor =
+                PropertyModelChangeProcessor.create(model, mDialogView, new ViewBinder());
+
         setBrowserControlsAccess(true);
         // Don't show the dialog container before browser controls are guaranteed fully visible.
-        if (mActiveTab.getControlsOffsetHelper().areBrowserControlsFullyVisible()) {
-            runEnterAnimation(dialogView);
+        if (getControlsOffsetHelper().areBrowserControlsFullyVisible()) {
+            runEnterAnimation(mDialogView);
         } else {
             mRunEnterAnimationOnCallback = true;
         }
@@ -121,27 +159,39 @@ public class TabModalPresenter
     }
 
     @Override
-    protected void removeDialogView(View dialogView) {
+    protected void removeDialogView(PropertyModel model) {
         setBrowserControlsAccess(false);
         // Don't run exit animation if enter animation has not yet started.
         if (mRunEnterAnimationOnCallback) {
             mRunEnterAnimationOnCallback = false;
         } else {
             // Clear focus so that keyboard can hide accordingly while entering tab switcher.
-            dialogView.clearFocus();
-            runExitAnimation(dialogView);
+            mDialogView.clearFocus();
+            runExitAnimation(mDialogView);
         }
         mChromeActivity.removeViewObscuringAllTabs(mDialogContainer);
+
+        if (mModelChangeProcessor != null) {
+            mModelChangeProcessor.destroy();
+            mModelChangeProcessor = null;
+        }
+        mDialogView = null;
     }
+
+    // TabBrowserControlsOffsetHelper.Observer implementation.
 
     @Override
     public void onBrowserControlsFullyVisible(Tab tab) {
-        if (getModalDialog() == null) return;
+        if (getDialogModel() == null) return;
         assert mActiveTab == tab;
         if (mRunEnterAnimationOnCallback) {
             mRunEnterAnimationOnCallback = false;
-            runEnterAnimation(getModalDialog().getView());
+            runEnterAnimation(mDialogView);
         }
+    }
+
+    private TabBrowserControlsOffsetHelper getControlsOffsetHelper() {
+        return TabBrowserControlsOffsetHelper.from(mActiveTab);
     }
 
     /**
@@ -150,14 +200,13 @@ public class TabModalPresenter
      * @param toFront Whether the dialog container should be brought to the front.
      */
     void updateContainerHierarchy(boolean toFront) {
-        View dialogView = getModalDialog().getView();
         if (toFront) {
-            dialogView.announceForAccessibility(getModalDialog().getContentDescription());
-            dialogView.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_YES);
-            dialogView.requestFocus();
+            mDialogView.announceForAccessibility(getContentDescription(getDialogModel()));
+            mDialogView.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_YES);
+            mDialogView.requestFocus();
         } else {
-            dialogView.clearFocus();
-            dialogView.setImportantForAccessibility(
+            mDialogView.clearFocus();
+            mDialogView.setImportantForAccessibility(
                     View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS);
         }
 
@@ -194,9 +243,12 @@ public class TabModalPresenter
         Resources resources = mChromeActivity.getResources();
         int scrimVerticalMargin =
                 resources.getDimensionPixelSize(R.dimen.tab_modal_scrim_vertical_margin);
-        int containerVerticalMargin =
-                resources.getDimensionPixelSize(mChromeActivity.getControlContainerHeightResource())
-                - scrimVerticalMargin;
+
+        int containerVerticalMargin = -scrimVerticalMargin;
+        int containerHeightResource = mChromeActivity.getControlContainerHeightResource();
+        if (containerHeightResource != ChromeActivity.NO_CONTROL_CONTAINER) {
+            containerVerticalMargin += resources.getDimensionPixelSize(containerHeightResource);
+        }
 
         MarginLayoutParams params = (MarginLayoutParams) mDialogContainer.getLayoutParams();
         params.width = ViewGroup.MarginLayoutParams.MATCH_PARENT;
@@ -228,7 +280,7 @@ public class TabModalPresenter
             assert mActiveTab
                     != null : "Tab modal dialogs should be shown on top of an active tab.";
 
-            mActiveTab.getControlsOffsetHelper().addObserver(this);
+            getControlsOffsetHelper().addObserver(this);
             // Hide contextual search panel so that bottom toolbar will not be
             // obscured and back press is not overridden.
             ContextualSearchManager contextualSearchManager =
@@ -253,7 +305,7 @@ public class TabModalPresenter
             mChromeActivity.getAppMenuHandler().hideAppMenu();
 
             // Force toolbar to show and disable overflow menu.
-            mActiveTab.onTabModalDialogStateChanged(true);
+            onTabModalDialogStateChanged(true);
 
             if (mHasBottomControls) {
                 bottomSheet.setSheetState(BottomSheet.SheetState.PEEK, true);
@@ -263,7 +315,7 @@ public class TabModalPresenter
             }
             menuButton.setEnabled(false);
         } else {
-            mActiveTab.getControlsOffsetHelper().removeObserver(this);
+            getControlsOffsetHelper().removeObserver(this);
             // Show the action bar back if it was dismissed when the dialogs were showing.
             if (mDidClearTextControls) {
                 mDidClearTextControls = false;
@@ -274,10 +326,23 @@ public class TabModalPresenter
                 }
             }
 
-            mActiveTab.onTabModalDialogStateChanged(false);
+            onTabModalDialogStateChanged(false);
             menuButton.setEnabled(true);
             if (mHasBottomControls) bottomSheet.removeObserver(mBottomSheetObserver);
             mActiveTab = null;
+        }
+    }
+
+    private void onTabModalDialogStateChanged(boolean isShowing) {
+        mActiveTab.onTabModalDialogStateChanged(isShowing);
+
+        // Also need to update browser control state after dismissal to refresh the constraints.
+        TabBrowserControlsOffsetHelper offsetHelper = getControlsOffsetHelper();
+        if (isShowing && mActiveTab.areRendererInputEventsIgnored()) {
+            offsetHelper.showAndroidControls(true);
+        } else {
+            mActiveTab.updateBrowserControlsState(
+                    BrowserControlsState.SHOWN, !offsetHelper.isControlsOffsetOverridden());
         }
     }
 

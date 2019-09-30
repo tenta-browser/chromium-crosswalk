@@ -31,6 +31,7 @@
 #include "third_party/blink/renderer/core/frame/local_frame.h"
 #include "third_party/blink/renderer/core/frame/local_frame_client.h"
 #include "third_party/blink/renderer/core/frame/settings.h"
+#include "third_party/blink/renderer/core/frame/use_counter.h"
 #include "third_party/blink/renderer/core/inspector/console_message.h"
 #include "third_party/blink/renderer/core/loader/document_loader.h"
 #include "third_party/blink/renderer/core/loader/frame_loader.h"
@@ -162,31 +163,6 @@ HistoryScrollRestorationType History::ScrollRestorationInternal() const {
   return history_item->ScrollRestorationType();
 }
 
-// TODO(crbug.com/394296): This is not the long-term fix to IPC flooding that we
-// need. However, it does somewhat mitigate the immediate concern of |pushState|
-// and |replaceState| DoS (assuming the renderer has not been compromised).
-bool History::ShouldThrottleStateObjectChanges() {
-  if (!GetFrame()->GetSettings()->GetShouldThrottlePushState())
-    return false;
-
-  const int kStateUpdateLimit = 50;
-
-  if (state_flood_guard.count > kStateUpdateLimit) {
-    static constexpr auto kStateUpdateLimitResetInterval =
-        TimeDelta::FromSeconds(10);
-    const auto now = CurrentTimeTicks();
-    if (now - state_flood_guard.last_updated > kStateUpdateLimitResetInterval) {
-      state_flood_guard.count = 0;
-      state_flood_guard.last_updated = now;
-      return false;
-    }
-    return true;
-  }
-
-  state_flood_guard.count++;
-  return false;
-}
-
 bool History::stateChanged() const {
   return last_state_object_requested_ != StateInternal();
 }
@@ -215,7 +191,8 @@ void History::go(ScriptState* script_state,
   }
 
   DCHECK(IsMainThread());
-  Document* active_document = ToDocument(ExecutionContext::From(script_state));
+  Document* active_document =
+      To<Document>(ExecutionContext::From(script_state));
   if (!active_document)
     return;
 
@@ -225,6 +202,9 @@ void History::go(ScriptState* script_state,
       !NavigationDisablerForBeforeUnload::IsNavigationAllowed()) {
     return;
   }
+
+  if (!GetFrame()->navigation_rate_limiter().CanProceed())
+    return;
 
   if (delta) {
     GetFrame()->Client()->NavigateBackForward(delta);
@@ -244,6 +224,14 @@ void History::pushState(scoped_refptr<SerializedScriptValue> data,
                         ExceptionState& exception_state) {
   StateObjectAdded(std::move(data), title, url, ScrollRestorationInternal(),
                    WebFrameLoadType::kStandard, exception_state);
+}
+
+void History::replaceState(scoped_refptr<SerializedScriptValue> data,
+                           const String& title,
+                           const String& url,
+                           ExceptionState& exception_state) {
+  StateObjectAdded(std::move(data), title, url, ScrollRestorationInternal(),
+                   WebFrameLoadType::kReplaceCurrentItem, exception_state);
 }
 
 KURL History::UrlForState(const String& url_string) {
@@ -313,7 +301,7 @@ void History::StateObjectAdded(scoped_refptr<SerializedScriptValue> data,
     return;
   }
 
-  if (ShouldThrottleStateObjectChanges()) {
+  if (!GetFrame()->navigation_rate_limiter().CanProceed()) {
     // TODO(769592): Get an API spec change so that we can throw an exception:
     //
     //  exception_state.ThrowDOMException(DOMExceptionCode::kQuotaExceededError,
@@ -321,11 +309,6 @@ void History::StateObjectAdded(scoped_refptr<SerializedScriptValue> data,
     //                                    "prevent the browser from hanging.");
     //
     // instead of merely warning.
-
-    GetFrame()->Console().AddMessage(
-        ConsoleMessage::Create(kJSMessageSource, kWarningMessageLevel,
-                               "Throttling history state changes to prevent "
-                               "the browser from hanging."));
     return;
   }
 

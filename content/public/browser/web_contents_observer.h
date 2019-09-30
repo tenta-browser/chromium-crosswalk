@@ -25,7 +25,6 @@
 #include "third_party/skia/include/core/SkColor.h"
 #include "ui/base/page_transition_types.h"
 #include "ui/base/window_open_disposition.h"
-#include "ui/gfx/range/range.h"
 
 namespace blink {
 namespace mojom {
@@ -325,6 +324,12 @@ class CONTENT_EXPORT WebContentsObserver : public IPC::Listener {
   // failure methods will also be invoked.
   virtual void NavigationStopped() {}
 
+  // This method is invoked when the WebContents reloads all the LoFi images in
+  // the frame. LoFi is a type of Preview where Chrome shows gray boxes in place
+  // of the images on a webpage in order to conserve data for data-sensitive
+  // users. See http://bit.ly/LoFiPublicDoc.
+  virtual void DidReloadLoFiImages() {}
+
   // Called when there has been direct user interaction with the WebContents.
   // The type argument specifies the kind of interaction. Direct user input
   // signalled through this callback includes:
@@ -347,6 +352,13 @@ class CONTENT_EXPORT WebContentsObserver : public IPC::Listener {
   // Invoked when the given frame changes its window.name property.
   virtual void FrameNameChanged(RenderFrameHost* render_frame_host,
                                 const std::string& name) {}
+
+  // Called when the sticky user activation bit has been set on the frame.
+  // This will not be called for new RenderFrameHosts whose underlying
+  // FrameTreeNode was already activated. This should not be used to determine a
+  // RenderFrameHost's user activation state.
+  virtual void FrameReceivedFirstUserActivation(
+      RenderFrameHost* render_frame_host) {}
 
   // This method is invoked when the title of the WebContents is set. Note that
   // |entry| may be null if the web page whose title changed has not yet had a
@@ -429,9 +441,11 @@ class CONTENT_EXPORT WebContentsObserver : public IPC::Listener {
   // Invoked before a form repost warning is shown.
   virtual void BeforeFormRepostWarningShow() {}
 
-  // Invoked when the beforeunload handler fires. The time is from the renderer
-  // process.
-  virtual void BeforeUnloadFired(const base::TimeTicks& proceed_time) {}
+  // Invoked when the beforeunload handler fires. |proceed| is set to true if
+  // the beforeunload can safely proceed, otherwise it should be interrupted.
+  // The time is from the renderer process.
+  virtual void BeforeUnloadFired(bool proceed,
+                                 const base::TimeTicks& proceed_time) {}
 
   // Invoked when a user cancels a before unload dialog.
   virtual void BeforeUnloadDialogCancelled() {}
@@ -446,11 +460,6 @@ class CONTENT_EXPORT WebContentsObserver : public IPC::Listener {
 
   // Invoked when theme color is changed to |theme_color|.
   virtual void DidChangeThemeColor(SkColor theme_color) {}
-
-  // Invoked when text selection is changed.
-  virtual void DidChangeTextSelection(const base::string16& text,
-                                      const gfx::Range& range,
-                                      size_t offset) {}
 
   // Invoked when media is playing or paused.  |id| is unique per player and per
   // RenderFrameHost.  There may be multiple players within a RenderFrameHost

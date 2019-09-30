@@ -26,6 +26,7 @@
 #include "chrome/browser/ui/views/frame/top_container_view.h"
 #include "chrome/common/chrome_switches.h"
 #include "ui/base/hit_test.h"
+#include "ui/base/material_design/material_design_controller.h"
 #include "ui/events/event_handler.h"
 #include "ui/gfx/font_list.h"
 #include "ui/native_theme/native_theme_dark_aura.h"
@@ -44,6 +45,18 @@
 #include "ui/views/widget/desktop_aura/x11_desktop_handler.h"
 #endif
 
+namespace {
+
+bool IsUsingGtkTheme(Profile* profile) {
+#if defined(OS_LINUX) && !defined(OS_CHROMEOS)
+  return ThemeServiceFactory::GetForProfile(profile)->UsingSystemTheme();
+#else
+  return false;
+#endif
+}
+
+}  // namespace
+
 ////////////////////////////////////////////////////////////////////////////////
 // BrowserFrame, public:
 
@@ -56,15 +69,16 @@ BrowserFrame::BrowserFrame(BrowserView* browser_view)
   set_is_secondary_widget(false);
   // Don't focus anything on creation, selecting a tab will set the focus.
   set_focus_on_creation(false);
+  md_observer_.Add(ui::MaterialDesignController::GetInstance());
 }
 
-BrowserFrame::~BrowserFrame() {
-}
+BrowserFrame::~BrowserFrame() {}
 
 void BrowserFrame::InitBrowserFrame() {
   native_browser_frame_ =
       NativeBrowserFrameFactory::CreateNativeBrowserFrame(this, browser_view_);
   views::Widget::InitParams params = native_browser_frame_->GetWidgetParams();
+  params.name = "BrowserFrame";
   params.delegate = browser_view_;
   if (browser_view_->browser()->is_type_tabbed()) {
     // Typed panel/popup can only return a size once the widget has been
@@ -99,7 +113,8 @@ int BrowserFrame::GetMinimizeButtonOffset() const {
   return native_browser_frame_->GetMinimizeButtonOffset();
 }
 
-gfx::Rect BrowserFrame::GetBoundsForTabStrip(views::View* tabstrip) const {
+gfx::Rect BrowserFrame::GetBoundsForTabStrip(
+    const views::View* tabstrip) const {
   // This can be invoked before |browser_frame_view_| has been set.
   return browser_frame_view_ ?
       browser_frame_view_->GetBoundsForTabStrip(tabstrip) : gfx::Rect();
@@ -168,8 +183,11 @@ bool BrowserFrame::GetAccelerator(int command_id,
 }
 
 const ui::ThemeProvider* BrowserFrame::GetThemeProvider() const {
-  return &ThemeService::GetThemeProviderForProfile(
-      browser_view_->browser()->profile());
+  Browser* browser = browser_view_->browser();
+  Profile* profile = browser->profile();
+  return ShouldUseTheme()
+             ? &ThemeService::GetThemeProviderForProfile(profile)
+             : &ThemeService::GetDefaultThemeProviderForProfile(profile);
 }
 
 const ui::NativeTheme* BrowserFrame::GetNativeTheme() const {
@@ -241,12 +259,26 @@ ui::MenuModel* BrowserFrame::GetSystemMenuModel() {
   return menu_model_builder_->menu_model();
 }
 
-views::Button* BrowserFrame::GetNewAvatarMenuButton() {
-  // Note: This profile switcher is being replaced with a toolbar menu button.
-  // See ToolbarView.
-  return browser_frame_view_->GetProfileSwitcherButton();
-}
-
 void BrowserFrame::OnMenuClosed() {
   menu_runner_.reset();
+}
+
+bool BrowserFrame::ShouldUseTheme() const {
+  // Main browser windows are always themed.
+  if (browser_view_->IsBrowserTypeNormal())
+    return true;
+
+  // The system GTK theme should always be respected if the user has opted to
+  // use it.
+  if (IsUsingGtkTheme(browser_view_->browser()->profile()))
+    return true;
+
+  // Other window types (popups, hosted apps) on non-GTK use the default theme.
+  return false;
+}
+
+void BrowserFrame::OnTouchUiChanged() {
+  client_view()->InvalidateLayout();
+  non_client_view()->InvalidateLayout();
+  GetRootView()->Layout();
 }

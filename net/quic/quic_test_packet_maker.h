@@ -19,8 +19,8 @@
 #include "net/third_party/quic/platform/api/quic_string_piece.h"
 #include "net/third_party/quic/test_tools/mock_clock.h"
 #include "net/third_party/quic/test_tools/mock_random.h"
-#include "net/third_party/spdy/core/spdy_framer.h"
-#include "net/third_party/spdy/core/spdy_protocol.h"
+#include "net/third_party/quiche/src/spdy/core/spdy_framer.h"
+#include "net/third_party/quiche/src/spdy/core/spdy_protocol.h"
 
 namespace net {
 namespace test {
@@ -62,6 +62,17 @@ class QuicTestPacketMaker {
       quic::QuicPacketNumber largest_received,
       quic::QuicPacketNumber smallest_received,
       quic::QuicPacketNumber least_unacked);
+
+  std::unique_ptr<quic::QuicReceivedPacket> MakeStreamIdBlockedPacket(
+      quic::QuicPacketNumber num,
+      bool include_version,
+      quic::QuicStreamId stream_id);
+
+  std::unique_ptr<quic::QuicReceivedPacket> MakeMaxStreamIdPacket(
+      quic::QuicPacketNumber num,
+      bool include_version,
+      quic::QuicStreamId stream_id);
+
   std::unique_ptr<quic::QuicReceivedPacket> MakeRstPacket(
       quic::QuicPacketNumber num,
       bool include_version,
@@ -107,6 +118,17 @@ class QuicTestPacketMaker {
       quic::QuicPacketNumber least_unacked,
       bool send_feedback,
       size_t bytes_written);
+  std::unique_ptr<quic::QuicReceivedPacket> MakeRstAckAndConnectionClosePacket(
+      quic::QuicPacketNumber num,
+      bool include_version,
+      quic::QuicStreamId stream_id,
+      quic::QuicRstStreamErrorCode error_code,
+      quic::QuicTime::Delta delta_time_largest_observed,
+      quic::QuicPacketNumber largest_received,
+      quic::QuicPacketNumber smallest_received,
+      quic::QuicPacketNumber least_unacked,
+      quic::QuicErrorCode quic_error,
+      const std::string& quic_error_details);
   std::unique_ptr<quic::QuicReceivedPacket> MakeAckAndConnectionClosePacket(
       quic::QuicPacketNumber num,
       bool include_version,
@@ -184,6 +206,16 @@ class QuicTestPacketMaker {
       bool fin,
       quic::QuicStreamOffset offset,
       quic::QuicStringPiece data);
+  std::unique_ptr<quic::QuicReceivedPacket> MakeAckAndMultipleDataFramesPacket(
+      quic::QuicPacketNumber packet_number,
+      bool include_version,
+      quic::QuicStreamId stream_id,
+      quic::QuicPacketNumber largest_received,
+      quic::QuicPacketNumber smallest_received,
+      quic::QuicPacketNumber least_unacked,
+      bool fin,
+      quic::QuicStreamOffset offset,
+      const std::vector<std::string>& data);
 
   std::unique_ptr<quic::QuicReceivedPacket>
   MakeRequestHeadersAndMultipleDataFramesPacket(

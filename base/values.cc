@@ -26,7 +26,7 @@ namespace {
 
 const char* const kTypeNames[] = {"null",   "boolean", "integer",    "double",
                                   "string", "binary",  "dictionary", "list"};
-static_assert(arraysize(kTypeNames) ==
+static_assert(base::size(kTypeNames) ==
                   static_cast<size_t>(Value::Type::LIST) + 1,
               "kTypeNames Has Wrong Size");
 
@@ -223,7 +223,7 @@ Value::~Value() {
 // static
 const char* Value::GetTypeName(Value::Type type) {
   DCHECK_GE(static_cast<int>(type), 0);
-  DCHECK_LT(static_cast<size_t>(type), arraysize(kTypeNames));
+  DCHECK_LT(static_cast<size_t>(type), base::size(kTypeNames));
   return kTypeNames[static_cast<size_t>(type)];
 }
 
@@ -288,6 +288,26 @@ const Value* Value::FindKeyOfType(StringPiece key, Type type) const {
   if (!result || result->type() != type)
     return nullptr;
   return result;
+}
+
+base::Optional<bool> Value::FindBoolKey(StringPiece key) const {
+  const Value* result = FindKeyOfType(key, Type::BOOLEAN);
+  return result ? base::make_optional(result->bool_value_) : base::nullopt;
+}
+
+base::Optional<int> Value::FindIntKey(StringPiece key) const {
+  const Value* result = FindKeyOfType(key, Type::INTEGER);
+  return result ? base::make_optional(result->int_value_) : base::nullopt;
+}
+
+base::Optional<double> Value::FindDoubleKey(StringPiece key) const {
+  const Value* result = FindKeyOfType(key, Type::DOUBLE);
+  return result ? base::make_optional(result->double_value_) : base::nullopt;
+}
+
+const std::string* Value::FindStringKey(StringPiece key) const {
+  const Value* result = FindKeyOfType(key, Type::STRING);
+  return result ? &result->string_value_ : nullptr;
 }
 
 bool Value::RemoveKey(StringPiece key) {
@@ -374,12 +394,12 @@ Value* Value::SetPath(std::initializer_list<StringPiece> path, Value value) {
 }
 
 Value* Value::SetPath(span<const StringPiece> path, Value value) {
-  DCHECK_NE(path.begin(), path.end());  // Can't be empty path.
+  DCHECK(path.begin() != path.end());  // Can't be empty path.
 
   // Walk/construct intermediate dictionaries. The last element requires
   // special handling so skip it in this loop.
   Value* cur = this;
-  const StringPiece* cur_path = path.begin();
+  auto cur_path = path.begin();
   for (; (cur_path + 1) < path.end(); ++cur_path) {
     if (!cur->is_dict())
       return nullptr;
@@ -486,7 +506,8 @@ bool Value::GetAsDouble(double* out_value) const {
   if (out_value && is_double()) {
     *out_value = double_value_;
     return true;
-  } else if (out_value && is_int()) {
+  }
+  if (out_value && is_int()) {
     // Allow promotion from int to double.
     *out_value = int_value_;
     return true;
@@ -1403,7 +1424,7 @@ std::ostream& operator<<(std::ostream& out, const Value& value) {
 
 std::ostream& operator<<(std::ostream& out, const Value::Type& type) {
   if (static_cast<int>(type) < 0 ||
-      static_cast<size_t>(type) >= arraysize(kTypeNames))
+      static_cast<size_t>(type) >= base::size(kTypeNames))
     return out << "Invalid Type (index = " << static_cast<int>(type) << ")";
   return out << Value::GetTypeName(type);
 }

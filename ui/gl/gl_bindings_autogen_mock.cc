@@ -472,13 +472,6 @@ void GL_BINDING_CALL MockGLInterface::Mock_glCompileShader(GLuint shader) {
 }
 
 void GL_BINDING_CALL
-MockGLInterface::Mock_glCompressedCopyTextureCHROMIUM(GLuint sourceId,
-                                                      GLuint destId) {
-  MakeGlMockFunctionUnique("glCompressedCopyTextureCHROMIUM");
-  interface_->CompressedCopyTextureCHROMIUM(sourceId, destId);
-}
-
-void GL_BINDING_CALL
 MockGLInterface::Mock_glCompressedTexImage2D(GLenum target,
                                              GLint level,
                                              GLenum internalformat,
@@ -2036,12 +2029,12 @@ MockGLInterface::Mock_glGetProgramPipelineiv(GLuint pipeline,
   interface_->GetProgramPipelineiv(pipeline, pname, params);
 }
 
-void GL_BINDING_CALL
+GLuint GL_BINDING_CALL
 MockGLInterface::Mock_glGetProgramResourceIndex(GLuint program,
                                                 GLenum programInterface,
                                                 const GLchar* name) {
   MakeGlMockFunctionUnique("glGetProgramResourceIndex");
-  interface_->GetProgramResourceIndex(program, programInterface, name);
+  return interface_->GetProgramResourceIndex(program, programInterface, name);
 }
 
 GLint GL_BINDING_CALL
@@ -2942,6 +2935,12 @@ void GL_BINDING_CALL MockGLInterface::Mock_glMatrixLoadfEXT(GLenum matrixMode,
 }
 
 void GL_BINDING_CALL
+MockGLInterface::Mock_glMaxShaderCompilerThreadsKHR(GLuint count) {
+  MakeGlMockFunctionUnique("glMaxShaderCompilerThreadsKHR");
+  interface_->MaxShaderCompilerThreadsKHR(count);
+}
+
+void GL_BINDING_CALL
 MockGLInterface::Mock_glMemoryBarrier(GLbitfield barriers) {
   MakeGlMockFunctionUnique("glMemoryBarrier");
   interface_->MemoryBarrierEXT(barriers);
@@ -2962,6 +2961,48 @@ MockGLInterface::Mock_glMemoryBarrierEXT(GLbitfield barriers) {
 void GL_BINDING_CALL MockGLInterface::Mock_glMinSampleShading(GLfloat value) {
   MakeGlMockFunctionUnique("glMinSampleShading");
   interface_->MinSampleShading(value);
+}
+
+void GL_BINDING_CALL
+MockGLInterface::Mock_glMultiDrawArraysANGLE(GLenum mode,
+                                             const GLint* firsts,
+                                             const GLsizei* counts,
+                                             GLsizei drawcount) {
+  MakeGlMockFunctionUnique("glMultiDrawArraysANGLE");
+  interface_->MultiDrawArraysANGLE(mode, firsts, counts, drawcount);
+}
+
+void GL_BINDING_CALL MockGLInterface::Mock_glMultiDrawArraysInstancedANGLE(
+    GLenum mode,
+    const GLint* firsts,
+    const GLsizei* counts,
+    const GLsizei* instanceCounts,
+    GLsizei drawcount) {
+  MakeGlMockFunctionUnique("glMultiDrawArraysInstancedANGLE");
+  interface_->MultiDrawArraysInstancedANGLE(mode, firsts, counts,
+                                            instanceCounts, drawcount);
+}
+
+void GL_BINDING_CALL
+MockGLInterface::Mock_glMultiDrawElementsANGLE(GLenum mode,
+                                               const GLsizei* counts,
+                                               GLenum type,
+                                               const GLvoid* const* indices,
+                                               GLsizei drawcount) {
+  MakeGlMockFunctionUnique("glMultiDrawElementsANGLE");
+  interface_->MultiDrawElementsANGLE(mode, counts, type, indices, drawcount);
+}
+
+void GL_BINDING_CALL MockGLInterface::Mock_glMultiDrawElementsInstancedANGLE(
+    GLenum mode,
+    const GLsizei* counts,
+    GLenum type,
+    const GLvoid* const* indices,
+    const GLsizei* instanceCounts,
+    GLsizei drawcount) {
+  MakeGlMockFunctionUnique("glMultiDrawElementsInstancedANGLE");
+  interface_->MultiDrawElementsInstancedANGLE(mode, counts, type, indices,
+                                              instanceCounts, drawcount);
 }
 
 void GL_BINDING_CALL MockGLInterface::Mock_glObjectLabel(GLenum identifier,
@@ -4926,9 +4967,6 @@ MockGLInterface::GetGLProcAddress(const char* name) {
     return reinterpret_cast<GLFunctionPointerType>(Mock_glColorMask);
   if (strcmp(name, "glCompileShader") == 0)
     return reinterpret_cast<GLFunctionPointerType>(Mock_glCompileShader);
-  if (strcmp(name, "glCompressedCopyTextureCHROMIUM") == 0)
-    return reinterpret_cast<GLFunctionPointerType>(
-        Mock_glCompressedCopyTextureCHROMIUM);
   if (strcmp(name, "glCompressedTexImage2D") == 0)
     return reinterpret_cast<GLFunctionPointerType>(Mock_glCompressedTexImage2D);
   if (strcmp(name, "glCompressedTexImage2DRobustANGLE") == 0)
@@ -5650,6 +5688,9 @@ MockGLInterface::GetGLProcAddress(const char* name) {
     return reinterpret_cast<GLFunctionPointerType>(Mock_glMatrixLoadfCHROMIUM);
   if (strcmp(name, "glMatrixLoadfEXT") == 0)
     return reinterpret_cast<GLFunctionPointerType>(Mock_glMatrixLoadfEXT);
+  if (strcmp(name, "glMaxShaderCompilerThreadsKHR") == 0)
+    return reinterpret_cast<GLFunctionPointerType>(
+        Mock_glMaxShaderCompilerThreadsKHR);
   if (strcmp(name, "glMemoryBarrier") == 0)
     return reinterpret_cast<GLFunctionPointerType>(Mock_glMemoryBarrier);
   if (strcmp(name, "glMemoryBarrierByRegion") == 0)
@@ -5659,6 +5700,17 @@ MockGLInterface::GetGLProcAddress(const char* name) {
     return reinterpret_cast<GLFunctionPointerType>(Mock_glMemoryBarrierEXT);
   if (strcmp(name, "glMinSampleShading") == 0)
     return reinterpret_cast<GLFunctionPointerType>(Mock_glMinSampleShading);
+  if (strcmp(name, "glMultiDrawArraysANGLE") == 0)
+    return reinterpret_cast<GLFunctionPointerType>(Mock_glMultiDrawArraysANGLE);
+  if (strcmp(name, "glMultiDrawArraysInstancedANGLE") == 0)
+    return reinterpret_cast<GLFunctionPointerType>(
+        Mock_glMultiDrawArraysInstancedANGLE);
+  if (strcmp(name, "glMultiDrawElementsANGLE") == 0)
+    return reinterpret_cast<GLFunctionPointerType>(
+        Mock_glMultiDrawElementsANGLE);
+  if (strcmp(name, "glMultiDrawElementsInstancedANGLE") == 0)
+    return reinterpret_cast<GLFunctionPointerType>(
+        Mock_glMultiDrawElementsInstancedANGLE);
   if (strcmp(name, "glObjectLabel") == 0)
     return reinterpret_cast<GLFunctionPointerType>(Mock_glObjectLabel);
   if (strcmp(name, "glObjectLabelKHR") == 0)

@@ -51,6 +51,7 @@ class DataTypeManagerImpl : public DataTypeManager,
   void Configure(ModelTypeSet desired_types,
                  const ConfigureContext& context) override;
   void ReenableType(ModelType type) override;
+  void ReadyForStartChanged(ModelType type) override;
   void ResetDataTypeErrors() override;
 
   // Needed only for backend migration.
@@ -145,14 +146,14 @@ class DataTypeManagerImpl : public DataTypeManager,
   // Post a task to reconfigure when no downloading or association are running.
   void ProcessReconfigure();
 
+  // Programmatically force reconfiguration of data type (if needed).
+  void ForceReconfiguration();
+
   void Restart();
   void DownloadReady(ModelTypeSet types_to_download,
                      ModelTypeSet first_sync_types,
                      ModelTypeSet failed_configuration_types);
 
-  // Notification from the SBH that download failed due to a transient
-  // error and it will be retried.
-  void OnDownloadRetry();
   void NotifyStart();
   void NotifyDone(const ConfigureResult& result);
 

@@ -23,7 +23,7 @@
 #include "chrome/grit/generated_resources.h"
 #include "components/bookmarks/browser/bookmark_model.h"
 #include "components/bookmarks/browser/bookmark_utils.h"
-#include "components/signin/core/browser/profile_management_switches.h"
+#include "components/signin/core/browser/account_consistency_method.h"
 #include "components/signin/core/browser/signin_buildflags.h"
 #include "components/strings/grit/components_strings.h"
 #include "ui/base/l10n/l10n_util.h"
@@ -34,11 +34,6 @@
 #include "ui/views/layout/fill_layout.h"
 #include "ui/views/layout/grid_layout.h"
 #include "ui/views/widget/widget.h"
-
-#if defined(OS_WIN)
-#include "chrome/browser/ui/views/desktop_ios_promotion/desktop_ios_promotion_bubble_view.h"
-#include "chrome/browser/ui/views/desktop_ios_promotion/desktop_ios_promotion_footnote_view.h"
-#endif
 
 #if BUILDFLAG(ENABLE_DICE_SUPPORT)
 #include "chrome/browser/signin/account_consistency_mode_manager.h"
@@ -54,6 +49,7 @@ BookmarkBubbleView* BookmarkBubbleView::bookmark_bubble_ = nullptr;
 // static
 views::Widget* BookmarkBubbleView::ShowBubble(
     views::View* anchor_view,
+    views::Button* highlighted_button,
     const gfx::Rect& anchor_rect,
     gfx::NativeView parent_window,
     bookmarks::BookmarkBubbleObserver* observer,
@@ -70,11 +66,13 @@ views::Widget* BookmarkBubbleView::ShowBubble(
   // Bookmark bubble should always anchor TOP_RIGHT, but the
   // LocationBarBubbleDelegateView does not know that and may use different
   // arrow anchoring.
-  bookmark_bubble_->set_arrow(views::BubbleBorder::TOP_RIGHT);
+  bookmark_bubble_->SetArrow(views::BubbleBorder::TOP_RIGHT);
   if (!anchor_view) {
     bookmark_bubble_->SetAnchorRect(anchor_rect);
     bookmark_bubble_->set_parent_window(parent_window);
   }
+  if (highlighted_button)
+    bookmark_bubble_->SetHighlightedButton(highlighted_button);
   views::Widget* bubble_widget =
       views::BubbleDialogDelegateView::CreateBubble(bookmark_bubble_);
   bubble_widget->Show();
@@ -106,19 +104,6 @@ BookmarkBubbleView::~BookmarkBubbleView() {
   }
 }
 
-// ui::DialogModel -------------------------------------------------------------
-
-base::string16 BookmarkBubbleView::GetDialogButtonLabel(
-    ui::DialogButton button) const {
-#if defined(OS_WIN)
-  if (is_showing_ios_promotion_)
-    return ios_promo_view_->GetDialogButtonLabel(button);
-#endif
-  return l10n_util::GetStringUTF16((button == ui::DIALOG_BUTTON_OK)
-                                       ? IDS_DONE
-                                       : IDS_BOOKMARK_BUBBLE_REMOVE_BOOKMARK);
-}
-
 // views::WidgetDelegate -------------------------------------------------------
 
 views::View* BookmarkBubbleView::GetInitiallyFocusedView() {
@@ -126,12 +111,6 @@ views::View* BookmarkBubbleView::GetInitiallyFocusedView() {
 }
 
 base::string16 BookmarkBubbleView::GetWindowTitle() const {
-#if defined(OS_WIN)
-  if (is_showing_ios_promotion_) {
-    return desktop_ios_promotion::GetPromoTitle(
-        desktop_ios_promotion::PromotionEntryPoint::BOOKMARKS_BUBBLE);
-  }
-#endif
   return l10n_util::GetStringUTF16(newly_bookmarked_
                                        ? IDS_BOOKMARK_BUBBLE_PAGE_BOOKMARKED
                                        : IDS_BOOKMARK_BUBBLE_PAGE_BOOKMARK);
@@ -142,15 +121,11 @@ bool BookmarkBubbleView::ShouldShowCloseButton() const {
 }
 
 gfx::ImageSkia BookmarkBubbleView::GetWindowIcon() {
-#if defined(OS_WIN)
-  if (is_showing_ios_promotion_)
-    return ios_promo_view_->GetWindowIcon();
-#endif
   return gfx::ImageSkia();
 }
 
 bool BookmarkBubbleView::ShouldShowWindowIcon() const {
-  return is_showing_ios_promotion_;
+  return false;
 }
 
 void BookmarkBubbleView::WindowClosing() {
@@ -158,13 +133,19 @@ void BookmarkBubbleView::WindowClosing() {
   // destroyed asynchronously and the shown state will be checked before then.
   DCHECK_EQ(bookmark_bubble_, this);
   bookmark_bubble_ = NULL;
-  is_showing_ios_promotion_ = false;
 
   if (observer_)
     observer_->OnBookmarkBubbleHidden();
 }
 
 // views::DialogDelegate -------------------------------------------------------
+
+base::string16 BookmarkBubbleView::GetDialogButtonLabel(
+    ui::DialogButton button) const {
+  return l10n_util::GetStringUTF16((button == ui::DIALOG_BUTTON_OK)
+                                       ? IDS_DONE
+                                       : IDS_BOOKMARK_BUBBLE_REMOVE_BOOKMARK);
+}
 
 views::View* BookmarkBubbleView::CreateExtraView() {
   edit_button_ = views::MdTextButton::CreateSecondaryUiButton(
@@ -180,15 +161,6 @@ bool BookmarkBubbleView::GetExtraViewPadding(int* padding) {
 }
 
 views::View* BookmarkBubbleView::CreateFootnoteView() {
-#if defined(OS_WIN)
-  if (!is_showing_ios_promotion_ &&
-      desktop_ios_promotion::IsEligibleForIOSPromotion(
-          profile_,
-          desktop_ios_promotion::PromotionEntryPoint::BOOKMARKS_FOOTNOTE)) {
-    footnote_view_ = new DesktopIOSPromotionFootnoteView(profile_, this);
-    return footnote_view_;
-  }
-#endif
   if (!SyncPromoUI::ShouldShowSyncPromo(profile_))
     return nullptr;
 
@@ -216,10 +188,6 @@ views::View* BookmarkBubbleView::CreateFootnoteView() {
 }
 
 bool BookmarkBubbleView::Cancel() {
-#if defined(OS_WIN)
-  if (is_showing_ios_promotion_)
-    return ios_promo_view_->Cancel();
-#endif
   base::RecordAction(UserMetricsAction("BookmarkBubble_Unstar"));
   // Set this so we remove the bookmark after the window closes.
   remove_bookmark_ = true;
@@ -228,16 +196,6 @@ bool BookmarkBubbleView::Cancel() {
 }
 
 bool BookmarkBubbleView::Accept() {
-#if defined(OS_WIN)
-  if (is_showing_ios_promotion_)
-    return ios_promo_view_->Accept();
-  using desktop_ios_promotion::PromotionEntryPoint;
-  if (desktop_ios_promotion::IsEligibleForIOSPromotion(
-          profile_, PromotionEntryPoint::BOOKMARKS_BUBBLE)) {
-    ShowIOSPromotion(PromotionEntryPoint::BOOKMARKS_BUBBLE);
-    return false;
-  }
-#endif
   return true;
 }
 
@@ -274,15 +232,6 @@ void BookmarkBubbleView::OnPerformAction(views::Combobox* combobox) {
     base::RecordAction(UserMetricsAction("BookmarkBubble_EditFromCombobox"));
     ShowEditor();
   }
-}
-
-// DesktopIOSPromotionFootnoteDelegate -----------------------------------------
-
-void BookmarkBubbleView::OnIOSPromotionFootnoteLinkClicked() {
-#if defined(OS_WIN)
-  ShowIOSPromotion(
-      desktop_ios_promotion::PromotionEntryPoint::FOOTNOTE_FOLLOWUP_BUBBLE);
-#endif
 }
 
 // views::BubbleDialogDelegateView ---------------------------------------------
@@ -383,29 +332,3 @@ void BookmarkBubbleView::ApplyEdits() {
     folder_model()->MaybeChangeParent(node, parent_combobox_->selected_index());
   }
 }
-
-#if defined(OS_WIN)
-void BookmarkBubbleView::ShowIOSPromotion(
-    desktop_ios_promotion::PromotionEntryPoint entry_point) {
-  DCHECK(!is_showing_ios_promotion_);
-  edit_button_->SetVisible(false);
-
-  // If edits are to be applied we must do so before removing the content.
-  if (apply_edits_)
-    ApplyEdits();
-
-  delete bookmark_contents_view_;
-  bookmark_contents_view_ = nullptr;
-  delete footnote_view_;
-  footnote_view_ = nullptr;
-  is_showing_ios_promotion_ = true;
-  ios_promo_view_ = new DesktopIOSPromotionBubbleView(profile_, entry_point);
-  AddChildView(ios_promo_view_);
-  set_margins(ChromeLayoutProvider::Get()->GetDialogInsetsForContentType(
-      views::TEXT, views::TEXT));
-  GetWidget()->UpdateWindowIcon();
-  GetWidget()->UpdateWindowTitle();
-  DialogModelChanged();
-  SizeToContents();
-}
-#endif

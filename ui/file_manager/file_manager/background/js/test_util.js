@@ -91,14 +91,16 @@ test.util.sync.getFileList = function(contentWindow) {
  */
 test.util.sync.selectFile = function(contentWindow, filename) {
   var rows = contentWindow.document.querySelectorAll('#detail-table li');
+  test.util.sync.focus(contentWindow, '#file-list');
   test.util.sync.fakeKeyDown(
-      contentWindow, '#file-list', 'Home', 'Home', false, false, false);
+      contentWindow, '#file-list', 'Home', false, false, false);
   for (var index = 0; index < rows.length; ++index) {
     var selection = test.util.sync.getSelectedFiles(contentWindow);
-    if (selection.length === 1 && selection[0] === filename)
+    if (selection.length === 1 && selection[0] === filename) {
       return true;
+    }
     test.util.sync.fakeKeyDown(
-        contentWindow, '#file-list', 'ArrowDown', 'Down', false, false, false);
+        contentWindow, '#file-list', 'ArrowDown', false, false, false);
   }
   console.error('Failed to select file "' + filename + '"');
   return false;
@@ -193,19 +195,17 @@ test.util.sync.selectFolderInTree = function(contentWindow, folderName) {
   var items =
       contentWindow.document.querySelectorAll('#directory-tree .tree-item');
   test.util.sync.fakeKeyDown(
-      contentWindow, '#directory-tree', 'Home', 'Home', false, false, false);
+      contentWindow, '#directory-tree', 'Home', false, false, false);
   for (var index = 0; index < items.length; ++index) {
     var selectedTreeItemName =
         test.util.sync.getSelectedTreeItem(contentWindow);
     if (selectedTreeItemName === folderName) {
       test.util.sync.fakeKeyDown(
-          contentWindow, '#directory-tree', 'Enter', 'Enter', false, false,
-          false);
+          contentWindow, '#directory-tree', 'Enter', false, false, false);
       return true;
     }
     test.util.sync.fakeKeyDown(
-        contentWindow, '#directory-tree', 'ArrowDown', 'Down', false, false,
-        false);
+        contentWindow, '#directory-tree', 'ArrowDown', false, false, false);
   }
 
   console.error('Failed to select folder in tree "' + folderName + '"');
@@ -228,7 +228,7 @@ test.util.sync.expandSelectedFolderInTree = function(contentWindow) {
   }
   test.util.sync.fakeKeyDown(
       contentWindow, '#directory-tree .tree-item[selected]', 'ArrowRight',
-      'Right', false, false, false);
+      false, false, false);
   return true;
 };
 
@@ -248,7 +248,7 @@ test.util.sync.collapseSelectedFolderInTree = function(contentWindow) {
   }
   test.util.sync.fakeKeyDown(
       contentWindow, '#directory-tree .tree-item[selected]', 'ArrowLeft',
-      'Left', false, false, false);
+      false, false, false);
   return true;
 };
 
@@ -266,18 +266,21 @@ test.util.sync.selectTeamDrive = function(contentWindow, teamDriveName) {
   // Select + expand Team Drives gran root.
   const teamDrivesSelector = '#directory-tree .tree-item ' +
       '[entry-label="Team Drives"]:not([hidden])';
-  if (!test.util.sync.fakeMouseClick(contentWindow, teamDrivesSelector))
+  if (!test.util.sync.fakeMouseClick(contentWindow, teamDrivesSelector)) {
     return false;
+  }
 
   // Expand the 'Team Drives' root.
-  if (!test.util.sync.expandSelectedFolderInTree(contentWindow))
+  if (!test.util.sync.expandSelectedFolderInTree(contentWindow)) {
     return false;
+  }
 
   // Select the team drive folder.
   const teamDriveNameSelector = '#directory-tree .tree-item ' +
       '[entry-label="' + teamDriveName + '"]:not([hidden])';
-  if (!test.util.sync.fakeMouseClick(contentWindow, teamDriveNameSelector))
+  if (!test.util.sync.fakeMouseClick(contentWindow, teamDriveNameSelector)) {
     return false;
+  }
 
   return true;
 };
@@ -294,8 +297,9 @@ test.util.sync.getTreeItems = function(contentWindow) {
       '#directory-tree .tree-item');
   var result = [];
   for (var i = 0; i < items.length; i++) {
-    if (items[i].matches('.tree-children:not([expanded]) *'))
+    if (items[i].matches('.tree-children:not([expanded]) *')) {
       continue;
+    }
     result.push(items[i].querySelector('.entry-name').textContent);
   }
   return result;
@@ -335,13 +339,14 @@ test.util.async.executeScriptInWebView = function(
  *     say if the file got copied, or not.
  */
 test.util.sync.copyFile = function(contentWindow, filename) {
-  if (!test.util.sync.selectFile(contentWindow, filename))
+  if (!test.util.sync.selectFile(contentWindow, filename)) {
     return false;
+  }
   // Ctrl+C and Ctrl+V
   test.util.sync.fakeKeyDown(
-      contentWindow, '#file-list', 'c', 'U+0043', true, false, false);
+      contentWindow, '#file-list', 'c', true, false, false);
   test.util.sync.fakeKeyDown(
-      contentWindow, '#file-list', 'v', 'U+0056', true, false, false);
+      contentWindow, '#file-list', 'v', true, false, false);
   return true;
 };
 
@@ -354,11 +359,12 @@ test.util.sync.copyFile = function(contentWindow, filename) {
  *     say if the file got deleted, or not.
  */
 test.util.sync.deleteFile = function(contentWindow, filename) {
-  if (!test.util.sync.selectFile(contentWindow, filename))
+  if (!test.util.sync.selectFile(contentWindow, filename)) {
     return false;
+  }
   // Delete
   test.util.sync.fakeKeyDown(
-      contentWindow, '#file-list', 'Delete', 'U+007F', false, false, false);
+      contentWindow, '#file-list', 'Delete', false, false, false);
   return true;
 };
 

@@ -5,12 +5,8 @@
 #import "ios/chrome/browser/ui/settings/google_services_settings_view_controller.h"
 
 #include "base/mac/foundation_util.h"
-#import "ios/chrome/browser/ui/collection_view/cells/MDCCollectionViewCell+Chrome.h"
-#import "ios/chrome/browser/ui/collection_view/cells/collection_view_switch_item.h"
-#import "ios/chrome/browser/ui/collection_view/cells/collection_view_text_item.h"
-#import "ios/chrome/browser/ui/settings/cells/settings_collapsible_item.h"
+#import "ios/chrome/browser/ui/settings/cells/settings_switch_cell.h"
 #import "ios/chrome/browser/ui/settings/cells/sync_switch_item.h"
-#import "ios/chrome/browser/ui/settings/google_services_settings_local_commands.h"
 #import "ios/chrome/browser/ui/settings/google_services_settings_service_delegate.h"
 #import "ios/chrome/browser/ui/settings/google_services_settings_view_controller_model_delegate.h"
 #include "ios/chrome/grit/ios_strings.h"
@@ -30,59 +26,13 @@ constexpr NSInteger kSectionOffset = 1000;
 
 @implementation GoogleServicesSettingsViewController
 
-@synthesize presentationDelegate = _presentationDelegate;
-@synthesize modelDelegate = _modelDelegate;
-@synthesize serviceDelegate = _serviceDelegate;
-@synthesize localDispatcher = _localDispatcher;
-
-- (instancetype)initWithLayout:(UICollectionViewLayout*)layout
-                         style:(CollectionViewControllerStyle)style {
-  self = [super initWithLayout:layout style:style];
-  if (self) {
-    self.collectionViewAccessibilityIdentifier =
-        @"google_services_settings_view_controller";
-    self.title = l10n_util::GetNSString(IDS_IOS_GOOGLE_SERVICES_SETTINGS_TITLE);
-  }
-  return self;
+- (void)viewDidLoad {
+  [super viewDidLoad];
+  self.tableView.accessibilityIdentifier =
+      @"google_services_settings_view_controller";
+  self.title = l10n_util::GetNSString(IDS_IOS_GOOGLE_SERVICES_SETTINGS_TITLE);
 }
 
-// Collapse/expand a section at |sectionIndex|.
-- (void)toggleSectionWithIndexPath:(NSIndexPath*)indexPath {
-  DCHECK_EQ(0, indexPath.row);
-  NSMutableArray* cellIndexPathsToDeleteOrInsert = [NSMutableArray array];
-  CollectionViewModel* model = self.collectionViewModel;
-  NSInteger sectionIdentifier =
-      [model sectionIdentifierForSection:indexPath.section];
-  NSEnumerator* itemEnumerator =
-      [[model itemsInSectionWithIdentifier:sectionIdentifier] objectEnumerator];
-  // The first item is the title item that does the collapse/expand. This item
-  // should always be visible and should be skipped.
-  [itemEnumerator nextObject];
-  for (ListItem* item in itemEnumerator) {
-    NSIndexPath* tabIndexPath = [model indexPathForItem:item];
-    [cellIndexPathsToDeleteOrInsert addObject:tabIndexPath];
-  }
-
-  BOOL shouldCollapse = ![model sectionIsCollapsed:sectionIdentifier];
-  void (^tableUpdates)(void) = ^{
-    if (!shouldCollapse) {
-      [model setSection:sectionIdentifier collapsed:NO];
-      [self.collectionView
-          insertItemsAtIndexPaths:cellIndexPathsToDeleteOrInsert];
-    } else {
-      [model setSection:sectionIdentifier collapsed:YES];
-      [self.collectionView
-          deleteItemsAtIndexPaths:cellIndexPathsToDeleteOrInsert];
-    }
-  };
-  [self.collectionView performBatchUpdates:tableUpdates completion:nil];
-
-  SettingsCollapsibleItem* item = [model itemAtIndexPath:indexPath];
-  item.collapsed = shouldCollapse;
-  SettingsCollapsibleCell* cell = (SettingsCollapsibleCell*)[self.collectionView
-      cellForItemAtIndexPath:indexPath];
-  [cell setCollapsed:shouldCollapse animated:YES];
-}
 #pragma mark - Private
 
 - (NSInteger)tagForIndexPath:(NSIndexPath*)indexPath {
@@ -98,51 +48,19 @@ constexpr NSInteger kSectionOffset = 1000;
 - (void)switchAction:(UISwitch*)sender {
   NSIndexPath* indexPath = [self indexPathForTag:sender.tag];
   SyncSwitchItem* syncSwitchItem = base::mac::ObjCCastStrict<SyncSwitchItem>(
-      [self.collectionViewModel itemAtIndexPath:indexPath]);
-  BOOL isOn = sender.isOn;
-  GoogleServicesSettingsCommandID commandID =
-      static_cast<GoogleServicesSettingsCommandID>(syncSwitchItem.commandID);
-  switch (commandID) {
-    case GoogleServicesSettingsCommandIDToggleSyncEverything:
-      [self.serviceDelegate toggleSyncEverythingWithValue:isOn];
-      break;
-    case GoogleServicesSettingsCommandIDToggleDataTypeSync:
-      [self.serviceDelegate toggleSyncDataSync:syncSwitchItem.dataType
-                                     withValue:isOn];
-      break;
-    case GoogleServicesSettingsCommandIDAutocompleteWalletService:
-      [self.serviceDelegate toggleAutocompleteWalletServiceWithValue:isOn];
-      break;
-    case GoogleServicesSettingsCommandIDToggleAutocompleteSearchesService:
-      [self.serviceDelegate toggleAutocompleteSearchesServiceWithValue:isOn];
-      break;
-    case GoogleServicesSettingsCommandIDTogglePreloadPagesService:
-      [self.serviceDelegate togglePreloadPagesServiceWithValue:isOn];
-      break;
-    case GoogleServicesSettingsCommandIDToggleImproveChromeService:
-      [self.serviceDelegate toggleImproveChromeServiceWithValue:isOn];
-      break;
-    case GoogleServicesSettingsCommandIDToggleBetterSearchAndBrowsingService:
-      [self.serviceDelegate toggleBetterSearchAndBrowsingServiceWithValue:isOn];
-      break;
-    case GoogleServicesSettingsCommandIDNoOp:
-    case GoogleServicesSettingsCommandIDOpenGoogleActivityControlsDialog:
-    case GoogleServicesSettingsCommandIDOpenEncryptionDialog:
-    case GoogleServicesSettingsCommandIDOpenManageSyncedDataWebPage:
-      NOTREACHED();
-      break;
-  }
+      [self.tableViewModel itemAtIndexPath:indexPath]);
+  [self.serviceDelegate toggleSwitchItem:syncSwitchItem withValue:sender.isOn];
 }
 
-#pragma mark - UICollectionViewDataSource
+#pragma mark - UITableViewDataSource
 
-- (UICollectionViewCell*)collectionView:(UICollectionView*)collectionView
-                 cellForItemAtIndexPath:(NSIndexPath*)indexPath {
-  UICollectionViewCell* cell =
-      [super collectionView:collectionView cellForItemAtIndexPath:indexPath];
-  if ([cell isKindOfClass:[SyncSwitchCell class]]) {
-    SyncSwitchCell* switchCell =
-        base::mac::ObjCCastStrict<SyncSwitchCell>(cell);
+- (UITableViewCell*)tableView:(UITableView*)tableView
+        cellForRowAtIndexPath:(NSIndexPath*)indexPath {
+  UITableViewCell* cell = [super tableView:tableView
+                     cellForRowAtIndexPath:indexPath];
+  if ([cell isKindOfClass:[SettingsSwitchCell class]]) {
+    SettingsSwitchCell* switchCell =
+        base::mac::ObjCCastStrict<SettingsSwitchCell>(cell);
     [switchCell.switchView addTarget:self
                               action:@selector(switchAction:)
                     forControlEvents:UIControlEventValueChanged];
@@ -151,13 +69,43 @@ constexpr NSInteger kSectionOffset = 1000;
   return cell;
 }
 
-- (void)reloadSections:(NSIndexSet*)sections {
-  [self.collectionView reloadSections:sections];
+#pragma mark - GoogleServicesSettingsConsumer
+
+- (void)insertSections:(NSIndexSet*)sections {
+  if (!self.tableViewModel) {
+    // No need to reload since the model has not been loaded yet.
+    return;
+  }
+  [self.tableView insertSections:sections
+                withRowAnimation:UITableViewRowAnimationNone];
 }
 
-- (void)reloadItem:(CollectionViewItem*)item {
-  NSIndexPath* indexPath = [self.collectionViewModel indexPathForItem:item];
-  [self.collectionView reloadItemsAtIndexPaths:@[ indexPath ]];
+- (void)deleteSections:(NSIndexSet*)sections {
+  if (!self.tableViewModel) {
+    // No need to reload since the model has not been loaded yet.
+    return;
+  }
+  [self.tableView deleteSections:sections
+                withRowAnimation:UITableViewRowAnimationNone];
+}
+
+- (void)reloadSections:(NSIndexSet*)sections {
+  if (!self.tableViewModel) {
+    // No need to reload since the model has not been loaded yet.
+    return;
+  }
+  [self.tableView reloadSections:sections
+                withRowAnimation:UITableViewRowAnimationNone];
+}
+
+- (void)reloadItem:(TableViewItem*)item {
+  if (!self.tableViewModel) {
+    // No need to reload since the model has not been loaded yet.
+    return;
+  }
+  NSIndexPath* indexPath = [self.tableViewModel indexPathForItem:item];
+  [self.tableView reloadRowsAtIndexPaths:@[ indexPath ]
+                        withRowAnimation:UITableViewRowAnimationNone];
 }
 
 #pragma mark - CollectionViewController
@@ -182,75 +130,13 @@ constexpr NSInteger kSectionOffset = 1000;
   }
 }
 
-#pragma mark - MDCCollectionViewStylingDelegate
+#pragma mark - UITableViewDelegate
 
-- (CGFloat)collectionView:(UICollectionView*)collectionView
-    cellHeightAtIndexPath:(NSIndexPath*)indexPath {
-  CollectionViewItem* item =
-      [self.collectionViewModel itemAtIndexPath:indexPath];
-  UIEdgeInsets inset = [self collectionView:collectionView
-                                     layout:collectionView.collectionViewLayout
-                     insetForSectionAtIndex:indexPath.section];
-  CGFloat width =
-      CGRectGetWidth(collectionView.bounds) - inset.left - inset.right;
-  return [item.cellClass cr_preferredHeightForWidth:width forItem:item];
-}
-
-#pragma mark - UICollectionViewDelegate
-
-- (BOOL)collectionView:(UICollectionView*)collectionView
-    shouldHighlightItemAtIndexPath:(NSIndexPath*)indexPath {
-  [super collectionView:collectionView
-      shouldHighlightItemAtIndexPath:indexPath];
-  CollectionViewItem* item =
-      [self.collectionViewModel itemAtIndexPath:indexPath];
-  if ([item isKindOfClass:[SyncSwitchItem class]]) {
-    return NO;
-  } else if ([item isKindOfClass:[SettingsCollapsibleItem class]]) {
-    return YES;
-  } else if ([item isKindOfClass:[CollectionViewTextItem class]]) {
-    CollectionViewTextItem* textItem =
-        base::mac::ObjCCast<CollectionViewTextItem>(item);
-    return textItem.enabled;
-  }
-  return NO;
-}
-
-- (void)collectionView:(UICollectionView*)collectionView
-    didSelectItemAtIndexPath:(NSIndexPath*)indexPath {
-  [super collectionView:collectionView didSelectItemAtIndexPath:indexPath];
-  CollectionViewItem* item =
-      [self.collectionViewModel itemAtIndexPath:indexPath];
-  if ([item isKindOfClass:[SettingsCollapsibleItem class]]) {
-    [self toggleSectionWithIndexPath:indexPath];
-    return;
-  }
-  CollectionViewTextItem* textItem =
-      base::mac::ObjCCastStrict<CollectionViewTextItem>(
-          [self.collectionViewModel itemAtIndexPath:indexPath]);
-  GoogleServicesSettingsCommandID commandID =
-      static_cast<GoogleServicesSettingsCommandID>(textItem.commandID);
-  switch (commandID) {
-    case GoogleServicesSettingsCommandIDOpenGoogleActivityControlsDialog:
-      [self.localDispatcher openGoogleActivityControlsDialog];
-      break;
-    case GoogleServicesSettingsCommandIDOpenEncryptionDialog:
-      [self.localDispatcher openEncryptionDialog];
-      break;
-    case GoogleServicesSettingsCommandIDOpenManageSyncedDataWebPage:
-      [self.localDispatcher openManageSyncedDataWebPage];
-      break;
-    case GoogleServicesSettingsCommandIDNoOp:
-    case GoogleServicesSettingsCommandIDToggleSyncEverything:
-    case GoogleServicesSettingsCommandIDToggleDataTypeSync:
-    case GoogleServicesSettingsCommandIDAutocompleteWalletService:
-    case GoogleServicesSettingsCommandIDToggleAutocompleteSearchesService:
-    case GoogleServicesSettingsCommandIDTogglePreloadPagesService:
-    case GoogleServicesSettingsCommandIDToggleImproveChromeService:
-    case GoogleServicesSettingsCommandIDToggleBetterSearchAndBrowsingService:
-      NOTREACHED();
-      break;
-  }
+- (void)tableView:(UITableView*)tableView
+    didSelectRowAtIndexPath:(NSIndexPath*)indexPath {
+  [super tableView:tableView didSelectRowAtIndexPath:indexPath];
+  TableViewItem* item = [self.tableViewModel itemAtIndexPath:indexPath];
+  [self.serviceDelegate didSelectItem:item];
 }
 
 @end

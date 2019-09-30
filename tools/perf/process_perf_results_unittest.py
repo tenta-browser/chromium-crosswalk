@@ -34,6 +34,33 @@ class _FakeLogdogStream(object):
     return 'http://foobar.not.exit'
 
 
+# pylint: disable=protected-access
+class DataFormatParsingUnitTest(unittest.TestCase):
+  def tearDown(self):
+    ppr_module._data_format_cache = {}
+
+  def testGtest(self):
+    with mock.patch('__builtin__.open', mock.mock_open(read_data='{}')):
+      self.assertTrue(ppr_module._is_gtest('test.json'))
+      self.assertFalse(ppr_module._is_histogram('test.json'))
+    self.assertTrue(ppr_module._is_gtest('test.json'))
+    self.assertFalse(ppr_module._is_histogram('test.json'))
+
+  def testChartJSON(self):
+    with mock.patch('__builtin__.open',
+        mock.mock_open(read_data='{"charts": 1}')):
+      self.assertFalse(ppr_module._is_gtest('test.json'))
+      self.assertFalse(ppr_module._is_histogram('test.json'))
+    self.assertFalse(ppr_module._is_gtest('test.json'))
+    self.assertFalse(ppr_module._is_histogram('test.json'))
+
+  def testHistogram(self):
+    with mock.patch('__builtin__.open', mock.mock_open(read_data='[]')):
+      self.assertTrue(ppr_module._is_histogram('test.json'))
+      self.assertFalse(ppr_module._is_gtest('test.json'))
+    self.assertTrue(ppr_module._is_histogram('test.json'))
+    self.assertFalse(ppr_module._is_gtest('test.json'))
+
 class ProcessPerfResultsIntegrationTest(unittest.TestCase):
   def setUp(self):
     self.test_dir = tempfile.mkdtemp()
@@ -82,8 +109,9 @@ class ProcessPerfResultsIntegrationTest(unittest.TestCase):
              "created_by": "user:foo",
              "created_ts": "1535490272757820",
              "id": "8936915467712010816",
+             "project": "chrome",
              "lease_key": "461228535",
-             "tags": ["builder:obbs_fyi", "buildset:patch/1194825/3",
+             "tags": ["builder:android-go-perf", "buildset:patch/1194825/3",
                       "cq_experimental:False",
                       "master:master.tryserver.chromium.perf",
                       "user_agent:cq"]}}"""

@@ -49,6 +49,18 @@ Polymer({
    */
   networkLastSelectedGuid_: '',
 
+  /**
+   * Flag that ensures that OOBE configuration is applied only once.
+   * @private {boolean}
+   */
+  configuration_applied_: false,
+
+  /**
+   * Flag that reflects if this element is currently shown.
+   * @private {boolean}
+   */
+  is_shown_: false,
+
   /** Refreshes the list of the networks. */
   refresh: function() {
     this.$.networkSelect.refreshNetworks();
@@ -59,7 +71,20 @@ Polymer({
     this.$.networkSelect.focus();
   },
 
-  /** Call after strings are loaded to set CrOncStrings for cr-network-select */
+  /** Called when dialog is shown. */
+  onBeforeShow: function() {
+    this.is_shown_ = true;
+    this.attemptApplyConfiguration_();
+  },
+
+  /** Called when dialog is hidden. */
+  onBeforeHide: function() {
+    this.is_shown_ = false;
+  },
+
+  /**
+   * Call after strings are loaded to set CrOncStrings for cr-network-select.
+   */
   setCrOncStrings: function() {
     CrOncStrings = {
       OncTypeCellular: loadTimeData.getString('OncTypeCellular'),
@@ -178,6 +203,9 @@ Polymer({
     var state = event.detail;
     this.isConnected =
         state && state.ConnectionState == CrOnc.ConnectionState.CONNECTED;
+    if (!this.isConnected || !this.is_shown_)
+      return;
+    this.attemptApplyConfiguration_();
   },
 
   /**
@@ -194,13 +222,68 @@ Polymer({
   },
 
   /**
+   * Event triggered when a list of networks get changed.
+   * @param {!{detail: !Array<!CrOnc.NetworkStateProperties>}} event
+   * @private
+   */
+  onNetworkListChanged_: function(event) {
+    if (!this.is_shown_)
+      return;
+    this.attemptApplyConfiguration_();
+  },
+
+  /**
+   * Tries to apply OOBE configuration on current list of networks.
+   * @private
+   */
+  attemptApplyConfiguration_: function() {
+    if (this.configuration_applied_)
+      return;
+    var configuration = Oobe.getInstance().getOobeConfiguration();
+    if (!configuration)
+      return;
+    if (configuration.networkOfflineDemo && this.isOfflineDemoModeSetup) {
+      window.setTimeout(this.onOfflineDemoSetupClicked_.bind(this), 0);
+      this.configuration_applied_ = true;
+      return;
+    }
+    var defaultNetwork = this.$.networkSelect.getDefaultNetwork();
+    if (configuration.networkUseConnected && defaultNetwork) {
+      if (defaultNetwork.ConnectionState == CrOnc.ConnectionState.CONNECTED) {
+        window.setTimeout(
+            this.handleNetworkSelection_.bind(this, defaultNetwork), 0);
+        this.configuration_applied_ = true;
+        return;
+      }
+    }
+    if (configuration.networkSelectGuid) {
+      var network =
+          this.$.networkSelect.getNetwork(configuration.networkSelectGuid);
+      if (network) {
+        window.setTimeout(this.handleNetworkSelection_.bind(this, network), 0);
+        this.configuration_applied_ = true;
+        return;
+      }
+    }
+  },
+
+  /**
    * This is called when user taps on network entry in networks list.
    *
    * @param {!{detail: !CrOnc.NetworkStateProperties}} event
    * @private
    */
   onNetworkListNetworkItemSelected_: function(event) {
-    var state = event.detail;
+    this.handleNetworkSelection_(event.detail);
+  },
+
+  /**
+   * Handles selection of particular network.
+   *
+   * @param {!CrOnc.NetworkStateProperties} network state.
+   * @private
+   */
+  handleNetworkSelection_: function(state) {
     assert(state);
     // If |configureConnected| is false and a connected network is selected,
     // continue to the next screen.

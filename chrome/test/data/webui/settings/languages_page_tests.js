@@ -101,11 +101,13 @@ cr.define('languages_page_tests', function() {
       setup(function(done) {
         const addLanguagesButton =
             languagesCollapse.querySelector('#addLanguages');
+        const whenDialogOpen =
+            test_util.eventToPromise('cr-dialog-open', languagesPage);
         addLanguagesButton.click();
 
         // The page stamps the dialog, registers listeners, and populates the
         // iron-list asynchronously at microtask timing, so wait for a new task.
-        setTimeout(function() {
+        whenDialogOpen.then(() => {
           dialog = languagesPage.$$('settings-add-languages-dialog');
           assertTrue(!!dialog);
 
@@ -117,6 +119,7 @@ cr.define('languages_page_tests', function() {
 
           actionButton = assert(dialog.$$('.action-button'));
           cancelButton = assert(dialog.$$('.cancel-button'));
+          Polymer.dom.flush();
 
           // The fixed-height dialog's iron-list should stamp far fewer than
           // 50 items.
@@ -189,7 +192,7 @@ cr.define('languages_page_tests', function() {
       // Test that searching languages works whether the displayed or native
       // language name is queried.
       test('search languages', function() {
-        const searchInput = dialog.$$('settings-subpage-search');
+        const searchInput = dialog.$$('cr-search-field');
 
         const getItems = function() {
           return dialog.$.dialog.querySelectorAll('.list-item:not([hidden])');
@@ -220,7 +223,7 @@ cr.define('languages_page_tests', function() {
       });
 
       test('Escape key behavior', function() {
-        const searchInput = dialog.$$('settings-subpage-search');
+        const searchInput = dialog.$$('cr-search-field');
         searchInput.setValue('dummyquery');
 
         // Test that dialog is not closed if 'Escape' is pressed on the input
@@ -327,6 +330,19 @@ cr.define('languages_page_tests', function() {
         }, settings.kMenuCloseDelay + 1);
       });
 
+      test('toggle translate for target language', function() {
+        // Open options for 'en'.
+        const languageOptionsDropdownTrigger =
+            languagesCollapse.querySelectorAll('button')[0];
+        assertTrue(!!languageOptionsDropdownTrigger);
+        languageOptionsDropdownTrigger.click();
+        assertTrue(actionMenu.open);
+
+        // 'en' does not support.
+        const translateOption = getMenuItem('offerToTranslateInThisLanguage');
+        assertTrue(translateOption.disabled);
+      });
+
       test('disable translate hides language-specific option', function() {
         // Disables translate.
         languageHelper.setPrefValue('translate.enabled', false);
@@ -344,7 +360,7 @@ cr.define('languages_page_tests', function() {
         assertTrue(translateOption.hidden);
       });
 
-      test('remove language', function() {
+      test('remove language when starting with 3 languages', function() {
         // Enable a language which we can then disable.
         languageHelper.enableLanguage('no');
 
@@ -366,6 +382,7 @@ cr.define('languages_page_tests', function() {
         assertTrue(actionMenu.open);
         const removeMenuItem = getMenuItem('removeLanguage');
         assertFalse(removeMenuItem.disabled);
+        assertFalse(removeMenuItem.hidden);
         removeMenuItem.click();
         assertFalse(actionMenu.open);
 
@@ -373,10 +390,54 @@ cr.define('languages_page_tests', function() {
             initialLanguages, languageHelper.getPref(languagesPref).value);
       });
 
+      test('remove last blocked language', function() {
+        assertEquals(
+            initialLanguages, languageHelper.getPref(languagesPref).value);
+        assertDeepEquals(
+            ['en-US'], languageHelper.prefs.translate_blocked_languages.value);
+
+        const items = languagesCollapse.querySelectorAll('.list-item');
+        const domRepeat = assert(languagesCollapse.querySelector(
+            Polymer.DomRepeat ? 'dom-repeat' : 'template[is="dom-repeat"]'));
+        const item = Array.from(items).find(function(el) {
+          return domRepeat.itemForElement(el) &&
+              domRepeat.itemForElement(el).language.code == 'en-US';
+        });
+        // Open the menu and select Remove.
+        item.querySelector('button').click();
+
+        assertTrue(actionMenu.open);
+        const removeMenuItem = getMenuItem('removeLanguage');
+        assertTrue(removeMenuItem.hidden);
+      });
+
+      test('remove language when starting with 2 languages', function() {
+        const items = languagesCollapse.querySelectorAll('.list-item');
+        const domRepeat = assert(languagesCollapse.querySelector(
+            Polymer.DomRepeat ? 'dom-repeat' : 'template[is="dom-repeat"]'));
+        const item = Array.from(items).find(function(el) {
+          return domRepeat.itemForElement(el) &&
+              domRepeat.itemForElement(el).language.code == 'sw';
+        });
+
+        // Open the menu and select Remove.
+        item.querySelector('button').click();
+
+        assertTrue(actionMenu.open);
+        const removeMenuItem = getMenuItem('removeLanguage');
+        assertFalse(removeMenuItem.disabled);
+        assertFalse(removeMenuItem.hidden);
+        removeMenuItem.click();
+        assertFalse(actionMenu.open);
+
+        assertEquals('en-US', languageHelper.getPref(languagesPref).value);
+      });
+
       test('move up/down buttons', function() {
         // Add several languages.
-        for (const language of ['en-CA', 'en-US', 'tk', 'no'])
+        for (const language of ['en-CA', 'en-US', 'tk', 'no']) {
           languageHelper.enableLanguage(language);
+        }
 
         Polymer.dom.flush();
 
@@ -518,8 +579,9 @@ cr.define('languages_page_tests', function() {
       });
 
       test('error handling', function() {
-        if (cr.isMac)
+        if (cr.isMac) {
           return;
+        }
 
         const checkAllHidden = nodes => {
           assertTrue(nodes.every(node => node.hidden));

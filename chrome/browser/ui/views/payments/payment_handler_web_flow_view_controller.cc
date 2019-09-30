@@ -21,8 +21,10 @@
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/render_process_host.h"
 #include "content/public/browser/web_contents.h"
+#include "net/base/url_util.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/gfx/color_palette.h"
+#include "ui/gfx/color_utils.h"
 #include "ui/gfx/image/image_skia.h"
 #include "ui/views/background.h"
 #include "ui/views/border.h"
@@ -44,7 +46,7 @@ class ReadOnlyOriginView : public views::View {
                      views::ButtonListener* site_settings_listener) {
     std::unique_ptr<views::View> title_origin_container =
         std::make_unique<views::View>();
-    SkColor foreground = GetForegroundColorForBackground(background_color);
+    SkColor foreground = color_utils::GetColorWithMaxContrast(background_color);
     views::GridLayout* title_origin_layout =
         title_origin_container->SetLayoutManager(
             std::make_unique<views::GridLayout>(title_origin_container.get()));
@@ -129,10 +131,12 @@ PaymentHandlerWebFlowViewController::PaymentHandlerWebFlowViewController(
     PaymentRequestSpec* spec,
     PaymentRequestState* state,
     PaymentRequestDialogView* dialog,
+    content::WebContents* log_destination,
     Profile* profile,
     GURL target,
     PaymentHandlerOpenWindowCallback first_navigation_complete_callback)
     : PaymentRequestSheetController(spec, state, dialog),
+      log_(log_destination),
       profile_(profile),
       target_(target),
       show_progress_bar_(false),
@@ -201,9 +205,14 @@ PaymentHandlerWebFlowViewController::CreateHeaderContentSeparatorView() {
 
 std::unique_ptr<views::Background>
 PaymentHandlerWebFlowViewController::GetHeaderBackground() {
-  if (!web_contents())
-    return PaymentRequestSheetController::GetHeaderBackground();
-  return views::CreateSolidBackground(web_contents()->GetThemeColor());
+  auto default_header_background =
+      PaymentRequestSheetController::GetHeaderBackground();
+  if (web_contents()) {
+    return views::CreateSolidBackground(color_utils::GetResultingPaintColor(
+        web_contents()->GetThemeColor(),
+        default_header_background->get_color()));
+  }
+  return default_header_background;
 }
 
 bool PaymentHandlerWebFlowViewController::GetSheetId(DialogViewID* sheet_id) {
@@ -241,11 +250,12 @@ void PaymentHandlerWebFlowViewController::VisibleSecurityStateChanged(
   DCHECK(source == web_contents());
   // IsSslCertificateValid checks security_state::SecurityInfo.security_level
   // which reflects security state.
-  if (!SslValidityChecker::IsSslCertificateValid(source)) {
-    WarnIfPossible(
-        "Opened payment handler window's visible security state changed for "
-        "url " +
-        source->GetVisibleURL().spec());
+  // Allow localhost for test.
+  if (!SslValidityChecker::IsSslCertificateValid(source) &&
+      !net::IsLocalhost(source->GetLastCommittedURL())) {
+    log_.Error("Aborting payment handler window \"" + target_.spec() +
+               "\" because of insecure certificate state on \"" +
+               source->GetVisibleURL().spec() + "\"");
     AbortPayment();
   }
 }
@@ -289,11 +299,14 @@ void PaymentHandlerWebFlowViewController::DidFinishNavigation(
        !navigation_handle->GetURL().IsAboutBlank()) ||
       !SslValidityChecker::IsSslCertificateValid(
           navigation_handle->GetWebContents())) {
-    WarnIfPossible(
-        "Opened payment handler window has an insecure navigation to url " +
-        navigation_handle->GetURL().spec());
-    AbortPayment();
-    return;
+    // Allow localhost for test.
+    if (!net::IsLocalhost(navigation_handle->GetURL())) {
+      log_.Error("Aborting payment handler window \"" + target_.spec() +
+                 "\" because of navigation to an insecure url \"" +
+                 navigation_handle->GetURL().spec() + "\"");
+      AbortPayment();
+      return;
+    }
   }
 
   if (first_navigation_complete_callback_) {
@@ -312,8 +325,9 @@ void PaymentHandlerWebFlowViewController::TitleWasSet(
 }
 
 void PaymentHandlerWebFlowViewController::DidAttachInterstitialPage() {
-  WarnIfPossible(
-      "An interstitial page attached to opened payment handler window.");
+  log_.Error("Aborting payment handler window \"" + target_.spec() +
+             "\" because of navigation to a page with invalid certificate "
+             "state or malicious content.");
   AbortPayment();
 }
 
@@ -322,16 +336,6 @@ void PaymentHandlerWebFlowViewController::AbortPayment() {
     web_contents()->Close();
 
   dialog()->ShowErrorMessage();
-}
-
-void PaymentHandlerWebFlowViewController::WarnIfPossible(
-    const std::string& message) {
-  if (web_contents()) {
-    web_contents()->GetMainFrame()->AddMessageToConsole(
-        content::ConsoleMessageLevel::CONSOLE_MESSAGE_LEVEL_WARNING, message);
-  } else {
-    LOG(WARNING) << message;
-  }
 }
 
 }  // namespace payments

@@ -10,20 +10,14 @@
 namespace web {
 namespace features {
 
+// Used to always allow scaling of the web page, regardless of author intent.
+extern const base::Feature kIgnoresViewportScaleLimits;
+
 // Used to enable API to send messages directly to frames of a webpage.
 extern const base::Feature kWebFrameMessaging;
 
 // Used to enable the WKBackForwardList based navigation manager.
 extern const base::Feature kSlimNavigationManager;
-
-// Used to enable displaying error pages in WebState by loading HTML string.
-extern const base::Feature kWebErrorPages;
-
-// If enabled the CRWCertVerificationController will use WebThread::PostTask
-// instead of GCD. GCD API was used to make sure that completion callbacks are
-// called during the app shutdown, which may be unnecessary
-// (https://crbug.com/853774).
-extern const base::Feature kUseWebThreadInCertVerificationController;
 
 // Used to enable using WKHTTPSystemCookieStore in main context URL requests.
 extern const base::Feature kWKHTTPSystemCookieStore;
@@ -37,6 +31,10 @@ extern const base::Feature kBrowserContainerFullscreen;
 
 // Used to use the fullscreen implementation out of web.
 extern const base::Feature kOutOfWebFullscreen;
+
+// Used to enable the workaround for WKWebView history clobber bug
+// (crbug.com/887497).
+extern const base::Feature kHistoryClobberWorkaround;
 
 }  // namespace features
 }  // namespace web

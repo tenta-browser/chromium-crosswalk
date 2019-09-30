@@ -20,7 +20,7 @@ class ImageView;
 namespace ash {
 
 // Status area tray for showing a toggle for Overview Mode. Overview Mode
-// is equivalent to WindowSelectorController being in selection mode.
+// is equivalent to OverviewController being in selection mode.
 // This hosts a ShellObserver that listens for the activation of Maximize Mode
 // This tray will only be visible while in this state. This tray does not
 // provide any bubble view windows.
@@ -64,13 +64,13 @@ class ASH_EXPORT OverviewButtonTray : public TrayBackgroundView,
   // TrayBackgroundView:
   void ClickedOutsideBubble() override;
   base::string16 GetAccessibleNameForTray() override;
-  void HideBubbleWithView(const views::TrayBubbleView* bubble_view) override;
+  void HideBubbleWithView(const TrayBubbleView* bubble_view) override;
 
  private:
   friend class OverviewButtonTrayTest;
 
   // Sets the icon to visible if tablet mode is enabled and
-  // WindowSelectorController::CanSelect.
+  // OverviewController::CanSelect.
   void UpdateIconVisibility();
 
   // Weak pointer, will be parented by TrayContainer for its lifetime.

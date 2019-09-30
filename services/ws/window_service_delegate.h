@@ -23,20 +23,27 @@
 namespace aura {
 class PropertyConverter;
 class Window;
-class WindowTreeHost;
 }  // namespace aura
 
 namespace gfx {
 class Point;
 }
 
+namespace mojo {
+class ScopedInterfaceEndpointHandle;
+}
+
 namespace ui {
+class EventTarget;
 class KeyEvent;
 class OSExchangeData;
 class SystemInputInjector;
 }  // namespace ui
 
 namespace ws {
+
+class WindowManagerInterface;
+class WindowTree;
 
 // A delegate used by the WindowService for context-specific operations.
 class COMPONENT_EXPORT(WINDOW_SERVICE) WindowServiceDelegate {
@@ -111,10 +118,10 @@ class COMPONENT_EXPORT(WINDOW_SERVICE) WindowServiceDelegate {
   // injection.
   virtual ui::SystemInputInjector* GetSystemInputInjector();
 
-  // Returns the WindowTreeHost for the specified display id, null if not a
-  // valid display.
-  virtual aura::WindowTreeHost* GetWindowTreeHostForDisplayId(
-      int64_t display_id);
+  // Returns the EventTarget which can process all of the events on the system.
+  virtual ui::EventTarget* GetGlobalEventTarget() = 0;
+
+  virtual aura::Window* GetRootWindowForDisplayId(int64_t display_id) = 0;
 
   // Returns the topmost visible window at the location in screen coordinate,
   // excluding |ignore|. |real_topmost| is updated to the topmost visible window
@@ -123,6 +130,21 @@ class COMPONENT_EXPORT(WINDOW_SERVICE) WindowServiceDelegate {
       const gfx::Point& location_in_screen,
       const std::set<aura::Window*>& ignore,
       aura::Window** real_topmost);
+
+  // Creates and binds a request for an interface provided by the local
+  // environment. The interface request originated from the client associated
+  // with |tree|. |name| is the name of the requested interface. The return
+  // value is owned by |tree|. Return null if |name| is not the name of a known
+  // interface.
+  // The following shows how to bind |handle|:
+  // TestWmInterface* wm_interface_impl = ...;
+  // mojo::AssociatedBindingTestWmInterface> binding(
+  //   wm_interface_impl,
+  //   mojo::AssociatedInterfaceRequest<TestWmInterface>(std::move(handle)));
+  virtual std::unique_ptr<WindowManagerInterface> CreateWindowManagerInterface(
+      WindowTree* tree,
+      const std::string& name,
+      mojo::ScopedInterfaceEndpointHandle handle);
 
  protected:
   virtual ~WindowServiceDelegate() = default;

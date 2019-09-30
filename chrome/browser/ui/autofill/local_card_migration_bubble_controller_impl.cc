@@ -66,20 +66,15 @@ void LocalCardMigrationBubbleControllerImpl::ReshowBubble() {
   ShowBubbleImplementation();
 }
 
-bool LocalCardMigrationBubbleControllerImpl::IsIconVisible() const {
-  return !local_card_migration_bubble_closure_.is_null();
+void LocalCardMigrationBubbleControllerImpl::AddObserver(
+    LocalCardMigrationControllerObserver* observer) {
+  observer_list_.AddObserver(observer);
 }
 
 LocalCardMigrationBubble*
 LocalCardMigrationBubbleControllerImpl::local_card_migration_bubble_view()
     const {
   return local_card_migration_bubble_;
-}
-
-base::string16 LocalCardMigrationBubbleControllerImpl::GetBubbleMessage()
-    const {
-  return l10n_util::GetStringUTF16(
-      IDS_AUTOFILL_LOCAL_CARD_MIGRATION_BUBBLE_TITLE);
 }
 
 void LocalCardMigrationBubbleControllerImpl::OnConfirmButtonClicked() {
@@ -127,6 +122,9 @@ void LocalCardMigrationBubbleControllerImpl::DidFinishNavigation(
   // Otherwise, get rid of the bubble and icon.
   local_card_migration_bubble_closure_.Reset();
   bool bubble_was_visible = local_card_migration_bubble_;
+  for (LocalCardMigrationControllerObserver& observer : observer_list_) {
+    observer.OnMigrationNoLongerAvailable();
+  }
   if (bubble_was_visible) {
     local_card_migration_bubble_->Hide();
     OnBubbleClosed();
@@ -164,7 +162,7 @@ void LocalCardMigrationBubbleControllerImpl::ShowBubbleImplementation() {
   Browser* browser = chrome::FindBrowserWithWebContents(web_contents());
   local_card_migration_bubble_ =
       browser->window()->ShowLocalCardMigrationBubble(web_contents(), this,
-                                                      true);
+                                                      is_reshow_);
   DCHECK(local_card_migration_bubble_);
   UpdateIcon();
   timer_.reset(new base::ElapsedTimer());
@@ -182,5 +180,7 @@ void LocalCardMigrationBubbleControllerImpl::UpdateIcon() {
     return;
   location_bar->UpdateLocalCardMigrationIcon();
 }
+
+WEB_CONTENTS_USER_DATA_KEY_IMPL(LocalCardMigrationBubbleControllerImpl)
 
 }  // namespace autofill

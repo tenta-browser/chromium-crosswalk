@@ -46,6 +46,7 @@ class TestURLLoaderFactory : public mojom::URLLoaderFactory {
   enum ResponseProduceFlags : uint32_t {
     kResponseDefault = 0,
     kResponseOnlyRedirectsNoDestination = 0x1,
+    kSendHeadersOnNetworkError = 0x2,
   };
 
   TestURLLoaderFactory();
@@ -91,6 +92,10 @@ class TestURLLoaderFactory : public mojom::URLLoaderFactory {
   // access. It's recommended that consumers use AddResponse() rather than
   // servicing requests themselves, whenever possible.
   std::vector<PendingRequest>* pending_requests() { return &pending_requests_; }
+
+  // Returns the PendingRequest instance available at the given index |index|
+  // or null if not existing.
+  PendingRequest* GetPendingRequest(size_t index);
 
   // Sends a response for the first (oldest) pending request with URL |url|.
   // Returns false if no such pending request exists.

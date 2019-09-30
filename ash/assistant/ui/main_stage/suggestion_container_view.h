@@ -6,12 +6,13 @@
 #define ASH_ASSISTANT_UI_MAIN_STAGE_SUGGESTION_CONTAINER_VIEW_H_
 
 #include <map>
+#include <memory>
 
 #include "ash/app_list/views/suggestion_chip_view.h"
 #include "ash/assistant/model/assistant_cache_model_observer.h"
 #include "ash/assistant/model/assistant_interaction_model_observer.h"
 #include "ash/assistant/model/assistant_ui_model_observer.h"
-#include "ash/assistant/ui/assistant_scroll_view.h"
+#include "ash/assistant/ui/base/assistant_scroll_view.h"
 #include "base/macros.h"
 #include "chromeos/services/assistant/public/mojom/assistant.mojom.h"
 #include "ui/views/controls/scroll_view.h"
@@ -22,7 +23,7 @@ class BoxLayout;
 
 namespace ash {
 
-class AssistantController;
+class AssistantViewDelegate;
 
 // SuggestionContainerView is the child of AssistantMainView concerned with
 // laying out SuggestionChipViews in response to Assistant interaction model
@@ -37,10 +38,11 @@ class SuggestionContainerView : public AssistantScrollView,
   using AssistantSuggestionPtr =
       chromeos::assistant::mojom::AssistantSuggestionPtr;
 
-  explicit SuggestionContainerView(AssistantController* assistant_controller);
+  explicit SuggestionContainerView(AssistantViewDelegate* delegate);
   ~SuggestionContainerView() override;
 
   // AssistantScrollView:
+  const char* GetClassName() const override;
   gfx::Size CalculatePreferredSize() const override;
   int GetHeightForWidth(int width) const override;
   void OnContentsPreferredSizeChanged(views::View* content_view) override;
@@ -51,13 +53,16 @@ class SuggestionContainerView : public AssistantScrollView,
       override;
 
   // AssistantInteractionModelObserver:
-  void OnResponseChanged(const AssistantResponse& response) override;
+  void OnResponseChanged(
+      const std::shared_ptr<AssistantResponse>& response) override;
   void OnResponseCleared() override;
 
   // AssistantUiModelObserver:
-  void OnUiVisibilityChanged(AssistantVisibility new_visibility,
-                             AssistantVisibility old_visibility,
-                             AssistantSource source) override;
+  void OnUiVisibilityChanged(
+      AssistantVisibility new_visibility,
+      AssistantVisibility old_visibility,
+      base::Optional<AssistantEntryPoint> entry_point,
+      base::Optional<AssistantExitPoint> exit_point) override;
 
   // views::ButtonListener:
   void ButtonPressed(views::Button* sender, const ui::Event& event) override;
@@ -72,7 +77,7 @@ class SuggestionContainerView : public AssistantScrollView,
   // Invoked on suggestion chip icon downloaded event.
   void OnSuggestionChipIconDownloaded(int id, const gfx::ImageSkia& icon);
 
-  AssistantController* const assistant_controller_;  // Owned by Shell.
+  AssistantViewDelegate* const delegate_;  // Owned by Shell.
 
   views::BoxLayout* layout_manager_;  // Owned by view hierarchy.
 

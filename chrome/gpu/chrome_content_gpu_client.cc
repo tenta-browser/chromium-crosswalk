@@ -9,6 +9,7 @@
 
 #include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
+#include "base/token.h"
 #include "build/build_config.h"
 #include "content/public/child/child_thread.h"
 #include "mojo/public/cpp/bindings/strong_binding.h"
@@ -16,11 +17,11 @@
 #if BUILDFLAG(ENABLE_LIBRARY_CDMS)
 #include "media/cdm/cdm_paths.h"
 #include "media/cdm/library_cdm/clear_key_cdm/clear_key_cdm_proxy.h"
-#include "widevine_cdm_version.h"  // In SHARED_INTERMEDIATE_DIR.
-#if defined(WIDEVINE_CDM_AVAILABLE) && defined(OS_WIN)
+#include "third_party/widevine/cdm/buildflags.h"
+#if BUILDFLAG(ENABLE_WIDEVINE) && defined(OS_WIN)
 #include "chrome/gpu/widevine_cdm_proxy_factory.h"
 #include "third_party/widevine/cdm/widevine_cdm_common.h"
-#endif  // defined(WIDEVINE_CDM_AVAILABLE) && defined(OS_WIN)
+#endif  // BUILDFLAG(ENABLE_WIDEVINE) && defined(OS_WIN)
 #endif  // BUILDFLAG(ENABLE_LIBRARY_CDMS)
 
 #if defined(OS_CHROMEOS)
@@ -101,14 +102,14 @@ void ChromeContentGpuClient::PostCompositorThreadCreated(
 
 #if BUILDFLAG(ENABLE_LIBRARY_CDMS)
 std::unique_ptr<media::CdmProxy> ChromeContentGpuClient::CreateCdmProxy(
-    const std::string& cdm_guid) {
+    const base::Token& cdm_guid) {
   if (cdm_guid == media::kClearKeyCdmGuid)
     return std::make_unique<media::ClearKeyCdmProxy>();
 
-#if defined(WIDEVINE_CDM_AVAILABLE) && defined(OS_WIN)
+#if BUILDFLAG(ENABLE_WIDEVINE) && defined(OS_WIN)
   if (cdm_guid == kWidevineCdmGuid)
     return CreateWidevineCdmProxy();
-#endif  // defined(WIDEVINE_CDM_AVAILABLE) && defined(OS_WIN)
+#endif  // BUILDFLAG(ENABLE_WIDEVINE) && defined(OS_WIN)
 
   return nullptr;
 }

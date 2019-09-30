@@ -18,18 +18,16 @@ class FullscreenUIUpdater : public FullscreenControllerObserver {
 
  private:
   // FullscreenControllerObserver:
+  void FullscreenViewportInsetRangeChanged(
+      FullscreenController* controller,
+      UIEdgeInsets min_viewport_insets,
+      UIEdgeInsets max_viewport_insets) override;
   void FullscreenProgressUpdated(FullscreenController* controller,
                                  CGFloat progress) override;
   void FullscreenEnabledStateChanged(FullscreenController* controller,
                                      bool enabled) override;
-  void FullscreenScrollEventEnded(FullscreenController* controller,
-                                  FullscreenAnimator* animator) override;
-  void FullscreenWillScrollToTop(FullscreenController* controller,
-                                 FullscreenAnimator* animator) override;
-  void FullscreenWillEnterForeground(FullscreenController* controller,
-                                     FullscreenAnimator* animator) override;
-  void FullscreenModelWasReset(FullscreenController* controller,
-                               FullscreenAnimator* animator) override;
+  void FullscreenWillAnimate(FullscreenController* controller,
+                             FullscreenAnimator* animator) override;
 
   // The UI element being updated by this observer.
   __weak id<FullscreenUIElement> ui_element_;

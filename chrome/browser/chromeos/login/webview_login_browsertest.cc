@@ -9,6 +9,8 @@
 #include "base/macros.h"
 #include "base/run_loop.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/task/post_task.h"
+#include "base/threading/thread_restrictions.h"
 #include "base/values.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/chrome_notification_types.h"
@@ -21,10 +23,12 @@
 #include "chrome/browser/chromeos/policy/device_policy_builder.h"
 #include "chrome/browser/chromeos/policy/device_policy_cros_browser_test.h"
 #include "chrome/browser/chromeos/profiles/profile_helper.h"
+#include "chrome/browser/chromeos/settings/scoped_testing_cros_settings.h"
+#include "chrome/browser/chromeos/settings/stub_cros_settings_provider.h"
 #include "chrome/browser/policy/test/local_policy_test_server.h"
 #include "chrome/browser/ui/login/login_handler.h"
 #include "chrome/browser/ui/webui/signin/signin_utils.h"
-#include "chromeos/chromeos_switches.h"
+#include "chromeos/constants/chromeos_switches.h"
 #include "chromeos/dbus/dbus_thread_manager.h"
 #include "chromeos/dbus/fake_session_manager_client.h"
 #include "components/content_settings/core/common/pref_names.h"
@@ -37,6 +41,7 @@
 #include "components/policy/policy_constants.h"
 #include "components/policy/proto/chrome_device_policy.pb.h"
 #include "components/prefs/pref_change_registrar.h"
+#include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/notification_service.h"
 #include "content/public/browser/storage_partition.h"
@@ -175,19 +180,21 @@ class WebviewLoginTest : public OobeBaseTest {
   void ExpectIdentifierPage() {
     // First page: no back button, no close button, refresh button, #identifier
     // input field.
-    JsExpect("!$('gaia-navigation').backVisible");
-    JsExpect("!$('gaia-navigation').closeVisible");
-    JsExpect("$('gaia-navigation').refreshVisible");
-    JsExpect("$('signin-frame').src.indexOf('#identifier') != -1");
+    test::OobeJS().ExpectTrue("!$('gaia-navigation').backVisible");
+    test::OobeJS().ExpectTrue("!$('gaia-navigation').closeVisible");
+    test::OobeJS().ExpectTrue("$('gaia-navigation').refreshVisible");
+    test::OobeJS().ExpectTrue(
+        "$('signin-frame').src.indexOf('#identifier') != -1");
   }
 
   void ExpectPasswordPage() {
     // Second page: back button, close button, no refresh button,
     // #challengepassword input field.
-    JsExpect("$('gaia-navigation').backVisible");
-    JsExpect("$('gaia-navigation').closeVisible");
-    JsExpect("!$('gaia-navigation').refreshVisible");
-    JsExpect("$('signin-frame').src.indexOf('#challengepassword') != -1");
+    test::OobeJS().ExpectTrue("$('gaia-navigation').backVisible");
+    test::OobeJS().ExpectTrue("$('gaia-navigation').closeVisible");
+    test::OobeJS().ExpectTrue("!$('gaia-navigation').refreshVisible");
+    test::OobeJS().ExpectTrue(
+        "$('signin-frame').src.indexOf('#challengepassword') != -1");
   }
 
   bool WebViewVisited(content::BrowserContext* browser_context,
@@ -223,6 +230,9 @@ class WebviewLoginTest : public OobeBaseTest {
 
     return web_view_found;
   }
+
+ protected:
+  chromeos::ScopedTestingCrosSettings scoped_testing_cros_settings_;
 
  private:
   DISALLOW_COPY_AND_ASSIGN(WebviewLoginTest);
@@ -264,7 +274,7 @@ IN_PROC_BROWSER_TEST_F(WebviewLoginTest, DISABLED_BackButton) {
   ExpectPasswordPage();
 
   // Click back to identifier page.
-  JS().Evaluate("$('gaia-navigation').$.backButton.click();");
+  test::OobeJS().Evaluate("$('gaia-navigation').$.backButton.click();");
   WaitForGaiaPageBackButtonUpdate();
   ExpectIdentifierPage();
 
@@ -285,33 +295,28 @@ IN_PROC_BROWSER_TEST_F(WebviewLoginTest, DISABLED_BackButton) {
   session_start_waiter.Wait();
 }
 
-IN_PROC_BROWSER_TEST_F(WebviewLoginTest, AllowGuest) {
-  WaitForGaiaPageLoad();
-  JsExpect("!$('guest-user-header-bar-item').hidden");
-  CrosSettings::Get()->SetBoolean(kAccountsPrefAllowGuest, false);
-  JsExpect("$('guest-user-header-bar-item').hidden");
-}
-
 // Create new account option should be available only if the settings allow it.
 IN_PROC_BROWSER_TEST_F(WebviewLoginTest, AllowNewUser) {
   WaitForGaiaPageLoad();
 
   std::string frame_url = "$('gaia-signin').gaiaAuthHost_.reloadUrl_";
   // New users are allowed.
-  JsExpect(frame_url + ".search('flow=nosignup') == -1");
+  test::OobeJS().ExpectTrue(frame_url + ".search('flow=nosignup') == -1");
 
   // Disallow new users - we also need to set a whitelist due to weird logic.
-  CrosSettings::Get()->Set(kAccountsPrefUsers, base::ListValue());
-  CrosSettings::Get()->SetBoolean(kAccountsPrefAllowNewUser, false);
+  scoped_testing_cros_settings_.device_settings()->Set(kAccountsPrefUsers,
+                                                       base::ListValue());
+  scoped_testing_cros_settings_.device_settings()->Set(
+      kAccountsPrefAllowNewUser, base::Value(false));
   WaitForGaiaPageReload();
 
   // flow=nosignup indicates that user creation is not allowed.
-  JsExpect(frame_url + ".search('flow=nosignup') != -1");
+  test::OobeJS().ExpectTrue(frame_url + ".search('flow=nosignup') != -1");
 }
 
 IN_PROC_BROWSER_TEST_F(WebviewLoginTest, EmailPrefill) {
   WaitForGaiaPageLoad();
-  JS().ExecuteAsync("Oobe.showSigninUI('user@example.com')");
+  test::OobeJS().ExecuteAsync("Oobe.showSigninUI('user@example.com')");
   WaitForGaiaPageReload();
   EXPECT_EQ(fake_gaia_->prefilled_email(), "user@example.com");
 }
@@ -327,7 +332,7 @@ IN_PROC_BROWSER_TEST_F(WebviewLoginTest, StoragePartitionHandling) {
   content::BrowserContext* browser_context = web_contents->GetBrowserContext();
 
   std::string signin_frame_partition_name_1 =
-      JS().GetString("$('signin-frame').partition");
+      test::OobeJS().GetString("$('signin-frame').partition");
   content::StoragePartition* signin_frame_partition_1 =
       login::GetSigninPartition();
 
@@ -344,14 +349,14 @@ IN_PROC_BROWSER_TEST_F(WebviewLoginTest, StoragePartitionHandling) {
 
   // Press the back button at a sign-in screen without pre-existing users to
   // start a new sign-in attempt.
-  JS().Evaluate("$('signin-back-button').fire('tap')");
+  test::OobeJS().Evaluate("$('signin-back-button').fire('tap')");
   WaitForGaiaPageBackButtonUpdate();
   // Expect that we got back to the identifier page, as there are no known users
   // so the sign-in screen will not display user pods.
   ExpectIdentifierPage();
 
   std::string signin_frame_partition_name_2 =
-      JS().GetString("$('signin-frame').partition");
+      test::OobeJS().GetString("$('signin-frame').partition");
   content::StoragePartition* signin_frame_partition_2 =
       login::GetSigninPartition();
 
@@ -413,8 +418,8 @@ class WebviewClientCertsLoginTest : public WebviewLoginTest {
     {
       bool system_slot_constructed_successfully = false;
       base::RunLoop loop;
-      content::BrowserThread::PostTaskAndReply(
-          content::BrowserThread::IO, FROM_HERE,
+      base::PostTaskWithTraitsAndReply(
+          FROM_HERE, {content::BrowserThread::IO},
           base::BindOnce(&WebviewClientCertsLoginTest::SetUpTestSystemSlotOnIO,
                          base::Unretained(this),
                          &system_slot_constructed_successfully),
@@ -425,6 +430,7 @@ class WebviewClientCertsLoginTest : public WebviewLoginTest {
 
     // Import a second client cert signed by another CA than client_1 into the
     // system wide key slot.
+    base::ScopedAllowBlockingForTesting allow_io;
     client_cert_ = net::ImportClientCertAndKeyFromFile(
         net::GetTestCertsDirectory(), "client_1.pem", "client_1.pk8",
         test_system_slot_->slot());
@@ -457,7 +463,10 @@ class WebviewClientCertsLoginTest : public WebviewLoginTest {
   void SetIntermediateAuthorityInDeviceOncPolicy(
       const base::FilePath& authority_file_path) {
     std::string x509_contents;
-    ASSERT_TRUE(base::ReadFileToString(authority_file_path, &x509_contents));
+    {
+      base::ScopedAllowBlockingForTesting allow_io;
+      ASSERT_TRUE(base::ReadFileToString(authority_file_path, &x509_contents));
+    }
     base::DictionaryValue onc_dict =
         BuildDeviceOncDictForUntrustedAuthority(x509_contents);
 
@@ -499,8 +508,8 @@ class WebviewClientCertsLoginTest : public WebviewLoginTest {
     else
       navigation_observer.WatchExistingWebContents();
 
-    JS().Evaluate(base::StringPrintf("$('%s').src='%s'", webview_id.c_str(),
-                                     url.spec().c_str()));
+    test::OobeJS().Evaluate(base::StringPrintf(
+        "$('%s').src='%s'", webview_id.c_str(), url.spec().c_str()));
 
     navigation_observer.Wait();
 
@@ -556,8 +565,8 @@ class WebviewClientCertsLoginTest : public WebviewLoginTest {
       return;
 
     base::RunLoop loop;
-    content::BrowserThread::PostTaskAndReply(
-        content::BrowserThread::IO, FROM_HERE,
+    base::PostTaskWithTraitsAndReply(
+        FROM_HERE, {content::BrowserThread::IO},
         base::BindOnce(&WebviewClientCertsLoginTest::TearDownTestSystemSlotOnIO,
                        base::Unretained(this)),
         loop.QuitClosure());
@@ -1032,7 +1041,7 @@ IN_PROC_BROWSER_TEST_F(WebviewProxyAuthLoginTest, DISABLED_ProxyAuthTransfer) {
   // start a new sign-in attempt.
   // This will re-load gaia, rotating the StoragePartition. The new
   // StoragePartition must also have the proxy auth details.
-  JS().Evaluate("$('signin-back-button').fire('tap')");
+  test::OobeJS().Evaluate("$('signin-back-button').fire('tap')");
   WaitForGaiaPageBackButtonUpdate();
   // Expect that we got back to the identifier page, as there are no known users
   // so the sign-in screen will not display user pods.

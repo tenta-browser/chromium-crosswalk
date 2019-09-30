@@ -172,12 +172,12 @@ bool TextInput::GetCompositionTextRange(gfx::Range* range) const {
   return false;
 }
 
-bool TextInput::GetSelectionRange(gfx::Range* range) const {
+bool TextInput::GetEditableSelectionRange(gfx::Range* range) const {
   NOTIMPLEMENTED_LOG_ONCE();
   return false;
 }
 
-bool TextInput::SetSelectionRange(const gfx::Range& range) {
+bool TextInput::SetEditableSelectionRange(const gfx::Range& range) {
   NOTIMPLEMENTED_LOG_ONCE();
   return false;
 }
@@ -255,7 +255,7 @@ void TextInput::AttachInputMethod() {
 
   if (!keyboard_controller_ && keyboard::KeyboardController::HasInstance()) {
     auto* keyboard_controller = keyboard::KeyboardController::Get();
-    if (keyboard_controller->enabled()) {
+    if (keyboard_controller->IsEnabled()) {
       keyboard_controller_ = keyboard_controller;
       keyboard_controller_->AddObserver(this);
     }

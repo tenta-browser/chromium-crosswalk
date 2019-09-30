@@ -79,7 +79,7 @@ class SafeBrowsingBlockingPage : public BaseBlockingPage {
 
  protected:
   friend class SafeBrowsingBlockingPageFactoryImpl;
-  friend class SafeBrowsingBlockingPageTest;
+  friend class SafeBrowsingBlockingPageTestBase;
   friend class SafeBrowsingBlockingPageBrowserTest;
   friend class SafeBrowsingBlockingQuietPageFactoryImpl;
   friend class SafeBrowsingBlockingQuietPageTest;
@@ -93,7 +93,7 @@ class SafeBrowsingBlockingPage : public BaseBlockingPage {
                            ExtendedReportingNotShownOnSecurePage);
   FRIEND_TEST_ALL_PREFIXES(SafeBrowsingBlockingPageTest,
                            MalwareReportsTransitionDisabled);
-  FRIEND_TEST_ALL_PREFIXES(SafeBrowsingBlockingPageTest,
+  FRIEND_TEST_ALL_PREFIXES(SafeBrowsingBlockingPageIncognitoTest,
                            ExtendedReportingNotShownInIncognito);
   FRIEND_TEST_ALL_PREFIXES(SafeBrowsingBlockingPageTest,
                            ExtendedReportingNotShownNotAllowExtendedReporting);

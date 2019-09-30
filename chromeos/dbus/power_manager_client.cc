@@ -22,7 +22,7 @@
 #include "base/strings/stringprintf.h"
 #include "base/threading/platform_thread.h"
 #include "base/timer/timer.h"
-#include "chromeos/dbus/dbus_switches.h"
+#include "chromeos/dbus/constants/dbus_switches.h"
 #include "chromeos/dbus/fake_power_manager_client.h"
 #include "chromeos/dbus/power_manager/backlight.pb.h"
 #include "chromeos/dbus/power_manager/idle.pb.h"
@@ -169,6 +169,11 @@ class PowerManagerClientImpl : public PowerManagerClient {
     return observers_.HasObserver(observer);
   }
 
+  void WaitForServiceToBeAvailable(
+      WaitForServiceToBeAvailableCallback callback) override {
+    power_manager_proxy_->WaitForServiceToBeAvailable(std::move(callback));
+  }
+
   void SetRenderProcessManagerDelegate(
       base::WeakPtr<RenderProcessManagerDelegate> delegate) override {
     DCHECK(!render_process_manager_delegate_)
@@ -207,14 +212,16 @@ class PowerManagerClientImpl : public PowerManagerClient {
     return proto_;
   }
 
-  void SetScreenBrightnessPercent(double percent, bool gradual) override {
-    dbus::MethodCall method_call(
-        power_manager::kPowerManagerInterface,
-        power_manager::kSetScreenBrightnessPercentMethod);
-    dbus::MessageWriter writer(&method_call);
-    writer.AppendDouble(percent);
-    writer.AppendInt32(gradual ? power_manager::kBrightnessTransitionGradual
-                               : power_manager::kBrightnessTransitionInstant);
+  void SetScreenBrightness(
+      const power_manager::SetBacklightBrightnessRequest& request) override {
+    dbus::MethodCall method_call(power_manager::kPowerManagerInterface,
+                                 power_manager::kSetScreenBrightnessMethod);
+    if (!dbus::MessageWriter(&method_call).AppendProtoAsArrayOfBytes(request)) {
+      POWER_LOG(ERROR) << "Error serializing "
+                       << power_manager::kSetScreenBrightnessMethod
+                       << " request";
+      return;
+    }
     power_manager_proxy_->CallMethod(&method_call,
                                      dbus::ObjectProxy::TIMEOUT_USE_DEFAULT,
                                      base::DoNothing());

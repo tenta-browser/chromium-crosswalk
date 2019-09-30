@@ -56,10 +56,12 @@ class VoiceInteractionControllerClient
   void NotifySettingsEnabled();
   void NotifyContextEnabled();
   void NotifyHotwordEnabled();
+  void NotifyHotwordAlwaysOn();
   void NotifySetupCompleted();
   void NotifyFeatureAllowed();
   void NotifyNotificationEnabled();
   void NotifyLocaleChanged();
+  void NotifyLaunchWithMicOpen();
 
   // user_manager::UserManager::UserSessionStateObserver overrides:
   void ActiveUserChanged(const user_manager::User* active_user) override;

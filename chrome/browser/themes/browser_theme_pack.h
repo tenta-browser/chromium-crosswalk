@@ -115,9 +115,14 @@ class BrowserThemePack : public CustomThemeSupplier {
   // valid to call after BuildColorsFromJSON(), which creates |colors_|.
   void SetColor(int id, SkColor color);
 
-  // If |colors_| does not already contain an entry with identifier |id|, sets
-  // it to the dominant color of the top |height| rows of |image|.
-  void ComputeColorFromImage(int id, int height, const gfx::Image& image);
+  // If |colors_| does not already contain an entry with identifier |id|,
+  // modifies |colors_| to set the entry with identifier |id| to |color|.  If an
+  // entry for |id| already exists, does nothing.
+  // Only valid to call after BuildColorsFromJSON(), which creates |colors_|.
+  void SetColorIfUnspecified(int id, SkColor color);
+
+  // Calculates the dominant color of the top |height| rows of |image|.
+  SkColor ComputeImageColor(const gfx::Image& image, int height);
 
   // Builds a header ready to write to disk.
   void BuildHeader(const extensions::Extension* extension);
@@ -162,6 +167,14 @@ class BrowserThemePack : public CustomThemeSupplier {
   // can be of any size. Source and destination is |images|.
   void CropImages(ImageCache* images) const;
 
+  // Set toolbar related elements' colors (e.g. status bubble, info bar,
+  // download shelf, detached bookmark bar) to toolbar color.
+  void SetToolbarRelatedColors();
+
+  // Creates a composited toolbar image. Source and destination is |images|.
+  // Also sets toolbar color corresponding to this image.
+  void CreateToolbarImageAndColors(ImageCache* images);
+
   // Creates tinted and composited frame images. Source and destination is
   // |images|.  Also sets frame colors corresponding to these images if no
   // explicit color has been specified for these colors.
@@ -169,6 +182,12 @@ class BrowserThemePack : public CustomThemeSupplier {
 
   // Generates any frame colors which have not already been set.
   void GenerateFrameColors();
+
+  // Generates background color information for the background of window control
+  // buttons.  This can be used when drawing the window control/caption buttons
+  // to determine what color to draw the symbol, ensuring that it contrasts
+  // sufficiently with the background of the button.
+  void GenerateWindowControlButtonColor(ImageCache* images);
 
   // Creates the semi-transparent tab background images, putting the results
   // in |images|.  Also sets colors corresponding to these images if no explicit

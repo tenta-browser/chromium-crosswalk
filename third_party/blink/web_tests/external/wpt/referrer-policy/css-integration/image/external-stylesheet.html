@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>CSS integration - image from external stylesheet</title>
+    <script src="/resources/testharness.js"></script>
+    <script src="/resources/testharnessreport.js"></script>
+    <script src="/common/utils.js"></script>
+    <!-- Common global functions for referrer-policy tests. -->
+    <script src="/referrer-policy/generic/common.js"></script>
+    <meta name="referrer" content="never">
+  </head>
+  <body>
+    <p>Check that resources from external stylesheets are loaded with
+    the referrer and referrer policy from the external stylesheet.</p>
+
+    <div class="styled"></div>
+
+    <script>
+      async_test(function(css_test) {
+        var id = token();
+        var url_prefix = location.protocol + "//www1." + location.hostname + ":" + location.port;
+        var css_url = url_prefix + "/referrer-policy/generic/subresource/stylesheet.py?id=" + id;
+        var img_url = url_prefix + "/referrer-policy/generic/subresource/image.py" +
+                      "?id=" + id + "&report-headers";
+
+        var link = document.createElement("link");
+        link.href = css_url;
+        link.rel = "stylesheet";
+        link.onload = css_test.step_func(function() {
+          css_test.step_timeout(function() {
+              queryXhr(img_url, function(message) {
+                  assert_own_property(message, "headers");
+                  assert_own_property(message, "referrer");
+                  assert_equals(message.referrer, css_url);
+                  css_test.done();
+              }, null, null, css_test);
+          }, 1000);
+        });
+        document.head.appendChild(link);
+      }, "Image from external stylesheet.");
+    </script>
+
+    <div id="log"></div>
+  </body>
+</html>

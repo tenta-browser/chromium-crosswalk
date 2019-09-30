@@ -13,7 +13,6 @@
 #include "base/i18n/icu_string_conversions.h"
 #include "base/i18n/rtl.h"
 #include "base/logging.h"
-#include "base/macros.h"
 #include "base/metrics/field_trial.h"
 #include "base/stl_util.h"
 #include "base/strings/string_number_conversions.h"
@@ -952,8 +951,7 @@ std::string TemplateURLRef::HandleReplacements(
 
   // replacements_ is ordered in ascending order, as such we need to iterate
   // from the back.
-  for (Replacements::reverse_iterator i = replacements_.rbegin();
-       i != replacements_.rend(); ++i) {
+  for (auto i = replacements_.rbegin(); i != replacements_.rend(); ++i) {
     switch (i->type) {
       case ENCODING:
         HandleReplacement(std::string(), input_encoding, *i, &url);
@@ -1292,7 +1290,7 @@ GURL TemplateURL::GenerateFaviconURL(const GURL& url) {
   GURL::Replacements rep;
 
   const char favicon_path[] = "/favicon.ico";
-  int favicon_path_len = arraysize(favicon_path) - 1;
+  int favicon_path_len = base::size(favicon_path) - 1;
 
   rep.SetPath(favicon_path, url::Component(0, favicon_path_len));
   rep.ClearUsername();

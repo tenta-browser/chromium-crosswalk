@@ -14,11 +14,20 @@
 #include "chrome/test/base/testing_browser_process.h"
 #include "chrome/test/base/view_event_test_platform_part.h"
 #include "mojo/core/embedder/embedder.h"
+#include "ui/base/clipboard/clipboard.h"
 #include "ui/base/ime/input_method_initializer.h"
 #include "ui/base/test/ui_controls.h"
 #include "ui/compositor/test/context_factories_for_test.h"
 #include "ui/views/view.h"
 #include "ui/views/widget/widget.h"
+
+#if defined(OS_CHROMEOS)
+#include "ash/test/ui_controls_factory_ash.h"
+#include "ui/aura/test/ui_controls_factory_aura.h"
+#include "ui/aura/window.h"
+#include "ui/base/test/ui_controls_aura.h"
+#include "ui/base/ui_base_features.h"
+#endif
 
 namespace {
 
@@ -47,9 +56,6 @@ class TestView : public views::View {
 
   DISALLOW_COPY_AND_ASSIGN(TestView);
 };
-
-// Delay in background thread before posting mouse move.
-const int kMouseMoveDelayMS = 200;
 
 }  // namespace
 
@@ -94,6 +100,13 @@ void ViewEventTestBase::SetUp() {
   gfx::NativeWindow context = platform_part_->GetContext();
   window_ = views::Widget::CreateWindowWithContext(this, context);
   window_->Show();
+#if defined(OS_CHROMEOS)
+  ui_controls::InstallUIControlsAura(
+      features::IsUsingWindowService()
+          ? aura::test::CreateUIControlsAura(
+                window_->GetNativeWindow()->GetHost())
+          : ash::test::CreateAshUIControls());
+#endif
 }
 
 void ViewEventTestBase::TearDown() {
@@ -159,18 +172,17 @@ void ViewEventTestBase::StartMessageLoopAndRunTest() {
 }
 
 void ViewEventTestBase::ScheduleMouseMoveInBackground(int x, int y) {
-  if (!dnd_thread_.get()) {
-    dnd_thread_.reset(new base::Thread("mouse-move-thread"));
+  if (!dnd_thread_) {
+    dnd_thread_ = std::make_unique<base::Thread>("mouse-move-thread");
     dnd_thread_->Start();
   }
-  dnd_thread_->task_runner()->PostDelayedTask(
+  dnd_thread_->task_runner()->PostTask(
       FROM_HERE,
-      base::Bind(base::IgnoreResult(&ui_controls::SendMouseMove), x, y),
-      base::TimeDelta::FromMilliseconds(kMouseMoveDelayMS));
+      base::BindOnce(base::IgnoreResult(&ui_controls::SendMouseMove), x, y));
 }
 
 void ViewEventTestBase::StopBackgroundThread() {
-  dnd_thread_.reset(NULL);
+  dnd_thread_.reset();
 }
 
 void ViewEventTestBase::RunTestMethod(const base::Closure& task) {

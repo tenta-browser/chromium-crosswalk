@@ -15,33 +15,54 @@ using base::android::JavaParamRef;
 
 static jboolean JNI_UnifiedConsentServiceBridge_IsUnifiedConsentGiven(
     JNIEnv* env,
-    const base::android::JavaParamRef<jclass>& jcaller,
     const base::android::JavaParamRef<jobject>& profileAndroid) {
-  Profile* profile = ProfileAndroid::FromProfileAndroid(profileAndroid);
-  auto* unifiedConsentService =
-      UnifiedConsentServiceFactory::GetForProfile(profile);
-  return unifiedConsentService->IsUnifiedConsentGiven();
+  // TODO(crbug.com/907856): Remove.
+  return false;
 }
 
 static void JNI_UnifiedConsentServiceBridge_SetUnifiedConsentGiven(
     JNIEnv* env,
-    const base::android::JavaParamRef<jclass>& jcaller,
     const base::android::JavaParamRef<jobject>& profileAndroid,
     jboolean unifiedConsentGiven) {
-  Profile* profile = ProfileAndroid::FromProfileAndroid(profileAndroid);
-  auto* unifiedConsentService =
-      UnifiedConsentServiceFactory::GetForProfile(profile);
-  unifiedConsentService->SetUnifiedConsentGiven(unifiedConsentGiven);
+  // TODO(crbug.com/907856): Remove.
 }
 
-static jboolean JNI_UnifiedConsentServiceBridge_ShouldShowConsentBump(
+static void JNI_UnifiedConsentServiceBridge_EnableGoogleServices(
     JNIEnv* env,
-    const base::android::JavaParamRef<jclass>& jcaller,
     const base::android::JavaParamRef<jobject>& profileAndroid) {
   Profile* profile = ProfileAndroid::FromProfileAndroid(profileAndroid);
   auto* unifiedConsentService =
       UnifiedConsentServiceFactory::GetForProfile(profile);
-  return unifiedConsentService->ShouldShowConsentBump();
+  return unifiedConsentService->EnableGoogleServices();
+}
+
+static jboolean
+JNI_UnifiedConsentServiceBridge_IsUrlKeyedAnonymizedDataCollectionEnabled(
+    JNIEnv* env,
+    const base::android::JavaParamRef<jobject>& profileAndroid) {
+  Profile* profile = ProfileAndroid::FromProfileAndroid(profileAndroid);
+  return profile->GetPrefs()->GetBoolean(
+      unified_consent::prefs::kUrlKeyedAnonymizedDataCollectionEnabled);
+}
+
+static void
+JNI_UnifiedConsentServiceBridge_SetUrlKeyedAnonymizedDataCollectionEnabled(
+    JNIEnv* env,
+    const base::android::JavaParamRef<jobject>& profileAndroid,
+    const jboolean enabled) {
+  Profile* profile = ProfileAndroid::FromProfileAndroid(profileAndroid);
+  profile->GetPrefs()->SetBoolean(
+      unified_consent::prefs::kUrlKeyedAnonymizedDataCollectionEnabled,
+      enabled);
+}
+
+static jboolean
+JNI_UnifiedConsentServiceBridge_IsUrlKeyedAnonymizedDataCollectionManaged(
+    JNIEnv* env,
+    const base::android::JavaParamRef<jobject>& profileAndroid) {
+  Profile* profile = ProfileAndroid::FromProfileAndroid(profileAndroid);
+  return profile->GetPrefs()->IsManagedPreference(
+      unified_consent::prefs::kUrlKeyedAnonymizedDataCollectionEnabled);
 }
 
 static jboolean

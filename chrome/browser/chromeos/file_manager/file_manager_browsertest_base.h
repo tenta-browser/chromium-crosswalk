@@ -8,6 +8,7 @@
 #include <map>
 #include <memory>
 #include <string>
+#include <vector>
 
 #include "base/test/scoped_feature_list.h"
 #include "base/values.h"
@@ -23,8 +24,10 @@ enum GuestMode { NOT_IN_GUEST_MODE, IN_GUEST_MODE, IN_INCOGNITO };
 
 class DriveTestVolume;
 class FakeTestVolume;
-class LocalTestVolume;
+class DownloadsTestVolume;
 class CrostiniTestVolume;
+class AndroidFilesTestVolume;
+class RemovableTestVolume;
 
 class FileManagerBrowserTestBase : public extensions::ExtensionApiTest {
  protected:
@@ -38,15 +41,20 @@ class FileManagerBrowserTestBase : public extensions::ExtensionApiTest {
   void SetUpInProcessBrowserTestFixture() override;
   void SetUpOnMainThread() override;
 
-  // Overrides for each FileManagerBrowserTest test extension type.
+  // Mandatory overrides for each File Manager test extension type.
   virtual GuestMode GetGuestMode() const = 0;
   virtual const char* GetTestCaseName() const = 0;
   virtual std::string GetFullTestCaseName() const = 0;
   virtual const char* GetTestExtensionManifestName() const = 0;
+
+  // Optional overrides for each File Manager test extension type.
+  virtual bool GetTabletMode() const;
   virtual bool GetEnableDriveFs() const;
+  virtual bool GetEnableMyFilesVolume() const;
   virtual bool GetRequiresStartupBrowser() const;
   virtual bool GetNeedsZipSupport() const;
   virtual bool GetIsOffline() const;
+  virtual bool GetStartWithNoVolumesMounted() const;
 
   // Launches the test extension from GetTestExtensionManifestName() and uses
   // it to drive the testing the actual FileManager component extension under
@@ -60,14 +68,24 @@ class FileManagerBrowserTestBase : public extensions::ExtensionApiTest {
   // Returns true if the test requires in guest mode.
   bool IsGuestModeTest() const { return GetGuestMode() == IN_GUEST_MODE; }
 
+  // Returns true if the test runs in tablet mode.
+  bool IsTabletModeTest() const { return GetTabletMode(); }
+
   // Returns true if the test requires DriveFS.
   bool IsDriveFsTest() const { return GetEnableDriveFs(); }
+
+  // Returns true if the test MyFilesVolume feature is enabled.
+  bool IsMyFilesVolume() const { return GetEnableMyFilesVolume(); }
 
   // Returns true if the test requires zip/unzip support.
   bool IsZipTest() const { return GetNeedsZipSupport(); }
 
   // Returns true if Drive should act as if offline.
   bool IsOfflineTest() const { return GetIsOffline(); }
+
+  bool DoesTestStartWithNoVolumesMounted() const {
+    return GetStartWithNoVolumesMounted();
+  }
 
   // Launches the test extension with manifest |manifest_name|. The extension
   // manifest_name file should reside in the specified |path| relative to the
@@ -96,14 +114,21 @@ class FileManagerBrowserTestBase : public extensions::ExtensionApiTest {
       const std::string& source_path,
       const std::vector<std::string>& mount_options);
 
+  // Called during tablet mode test setup to enable the Ash virtual keyboard.
+  void EnableVirtualKeyboard();
+
   base::test::ScopedFeatureList feature_list_;
 
-  std::unique_ptr<LocalTestVolume> local_volume_;
+  std::unique_ptr<DownloadsTestVolume> local_volume_;
   std::unique_ptr<CrostiniTestVolume> crostini_volume_;
+  std::unique_ptr<AndroidFilesTestVolume> android_files_volume_;
   std::map<Profile*, std::unique_ptr<DriveTestVolume>> drive_volumes_;
   DriveTestVolume* drive_volume_ = nullptr;
   std::unique_ptr<FakeTestVolume> usb_volume_;
   std::unique_ptr<FakeTestVolume> mtp_volume_;
+  std::unique_ptr<RemovableTestVolume> partition_1_;
+  std::unique_ptr<RemovableTestVolume> partition_2_;
+  std::unique_ptr<RemovableTestVolume> single_usb_volume_;
 
   drive::DriveIntegrationServiceFactory::FactoryCallback
       create_drive_integration_service_;

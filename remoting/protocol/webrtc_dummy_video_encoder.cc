@@ -115,15 +115,6 @@ int32_t WebrtcDummyVideoEncoder::Encode(
   return WEBRTC_VIDEO_CODEC_OK;
 }
 
-int32_t WebrtcDummyVideoEncoder::SetChannelParameters(uint32_t packet_loss,
-                                                      int64_t rtt) {
-  main_task_runner_->PostTask(
-      FROM_HERE, base::Bind(&VideoChannelStateObserver::OnChannelParameters,
-                            video_channel_state_observer_, packet_loss,
-                            base::TimeDelta::FromMilliseconds(rtt)));
-  return WEBRTC_VIDEO_CODEC_OK;
-}
-
 int32_t WebrtcDummyVideoEncoder::SetRates(uint32_t bitrate,
                                           uint32_t framerate) {
   main_task_runner_->PostTask(
@@ -162,7 +153,7 @@ webrtc::EncodedImageCallback::Result WebrtcDummyVideoEncoder::SendEncodedFrame(
   int64_t encode_finished_time_ms =
       (encode_finished_time - base::TimeTicks()).InMilliseconds();
   encoded_image.capture_time_ms_ = capture_time_ms;
-  encoded_image._timeStamp = static_cast<uint32_t>(capture_time_ms * 90);
+  encoded_image.SetTimestamp(static_cast<uint32_t>(capture_time_ms * 90));
   encoded_image.playout_delay_.min_ms = 0;
   encoded_image.playout_delay_.max_ms = 0;
   encoded_image.timing_.encode_start_ms = encode_started_time_ms;
@@ -176,7 +167,6 @@ webrtc::EncodedImageCallback::Result WebrtcDummyVideoEncoder::SendEncodedFrame(
   if (frame.codec == webrtc::kVideoCodecVP8) {
     webrtc::CodecSpecificInfoVP8* vp8_info =
         &codec_specific_info.codecSpecific.VP8;
-    vp8_info->simulcastIdx = 0;
     vp8_info->temporalIdx = webrtc::kNoTemporalIdx;
   } else if (frame.codec == webrtc::kVideoCodecVP9) {
     webrtc::CodecSpecificInfoVP9* vp9_info =
@@ -191,7 +181,6 @@ webrtc::EncodedImageCallback::Result WebrtcDummyVideoEncoder::SendEncodedFrame(
     vp9_info->num_spatial_layers = 1;
     vp9_info->gof_idx = webrtc::kNoGofIdx;
     vp9_info->temporal_idx = webrtc::kNoTemporalIdx;
-    vp9_info->spatial_idx = webrtc::kNoSpatialIdx;
   } else if (frame.codec == webrtc::kVideoCodecH264) {
 #if defined(USE_H264_ENCODER)
     webrtc::CodecSpecificInfoH264* h264_info =
@@ -226,6 +215,16 @@ webrtc::EncodedImageCallback::Result WebrtcDummyVideoEncoder::SendEncodedFrame(
   DCHECK(encoded_callback_);
   return encoded_callback_->OnEncodedImage(encoded_image, &codec_specific_info,
                                            &header);
+}
+
+webrtc::VideoEncoder::EncoderInfo WebrtcDummyVideoEncoder::GetEncoderInfo()
+    const {
+  EncoderInfo info;
+  // TODO(mirtad): Set this flag correctly per encoder.
+  info.is_hardware_accelerated = true;
+  // Set internal source to true to directly provide encoded frames to webrtc.
+  info.has_internal_source = true;
+  return info;
 }
 
 WebrtcDummyVideoEncoderFactory::WebrtcDummyVideoEncoderFactory()

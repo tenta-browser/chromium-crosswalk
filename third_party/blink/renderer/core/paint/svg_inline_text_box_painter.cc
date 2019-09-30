@@ -20,7 +20,7 @@
 #include "third_party/blink/renderer/core/paint/inline_text_box_painter.h"
 #include "third_party/blink/renderer/core/paint/paint_info.h"
 #include "third_party/blink/renderer/core/paint/selection_painting_utils.h"
-#include "third_party/blink/renderer/core/paint/svg_paint_context.h"
+#include "third_party/blink/renderer/core/paint/svg_object_painter.h"
 #include "third_party/blink/renderer/core/style/applied_text_decoration.h"
 #include "third_party/blink/renderer/core/style/shadow_list.h"
 #include "third_party/blink/renderer/platform/fonts/text_run_paint_info.h"
@@ -93,15 +93,13 @@ void SVGInlineTextBoxPainter::Paint(const PaintInfo& paint_info,
   if (!TextShouldBePainted(text_layout_object))
     return;
 
-  DisplayItem::Type display_item_type =
-      DisplayItem::PaintPhaseToDrawingType(paint_info.phase);
   if (!DrawingRecorder::UseCachedDrawingIfPossible(
-          paint_info.context, svg_inline_text_box_, display_item_type)) {
+          paint_info.context, svg_inline_text_box_, paint_info.phase)) {
     LayoutObject& parent_layout_object = ParentInlineLayoutObject();
     const ComputedStyle& style = parent_layout_object.StyleRef();
 
     DrawingRecorder recorder(paint_info.context, svg_inline_text_box_,
-                             display_item_type);
+                             paint_info.phase);
     InlineTextBoxPainter text_painter(svg_inline_text_box_);
     const DocumentMarkerVector& markers_to_paint =
         text_painter.ComputeMarkersToPaint();
@@ -350,9 +348,9 @@ void SVGInlineTextBoxPainter::PaintDecoration(const PaintInfo& paint_info,
       case PT_FILL:
         if (svg_decoration_style.HasFill()) {
           PaintFlags fill_flags;
-          if (!SVGPaintContext::PaintForLayoutObject(
-                  paint_info, decoration_style, *decoration_layout_object,
-                  kApplyToFillMode, fill_flags))
+          if (!SVGObjectPainter(*decoration_layout_object)
+                   .PreparePaint(paint_info, decoration_style, kApplyToFillMode,
+                                 fill_flags))
             break;
           fill_flags.setAntiAlias(true);
           paint_info.context.DrawPath(path.GetSkPath(), fill_flags);
@@ -361,9 +359,9 @@ void SVGInlineTextBoxPainter::PaintDecoration(const PaintInfo& paint_info,
       case PT_STROKE:
         if (svg_decoration_style.HasVisibleStroke()) {
           PaintFlags stroke_flags;
-          if (!SVGPaintContext::PaintForLayoutObject(
-                  paint_info, decoration_style, *decoration_layout_object,
-                  kApplyToStrokeMode, stroke_flags))
+          if (!SVGObjectPainter(*decoration_layout_object)
+                   .PreparePaint(paint_info, decoration_style,
+                                 kApplyToStrokeMode, stroke_flags))
             break;
           stroke_flags.setAntiAlias(true);
           float stroke_scale_factor =
@@ -412,9 +410,9 @@ bool SVGInlineTextBoxPainter::SetupTextPaint(
       paint_server_transform->Multiply(*shader_transform);
   }
 
-  if (!SVGPaintContext::PaintForLayoutObject(
-          paint_info, style, ParentInlineLayoutObject(), resource_mode, flags,
-          base::OptionalOrNullptr(paint_server_transform)))
+  if (!SVGObjectPainter(ParentInlineLayoutObject())
+           .PreparePaint(paint_info, style, resource_mode, flags,
+                         base::OptionalOrNullptr(paint_server_transform)))
     return false;
   flags.setAntiAlias(true);
 

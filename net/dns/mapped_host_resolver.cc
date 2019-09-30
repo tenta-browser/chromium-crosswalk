@@ -22,8 +22,22 @@ class MappedHostResolver::AlwaysErrorRequestImpl
   int Start(CompletionOnceCallback callback) override { return error_; }
 
   const base::Optional<AddressList>& GetAddressResults() const override {
-    static base::NoDestructor<base::Optional<AddressList>> nullopt_address_list;
-    return *nullopt_address_list;
+    static base::NoDestructor<base::Optional<AddressList>> nullopt_result;
+    return *nullopt_result;
+  }
+
+  const base::Optional<std::vector<std::string>>& GetTextResults()
+      const override {
+    static const base::NoDestructor<base::Optional<std::vector<std::string>>>
+        nullopt_result;
+    return *nullopt_result;
+  }
+
+  const base::Optional<std::vector<HostPortPair>>& GetHostnameResults()
+      const override {
+    static const base::NoDestructor<base::Optional<std::vector<HostPortPair>>>
+        nullopt_result;
+    return *nullopt_result;
   }
 
  private:
@@ -112,6 +126,20 @@ void MappedHostResolver::SetNoIPv6OnWifi(bool no_ipv6_on_wifi) {
 
 bool MappedHostResolver::GetNoIPv6OnWifi() {
   return impl_->GetNoIPv6OnWifi();
+}
+
+void MappedHostResolver::SetDnsConfigOverrides(
+    const DnsConfigOverrides& overrides) {
+  impl_->SetDnsConfigOverrides(overrides);
+}
+
+void MappedHostResolver::SetRequestContext(URLRequestContext* request_context) {
+  impl_->SetRequestContext(request_context);
+}
+
+const std::vector<DnsConfig::DnsOverHttpsServerConfig>*
+MappedHostResolver::GetDnsOverHttpsServersForTesting() const {
+  return impl_->GetDnsOverHttpsServersForTesting();
 }
 
 int MappedHostResolver::ApplyRules(RequestInfo* info) const {

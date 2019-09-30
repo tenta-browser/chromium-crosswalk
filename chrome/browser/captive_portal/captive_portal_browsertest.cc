@@ -3,6 +3,7 @@
 // found in the LICENSE file.
 
 #include <algorithm>
+#include <atomic>
 #include <iterator>
 #include <map>
 #include <memory>
@@ -24,6 +25,7 @@
 #include "base/sequence_checker.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/task/post_task.h"
 #include "base/test/bind_test_util.h"
 #include "base/values.h"
 #include "build/build_config.h"
@@ -49,6 +51,7 @@
 #include "chrome/test/base/ui_test_utils.h"
 #include "components/prefs/pref_service.h"
 #include "components/security_interstitials/content/security_interstitial_page.h"
+#include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/interstitial_page.h"
 #include "content/public/browser/interstitial_page_delegate.h"
@@ -243,8 +246,7 @@ void MultiNavigationObserver::WaitForNavigations(
 
 int MultiNavigationObserver::NumNavigationsForTab(
     WebContents* web_contents) const {
-  TabNavigationMap::const_iterator tab_navigations =
-      tab_navigation_map_.find(web_contents);
+  auto tab_navigations = tab_navigation_map_.find(web_contents);
   if (tab_navigations == tab_navigation_map_.end())
     return 0;
   return tab_navigations->second;
@@ -520,10 +522,13 @@ class TabActivationWaiter : public TabStripModelObserver {
   }
 
   // TabStripModelObserver overrides.
-  void ActiveTabChanged(content::WebContents* old_contents,
-                        content::WebContents* new_contents,
-                        int index,
-                        int reason) override {
+  void OnTabStripModelChanged(
+      TabStripModel* tab_strip_model,
+      const TabStripModelChange& change,
+      const TabStripSelectionChange& selection) override {
+    if (tab_strip_model->empty() || !selection.active_tab_changed())
+      return;
+
     number_of_unconsumed_active_tab_changes_++;
     DCHECK_EQ(1, number_of_unconsumed_active_tab_changes_);
     if (message_loop_runner_)
@@ -727,22 +732,14 @@ class CaptivePortalBrowserTest : public InProcessBrowserTest {
   // Sets whether or not there is a captive portal. Outstanding requests are
   // not affected.
   void SetBehindCaptivePortal(bool behind_captive_portal) {
-    if (BrowserThread::CurrentlyOn(BrowserThread::UI)) {
-      content::BrowserThread::PostTask(
-          content::BrowserThread::IO, FROM_HERE,
-          base::BindOnce(&CaptivePortalBrowserTest::SetBehindCaptivePortal,
-                         base::Unretained(this), behind_captive_portal));
-      return;
-    }
-
     behind_captive_portal_ = behind_captive_portal;
   }
 
   // Waits for exactly |num_jobs| kMockHttps* requests.
   void WaitForJobs(int num_jobs) {
     if (BrowserThread::CurrentlyOn(BrowserThread::UI)) {
-      content::BrowserThread::PostTask(
-          content::BrowserThread::IO, FROM_HERE,
+      base::PostTaskWithTraits(
+          FROM_HERE, {content::BrowserThread::IO},
           base::BindOnce(&CaptivePortalBrowserTest::WaitForJobs,
                          base::Unretained(this), num_jobs));
       content::RunMessageLoop();
@@ -752,8 +749,8 @@ class CaptivePortalBrowserTest : public InProcessBrowserTest {
     DCHECK(!num_jobs_to_wait_for_);
     EXPECT_LE(static_cast<int>(ongoing_mock_requests_.size()), num_jobs);
     if (num_jobs == static_cast<int>(ongoing_mock_requests_.size())) {
-      BrowserThread::PostTask(
-          BrowserThread::UI, FROM_HERE,
+      base::PostTaskWithTraits(
+          FROM_HERE, {BrowserThread::UI},
           base::RunLoop::QuitCurrentWhenIdleClosureDeprecated());
     } else {
       num_jobs_to_wait_for_ = num_jobs;
@@ -766,8 +763,8 @@ class CaptivePortalBrowserTest : public InProcessBrowserTest {
   // WaitForJobs, so makes sure there has been a matching WaitForJobs call.
   void FailJobs(int expected_num_jobs) {
     if (!BrowserThread::CurrentlyOn(BrowserThread::IO)) {
-      BrowserThread::PostTask(
-          BrowserThread::IO, FROM_HERE,
+      base::PostTaskWithTraits(
+          FROM_HERE, {BrowserThread::IO},
           base::BindOnce(&CaptivePortalBrowserTest::FailJobs,
                          base::Unretained(this), expected_num_jobs));
       return;
@@ -787,8 +784,8 @@ class CaptivePortalBrowserTest : public InProcessBrowserTest {
   void FailJobsWithCertError(int expected_num_jobs,
                              const net::SSLInfo& ssl_info) {
     if (!BrowserThread::CurrentlyOn(BrowserThread::IO)) {
-      BrowserThread::PostTask(
-          BrowserThread::IO, FROM_HERE,
+      base::PostTaskWithTraits(
+          FROM_HERE, {BrowserThread::IO},
           base::BindOnce(&CaptivePortalBrowserTest::FailJobsWithCertError,
                          base::Unretained(this), expected_num_jobs, ssl_info));
       return;
@@ -807,8 +804,8 @@ class CaptivePortalBrowserTest : public InProcessBrowserTest {
     EXPECT_EQ(expected_num_jobs,
               static_cast<int>(ongoing_mock_requests_.size()));
     for (auto& job : ongoing_mock_requests_) {
-      BrowserThread::PostTask(
-          BrowserThread::UI, FROM_HERE,
+      base::PostTaskWithTraits(
+          FROM_HERE, {BrowserThread::UI},
           base::BindOnce(&CaptivePortalBrowserTest::CreateLoader,
                          base::Unretained(this), std::move(job)));
     }
@@ -829,8 +826,8 @@ class CaptivePortalBrowserTest : public InProcessBrowserTest {
   // behaves just as in FailJobs.
   void AbandonJobs(int expected_num_jobs) {
     if (!BrowserThread::CurrentlyOn(BrowserThread::IO)) {
-      BrowserThread::PostTask(
-          BrowserThread::IO, FROM_HERE,
+      base::PostTaskWithTraits(
+          FROM_HERE, {BrowserThread::IO},
           base::BindOnce(&CaptivePortalBrowserTest::AbandonJobs,
                          base::Unretained(this), expected_num_jobs));
       return;
@@ -860,15 +857,15 @@ class CaptivePortalBrowserTest : public InProcessBrowserTest {
   int num_jobs_to_wait_for_ = 0;
   std::vector<content::URLLoaderInterceptor::RequestParams>
       ongoing_mock_requests_;
-  bool behind_captive_portal_ = true;
+  std::atomic<bool> behind_captive_portal_;
   bool intercept_bad_cert_ = true;
 
  private:
   DISALLOW_COPY_AND_ASSIGN(CaptivePortalBrowserTest);
 };
 
-CaptivePortalBrowserTest::CaptivePortalBrowserTest() {
-}
+CaptivePortalBrowserTest::CaptivePortalBrowserTest()
+    : behind_captive_portal_(true) {}
 
 void CaptivePortalBrowserTest::SetUpOnMainThread() {
   url_loader_interceptor_ =
@@ -955,8 +952,8 @@ bool CaptivePortalBrowserTest::OnIntercept(
         if (num_jobs_to_wait_for_ ==
             static_cast<int>(ongoing_mock_requests_.size())) {
           num_jobs_to_wait_for_ = 0;
-          BrowserThread::PostTask(
-              BrowserThread::UI, FROM_HERE,
+          base::PostTaskWithTraits(
+              FROM_HERE, {BrowserThread::UI},
               base::RunLoop::QuitCurrentWhenIdleClosureDeprecated());
         }
       }

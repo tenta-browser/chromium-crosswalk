@@ -59,6 +59,9 @@ class CORE_EXPORT HTMLImageElement final
  public:
   class ViewportChangeListener;
 
+  // Returns attributes that should be checked against Trusted Types
+  const AttrNameToTrustedType& GetCheckedAttributeTypes() const override;
+
   static HTMLImageElement* Create(Document&);
   static HTMLImageElement* Create(Document&, const CreateElementFlags);
   static HTMLImageElement* CreateForJSConstructor(Document&);
@@ -67,8 +70,9 @@ class CORE_EXPORT HTMLImageElement final
                                                   unsigned width,
                                                   unsigned height);
 
+  explicit HTMLImageElement(Document&, bool created_by_parser = false);
   ~HTMLImageElement() override;
-  void Trace(blink::Visitor*) override;
+  void Trace(Visitor*) override;
 
   unsigned width();
   unsigned height();
@@ -109,6 +113,9 @@ class CORE_EXPORT HTMLImageElement final
   void setWidth(unsigned);
 
   IntSize GetOverriddenIntrinsicSize() const;
+  bool IsDefaultIntrinsicSize() const {
+    return is_default_overridden_intrinsic_size_;
+  }
 
   int x() const;
   int y() const;
@@ -159,6 +166,10 @@ class CORE_EXPORT HTMLImageElement final
     return *visible_load_time_metrics_;
   }
 
+  static bool IsDimensionSmallAndAbsoluteForLazyLoad(
+      const String& attribute_value);
+  static bool IsInlineStyleDimensionsSmall(const CSSPropertyValueSet*);
+
  protected:
   // Controls how an image element appears in the layout. See:
   // https://html.spec.whatwg.org/multipage/embedded-content.html#image-request
@@ -175,8 +186,6 @@ class CORE_EXPORT HTMLImageElement final
     // |shouldCollapseInitiator| flag set.
     kCollapsed
   };
-
-  explicit HTMLImageElement(Document&, bool created_by_parser = false);
 
   void DidMoveToNewDocument(Document& old_document) override;
 
@@ -221,8 +230,6 @@ class CORE_EXPORT HTMLImageElement final
   void NotifyViewportChanged();
   void CreateMediaQueryListIfDoesNotExist();
 
-  void ParseIntrinsicSizeAttribute(const String& value);
-
   Member<HTMLImageLoader> image_loader_;
   Member<ViewportChangeListener> listener_;
   Member<HTMLFormElement> form_;
@@ -235,8 +242,9 @@ class CORE_EXPORT HTMLImageElement final
   unsigned is_fallback_image_ : 1;
   bool should_invert_color_;
   bool sizes_set_width_;
+  bool is_default_overridden_intrinsic_size_;
 
-  ReferrerPolicy referrer_policy_;
+  network::mojom::ReferrerPolicy referrer_policy_;
 
   IntSize overridden_intrinsic_size_;
 

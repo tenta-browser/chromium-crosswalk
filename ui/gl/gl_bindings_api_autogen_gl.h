@@ -119,7 +119,6 @@ void glColorMaskFn(GLboolean red,
                    GLboolean blue,
                    GLboolean alpha) override;
 void glCompileShaderFn(GLuint shader) override;
-void glCompressedCopyTextureCHROMIUMFn(GLuint sourceId, GLuint destId) override;
 void glCompressedTexImage2DFn(GLenum target,
                               GLint level,
                               GLenum internalformat,
@@ -608,9 +607,9 @@ void glGetProgramPipelineInfoLogFn(GLuint pipeline,
 void glGetProgramPipelineivFn(GLuint pipeline,
                               GLenum pname,
                               GLint* params) override;
-void glGetProgramResourceIndexFn(GLuint program,
-                                 GLenum programInterface,
-                                 const GLchar* name) override;
+GLuint glGetProgramResourceIndexFn(GLuint program,
+                                   GLenum programInterface,
+                                   const GLchar* name) override;
 void glGetProgramResourceivFn(GLuint program,
                               GLenum programInterface,
                               GLuint index,
@@ -868,9 +867,30 @@ void* glMapBufferRangeFn(GLenum target,
                          GLbitfield access) override;
 void glMatrixLoadfEXTFn(GLenum matrixMode, const GLfloat* m) override;
 void glMatrixLoadIdentityEXTFn(GLenum matrixMode) override;
+void glMaxShaderCompilerThreadsKHRFn(GLuint count) override;
 void glMemoryBarrierByRegionFn(GLbitfield barriers) override;
 void glMemoryBarrierEXTFn(GLbitfield barriers) override;
 void glMinSampleShadingFn(GLfloat value) override;
+void glMultiDrawArraysANGLEFn(GLenum mode,
+                              const GLint* firsts,
+                              const GLsizei* counts,
+                              GLsizei drawcount) override;
+void glMultiDrawArraysInstancedANGLEFn(GLenum mode,
+                                       const GLint* firsts,
+                                       const GLsizei* counts,
+                                       const GLsizei* instanceCounts,
+                                       GLsizei drawcount) override;
+void glMultiDrawElementsANGLEFn(GLenum mode,
+                                const GLsizei* counts,
+                                GLenum type,
+                                const GLvoid* const* indices,
+                                GLsizei drawcount) override;
+void glMultiDrawElementsInstancedANGLEFn(GLenum mode,
+                                         const GLsizei* counts,
+                                         GLenum type,
+                                         const GLvoid* const* indices,
+                                         const GLsizei* instanceCounts,
+                                         GLsizei drawcount) override;
 void glObjectLabelFn(GLenum identifier,
                      GLuint name,
                      GLsizei length,

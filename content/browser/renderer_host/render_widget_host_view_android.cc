@@ -19,7 +19,7 @@
 #include "base/metrics/histogram_macros.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/sys_info.h"
+#include "base/system/sys_info.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "cc/base/math_util.h"
 #include "cc/layers/layer.h"
@@ -62,8 +62,6 @@
 #include "content/browser/renderer_host/render_widget_host_input_event_router.h"
 #include "content/browser/renderer_host/ui_events_helper.h"
 #include "content/common/content_switches_internal.h"
-#include "content/common/input_messages.h"
-#include "content/common/view_messages.h"
 #include "content/public/browser/android/compositor.h"
 #include "content/public/browser/android/synchronous_compositor_client.h"
 #include "content/public/browser/browser_thread.h"
@@ -73,8 +71,6 @@
 #include "content/public/common/content_features.h"
 #include "content/public/common/content_switches.h"
 #include "content/public/common/use_zoom_for_dsf_policy.h"
-#include "ipc/ipc_message_macros.h"
-#include "ipc/ipc_message_start.h"
 #include "third_party/skia/include/core/SkBitmap.h"
 #include "third_party/skia/include/core/SkCanvas.h"
 #include "third_party/skia/include/core/SkColor.h"
@@ -123,7 +119,8 @@ std::unique_ptr<ui::TouchSelectionController> CreateSelectionController(
   config.hide_active_handle =
       base::FeatureList::IsEnabled(
           content::android::kEnhancedSelectionInsertionHandle) &&
-      base::android::BuildInfo::GetInstance()->is_at_least_p();
+      base::android::BuildInfo::GetInstance()->sdk_int() >=
+          base::android::SDK_VERSION_P;
   return std::make_unique<ui::TouchSelectionController>(client, config);
 }
 
@@ -201,8 +198,10 @@ RenderWidgetHostViewAndroid::RenderWidgetHostViewAndroid(
         delegated_frame_host_client_.get(), host()->GetFrameSinkId(),
         features::IsSurfaceSynchronizationEnabled());
     if (is_showing_) {
+      local_surface_id_allocator_.GenerateId();
       delegated_frame_host_->WasShown(
-          local_surface_id_allocator_.GetCurrentLocalSurfaceId(),
+          local_surface_id_allocator_.GetCurrentLocalSurfaceIdAllocation()
+              .local_surface_id(),
           GetCompositorViewportPixelSize());
     }
 
@@ -216,7 +215,8 @@ RenderWidgetHostViewAndroid::RenderWidgetHostViewAndroid(
 
   host()->SetView(this);
   touch_selection_controller_client_manager_ =
-      std::make_unique<TouchSelectionControllerClientManagerAndroid>(this);
+      std::make_unique<TouchSelectionControllerClientManagerAndroid>(
+          this, CompositorImpl::GetHostFrameSinkManager());
 
   UpdateNativeViewTree(parent_native_view);
   // This RWHVA may have been created speculatively. We should give any
@@ -249,17 +249,6 @@ void RenderWidgetHostViewAndroid::RemoveDestructionObserver(
   destruction_observers_.RemoveObserver(observer);
 }
 
-bool RenderWidgetHostViewAndroid::OnMessageReceived(
-    const IPC::Message& message) {
-  bool handled = true;
-  IPC_BEGIN_MESSAGE_MAP(RenderWidgetHostViewAndroid, message)
-    IPC_MESSAGE_HANDLER(ViewHostMsg_SelectWordAroundCaretAck,
-                        OnSelectWordAroundCaretAck)
-    IPC_MESSAGE_UNHANDLED(handled = false)
-  IPC_END_MESSAGE_MAP()
-  return handled;
-}
-
 void RenderWidgetHostViewAndroid::InitAsChild(gfx::NativeView parent_view) {
   NOTIMPLEMENTED();
 }
@@ -276,17 +265,18 @@ void RenderWidgetHostViewAndroid::InitAsFullscreen(
 
 bool RenderWidgetHostViewAndroid::SynchronizeVisualProperties(
     const cc::DeadlinePolicy& deadline_policy,
-    const base::Optional<viz::LocalSurfaceId>&
-        child_allocated_local_surface_id) {
-  if (child_allocated_local_surface_id) {
+    const base::Optional<viz::LocalSurfaceIdAllocation>&
+        child_local_surface_id_allocation) {
+  if (child_local_surface_id_allocation) {
     local_surface_id_allocator_.UpdateFromChild(
-        *child_allocated_local_surface_id);
+        *child_local_surface_id_allocation);
   } else {
     local_surface_id_allocator_.GenerateId();
   }
   if (delegated_frame_host_) {
     delegated_frame_host_->EmbedSurface(
-        local_surface_id_allocator_.GetCurrentLocalSurfaceId(),
+        local_surface_id_allocator_.GetCurrentLocalSurfaceIdAllocation()
+            .local_surface_id(),
         GetCompositorViewportPixelSize(), deadline_policy);
 
     // TODO(ericrk): This can be removed once surface synchronization is
@@ -473,9 +463,9 @@ bool RenderWidgetHostViewAndroid::IsShowing() {
   return is_showing_ && view_.parent();
 }
 
-void RenderWidgetHostViewAndroid::OnSelectWordAroundCaretAck(bool did_select,
-                                                             int start_adjust,
-                                                             int end_adjust) {
+void RenderWidgetHostViewAndroid::SelectWordAroundCaretAck(bool did_select,
+                                                           int start_adjust,
+                                                           int end_adjust) {
   if (!selection_popup_controller_)
     return;
   selection_popup_controller_->OnSelectWordAroundCaretAck(
@@ -514,9 +504,9 @@ gfx::Size RenderWidgetHostViewAndroid::GetCompositorViewportPixelSize() const {
   return view_.GetPhysicalBackingSize();
 }
 
-bool RenderWidgetHostViewAndroid::DoBrowserControlsShrinkBlinkSize() const {
+bool RenderWidgetHostViewAndroid::DoBrowserControlsShrinkRendererSize() const {
   auto* delegate_view = GetRenderViewHostDelegateView();
-  return delegate_view ? delegate_view->DoBrowserControlsShrinkBlinkSize()
+  return delegate_view ? delegate_view->DoBrowserControlsShrinkRendererSize()
                        : false;
 }
 
@@ -678,18 +668,18 @@ bool RenderWidgetHostViewAndroid::TransformPointToCoordSpaceForView(
     RenderWidgetHostViewBase* target_view,
     gfx::PointF* transformed_point,
     viz::EventSource source) {
-  if (target_view == this || !delegated_frame_host_) {
+  if (target_view == this) {
     *transformed_point = point;
     return true;
   }
 
-  // In TransformPointToLocalCoordSpace() there is a Point-to-Pixel conversion,
-  // but it is not necessary here because the final target view is responsible
-  // for converting before computing the final transform.
-  viz::SurfaceId surface_id = delegated_frame_host_->SurfaceId();
+  viz::SurfaceId surface_id = GetCurrentSurfaceId();
   if (!surface_id.is_valid())
     return false;
 
+  // In TransformPointToLocalCoordSpace() there is a Point-to-Pixel conversion,
+  // but it is not necessary here because the final target view is responsible
+  // for converting before computing the final transform.
   return target_view->TransformPointToLocalCoordSpace(
       point, surface_id, transformed_point, source);
 }
@@ -889,8 +879,7 @@ void RenderWidgetHostViewAndroid::CopyFromSurface(
     const gfx::Size& output_size,
     base::OnceCallback<void(const SkBitmap&)> callback) {
   TRACE_EVENT0("cc", "RenderWidgetHostViewAndroid::CopyFromSurface");
-  if (!features::IsSurfaceSynchronizationEnabled() &&
-      !IsSurfaceAvailableForCopy()) {
+  if (!IsSurfaceAvailableForCopy()) {
     std::move(callback).Run(SkBitmap());
     return;
   }
@@ -919,7 +908,7 @@ void RenderWidgetHostViewAndroid::CopyFromSurface(
           std::move(callback), start_time));
 }
 
-void RenderWidgetHostViewAndroid::EnsureSurfaceSynchronizedForLayoutTest() {
+void RenderWidgetHostViewAndroid::EnsureSurfaceSynchronizedForWebTest() {
   ++latest_capture_sequence_number_;
   SynchronizeVisualProperties(cc::DeadlinePolicy::UseInfiniteDeadline(),
                               base::nullopt);
@@ -959,12 +948,12 @@ void RenderWidgetHostViewAndroid::DidReceiveCompositorFrameAck(
   renderer_compositor_frame_sink_->DidReceiveCompositorFrameAck(resources);
 }
 
-void RenderWidgetHostViewAndroid::DidPresentCompositorFrame(
-    uint32_t presentation_token,
-    const gfx::PresentationFeedback& feedback) {
+void RenderWidgetHostViewAndroid::DidPresentCompositorFrames(
+    const base::flat_map<uint32_t, gfx::PresentationFeedback>& feedbacks) {
   DCHECK(using_browser_compositor_);
-  renderer_compositor_frame_sink_->DidPresentCompositorFrame(presentation_token,
-                                                             feedback);
+  presentation_feedbacks_ = feedbacks;
+  if (!presentation_feedbacks_.empty())
+    AddBeginFrameRequest(BEGIN_FRAME);
 }
 
 void RenderWidgetHostViewAndroid::ReclaimResources(
@@ -1319,8 +1308,6 @@ void RenderWidgetHostViewAndroid::UpdateTouchSelectionController(
   DCHECK(touch_selection_controller_client_manager_);
   touch_selection_controller_client_manager_->UpdateClientSelectionBounds(
       selection.start, selection.end, this, nullptr);
-  touch_selection_controller_client_manager_->SetPageScaleFactor(
-      page_scale_factor);
 
   // Set parameters for adaptive handle orientation.
   gfx::SizeF viewport_size(scrollable_viewport_size_dip);
@@ -1347,9 +1334,7 @@ bool RenderWidgetHostViewAndroid::UpdateControls(
   float top_translate = top_shown_pix - top_controls_pix;
   bool top_changed =
       !cc::MathUtil::IsFloatNearlyTheSame(top_shown_pix, prev_top_shown_pix_);
-  // TODO(mthiesse, https://crbug.com/853686): Remove the IsInVR check once
-  // there are no use cases for ignoring the initial update.
-  if (top_changed || (!controls_initialized_ && IsInVR()))
+  if (top_changed || !controls_initialized_)
     view_.OnTopControlsChanged(top_translate, top_shown_pix);
   prev_top_shown_pix_ = top_shown_pix;
   prev_top_controls_translate_ = top_translate;
@@ -1359,7 +1344,7 @@ bool RenderWidgetHostViewAndroid::UpdateControls(
   bool bottom_changed = !cc::MathUtil::IsFloatNearlyTheSame(
       bottom_shown_pix, prev_bottom_shown_pix_);
   float bottom_translate = bottom_controls_pix - bottom_shown_pix;
-  if (bottom_changed || (!controls_initialized_ && IsInVR()))
+  if (bottom_changed || !controls_initialized_)
     view_.OnBottomControlsChanged(bottom_translate, bottom_shown_pix);
   prev_bottom_shown_pix_ = bottom_shown_pix;
   prev_bottom_controls_translate_ = bottom_translate;
@@ -1370,7 +1355,7 @@ bool RenderWidgetHostViewAndroid::UpdateControls(
 void RenderWidgetHostViewAndroid::OnDidUpdateVisualPropertiesComplete(
     const cc::RenderFrameMetadata& metadata) {
   SynchronizeVisualProperties(cc::DeadlinePolicy::UseDefaultDeadline(),
-                              metadata.local_surface_id);
+                              metadata.local_surface_id_allocation);
   // We've just processed new RenderFrameMetadata and potentially embedded a
   // new surface for that data. Check if we need to evict it.
   EvictFrameIfNecessary();
@@ -1406,7 +1391,8 @@ void RenderWidgetHostViewAndroid::ShowInternal() {
 
   if (delegated_frame_host_) {
     delegated_frame_host_->WasShown(
-        local_surface_id_allocator_.GetCurrentLocalSurfaceId(),
+        local_surface_id_allocator_.GetCurrentLocalSurfaceIdAllocation()
+            .local_surface_id(),
         GetCompositorViewportPixelSize());
   }
 
@@ -1545,7 +1531,9 @@ void RenderWidgetHostViewAndroid::SendBeginFrame(viz::BeginFrameArgs args) {
   if (sync_compositor_) {
     sync_compositor_->BeginFrame(view_.GetWindowAndroid(), args);
   } else if (renderer_compositor_frame_sink_) {
-    renderer_compositor_frame_sink_->OnBeginFrame(args);
+    renderer_compositor_frame_sink_->OnBeginFrame(args,
+                                                  presentation_feedbacks_);
+    presentation_feedbacks_.clear();
   }
 }
 
@@ -1570,7 +1558,7 @@ void RenderWidgetHostViewAndroid::RequestDisallowInterceptTouchEvent() {
 void RenderWidgetHostViewAndroid::TransformPointToRootSurface(
     gfx::PointF* point) {
   *point += gfx::Vector2d(
-      0, DoBrowserControlsShrinkBlinkSize() ? GetTopControlsHeight() : 0);
+      0, DoBrowserControlsShrinkRendererSize() ? GetTopControlsHeight() : 0);
 }
 
 // TODO(jrg): Find out the implications and answer correctly here,
@@ -1602,7 +1590,11 @@ void RenderWidgetHostViewAndroid::GestureEventAck(
     overscroll_controller_->OnGestureEventAck(event, ack_result);
   mouse_wheel_phase_handler_.GestureEventAck(event, ack_result);
 
-  ForwardTouchpadPinchIfNecessary(event, ack_result);
+  ForwardTouchpadZoomEventIfNecessary(event, ack_result);
+
+  // Stop flinging if a GSU event with momentum phase is sent to the renderer
+  // but not consumed.
+  StopFlingingIfNecessary(event, ack_result);
 
   if (!gesture_listener_manager_)
     return;
@@ -1906,28 +1898,6 @@ void RenderWidgetHostViewAndroid::SetIsInVR(bool is_in_vr) {
   gesture_provider_.UpdateConfig(ui::GetGestureProviderConfig(
       is_in_vr_ ? ui::GestureProviderConfigType::CURRENT_PLATFORM_VR
                 : ui::GestureProviderConfigType::CURRENT_PLATFORM));
-
-  if (is_in_vr_ && controls_initialized_) {
-    // TODO(mthiesse, https://crbug.com/825765): See the TODO in
-    // RenderWidgetHostViewAndroid::OnFrameMetadataUpdated. RWHVA isn't
-    // initialized with VR state so the initial frame metadata top controls
-    // height can be dropped when a new RWHVA is created.
-    view_.OnTopControlsChanged(prev_top_controls_translate_,
-                               prev_top_shown_pix_);
-    view_.OnBottomControlsChanged(prev_bottom_controls_translate_,
-                                  prev_bottom_shown_pix_);
-  }
-
-  if (is_in_vr_ && controls_initialized_) {
-    // TODO(carlosil, https://crbug.com/825765): See the TODO in
-    // RenderWidgetHostViewAndroid::OnFrameMetadataUpdated. RWHVA isn't
-    // initialized with VR state so the initial frame metadata top controls
-    // height can be dropped when a new RWHVA is created.
-    view_.OnTopControlsChanged(prev_top_controls_translate_,
-                               prev_top_shown_pix_);
-    view_.OnBottomControlsChanged(prev_bottom_controls_translate_,
-                                  prev_bottom_shown_pix_);
-  }
 }
 
 bool RenderWidgetHostViewAndroid::IsInVR() const {
@@ -2039,11 +2009,12 @@ RenderWidgetHostViewAndroid::GetTouchSelectionControllerClientManager() {
   return touch_selection_controller_client_manager_.get();
 }
 
-const viz::LocalSurfaceId& RenderWidgetHostViewAndroid::GetLocalSurfaceId()
-    const {
+const viz::LocalSurfaceIdAllocation&
+RenderWidgetHostViewAndroid::GetLocalSurfaceIdAllocation() const {
   if (!delegated_frame_host_)
-    return viz::ParentLocalSurfaceIdAllocator::InvalidLocalSurfaceId();
-  return local_surface_id_allocator_.GetCurrentLocalSurfaceId();
+    return viz::ParentLocalSurfaceIdAllocator::
+        InvalidLocalSurfaceIdAllocation();
+  return local_surface_id_allocator_.GetCurrentLocalSurfaceIdAllocation();
 }
 
 void RenderWidgetHostViewAndroid::OnRenderWidgetInit() {
@@ -2397,14 +2368,20 @@ void RenderWidgetHostViewAndroid::DidNavigate() {
     RenderWidgetHostViewBase::DidNavigate();
     return;
   }
-
-  if (is_first_navigation_) {
-    SynchronizeVisualProperties(
-        cc::DeadlinePolicy::UseExistingDeadline(),
-        local_surface_id_allocator_.GetCurrentLocalSurfaceId());
+  if (!is_showing_) {
+    // Navigating while hidden should not allocate a new LocalSurfaceID. Once
+    // sizes are ready, or we begin to Show, we can then allocate the new
+    // LocalSurfaceId.
+    local_surface_id_allocator_.Invalidate();
   } else {
-    SynchronizeVisualProperties(cc::DeadlinePolicy::UseExistingDeadline(),
-                                base::nullopt);
+    if (is_first_navigation_) {
+      SynchronizeVisualProperties(
+          cc::DeadlinePolicy::UseExistingDeadline(),
+          local_surface_id_allocator_.GetCurrentLocalSurfaceIdAllocation());
+    } else {
+      SynchronizeVisualProperties(cc::DeadlinePolicy::UseExistingDeadline(),
+                                  base::nullopt);
+    }
   }
   delegated_frame_host_->DidNavigate();
   is_first_navigation_ = false;
@@ -2420,6 +2397,25 @@ RenderWidgetHostViewAndroid::DidUpdateVisualProperties(
       &RenderWidgetHostViewAndroid::OnDidUpdateVisualPropertiesComplete,
       weak_ptr_factory_.GetWeakPtr(), metadata);
   return viz::ScopedSurfaceIdAllocator(std::move(allocation_task));
+}
+
+void RenderWidgetHostViewAndroid::WasEvicted() {
+  // Eviction can occur when the CompositorFrameSink has changed. This can
+  // occur either from a lost connection, as well as from the initial conneciton
+  // upon creating RenderWidgetHostViewAndroid. When this occurs while visible
+  // a new LocalSurfaceId should be generated. If eviction occurs while not
+  // visible, then the new LocalSurfaceId can be allocated upon the next Show.
+  if (is_showing_) {
+    local_surface_id_allocator_.GenerateId();
+    // Guarantee that the new LocalSurfaceId is propagated. Rather than relying
+    // upon calls to Show() and OnDidUpdateVisualPropertiesComplete(). As there
+    // is no guarantee that they will occur after the eviction.
+    SynchronizeVisualProperties(
+        cc::DeadlinePolicy::UseExistingDeadline(),
+        local_surface_id_allocator_.GetCurrentLocalSurfaceIdAllocation());
+  } else {
+    local_surface_id_allocator_.Invalidate();
+  }
 }
 
 }  // namespace content

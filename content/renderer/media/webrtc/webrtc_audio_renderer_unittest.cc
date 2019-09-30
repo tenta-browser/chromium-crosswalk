@@ -9,8 +9,9 @@
 #include <vector>
 
 #include "base/bind.h"
-#include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
+#include "base/test/scoped_task_environment.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "build/build_config.h"
 #include "content/public/renderer/media_stream_audio_renderer.h"
 #include "content/renderer/media/audio/audio_device_factory.h"
@@ -19,11 +20,12 @@
 #include "media/base/mock_audio_renderer_sink.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "third_party/blink/public/platform/scheduler/test/renderer_scheduler_test_support.h"
 #include "third_party/blink/public/platform/web_media_stream.h"
 #include "third_party/blink/public/platform/web_media_stream_track.h"
 #include "third_party/blink/public/platform/web_string.h"
 #include "third_party/blink/public/web/web_heap.h"
-#include "third_party/webrtc/api/mediastreaminterface.h"
+#include "third_party/webrtc/api/media_stream_interface.h"
 
 using testing::Return;
 using testing::_;
@@ -65,9 +67,7 @@ class WebRtcAudioRendererTest : public testing::Test,
   }
 
  protected:
-  WebRtcAudioRendererTest()
-      : message_loop_(new base::MessageLoopForIO),
-        source_(new MockAudioRendererSource()) {
+  WebRtcAudioRendererTest() : source_(new MockAudioRendererSource()) {
     blink::WebVector<blink::WebMediaStreamTrack> dummy_tracks;
     stream_.Initialize(blink::WebString::FromUTF8("new stream"), dummy_tracks,
                        dummy_tracks);
@@ -76,8 +76,9 @@ class WebRtcAudioRendererTest : public testing::Test,
   }
 
   void SetupRenderer(const std::string& device_id) {
-    renderer_ = new WebRtcAudioRenderer(message_loop_->task_runner(), stream_,
-                                        1, 1, device_id);
+    renderer_ = new WebRtcAudioRenderer(
+        blink::scheduler::GetSingleThreadTaskRunnerForTesting(), stream_, 1, 1,
+        device_id);
     EXPECT_CALL(
         *this, MockCreateAudioRendererSink(AudioDeviceFactory::kSourceWebRtc, _,
                                            _, device_id, _));
@@ -90,10 +91,11 @@ class WebRtcAudioRendererTest : public testing::Test,
                scoped_refptr<media::AudioCapturerSource>(
                    int,
                    const media::AudioSourceParameters&));
-  MOCK_METHOD2(CreateFinalAudioRendererSink,
-               scoped_refptr<media::AudioRendererSink>(
-                   int,
-                   const media::AudioSinkParameters&));
+  MOCK_METHOD3(
+      CreateFinalAudioRendererSink,
+      scoped_refptr<media::AudioRendererSink>(int,
+                                              const media::AudioSinkParameters&,
+                                              base::TimeDelta));
   MOCK_METHOD3(CreateSwitchableAudioRendererSink,
                scoped_refptr<media::SwitchableAudioRendererSink>(
                    SourceType,
@@ -142,7 +144,8 @@ class WebRtcAudioRendererTest : public testing::Test,
 
   const base::Optional<base::UnguessableToken> kAudioProcessingId =
       base::UnguessableToken::Create();
-  std::unique_ptr<base::MessageLoopForIO> message_loop_;
+  base::test::ScopedTaskEnvironment task_environment_{
+      base::test::ScopedTaskEnvironment::MainThreadType::IO};
   scoped_refptr<media::MockAudioRendererSink> mock_sink_;
   std::unique_ptr<MockAudioRendererSource> source_;
   blink::WebMediaStream stream_;
@@ -292,8 +295,9 @@ TEST_F(WebRtcAudioRendererTest, SwitchOutputDeviceInvalidDevice) {
 }
 
 TEST_F(WebRtcAudioRendererTest, InitializeWithInvalidDevice) {
-  renderer_ = new WebRtcAudioRenderer(message_loop_->task_runner(), stream_, 1,
-                                      1, kInvalidOutputDeviceId);
+  renderer_ = new WebRtcAudioRenderer(
+      blink::scheduler::GetSingleThreadTaskRunnerForTesting(), stream_, 1, 1,
+      kInvalidOutputDeviceId);
 
   EXPECT_CALL(*this, MockCreateAudioRendererSink(
                          AudioDeviceFactory::kSourceWebRtc, _, _,

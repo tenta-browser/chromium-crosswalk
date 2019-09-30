@@ -40,13 +40,6 @@
 #include "ui/views/widget/widget.h"
 #include "url/gurl.h"
 
-#if defined(OS_CHROMEOS)
-#include "ash/shell.h"                                           // mash-ok
-#include "ash/wm/window_state.h"                                 // mash-ok
-#include "services/ws/public/cpp/property_type_converters.h"     // nogncheck
-#include "services/ws/public/mojom/window_manager.mojom.h"       // nogncheck
-#endif
-
 namespace {
 
 // The alpha and color of the bubble's shadow.
@@ -145,8 +138,7 @@ class StatusBubbleViews::StatusView : public views::View {
 
   StatusView(views::Widget* popup,
              const gfx::Size& popup_size,
-             const ui::ThemeProvider* theme_provider,
-             bool has_client_edge);
+             const ui::ThemeProvider* theme_provider);
   ~StatusView() override;
 
   // Set the bubble text to a certain value, hides the bubble if text is
@@ -209,7 +201,6 @@ class StatusBubbleViews::StatusView : public views::View {
   gfx::Size popup_size_;
 
   const ui::ThemeProvider* theme_provider_;
-  const bool has_client_edge_;
 
   base::WeakPtrFactory<StatusBubbleViews::StatusView> timer_factory_;
 
@@ -219,15 +210,13 @@ class StatusBubbleViews::StatusView : public views::View {
 StatusBubbleViews::StatusView::StatusView(
     views::Widget* popup,
     const gfx::Size& popup_size,
-    const ui::ThemeProvider* theme_provider,
-    bool has_client_edge)
+    const ui::ThemeProvider* theme_provider)
     : state_(BUBBLE_HIDDEN),
       style_(STYLE_STANDARD),
       animation_(new StatusViewAnimation(this, 0, 0)),
       popup_(popup),
       popup_size_(popup_size),
       theme_provider_(theme_provider),
-      has_client_edge_(has_client_edge),
       timer_factory_(this) {}
 
 StatusBubbleViews::StatusView::~StatusView() {
@@ -444,19 +433,15 @@ void StatusBubbleViews::StatusView::OnPaint(gfx::Canvas* canvas) {
   // where the web content is visible.
   const int shadow_thickness_pixels = std::floor(kShadowThickness * scale);
 
-  if (!has_client_edge_) {
-    // When there's no client edge the shadow will overlap the window frame.
-    // Clip it off when the bubble is docked. Otherwise when the bubble is
-    // floating preserve the full shadow so the bubble looks complete.
-    const int clip_left =
-        style_ == STYLE_STANDARD ? shadow_thickness_pixels : 0;
-    const int clip_right =
-        style_ == STYLE_STANDARD_RIGHT ? shadow_thickness_pixels : 0;
-    const int clip_bottom =
-        clip_left || clip_right ? shadow_thickness_pixels : 0;
-    gfx::Rect clip_rect(clip_left, 0, width - clip_right, height - clip_bottom);
-    canvas->ClipRect(clip_rect);
-  }
+  // The shadow will overlap the window frame. Clip it off when the bubble is
+  // docked. Otherwise when the bubble is floating preserve the full shadow so
+  // the bubble looks complete.
+  const int clip_left = style_ == STYLE_STANDARD ? shadow_thickness_pixels : 0;
+  const int clip_right =
+      style_ == STYLE_STANDARD_RIGHT ? shadow_thickness_pixels : 0;
+  const int clip_bottom = clip_left || clip_right ? shadow_thickness_pixels : 0;
+  gfx::Rect clip_rect(clip_left, 0, width - clip_right, height - clip_bottom);
+  canvas->ClipRect(clip_rect);
 
   gfx::RectF bubble_rect(width, height);
   // Reposition() moves the bubble down and to the left in order to overlap the
@@ -486,7 +471,7 @@ void StatusBubbleViews::StatusView::OnPaint(gfx::Canvas* canvas) {
   Op(path, stroke_path, kDifference_SkPathOp, &fill_path);
   flags.setStyle(cc::PaintFlags::kFill_Style);
   const SkColor bubble_color =
-      theme_provider_->GetColor(ThemeProperties::COLOR_TOOLBAR);
+      theme_provider_->GetColor(ThemeProperties::COLOR_STATUS_BUBBLE);
   flags.setColor(bubble_color);
   canvas->sk_canvas()->drawPath(fill_path, flags);
 
@@ -506,12 +491,12 @@ void StatusBubbleViews::StatusView::OnPaint(gfx::Canvas* canvas) {
   // Text color is the foreground tab text color at 60% alpha.
   SkColor blended_text_color = color_utils::AlphaBlend(
       theme_provider_->GetColor(ThemeProperties::COLOR_TAB_TEXT), bubble_color,
-      0x99);
+      0.6f);
 
-  canvas->DrawStringRect(
-      text_, GetFont(),
-      color_utils::GetReadableColor(blended_text_color, bubble_color),
-      text_rect);
+  canvas->DrawStringRect(text_, GetFont(),
+                         color_utils::GetColorWithMinimumContrast(
+                             blended_text_color, bubble_color),
+                         text_rect);
 }
 
 
@@ -629,15 +614,13 @@ void StatusBubbleViews::StatusViewExpander::SetBubbleWidth(int width) {
 
 const int StatusBubbleViews::kShadowThickness = 1;
 
-StatusBubbleViews::StatusBubbleViews(views::View* base_view,
-                                     bool has_client_edge)
+StatusBubbleViews::StatusBubbleViews(views::View* base_view)
     : contains_mouse_(false),
       offset_(0),
       base_view_(base_view),
       view_(NULL),
       download_shelf_is_visible_(false),
       is_expanded_(false),
-      has_client_edge_(has_client_edge),
       expand_timer_factory_(this) {
   expand_view_.reset();
 }
@@ -653,8 +636,7 @@ void StatusBubbleViews::Init() {
     popup_.reset(new views::Widget);
     views::Widget* frame = base_view_->GetWidget();
     if (!view_) {
-      view_ = new StatusView(popup_.get(), size_, frame->GetThemeProvider(),
-                             has_client_edge_);
+      view_ = new StatusView(popup_.get(), size_, frame->GetThemeProvider());
     }
     if (!expand_view_.get())
       expand_view_.reset(new StatusViewExpander(this, view_));
@@ -672,23 +654,11 @@ void StatusBubbleViews::Init() {
     params.parent = frame->GetNativeView();
     params.context = frame->GetNativeWindow();
     params.name = "StatusBubble";
-#if defined(OS_CHROMEOS)
-    params.mus_properties
-        [ws::mojom::WindowManager::kWindowIgnoredByShelf_InitProperty] =
-        mojo::ConvertTo<std::vector<uint8_t>>(true);
-#endif
     popup_->Init(params);
     // We do our own animation and don't want any from the system.
     popup_->SetVisibilityChangedAnimationsEnabled(false);
     popup_->SetOpacity(0.f);
     popup_->SetContentsView(view_);
-#if defined(OS_CHROMEOS)
-    // Mash is handled via mus_properties.
-    if (ash::Shell::HasInstance()) {
-      ash::wm::GetWindowState(popup_->GetNativeWindow())
-          ->set_ignored_by_shelf(true);
-    }
-#endif
     RepositionPopup();
   }
 }

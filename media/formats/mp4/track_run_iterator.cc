@@ -9,9 +9,9 @@
 #include <limits>
 #include <memory>
 
-#include "base/macros.h"
 #include "base/numerics/checked_math.h"
 #include "base/numerics/safe_conversions.h"
+#include "base/stl_util.h"
 #include "media/base/demuxer_memory_limit.h"
 #include "media/base/encryption_scheme.h"
 #include "media/base/media_util.h"
@@ -619,7 +619,7 @@ int64_t TrackRunIterator::GetMaxClearOffset() {
       offset = std::min(offset, aux_info_offset());
   }
   if (run_itr_ != runs_.end()) {
-    std::vector<TrackRunInfo>::const_iterator next_run = run_itr_ + 1;
+    auto next_run = run_itr_ + 1;
     if (next_run != runs_.end()) {
       offset = std::min(offset, next_run->sample_start_offset);
       if (next_run->aux_info_total_size)
@@ -721,7 +721,7 @@ std::unique_ptr<DecryptConfig> TrackRunIterator::GetDecryptConfig() {
     if (ApplyConstantIv(sample_idx, &sample_encryption_entry)) {
       std::string iv(reinterpret_cast<const char*>(
                          sample_encryption_entry.initialization_vector),
-                     arraysize(sample_encryption_entry.initialization_vector));
+                     base::size(sample_encryption_entry.initialization_vector));
       switch (run_itr_->encryption_scheme.mode()) {
         case EncryptionScheme::CIPHER_MODE_UNENCRYPTED:
           return nullptr;
@@ -744,7 +744,7 @@ std::unique_ptr<DecryptConfig> TrackRunIterator::GetDecryptConfig() {
       run_itr_->sample_encryption_entries[sample_idx];
   std::string iv(reinterpret_cast<const char*>(
                      sample_encryption_entry.initialization_vector),
-                 arraysize(sample_encryption_entry.initialization_vector));
+                 base::size(sample_encryption_entry.initialization_vector));
 
   size_t total_size = 0;
   if (!sample_encryption_entry.subsamples.empty() &&

@@ -17,10 +17,7 @@ import android.text.TextPaint;
 
 import org.chromium.base.VisibleForTesting;
 import org.chromium.chrome.R;
-import org.chromium.chrome.browser.ChromeFeatureList;
-import org.chromium.chrome.browser.util.FeatureUtilities;
 import org.chromium.chrome.browser.widget.TintedDrawable;
-import org.chromium.ui.base.DeviceFormFactor;
 
 import java.util.Locale;
 
@@ -45,10 +42,8 @@ public class TabSwitcherDrawable extends TintedDrawable {
      * @return          A {@link TabSwitcherDrawable} instance.
      */
     public static TabSwitcherDrawable createTabSwitcherDrawable(Context context, boolean useLight) {
-        Bitmap icon = BitmapFactory.decodeResource(context.getResources(),
-                FeatureUtilities.isChromeModernDesignEnabled() && !DeviceFormFactor.isTablet()
-                        ? R.drawable.btn_tabswitcher_modern
-                        : R.drawable.btn_tabswitcher);
+        Bitmap icon = BitmapFactory.decodeResource(
+                context.getResources(), R.drawable.btn_tabswitcher_modern);
         return new TabSwitcherDrawable(context, useLight, icon);
     }
 
@@ -114,10 +109,6 @@ public class TabSwitcherDrawable extends TintedDrawable {
     }
 
     private String getTabCountString() {
-        if (ChromeFeatureList.isInitialized()
-                && ChromeFeatureList.isEnabled(ChromeFeatureList.CHROME_MEMEX)) {
-            return "M";
-        }
         if (mTabCount <= 0) {
             return "";
         } else if (mTabCount > 99) {

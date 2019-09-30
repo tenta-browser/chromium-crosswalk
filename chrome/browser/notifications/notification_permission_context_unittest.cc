@@ -128,7 +128,7 @@ class NotificationPermissionContextTest
   // Registers the given |extension| with the extension service and returns the
   // extension if it could be registered appropriately.
   scoped_refptr<const extensions::Extension> RegisterExtension(
-      scoped_refptr<extensions::Extension> extension) {
+      scoped_refptr<const extensions::Extension> extension) {
     base::CommandLine command_line(base::CommandLine::NO_PROGRAM);
     extensions::TestExtensionSystem* test_extension_system =
         static_cast<extensions::TestExtensionSystem*>(
@@ -552,7 +552,7 @@ TEST_F(NotificationPermissionContextTest, ExtensionPermissionOverrideDenied) {
 
   // Disable the |extension|'s notification ability through the state tracker.
   message_center::NotifierId notifier_id(
-      message_center::NotifierId::APPLICATION, extension->id());
+      message_center::NotifierType::APPLICATION, extension->id());
   notifier_state_tracker->SetNotifierEnabled(notifier_id, /* enabled= */ false);
 
   ASSERT_EQ(CONTENT_SETTING_BLOCK,

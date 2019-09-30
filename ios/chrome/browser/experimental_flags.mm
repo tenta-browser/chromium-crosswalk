@@ -24,6 +24,8 @@
 #include "components/variations/variations_associated_data.h"
 #include "ios/chrome/browser/browsing_data/browsing_data_features.h"
 #include "ios/chrome/browser/chrome_switches.h"
+#include "ios/chrome/browser/passwords/password_manager_features.h"
+#import "ios/chrome/browser/ui/infobars/infobar_feature.h"
 #include "ios/chrome/browser/ui/ui_feature_flags.h"
 #include "ios/web/public/web_view_creation_util.h"
 
@@ -44,6 +46,9 @@ const base::Feature kEnableThirdPartyKeyboardWorkaround{
 }  // namespace
 
 namespace experimental_flags {
+
+const base::Feature kExternalFilesLoadedInWebState{
+    "ExternalFilesLoadedInWebState", base::FEATURE_ENABLED_BY_DEFAULT};
 
 bool AlwaysDisplayFirstRun() {
   return
@@ -78,11 +83,6 @@ WhatsNewPromoStatus GetWhatsNewPromoStatus() {
     [defaults setInteger:status forKey:kWhatsNewPromoStatus];
   }
   return static_cast<WhatsNewPromoStatus>(status);
-}
-
-bool IsLRUSnapshotCacheEnabled() {
-  // TODO(crbug.com/751553): Remove this function and its associated code.
-  return NO;
 }
 
 bool IsMemoryDebuggingEnabled() {
@@ -126,20 +126,16 @@ bool IsThirdPartyKeyboardWorkaroundEnabled() {
   return base::FeatureList::IsEnabled(kEnableThirdPartyKeyboardWorkaround);
 }
 
-bool IsRecentTabsUIRebootEnabled() {
-  return base::FeatureList::IsEnabled(kUIRefreshPhase1);
-}
-
 bool IsBookmarksUIRebootEnabled() {
-  return base::FeatureList::IsEnabled(kUIRefreshPhase1);
+  return true;
 }
 
-bool IsReadingListUIRebootEnabled() {
-  return base::FeatureList::IsEnabled(kUIRefreshPhase1);
+bool IsInfobarUIRebootEnabled() {
+  return base::FeatureList::IsEnabled(kInfobarUIReboot);
 }
 
-bool IsSettingsUIRebootEnabled() {
-  return base::FeatureList::IsEnabled(kUIRefreshPhase1);
+bool IsAutomaticPasswordGenerationEnabled() {
+  return base::FeatureList::IsEnabled(features::kPasswordGeneration);
 }
 
 }  // namespace experimental_flags

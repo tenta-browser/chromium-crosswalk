@@ -7,7 +7,8 @@
 
 namespace error_page {
 
-// Network error page events.  Used for UMA statistics.
+// Network error page events.  Used for UMA statistics and its values must be
+// mirrored in NetErrorPageEvents in enums.xml.
 enum NetworkErrorPageEvent {
   NETWORK_ERROR_PAGE_SHOWN = 0,  // Error pages shown.
 
@@ -56,14 +57,18 @@ enum NetworkErrorPageEvent {
 
   // Values for suggested content on the net-error page:
 
-  // At least one offline content suggestion was shown.
+  // A list containing at least one item of offline content suggestions was
+  // shown in the expanded/shown state.
   NETWORK_ERROR_PAGE_OFFLINE_SUGGESTIONS_SHOWN = 24,
-  // An offline content suggestion was clicked.
+  // An item from the offline content suggestions list was clicked.
   NETWORK_ERROR_PAGE_OFFLINE_SUGGESTION_CLICKED = 25,
   // A link that opens the downloads page was clicked.
   NETWORK_ERROR_PAGE_OFFLINE_DOWNLOADS_PAGE_CLICKED = 26,
   // A summary of available offline content was shown.
   NETWORK_ERROR_PAGE_OFFLINE_CONTENT_SUMMARY_SHOWN = 27,
+  // A list containing at least one item of offline content suggestions was
+  // shown in the collapsed/hidden state.
+  NETWORK_ERROR_PAGE_OFFLINE_SUGGESTIONS_SHOWN_COLLAPSED = 28,
 
   NETWORK_ERROR_PAGE_EVENT_MAX,
 };

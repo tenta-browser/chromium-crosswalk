@@ -58,12 +58,21 @@ class SearchResultPageViewTest
     }
 
     // Setting up the feature set.
-    if (test_with_answer_card)
-      scoped_feature_list_.InitAndEnableFeature(features::kEnableAnswerCard);
-    else
-      scoped_feature_list_.InitAndDisableFeature(features::kEnableAnswerCard);
+    // Zero State will affect the UI behavior significantly. This test works
+    // if zero state feature is disabled.
+    // TODO(crbug.com/925195): Add different test suites for zero state.
+    if (test_with_answer_card) {
+      scoped_feature_list_.InitWithFeatures(
+          {app_list_features::kEnableAnswerCard},
+          {app_list_features::kEnableZeroStateSuggestions});
+    } else {
+      scoped_feature_list_.InitWithFeatures(
+          {}, {app_list_features::kEnableAnswerCard,
+               app_list_features::kEnableZeroStateSuggestions});
+    }
 
-    ASSERT_EQ(test_with_answer_card, features::IsAnswerCardEnabled());
+    ASSERT_FALSE(app_list_features::IsZeroStateSuggestionsEnabled());
+    ASSERT_EQ(test_with_answer_card, app_list_features::IsAnswerCardEnabled());
 
     // Setting up views.
     delegate_ = std::make_unique<AppListTestViewDelegate>();

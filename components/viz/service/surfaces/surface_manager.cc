@@ -20,6 +20,7 @@
 #include "components/viz/common/surfaces/surface_info.h"
 #include "components/viz/service/surfaces/surface.h"
 #include "components/viz/service/surfaces/surface_client.h"
+#include "components/viz/service/surfaces/surface_manager_delegate.h"
 
 #if DCHECK_IS_ON()
 #include <sstream>
@@ -40,13 +41,11 @@ const char kUmaRemovedTemporaryReference[] =
 
 }  // namespace
 
-SurfaceManager::TemporaryReferenceData::TemporaryReferenceData() = default;
-
-SurfaceManager::TemporaryReferenceData::~TemporaryReferenceData() = default;
-
 SurfaceManager::SurfaceManager(
+    SurfaceManagerDelegate* delegate,
     base::Optional<uint32_t> activation_deadline_in_frames)
-    : activation_deadline_in_frames_(activation_deadline_in_frames),
+    : delegate_(delegate),
+      activation_deadline_in_frames_(activation_deadline_in_frames),
       dependency_tracker_(this),
       root_surface_id_(FrameSinkId(0u, 0u),
                        LocalSurfaceId(1u, base::UnguessableToken::Create())),
@@ -106,50 +105,33 @@ Surface* SurfaceManager::CreateSurface(
     base::WeakPtr<SurfaceClient> surface_client,
     const SurfaceInfo& surface_info,
     BeginFrameSource* begin_frame_source,
-    bool needs_sync_tokens) {
+    bool needs_sync_tokens,
+    bool block_activation_on_parent) {
   DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
   DCHECK(surface_info.is_valid());
   DCHECK(surface_client);
 
+  auto it = surface_map_.find(surface_info.id());
+  if (it != surface_map_.end())
+    return nullptr;
+
   // If no surface with this SurfaceId exists, simply create the surface
   // and return.
-  auto it = surface_map_.find(surface_info.id());
-  if (it == surface_map_.end()) {
-    std::unique_ptr<Surface> surface = std::make_unique<Surface>(
-        surface_info, this, surface_client, needs_sync_tokens);
-    // If no default deadline is specified then don't track deadlines.
-    if (activation_deadline_in_frames_) {
-      surface->SetDependencyDeadline(
-          std::make_unique<SurfaceDependencyDeadline>(
-              surface.get(), begin_frame_source, tick_clock_));
-    }
-    surface_map_[surface_info.id()] = std::move(surface);
-    // We can get into a situation where multiple CompositorFrames arrive for a
-    // FrameSink before the client can add any references for the frame. When
-    // the second frame with a new size arrives, the first will be destroyed in
-    // SurfaceFactory and then if there are no references it will be deleted
-    // during surface GC. A temporary reference, removed when a real reference
-    // is received, is added to prevent this from happening.
-    AddTemporaryReference(surface_info.id());
+  std::unique_ptr<Surface> surface =
+      std::make_unique<Surface>(surface_info, this, surface_client,
+                                needs_sync_tokens, block_activation_on_parent);
+  surface->SetDependencyDeadline(std::make_unique<SurfaceDependencyDeadline>(
+      surface.get(), begin_frame_source, tick_clock_));
+  surface_map_[surface_info.id()] = std::move(surface);
+  // We can get into a situation where multiple CompositorFrames arrive for a
+  // FrameSink before the client can add any references for the frame. When
+  // the second frame with a new size arrives, the first will be destroyed in
+  // SurfaceFactory and then if there are no references it will be deleted
+  // during surface GC. A temporary reference, removed when a real reference
+  // is received, is added to prevent this from happening.
+  AddTemporaryReference(surface_info.id());
 
-    for (auto& observer : observer_list_)
-      observer.OnSurfaceCreated(surface_info.id());
-    return surface_map_[surface_info.id()].get();
-  }
-
-  // If a surface with this SurfaceId exists, it must be marked as
-  // destroyed. Otherwise, we wouldn't receive a request to reuse the same
-  // SurfaceId. Remove the surface out of the garbage collector's queue and
-  // reuse it.
-  Surface* surface = it->second.get();
-
-  DCHECK(IsMarkedForDestruction(surface_info.id()));
-  surfaces_to_destroy_.erase(surface_info.id());
-  SurfaceDiscarded(surface);
-  surface->Reset(surface_client);
-  for (auto& observer : observer_list_)
-    observer.OnSurfaceCreated(surface_info.id());
-  return surface;
+  return surface_map_[surface_info.id()].get();
 }
 
 void SurfaceManager::DestroySurface(const SurfaceId& surface_id) {
@@ -161,17 +143,6 @@ void SurfaceManager::DestroySurface(const SurfaceId& surface_id) {
 }
 
 void SurfaceManager::InvalidateFrameSinkId(const FrameSinkId& frame_sink_id) {
-  // Remove any temporary references owned by |frame_sink_id|.
-  std::vector<SurfaceId> temp_refs_to_clear;
-  for (auto& map_entry : temporary_references_) {
-    base::Optional<FrameSinkId>& owner = map_entry.second.owner;
-    if (owner.has_value() && owner.value() == frame_sink_id)
-      temp_refs_to_clear.push_back(map_entry.first);
-  }
-
-  for (auto& surface_id : temp_refs_to_clear)
-    RemoveTemporaryReference(surface_id, RemovedReason::INVALIDATED);
-
   dependency_tracker_.OnFrameSinkInvalidated(frame_sink_id);
 
   GarbageCollectSurfaces();
@@ -204,25 +175,6 @@ void SurfaceManager::RemoveSurfaceReferences(
     RemoveSurfaceReferenceImpl(reference);
 }
 
-void SurfaceManager::AssignTemporaryReference(const SurfaceId& surface_id,
-                                              const FrameSinkId& owner) {
-  DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
-
-  if (!HasTemporaryReference(surface_id))
-    return;
-
-  temporary_references_[surface_id].owner = owner;
-}
-
-void SurfaceManager::DropTemporaryReference(const SurfaceId& surface_id) {
-  DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
-
-  if (!HasTemporaryReference(surface_id))
-    return;
-
-  RemoveTemporaryReference(surface_id, RemovedReason::DROPPED);
-}
-
 void SurfaceManager::GarbageCollectSurfaces() {
   TRACE_EVENT0("viz", "SurfaceManager::GarbageCollectSurfaces");
   if (surfaces_to_destroy_.empty())
@@ -253,6 +205,17 @@ void SurfaceManager::GarbageCollectSurfaces() {
   // ~Surface() draw callback could modify |surfaces_to_destroy_|.
   for (const SurfaceId& surface_id : surfaces_to_delete)
     DestroySurfaceInternal(surface_id);
+
+  // Run another pass over surfaces_to_delete, all of which have just been
+  // deleted, making sure they are not present in |surfaces_to_destroy_|. This
+  // is necessary as ~Surface may re-add already-in-destruction surfaces to the
+  // set and we need to avoid double-deletion.
+  // TODO(ericrk): Removing surfaces both here and above allows for
+  // GarbageCollectSurfaces re-entrancy, which is exercised in tests and is
+  // hard to prove can't happen in the wild. Evaluate whether we should allow
+  // re-entrancy, and if not just remove here.
+  for (const SurfaceId& surface_id : surfaces_to_delete)
+    surfaces_to_destroy_.erase(surface_id);
 }
 
 const base::flat_set<SurfaceId>& SurfaceManager::GetSurfacesReferencedByParent(
@@ -377,7 +340,7 @@ void SurfaceManager::AddSurfaceReferenceImpl(
     observer.OnAddedSurfaceReference(parent_id, child_id);
 
   if (HasTemporaryReference(child_id))
-    RemoveTemporaryReference(child_id, RemovedReason::EMBEDDED);
+    RemoveTemporaryReferenceImpl(child_id, RemovedReason::EMBEDDED);
 }
 
 void SurfaceManager::RemoveSurfaceReferenceImpl(
@@ -432,10 +395,9 @@ bool SurfaceManager::HasPersistentReference(const SurfaceId& surface_id) const {
 void SurfaceManager::AddTemporaryReference(const SurfaceId& surface_id) {
   DCHECK(!HasTemporaryReference(surface_id));
 
-  // Add an entry to |temporary_references_| with no owner for the temporary
-  // reference. Also add a range tracking entry so we know the order that
-  // surfaces were created for the FrameSinkId.
-  temporary_references_[surface_id].owner = base::Optional<FrameSinkId>();
+  // Add an entry to |temporary_references_|. Also add a range tracking entry so
+  // we know the order that surfaces were created for the FrameSinkId.
+  temporary_references_.emplace(surface_id, TemporaryReferenceData());
   temporary_reference_ranges_[surface_id.frame_sink_id()].push_back(
       surface_id.local_surface_id());
 
@@ -446,27 +408,21 @@ void SurfaceManager::AddTemporaryReference(const SurfaceId& surface_id) {
   }
 }
 
-void SurfaceManager::RemoveTemporaryReference(const SurfaceId& surface_id,
-                                              RemovedReason reason) {
-  DCHECK(HasTemporaryReference(surface_id));
-
+void SurfaceManager::RemoveTemporaryReferenceImpl(const SurfaceId& surface_id,
+                                                  RemovedReason reason) {
   const FrameSinkId& frame_sink_id = surface_id.frame_sink_id();
   std::vector<LocalSurfaceId>& frame_sink_temp_refs =
       temporary_reference_ranges_[frame_sink_id];
 
-  // If the temporary reference to |surface_id| is being removed because it was
-  // embedded, then remove older temporary references with the same FrameSinkId.
-  const bool remove_older = (reason == RemovedReason::EMBEDDED);
-
   // Find the iterator to the range tracking entry for |surface_id|. Use that
-  // iterator and |remove_older| to find the right begin and end iterators for
-  // the temporary references we want to remove.
-  auto surface_id_iter =
-      std::find(frame_sink_temp_refs.begin(), frame_sink_temp_refs.end(),
-                surface_id.local_surface_id());
-  auto begin_iter =
-      remove_older ? frame_sink_temp_refs.begin() : surface_id_iter;
-  auto end_iter = surface_id_iter + 1;
+  // iterator to find the right end iterator for the temporary references we
+  // want to remove.
+  auto end_iter =
+      std::find_if(frame_sink_temp_refs.begin(), frame_sink_temp_refs.end(),
+                   [&surface_id](const LocalSurfaceId& id) {
+                     return id.IsNewerThan(surface_id.local_surface_id());
+                   });
+  auto begin_iter = frame_sink_temp_refs.begin();
 
   // Remove temporary references and range tracking information.
   for (auto iter = begin_iter; iter != end_iter; ++iter) {
@@ -532,7 +488,13 @@ void SurfaceManager::ExpireOldTemporaryReferences() {
       // The temporary reference has existed for more than 10 seconds, a surface
       // reference should have replaced it by now. To avoid permanently leaking
       // memory delete the temporary reference.
-      DLOG(ERROR) << "Old/orphaned temporary reference to " << surface_id;
+      base::StringPiece frame_sink_debug_label;
+      if (delegate_) {
+        frame_sink_debug_label =
+            delegate_->GetFrameSinkDebugLabel(surface_id.frame_sink_id());
+      }
+      DLOG(ERROR) << "Old/orphaned temporary reference to "
+                  << surface_id.ToString(frame_sink_debug_label);
       temporary_references_to_delete.push_back(surface_id);
     } else if (IsMarkedForDestruction(surface_id)) {
       // Never mark live surfaces as old, they can't be garbage collected.
@@ -541,7 +503,7 @@ void SurfaceManager::ExpireOldTemporaryReferences() {
   }
 
   for (auto& surface_id : temporary_references_to_delete)
-    RemoveTemporaryReference(surface_id, RemovedReason::EXPIRED);
+    RemoveTemporaryReferenceImpl(surface_id, RemovedReason::EXPIRED);
 }
 
 Surface* SurfaceManager::GetSurfaceForId(const SurfaceId& surface_id) {
@@ -601,13 +563,17 @@ void SurfaceManager::SurfaceActivated(
   if (!SurfaceModified(surface->surface_id(), frame.metadata.begin_frame_ack)) {
     TRACE_EVENT_INSTANT0("viz", "Damage not visible.",
                          TRACE_EVENT_SCOPE_THREAD);
-    surface->RunDrawCallback();
+    surface->SendAckToClient();
   }
 
   for (auto& observer : observer_list_)
     observer.OnSurfaceActivated(surface->surface_id(), duration);
 
   dependency_tracker_.OnSurfaceActivated(surface);
+}
+
+void SurfaceManager::SurfaceDependencyAdded(const SurfaceId& surface_id) {
+  dependency_tracker_.OnSurfaceDependencyAdded(surface_id);
 }
 
 void SurfaceManager::SurfaceDependenciesChanged(
@@ -686,6 +652,10 @@ bool SurfaceManager::IsMarkedForDestruction(const SurfaceId& surface_id) {
 void SurfaceManager::SurfaceWillBeDrawn(Surface* surface) {
   for (auto& observer : observer_list_)
     observer.OnSurfaceWillBeDrawn(surface);
+}
+
+void SurfaceManager::DropTemporaryReference(const SurfaceId& surface_id) {
+  RemoveTemporaryReferenceImpl(surface_id, RemovedReason::DROPPED);
 }
 
 }  // namespace viz

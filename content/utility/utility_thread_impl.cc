@@ -24,12 +24,6 @@
 #include "net/proxy_resolution/proxy_resolver_v8.h"
 #endif
 
-#if defined(OS_MACOSX)
-#include "content/common/font_loader_mac.mojom.h"
-#include "content/public/common/service_names.mojom.h"
-#include "services/service_manager/public/cpp/connector.h"
-#endif
-
 namespace content {
 
 #if !defined(OS_ANDROID)
@@ -59,15 +53,17 @@ void CreateResourceUsageReporter(mojom::ResourceUsageReporterRequest request) {
 }
 #endif  // !defined(OS_ANDROID)
 
-UtilityThreadImpl::UtilityThreadImpl()
-    : ChildThreadImpl(ChildThreadImpl::Options::Builder()
+UtilityThreadImpl::UtilityThreadImpl(base::RepeatingClosure quit_closure)
+    : ChildThreadImpl(std::move(quit_closure),
+                      ChildThreadImpl::Options::Builder()
                           .AutoStartServiceManagerConnection(false)
                           .Build()) {
   Init();
 }
 
 UtilityThreadImpl::UtilityThreadImpl(const InProcessChildThreadParams& params)
-    : ChildThreadImpl(ChildThreadImpl::Options::Builder()
+    : ChildThreadImpl(base::DoNothing(),
+                      ChildThreadImpl::Options::Builder()
                           .AutoStartServiceManagerConnection(false)
                           .InBrowserProcess(params)
                           .Build()) {
@@ -149,29 +145,18 @@ void UtilityThreadImpl::Init() {
   service_factory_.reset(new UtilityServiceFactory);
 
   if (connection) {
-    connection->Start();
     GetContentClient()->OnServiceManagerConnected(connection);
+
+    // NOTE: You must register any ConnectionFilter instances on |connection|
+    // *before* this call to |Start()|, otherwise incoming interface requests
+    // may race with the registration.
+    connection->Start();
   }
 }
 
 bool UtilityThreadImpl::OnControlMessageReceived(const IPC::Message& msg) {
   return GetContentClient()->utility()->OnMessageReceived(msg);
 }
-
-#if defined(OS_MACOSX)
-mojom::FontLoaderMac* UtilityThreadImpl::GetFontLoaderMac() {
-  DCHECK(font_loader_mac_ptr_);
-  return font_loader_mac_ptr_.get();
-}
-
-void UtilityThreadImpl::InitializeFontLoaderMac(
-    service_manager::Connector* connector) {
-  if (!font_loader_mac_ptr_) {
-    connector->BindInterface(content::mojom::kBrowserServiceName,
-                             &font_loader_mac_ptr_);
-  }
-}
-#endif
 
 void UtilityThreadImpl::BindServiceFactoryRequest(
     service_manager::mojom::ServiceFactoryRequest request) {

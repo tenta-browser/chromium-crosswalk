@@ -11,6 +11,7 @@
 #include "ash/public/cpp/ash_pref_names.h"
 #include "base/bind.h"
 #include "base/memory/ptr_util.h"
+#include "base/no_destructor.h"
 #include "base/run_loop.h"
 #include "base/stl_util.h"
 #include "base/test/bind_test_util.h"
@@ -31,6 +32,9 @@
 #include "chromeos/dbus/dbus_thread_manager.h"
 #include "chromeos/dbus/fake_cryptohome_client.h"
 #include "chromeos/login/auth/fake_extended_authenticator.h"
+#include "chromeos/services/device_sync/public/cpp/fake_device_sync_client.h"
+#include "chromeos/services/multidevice_setup/public/cpp/fake_multidevice_setup_client.h"
+#include "chromeos/services/secure_channel/public/cpp/client/fake_secure_channel_client.h"
 #include "components/user_manager/scoped_user_manager.h"
 #include "content/public/test/test_utils.h"
 #include "extensions/browser/api_test_utils.h"
@@ -63,35 +67,40 @@ constexpr char kInvalidPassword[] = "invalid";
 
 class FakeEasyUnlockService : public EasyUnlockServiceRegular {
  public:
-  explicit FakeEasyUnlockService(Profile* profile)
+  FakeEasyUnlockService(
+      Profile* profile,
+      chromeos::device_sync::FakeDeviceSyncClient* fake_device_sync_client,
+      chromeos::secure_channel::FakeSecureChannelClient*
+          fake_secure_channel_client,
+      chromeos::multidevice_setup::FakeMultiDeviceSetupClient*
+          fake_multidevice_setup_client)
       : EasyUnlockServiceRegular(profile,
-                                 nullptr /* secure_channel_client */,
-                                 nullptr /* device_sync_client */,
-                                 nullptr /* multidevice_setup_client */),
-        reauth_count_(0) {}
+                                 fake_secure_channel_client,
+                                 fake_device_sync_client,
+                                 fake_multidevice_setup_client) {}
   ~FakeEasyUnlockService() override {}
 
   // EasyUnlockServiceRegular:
   void InitializeInternal() override {}
   void ShutdownInternal() override {}
-  void HandleUserReauth(const chromeos::UserContext& user_context) override {
-    ++reauth_count_;
-  }
-
-  void ResetReauthCount() { reauth_count_ = 0; }
-
-  int reauth_count() const { return reauth_count_; }
 
  private:
-  int reauth_count_;
-
   DISALLOW_COPY_AND_ASSIGN(FakeEasyUnlockService);
 };
 
 std::unique_ptr<KeyedService> CreateEasyUnlockServiceForTest(
     content::BrowserContext* context) {
+  static base::NoDestructor<chromeos::device_sync::FakeDeviceSyncClient>
+      fake_device_sync_client;
+  static base::NoDestructor<chromeos::secure_channel::FakeSecureChannelClient>
+      fake_secure_channel_client;
+  static base::NoDestructor<
+      chromeos::multidevice_setup::FakeMultiDeviceSetupClient>
+      fake_multidevice_setup_client;
+
   return std::make_unique<FakeEasyUnlockService>(
-      Profile::FromBrowserContext(context));
+      Profile::FromBrowserContext(context), fake_device_sync_client.get(),
+      fake_secure_channel_client.get(), fake_multidevice_setup_client.get());
 }
 
 ExtendedAuthenticator* CreateFakeAuthenticator(
@@ -140,6 +149,7 @@ class QuickUnlockPrivateUnitTest
     }
     DBusThreadManager::GetSetterForTesting()->SetCryptohomeClient(
         std::move(cryptohome_client));
+    SystemSaltGetter::Initialize();
 
     ExtensionApiUnittest::SetUp();
 
@@ -182,12 +192,13 @@ class QuickUnlockPrivateUnitTest
     fake_user_manager_ = nullptr;
 
     ExtensionApiUnittest::TearDown();
+    SystemSaltGetter::Shutdown();
     cryptohome::HomedirMethods::Shutdown();
   }
 
   TestingProfile::TestingFactories GetTestingFactories() override {
     return {{EasyUnlockServiceFactory::GetInstance(),
-             &CreateEasyUnlockServiceForTest}};
+             base::BindRepeating(&CreateEasyUnlockServiceForTest)}};
   }
 
   // If a mode change event is raised, fail the test.
@@ -567,14 +578,8 @@ TEST_P(QuickUnlockPrivateUnitTest, SetModes) {
   // Verify there is no active mode.
   EXPECT_EQ(GetActiveModes(), QuickUnlockModeList{});
 
-  FakeEasyUnlockService* easy_unlock_service =
-      static_cast<FakeEasyUnlockService*>(EasyUnlockService::Get(profile()));
-  easy_unlock_service->ResetReauthCount();
-  EXPECT_EQ(0, easy_unlock_service->reauth_count());
-
   RunSetModes(QuickUnlockModeList{QuickUnlockMode::QUICK_UNLOCK_MODE_PIN},
               {"111111"});
-  EXPECT_EQ(1, easy_unlock_service->reauth_count());
   EXPECT_EQ(GetActiveModes(),
             QuickUnlockModeList{QuickUnlockMode::QUICK_UNLOCK_MODE_PIN});
 }
@@ -584,17 +589,11 @@ TEST_P(QuickUnlockPrivateUnitTest, SetModesFailsWithInvalidPassword) {
   // Verify there is no active mode.
   EXPECT_EQ(GetActiveModes(), QuickUnlockModeList{});
 
-  FakeEasyUnlockService* easy_unlock_service =
-      static_cast<FakeEasyUnlockService*>(EasyUnlockService::Get(profile()));
-  easy_unlock_service->ResetReauthCount();
-  EXPECT_EQ(0, easy_unlock_service->reauth_count());
-
   // Try to enable PIN, but use an invalid password. Verify that no event is
   // raised and GetActiveModes still returns an empty set.
   FailIfModesChanged();
   std::string error = RunSetModesWithInvalidToken();
   EXPECT_FALSE(error.empty());
-  EXPECT_EQ(0, easy_unlock_service->reauth_count());
   EXPECT_EQ(GetActiveModes(), QuickUnlockModeList{});
 }
 

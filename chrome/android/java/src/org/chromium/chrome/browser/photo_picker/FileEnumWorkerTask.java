@@ -9,8 +9,9 @@ import android.content.Intent;
 import android.os.Environment;
 import android.provider.MediaStore;
 
-import org.chromium.base.AsyncTask;
 import org.chromium.base.ThreadUtils;
+import org.chromium.base.task.AsyncTask;
+import org.chromium.net.MimeTypeFilter;
 import org.chromium.ui.base.WindowAndroid;
 
 import java.io.File;
@@ -39,7 +40,7 @@ class FileEnumWorkerTask extends AsyncTask<List<PickerBitmap>> {
     private FilesEnumeratedCallback mCallback;
 
     // The filter to apply to the list.
-    private MimeTypeFileFilter mFilter;
+    private MimeTypeFilter mFilter;
 
     // The camera directory undir DCIM.
     private static final String SAMPLE_DCIM_SOURCE_SUB_DIRECTORY = "Camera";
@@ -50,8 +51,8 @@ class FileEnumWorkerTask extends AsyncTask<List<PickerBitmap>> {
      * @param callback The callback to use to communicate back the results.
      * @param filter The file filter to apply to the list.
      */
-    public FileEnumWorkerTask(WindowAndroid windowAndroid, FilesEnumeratedCallback callback,
-            MimeTypeFileFilter filter) {
+    public FileEnumWorkerTask(
+            WindowAndroid windowAndroid, FilesEnumeratedCallback callback, MimeTypeFilter filter) {
         mWindowAndroid = windowAndroid;
         mCallback = callback;
         mFilter = filter;

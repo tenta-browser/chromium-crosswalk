@@ -60,7 +60,6 @@ class CORE_EXPORT WorkerReportingProxy {
                                     MessageLevel,
                                     const String& message,
                                     SourceLocation*) {}
-  virtual void PostMessageToPageInspector(int session_id, const String&) {}
 
   // Invoked when the new WorkerGlobalScope is created on
   // WorkerThread::InitializeOnWorkerThread.
@@ -76,6 +75,18 @@ class CORE_EXPORT WorkerReportingProxy {
   // via ResourceLoader. Called before WillEvaluateClassicScript().
   virtual void DidLoadInstalledScript() {}
 
+  // Invoked when it's failed to load the worker's main script from
+  // InstalledScriptsManager.
+  virtual void DidFailToLoadInstalledClassicScript() {}
+
+  // Invoked on failure to fetch the worker's classic script from network. This
+  // is not called when the script is loaded from InstalledScriptsManager.
+  virtual void DidFailToFetchClassicScript() {}
+
+  // Invoked on failure to fetch the worker's module script (either from network
+  // or InstalledScriptsManager).
+  virtual void DidFailToFetchModuleScript() {}
+
   // Invoked when the main classic script is about to be evaluated.
   virtual void WillEvaluateClassicScript(size_t script_size,
                                          size_t cached_metadata_size) {}
@@ -84,12 +95,15 @@ class CORE_EXPORT WorkerReportingProxy {
   virtual void WillEvaluateImportedClassicScript(size_t script_size,
                                                  size_t cached_metadata_size) {}
 
+  // Invoked when the worker's main module script is about to be evaluated.
+  virtual void WillEvaluateModuleScript() {}
+
   // Invoked when the main classic script is evaluated. |success| is true if the
   // evaluation completed with no uncaught exception.
   virtual void DidEvaluateClassicScript(bool success) {}
 
-  // Invoked when the main module script is evaluated. |success| is true if the
-  // evaluation completed with no uncaught exception.
+  // Invoked when the worker's main module script is evaluated. |success| is
+  // true if the evaluation completed with no uncaught exception.
   virtual void DidEvaluateModuleScript(bool success) {}
 
   // Invoked when close() is invoked on the worker context.

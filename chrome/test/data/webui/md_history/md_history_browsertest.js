@@ -98,7 +98,7 @@ MaterialHistoryListTest.prototype = {
 
 // Times out on debug builders because the History page can take several seconds
 // to load in a Debug build. See https://crbug.com/669227.
-GEN('#if !defined(NDEBUG) || defined(OS_MACOSX) || defined(OS_CHROMEOS)');
+GEN('#if !defined(NDEBUG)');
 GEN('#define MAYBE_All DISABLED_All');
 GEN('#else');
 GEN('#define MAYBE_All All');
@@ -190,6 +190,7 @@ MaterialHistorySyncedTabsTest.prototype = {
   __proto__: MaterialHistoryBrowserTest.prototype,
 
   extraLibraries: MaterialHistoryBrowserTest.prototype.extraLibraries.concat([
+    '../settings/test_util.js',
     'history_synced_tabs_test.js',
   ]),
 };
@@ -229,5 +230,19 @@ MaterialHistoryToolbarTest.prototype = {
 };
 
 TEST_F('MaterialHistoryToolbarTest', 'All', function() {
+  mocha.run();
+});
+
+function MaterialHistorySearchedLabelTest() {}
+
+MaterialHistorySearchedLabelTest.prototype = {
+  __proto__: MaterialHistoryBrowserTest.prototype,
+
+  extraLibraries: MaterialHistoryBrowserTest.prototype.extraLibraries.concat([
+    'searched_label_test.js',
+  ]),
+};
+
+TEST_F('MaterialHistorySearchedLabelTest', 'All', function() {
   mocha.run();
 });

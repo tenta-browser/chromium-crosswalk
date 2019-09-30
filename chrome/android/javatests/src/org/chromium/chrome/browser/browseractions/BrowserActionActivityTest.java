@@ -57,15 +57,15 @@ import org.chromium.chrome.browser.multiwindow.MultiWindowTestHelper;
 import org.chromium.chrome.browser.multiwindow.MultiWindowUtils;
 import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.chrome.browser.tabmodel.EmptyTabModelObserver;
+import org.chromium.chrome.browser.tabmodel.TabLaunchType;
 import org.chromium.chrome.browser.tabmodel.TabModel;
-import org.chromium.chrome.browser.tabmodel.TabModel.TabLaunchType;
 import org.chromium.chrome.browser.tabmodel.TabModelObserver;
 import org.chromium.chrome.browser.util.IntentUtils;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
 import org.chromium.chrome.test.ChromeTabbedActivityTestRule;
-import org.chromium.content.browser.test.util.Criteria;
-import org.chromium.content.browser.test.util.CriteriaHelper;
 import org.chromium.content_public.browser.LoadUrlParams;
+import org.chromium.content_public.browser.test.util.Criteria;
+import org.chromium.content_public.browser.test.util.CriteriaHelper;
 import org.chromium.net.test.EmbeddedTestServer;
 
 import java.util.ArrayList;

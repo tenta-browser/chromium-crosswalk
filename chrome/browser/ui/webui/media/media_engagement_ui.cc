@@ -77,7 +77,8 @@ class MediaEngagementScoreDetailsProviderImpl
         base::FeatureList::IsEnabled(
             media::kMediaEngagementBypassAutoplayPolicies),
         base::FeatureList::IsEnabled(media::kPreloadMediaEngagementData),
-        base::FeatureList::IsEnabled(media::kAutoplaySoundSettings),
+        base::FeatureList::IsEnabled(media::kAutoplayDisableSettings),
+        base::FeatureList::IsEnabled(media::kAutoplayWhitelistSettings),
         GetBlockAutoplayPref(),
         base::CommandLine::ForCurrentProcess()->HasSwitch(
             switches::kAutoplayPolicy),
@@ -94,8 +95,6 @@ class MediaEngagementScoreDetailsProviderImpl
         return "no-user-gesture-required";
       case content::AutoplayPolicy::kUserGestureRequired:
         return "user-gesture-required";
-      case content::AutoplayPolicy::kUserGestureRequiredForCrossOrigin:
-        return "user-gesture-required-for-cross-origin";
       case content::AutoplayPolicy::kDocumentUserActivationRequired:
         return "document-user-activation-required";
     }

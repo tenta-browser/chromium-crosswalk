@@ -12,31 +12,23 @@
 #include "base/compiler_specific.h"
 #include "base/gtest_prod_util.h"
 #include "base/macros.h"
-#include "base/memory/linked_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/observer_list.h"
+#include "base/optional.h"
 #include "base/time/time.h"
 #include "base/timer/timer.h"
 #include "chrome/browser/chromeos/accessibility/accessibility_manager.h"
+#include "chrome/browser/chromeos/login/demo_mode/demo_session.h"
 #include "chrome/browser/chromeos/login/enrollment/auto_enrollment_controller.h"
-#include "chrome/browser/chromeos/login/oobe_configuration.h"
 #include "chrome/browser/chromeos/login/screen_manager.h"
 #include "chrome/browser/chromeos/login/screens/base_screen_delegate.h"
-#include "chrome/browser/chromeos/login/screens/controller_pairing_screen.h"
 #include "chrome/browser/chromeos/login/screens/eula_screen.h"
 #include "chrome/browser/chromeos/login/screens/hid_detection_screen.h"
-#include "chrome/browser/chromeos/login/screens/host_pairing_screen.h"
 #include "chrome/browser/chromeos/login/screens/reset_screen.h"
 #include "chrome/browser/chromeos/login/screens/welcome_screen.h"
 #include "chrome/browser/chromeos/policy/enrollment_config.h"
 
 class PrefService;
-
-namespace pairing_chromeos {
-class ControllerPairingController;
-class HostPairingController;
-class SharkConnectionListener;
-}  // namespace pairing_chromeos
 
 namespace chromeos {
 
@@ -57,11 +49,8 @@ struct TimeZoneResponseData;
 // interacts with screen controllers to move the user between screens.
 class WizardController : public BaseScreenDelegate,
                          public EulaScreen::Delegate,
-                         public ControllerPairingScreen::Delegate,
-                         public HostPairingScreen::Delegate,
                          public WelcomeScreen::Delegate,
-                         public HIDDetectionScreen::Delegate,
-                         public OobeConfiguration::Observer {
+                         public HIDDetectionScreen::Delegate {
  public:
   WizardController();
   ~WizardController() override;
@@ -114,15 +103,15 @@ class WizardController : public BaseScreenDelegate,
   //    chromeos::OobeScreen::SCREEN_OOBE_DEMO_SETUP
   void StartDemoModeSetup();
 
-  void SimulateDemoModeSetupForTesting();
+  // Simulates demo mode setup environment. If |demo_config| has a value, it
+  // is explicitly set on DemoSetupController and going through demo settings
+  // screens can be skipped.
+  void SimulateDemoModeSetupForTesting(
+      base::Optional<DemoSession::DemoModeConfig> demo_config = base::nullopt);
 
   // Advances to login/update screen. Should be used in for testing only.
   void SkipToLoginForTesting(const LoginScreenContext& context);
   void SkipToUpdateForTesting();
-
-  // Should be used for testing only.
-  pairing_chromeos::SharkConnectionListener*
-  GetSharkConnectionListenerForTesting();
 
   // Skip update, go straight to enrollment after EULA is accepted.
   void SkipUpdateEnrollAfterEula();
@@ -184,17 +173,14 @@ class WizardController : public BaseScreenDelegate,
   void ShowAppDownloadingScreen();
   void ShowWrongHWIDScreen();
   void ShowAutoEnrollmentCheckScreen();
-  void ShowSupervisedUserCreationScreen();
   void ShowArcKioskSplashScreen();
   void ShowHIDDetectionScreen();
-  void ShowControllerPairingScreen();
-  void ShowHostPairingScreen();
   void ShowDeviceDisabledScreen();
   void ShowEncryptionMigrationScreen();
-  void ShowVoiceInteractionValuePropScreen();
-  void ShowWaitForContainerReadyScreen();
+  void ShowSupervisionTransitionScreen();
   void ShowUpdateRequiredScreen();
   void ShowAssistantOptInFlowScreen();
+  void ShowMultiDeviceSetupScreen();
   void ShowDiscoverScreen();
   void ShowMarketingOptInScreen();
 
@@ -212,12 +198,12 @@ class WizardController : public BaseScreenDelegate,
   void OnOfflineDemoModeSetup();
   void OnConnectionFailed();
   void OnUpdateCompleted();
+  void OnUpdateOverCellularRejected();
   void OnEulaAccepted();
   void OnEulaBack();
   void OnUpdateErrorCheckingForUpdate();
   void OnUpdateErrorUpdating(bool is_critical_update);
   void OnUserImageSelected();
-  void OnUserImageSkipped();
   void OnEnrollmentDone();
   void OnDeviceModificationCanceled();
   void OnKioskAutolaunchCanceled();
@@ -227,6 +213,7 @@ class WizardController : public BaseScreenDelegate,
   void OnTermsOfServiceDeclined();
   void OnTermsOfServiceAccepted();
   void OnSyncConsentFinished();
+  void OnDiscoverScreenFinished();
   void OnFingerprintSetupFinished();
   void OnArcTermsOfServiceSkipped();
   void OnArcTermsOfServiceAccepted();
@@ -234,16 +221,15 @@ class WizardController : public BaseScreenDelegate,
   void OnRecommendAppsSkipped();
   void OnRecommendAppsSelected();
   void OnAppDownloadingFinished();
-  void OnVoiceInteractionValuePropSkipped();
-  void OnVoiceInteractionValuePropAccepted();
-  void OnControllerPairingFinished();
   void OnAutoEnrollmentCheckCompleted();
   void OnDemoSetupFinished();
   void OnDemoSetupCanceled();
   void OnDemoPreferencesContinued();
   void OnDemoPreferencesCanceled();
   void OnWaitForContainerReadyFinished();
+  void OnSupervisionTransitionFinished();
   void OnAssistantOptInFlowFinished();
+  void OnMultiDeviceSetupFinished();
   void OnOobeFlowFinished();
   void OnMarketingOptInFinished();
 
@@ -257,6 +243,9 @@ class WizardController : public BaseScreenDelegate,
   // Shows update screen and starts update process.
   void InitiateOOBEUpdate();
   void StartOOBEUpdate();
+
+  // Retrieve filtered OOBE configuration and apply relevant values.
+  void UpdateOobeConfiguration();
 
   // Actions that should be done right after EULA is accepted,
   // before update check.
@@ -276,27 +265,11 @@ class WizardController : public BaseScreenDelegate,
   void SetUsageStatisticsReporting(bool val) override;
   bool GetUsageStatisticsReporting() const override;
 
-  // Override from ControllerPairingScreen::Delegate:
-  void SetHostNetwork() override;
-  void SetHostConfiguration() override;
-
-  // Override from HostPairingScreen::Delegate:
-  void ConfigureHostRequested(bool accepted_eula,
-                              const std::string& lang,
-                              const std::string& timezone,
-                              bool send_reports,
-                              const std::string& keyboard_layout) override;
-  void AddNetworkRequested(const std::string& onc_spec) override;
-  void RebootHostRequested() override;
-
   // Override from WelcomeScreen::Delegate:
   void OnEnableDebuggingScreenRequested() override;
 
   // Override from HIDDetectionScreen::Delegate
   void OnHIDScreenNecessityCheck(bool screen_needed) override;
-
-  // Overridden from OobeConfiguration::Observer
-  void OnOobeConfigurationChanged() override;
 
   // Notification of a change in the state of an accessibility setting.
   void OnAccessibilityStatusChanged(
@@ -346,31 +319,8 @@ class WizardController : public BaseScreenDelegate,
   // Returns false if timezone has already been resolved.
   bool SetOnTimeZoneResolvedForTesting(const base::Closure& callback);
 
-  // Returns true if kHostPairingOobe perf has been set. If it's set, launch the
-  // pairing remora OOBE from the beginning no matter an eligible controller is
-  // detected or not.
-  bool IsRemoraPairingOobe() const;
-
-  // Returns true if voice interaction value prop should be shown.
-  bool ShouldShowVoiceInteractionValueProp() const;
-
   // Start voice interaction setup wizard in container
   void StartVoiceInteractionSetupWizard();
-
-  // Starts listening for an incoming shark controller connection, if we are
-  // running remora OOBE.
-  void MaybeStartListeningForSharkConnection();
-
-  // Called when a connection to controller has been established. Wizard
-  // controller takes the ownership of |pairing_controller| after that call.
-  void OnSharkConnected(std::unique_ptr<pairing_chromeos::HostPairingController>
-                            pairing_controller);
-
-  // Callback functions for AddNetworkRequested().
-  void OnSetHostNetworkSuccessful();
-  void OnSetHostNetworkFailed(
-      const std::string& error_name,
-      std::unique_ptr<base::DictionaryValue> error_data);
 
   // Start the enrollment screen using the config from
   // |prescribed_enrollment_config_|. If |force_interactive| is true,
@@ -447,10 +397,6 @@ class WizardController : public BaseScreenDelegate,
 
   bool is_in_session_oobe_ = false;
 
-  // Indicates that once image selection screen finishes we should return to
-  // a previous screen instead of proceeding with usual flow.
-  bool user_image_screen_return_to_previous_hack_ = false;
-
   // Non-owning pointer to local state used for testing.
   static PrefService* local_state_for_testing_;
 
@@ -460,6 +406,7 @@ class WizardController : public BaseScreenDelegate,
                            ControlFlowNoForcedReEnrollmentOnFirstBoot);
 
   friend class DemoSetupTest;
+  friend class EnterpriseEnrollmentConfigurationTest;
   friend class HandsOffEnrollmentTest;
   friend class WizardControllerBrokenLocalStateTest;
   friend class WizardControllerDemoSetupTest;
@@ -467,19 +414,12 @@ class WizardController : public BaseScreenDelegate,
   friend class WizardControllerFlowTest;
   friend class WizardControllerOobeConfigurationTest;
   friend class WizardControllerOobeResumeTest;
-  friend class WizardInProcessBrowserTest;
+  friend class WizardControllerSupervisionTransitionOobeTest;
 
   std::unique_ptr<AccessibilityStatusSubscription> accessibility_subscription_;
 
   std::unique_ptr<SimpleGeolocationProvider> geolocation_provider_;
   std::unique_ptr<TimeZoneProvider> timezone_provider_;
-
-  // Pairing controller for shark devices.
-  std::unique_ptr<pairing_chromeos::ControllerPairingController>
-      shark_controller_;
-
-  // Pairing controller for remora devices.
-  std::unique_ptr<pairing_chromeos::HostPairingController> remora_controller_;
 
   // Helper for network realted operations.
   std::unique_ptr<login::NetworkStateHelper> network_state_helper_;
@@ -494,12 +434,6 @@ class WizardController : public BaseScreenDelegate,
   // Tests check result of timezone resolve.
   bool timezone_resolved_ = false;
   base::Closure on_timezone_resolved_for_testing_;
-
-  // Listens for incoming connection from a shark controller if a regular (not
-  // pairing) remora OOBE is active. If connection is established, wizard
-  // conroller swithces to a pairing OOBE.
-  std::unique_ptr<pairing_chromeos::SharkConnectionListener>
-      shark_connection_listener_;
 
   // Configuration (dictionary) for automating OOBE screens.
   base::Value oobe_configuration_;

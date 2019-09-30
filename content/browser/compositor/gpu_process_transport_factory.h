@@ -24,6 +24,7 @@
 #include "gpu/ipc/client/gpu_channel_host.h"
 #include "gpu/vulkan/buildflags.h"
 #include "services/ws/public/cpp/gpu/command_buffer_metrics.h"
+#include "services/ws/public/cpp/gpu/shared_worker_context_provider_factory.h"
 #include "ui/compositor/compositor.h"
 
 namespace base {
@@ -43,10 +44,10 @@ class VulkanImplementation;
 namespace viz {
 class CompositingModeReporterImpl;
 class OutputDeviceBacking;
+class RasterContextProvider;
 class ServerSharedBitmapManager;
 class SoftwareOutputDevice;
 class VulkanInProcessContextProvider;
-class RasterContextProvider;
 }
 
 namespace ws {
@@ -73,7 +74,6 @@ class GpuProcessTransportFactory : public ui::ContextFactory,
       base::WeakPtr<ui::Compositor> compositor) override;
   scoped_refptr<viz::ContextProvider> SharedMainThreadContextProvider()
       override;
-  double GetRefreshRate() const override;
   gpu::GpuMemoryBufferManager* GetGpuMemoryBufferManager() override;
   cc::TaskGraphRunner* GetTaskGraphRunner() override;
   void AddObserver(ui::ContextFactoryObserver* observer) override;
@@ -96,8 +96,6 @@ class GpuProcessTransportFactory : public ui::ContextFactory,
   void SetDisplayColorSpace(ui::Compositor* compositor,
                             const gfx::ColorSpace& blending_color_space,
                             const gfx::ColorSpace& output_color_space) override;
-  void SetAuthoritativeVSyncInterval(ui::Compositor* compositor,
-                                     base::TimeDelta interval) override;
   void SetDisplayVSyncParameters(ui::Compositor* compositor,
                                  base::TimeTicks timebase,
                                  base::TimeDelta interval) override;
@@ -114,6 +112,8 @@ class GpuProcessTransportFactory : public ui::ContextFactory,
 
  private:
   struct PerCompositorData;
+
+  scoped_refptr<viz::RasterContextProvider> shared_worker_context_provider();
 
   PerCompositorData* CreatePerCompositorData(ui::Compositor* compositor);
   std::unique_ptr<viz::SoftwareOutputDevice> CreateSoftwareOutputDevice(
@@ -168,7 +168,8 @@ class GpuProcessTransportFactory : public ui::ContextFactory,
   base::ObserverList<ui::ContextFactoryObserver>::Unchecked observer_list_;
   scoped_refptr<base::SingleThreadTaskRunner> resize_task_runner_;
   std::unique_ptr<cc::SingleThreadTaskGraphRunner> task_graph_runner_;
-  scoped_refptr<viz::RasterContextProvider> shared_worker_context_provider_;
+  ws::SharedWorkerContextProviderFactory
+      shared_worker_context_provider_factory_;
 
   bool is_gpu_compositing_disabled_ = false;
   bool disable_frame_rate_limit_ = false;

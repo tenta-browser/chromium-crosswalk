@@ -24,12 +24,6 @@
 
 namespace customtabs {
 
-namespace {
-
-constexpr int kMaxResponseSize = 100 * 1024;
-
-}  // namespace
-
 // static
 void DetachedResourceRequest::CreateAndStart(
     content::BrowserContext* browser_context,
@@ -139,7 +133,9 @@ void DetachedResourceRequest::OnResponseCallback(
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
   int net_error = url_loader_->NetError();
   bool success = net_error == net::OK;
+  net_error = std::abs(net_error);
   auto duration = base::TimeTicks::Now() - start_time_;
+
   switch (motivation_) {
     case Motivation::kParallelRequest: {
       if (success) {
@@ -158,7 +154,7 @@ void DetachedResourceRequest::OnResponseCallback(
       }
 
       base::UmaHistogramSparse("CustomTabs.DetachedResourceRequest.FinalStatus",
-                               std::abs(net_error));
+                               net_error);
       break;
     }
     case Motivation::kResourcePrefetch: {
@@ -171,12 +167,12 @@ void DetachedResourceRequest::OnResponseCallback(
       }
 
       base::UmaHistogramSparse("CustomTabs.ResourcePrefetch.FinalStatus",
-                               std::abs(net_error));
+                               net_error);
       break;
     }
   }
 
-  std::move(cb_).Run(success);
+  std::move(cb_).Run(net_error);
 }
 
 }  // namespace customtabs

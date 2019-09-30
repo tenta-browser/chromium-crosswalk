@@ -7,7 +7,9 @@
 
 #include "chrome/browser/ui/views/autofill/save_card_bubble_views.h"
 
+#include "chrome/browser/ui/autofill/autofill_dialog_models.h"
 #include "chrome/browser/ui/views/autofill/view_util.h"
+#include "ui/views/controls/combobox/combobox_listener.h"
 #include "ui/views/controls/styled_label_listener.h"
 #include "ui/views/controls/textfield/textfield_controller.h"
 
@@ -22,6 +24,7 @@ namespace autofill {
 // previously saved. It includes a description of the card that is being saved
 // and an [Save] button. (Non-material UI's include a [No Thanks] button).
 class SaveCardOfferBubbleViews : public SaveCardBubbleViews,
+                                 public views::ComboboxListener,
                                  public views::StyledLabelListener,
                                  public views::TextfieldController {
  public:
@@ -31,10 +34,12 @@ class SaveCardOfferBubbleViews : public SaveCardBubbleViews,
                            content::WebContents* web_contents,
                            SaveCardBubbleController* controller);
 
-  // BubbleDialogDelegateView
+  // BubbleDialogDelegateView:
+  views::View* CreateExtraView() override;
   views::View* CreateFootnoteView() override;
   bool Accept() override;
   base::string16 GetDialogButtonLabel(ui::DialogButton button) const override;
+  int GetDialogButtons() const override;
   bool IsDialogButtonEnabled(ui::DialogButton button) const override;
 
   // views::StyledLabelListener:
@@ -46,8 +51,13 @@ class SaveCardOfferBubbleViews : public SaveCardBubbleViews,
   void ContentsChanged(views::Textfield* sender,
                        const base::string16& new_contents) override;
 
+  // views::ComboboxListener:
+  void OnPerformAction(views::Combobox* combobox) override;
+
  private:
   std::unique_ptr<views::View> CreateMainContentView() override;
+
+  std::unique_ptr<views::View> CreateRequestExpirationDateView();
 
   ~SaveCardOfferBubbleViews() override;
 
@@ -55,7 +65,13 @@ class SaveCardOfferBubbleViews : public SaveCardBubbleViews,
 
   views::Textfield* cardholder_name_textfield_ = nullptr;
 
-  LegalMessageView* footnote_view_ = nullptr;
+  LegalMessageView* legal_message_view_ = nullptr;
+
+  // Holds expiration inputs:
+  views::Combobox* month_input_dropdown_ = nullptr;
+  views::Combobox* year_input_dropdown_ = nullptr;
+  MonthComboboxModel month_combobox_model_;
+  YearComboboxModel year_combobox_model_;
 
   DISALLOW_COPY_AND_ASSIGN(SaveCardOfferBubbleViews);
 };

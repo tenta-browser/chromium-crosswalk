@@ -11,8 +11,8 @@
 #include <utility>
 
 #include "base/lazy_instance.h"
-#include "base/macros.h"
 #include "base/memory/singleton.h"
+#include "base/stl_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/values.h"
 #include "build/build_config.h"
@@ -246,7 +246,7 @@ class PrefMapping {
                                        std::string* browser_pref,
                                        APIPermission::ID* read_permission,
                                        APIPermission::ID* write_permission) {
-    PrefMap::iterator it = mapping_.find(extension_pref);
+    auto it = mapping_.find(extension_pref);
     if (it != mapping_.end()) {
       *browser_pref = it->second.pref_name;
       *read_permission = it->second.read_permission;
@@ -259,7 +259,7 @@ class PrefMapping {
   bool FindEventForBrowserPref(const std::string& browser_pref,
                                std::string* event_name,
                                APIPermission::ID* permission) {
-    PrefMap::iterator it = event_mapping_.find(browser_pref);
+    auto it = event_mapping_.find(browser_pref);
     if (it != event_mapping_.end()) {
       *event_name = it->second.pref_name;
       *permission = it->second.read_permission;
@@ -289,8 +289,8 @@ class PrefMapping {
       event_mapping_[pref.browser_pref] =
           PrefMapData(event_name, pref.read_permission, pref.write_permission);
     }
-    DCHECK_EQ(arraysize(kPrefMapping), mapping_.size());
-    DCHECK_EQ(arraysize(kPrefMapping), event_mapping_.size());
+    DCHECK_EQ(base::size(kPrefMapping), mapping_.size());
+    DCHECK_EQ(base::size(kPrefMapping), event_mapping_.size());
     RegisterPrefTransformer(proxy_config::prefs::kProxy,
                             std::make_unique<ProxyPrefTransformer>());
     RegisterPrefTransformer(prefs::kBlockThirdPartyCookies,

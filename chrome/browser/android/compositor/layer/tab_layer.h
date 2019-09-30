@@ -44,7 +44,6 @@ class TabLayer : public Layer {
 
   void SetProperties(int id,
                      bool can_use_live_layer,
-                     bool modern_design_enabled,
                      int toolbar_resource_id,
                      int close_button_resource_id,
                      int shadow_resource_id,
@@ -77,6 +76,7 @@ class TabLayer : public Layer {
                      float saturation,
                      float brightness,
                      float close_btn_width,
+                     float close_btn_asset_size,
                      float static_to_view_blend,
                      float content_width,
                      float content_height,

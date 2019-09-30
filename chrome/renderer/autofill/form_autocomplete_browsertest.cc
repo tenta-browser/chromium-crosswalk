@@ -60,8 +60,7 @@ class FakeContentAutofillDriver : public mojom::AutofillDriver {
 
   void FormSubmitted(const FormData& form,
                      bool known_success,
-                     SubmissionSource source,
-                     base::TimeTicks timestamp) override {
+                     SubmissionSource source) override {
     form_submitted_.reset(new FormData(form));
     known_success_ = known_success;
     submission_source_ = source;
@@ -803,7 +802,7 @@ TEST_F(FormAutocompleteTest, FormSubmittedBySameDocumentNavigation) {
 
   // Simulate same document navigation.
   autofill_agent_->form_tracker_for_testing()->DidCommitProvisionalLoad(
-      false, true /*is_same_document_navigation*/);
+      true /*is_same_document_navigation*/, ui::PAGE_TRANSITION_LINK);
   base::RunLoop().RunUntilIdle();
 
   VerifyReceivedAddressRendererMessages(

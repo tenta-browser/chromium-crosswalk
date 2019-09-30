@@ -35,6 +35,8 @@ import org.chromium.base.StrictModeContext;
 import org.chromium.base.VisibleForTesting;
 import org.chromium.base.annotations.CalledByNative;
 import org.chromium.base.annotations.JNINamespace;
+import org.chromium.base.compat.ApiHelperForO;
+import org.chromium.ui.KeyboardVisibilityDelegate;
 import org.chromium.ui.VSyncMonitor;
 import org.chromium.ui.display.DisplayAndroid;
 import org.chromium.ui.widget.Toast;
@@ -49,6 +51,8 @@ import java.util.HashSet;
 @JNINamespace("ui")
 public class WindowAndroid implements AndroidPermissionDelegate {
     private static final String TAG = "WindowAndroid";
+    private KeyboardVisibilityDelegate mKeyboardVisibilityDelegate =
+            KeyboardVisibilityDelegate.getInstance();
 
     @TargetApi(Build.VERSION_CODES.KITKAT)
     private class TouchExplorationMonitor {
@@ -98,9 +102,6 @@ public class WindowAndroid implements AndroidPermissionDelegate {
     private HashSet<Animator> mAnimationsOverContent = new HashSet<>();
     private View mAnimationPlaceholderView;
 
-
-    protected boolean mIsKeyboardShowing;
-
     // System accessibility service.
     private final AccessibilityManager mAccessibilityManager;
 
@@ -116,15 +117,6 @@ public class WindowAndroid implements AndroidPermissionDelegate {
     // clients may pause VSync before the native WindowAndroid is created.
     private boolean mPendingVSyncRequest;
     private boolean mVSyncPaused;
-
-    /**
-     * An interface to notify listeners of changes in the soft keyboard's visibility.
-     */
-    public interface KeyboardVisibilityListener {
-        public void keyboardVisibilityChanged(boolean isShowing);
-    }
-    private ObserverList<KeyboardVisibilityListener> mKeyboardVisibilityListeners =
-            new ObserverList<>();
 
     /**
      * An interface to notify listeners that a context menu is closed.
@@ -245,7 +237,7 @@ public class WindowAndroid implements AndroidPermissionDelegate {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && !Build.VERSION.RELEASE.equals("8.0.0")
                 && activityFromContext(context) != null) {
             Configuration configuration = context.getResources().getConfiguration();
-            boolean isScreenWideColorGamut = configuration.isScreenWideColorGamut();
+            boolean isScreenWideColorGamut = ApiHelperForO.isScreenWideColorGamut(configuration);
             display.updateIsDisplayServerWideColorGamut(isScreenWideColorGamut);
         }
     }
@@ -690,32 +682,19 @@ public class WindowAndroid implements AndroidPermissionDelegate {
         }
     }
 
-    protected void registerKeyboardVisibilityCallbacks() {
-    }
-
-    protected void unregisterKeyboardVisibilityCallbacks() {
-    }
-
     /**
-     * Adds a listener that is updated of keyboard visibility changes. This works as a best guess.
-     *
-     * @see org.chromium.ui.UiUtils#isKeyboardShowing(Context, View)
+     * The returned {@link KeyboardVisibilityDelegate} can read and influence the soft keyboard.
+     * @return a {@link KeyboardVisibilityDelegate} specific for this window.
      */
-    public void addKeyboardVisibilityListener(KeyboardVisibilityListener listener) {
-        if (mKeyboardVisibilityListeners.isEmpty()) {
-            registerKeyboardVisibilityCallbacks();
-        }
-        mKeyboardVisibilityListeners.addObserver(listener);
+    public KeyboardVisibilityDelegate getKeyboardDelegate() {
+        return mKeyboardVisibilityDelegate;
     }
 
-    /**
-     * @see #addKeyboardVisibilityListener(KeyboardVisibilityListener)
-     */
-    public void removeKeyboardVisibilityListener(KeyboardVisibilityListener listener) {
-        mKeyboardVisibilityListeners.removeObserver(listener);
-        if (mKeyboardVisibilityListeners.isEmpty()) {
-            unregisterKeyboardVisibilityCallbacks();
-        }
+    @VisibleForTesting
+    public void setKeyboardDelegate(KeyboardVisibilityDelegate keyboardDelegate) {
+        mKeyboardVisibilityDelegate = keyboardDelegate;
+        // TODO(fhorschig): Remove - every caller should use the window to get the delegate.
+        KeyboardVisibilityDelegate.setInstance(keyboardDelegate);
     }
 
     /**
@@ -741,20 +720,6 @@ public class WindowAndroid implements AndroidPermissionDelegate {
     public void onContextMenuClosed() {
         for (OnCloseContextMenuListener listener : mContextMenuCloseListeners) {
             listener.onContextMenuClosed();
-        }
-    }
-
-    /**
-     * To be called when the keyboard visibility state might have changed. Informs listeners of the
-     * state change IFF there actually was a change.
-     * @param isShowing The current (guesstimated) state of the keyboard.
-     */
-    protected void keyboardVisibilityPossiblyChanged(boolean isShowing) {
-        if (mIsKeyboardShowing == isShowing) return;
-        mIsKeyboardShowing = isShowing;
-
-        for (KeyboardVisibilityListener listener : mKeyboardVisibilityListeners) {
-            listener.keyboardVisibilityChanged(isShowing);
         }
     }
 
@@ -808,7 +773,7 @@ public class WindowAndroid implements AndroidPermissionDelegate {
      * Return the current window token, or null.
      */
     @CalledByNative
-    private IBinder getWindowToken() {
+    protected IBinder getWindowToken() {
         Activity activity = activityFromContext(mContextRef.get());
         if (activity == null) return null;
         Window window = activity.getWindow();
@@ -829,6 +794,15 @@ public class WindowAndroid implements AndroidPermissionDelegate {
         if (mAnimationPlaceholderView.willNotDraw() != willNotDraw) {
             mAnimationPlaceholderView.setWillNotDraw(willNotDraw);
         }
+    }
+
+    /**
+     * As long as there are still animations which haven't ended, this will return false.
+     * @return True if all known animations have ended.
+     */
+    @VisibleForTesting
+    public boolean haveAnimationsEnded() {
+        return mAnimationsOverContent.isEmpty();
     }
 
     /**

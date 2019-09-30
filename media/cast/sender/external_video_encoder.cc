@@ -10,9 +10,9 @@
 #include "base/bind.h"
 #include "base/command_line.h"
 #include "base/logging.h"
-#include "base/macros.h"
 #include "base/memory/shared_memory.h"
 #include "base/metrics/histogram_macros.h"
+#include "base/stl_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "build/build_config.h"
@@ -438,8 +438,8 @@ class ExternalVideoEncoder::VEAClientImpl
 
   void OnCreateInputSharedMemory(std::unique_ptr<base::SharedMemory> memory) {
     task_runner_->PostTask(
-        FROM_HERE, base::Bind(&VEAClientImpl::OnReceivedInputSharedMemory, this,
-                              base::Passed(&memory)));
+        FROM_HERE, base::BindOnce(&VEAClientImpl::OnReceivedInputSharedMemory,
+                                  this, base::Passed(&memory)));
   }
 
   void OnReceivedSharedMemory(std::unique_ptr<base::SharedMemory> memory) {
@@ -624,9 +624,9 @@ ExternalVideoEncoder::ExternalVideoEncoder(
   DCHECK(cast_environment_->CurrentlyOn(CastEnvironment::MAIN));
   DCHECK_GT(video_config.max_frame_rate, 0);
   DCHECK(!frame_size_.IsEmpty());
-  DCHECK(!status_change_cb.is_null());
-  DCHECK(!create_vea_cb.is_null());
-  DCHECK(!create_video_encode_memory_cb_.is_null());
+  DCHECK(status_change_cb);
+  DCHECK(create_vea_cb);
+  DCHECK(create_video_encode_memory_cb_);
   DCHECK_GT(bit_rate_, 0);
 
   create_vea_cb.Run(
@@ -682,7 +682,8 @@ void ExternalVideoEncoder::SetBitRate(int new_bit_rate) {
   if (!client_)
     return;
   client_->task_runner()->PostTask(
-      FROM_HERE, base::Bind(&VEAClientImpl::SetBitRate, client_, bit_rate_));
+      FROM_HERE,
+      base::BindOnce(&VEAClientImpl::SetBitRate, client_, bit_rate_));
 }
 
 void ExternalVideoEncoder::GenerateKeyFrame() {
@@ -847,7 +848,7 @@ double QuantizerEstimator::EstimateForKeyFrame(const VideoFrame& frame) {
   // histogram and return it.
   const int num_samples = (size.width() - 1) * rows_in_subset;
   return ToQuantizerEstimate(ComputeEntropyFromHistogram(
-      histogram, arraysize(histogram), num_samples));
+      histogram, base::size(histogram), num_samples));
 }
 
 double QuantizerEstimator::EstimateForDeltaFrame(const VideoFrame& frame) {
@@ -892,7 +893,7 @@ double QuantizerEstimator::EstimateForDeltaFrame(const VideoFrame& frame) {
   // histogram and return it.
   const int num_samples = size.width() * rows_in_subset;
   return ToQuantizerEstimate(ComputeEntropyFromHistogram(
-      histogram, arraysize(histogram), num_samples));
+      histogram, base::size(histogram), num_samples));
 }
 
 // static

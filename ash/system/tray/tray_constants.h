@@ -7,7 +7,7 @@
 
 #include "ash/ash_export.h"
 #include "base/macros.h"
-#include "chromeos/chromeos_switches.h"
+#include "chromeos/constants/chromeos_switches.h"
 #include "third_party/skia/include/core/SkColor.h"
 #include "ui/gfx/geometry/insets.h"
 #include "ui/gfx/geometry/size.h"
@@ -96,7 +96,12 @@ extern const SkColor kMenuSeparatorColor;
 // system tray.
 constexpr int kTrayIconSize = 16;
 extern const SkColor kTrayIconColor;
+extern const SkColor kTrayIconBackgroundColor;
 extern const SkColor kOobeTrayIconColor;
+
+// The padding around network tray icon in dip.
+constexpr int kTrayNetworkIconPadding = 2;
+constexpr int kUnifiedTrayNetworkIconPadding = 4;
 
 // The total visual padding at the start and end of the icon/label section
 // of the tray.
@@ -166,10 +171,13 @@ constexpr SkColor kUnifiedFeaturePodHoverColor =
 constexpr gfx::Insets kUnifiedMenuItemPadding(0, 16, 16, 16);
 constexpr gfx::Insets kUnifiedSliderPadding(0, 16);
 
+constexpr int kUnifiedMenuVerticalPadding = 8;
 constexpr int kUnifiedNotificationCenterSpacing = 16;
 constexpr int kUnifiedTrayIconSize = 20;
+constexpr int kUnifiedTraySpacingBetweenIcons = 6;
+constexpr int kUnifiedTrayBatteryWidth = 10;
 constexpr int kUnifiedTrayCornerRadius = 20;
-constexpr int kUnifiedTrayContentPadding = 5;
+constexpr int kUnifiedTrayContentPadding = 8;
 constexpr int kUnifiedTopShortcutSpacing = 16;
 constexpr int kUnifiedNotificationHiddenLineHeight = 20;
 constexpr gfx::Insets kUnifiedTopShortcutPadding(0, 16);
@@ -231,20 +239,13 @@ constexpr int kUnifiedTopShortcutButtonMinSpacing = 4;
 constexpr gfx::Insets kUnifiedDetailedViewTitlePadding(0, 0, 0, 16);
 constexpr int kUnifiedDetailedViewTitleRowHeight = 64;
 
+// TODO(tetsui): Remove this class.
 class TrayConstants {
  public:
   // Returns the width of a line used to separate tray items in the shelf.
-  static int separator_width() {
-    return UseNewUi() ? kSeparatorWidthNewUi : kSeparatorWidth;
-  }
+  static int separator_width() { return kSeparatorWidthNewUi; }
 
   static int GetTrayIconSize();
-
- private:
-  static bool UseNewUi() {
-    static bool use_new_ui = chromeos::switches::ShouldUseShelfNewUi();
-    return use_new_ui;
-  }
 
   DISALLOW_IMPLICIT_CONSTRUCTORS(TrayConstants);
 };

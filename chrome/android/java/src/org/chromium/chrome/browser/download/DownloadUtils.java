@@ -35,12 +35,14 @@ import org.chromium.chrome.browser.ChromeTabbedActivity;
 import org.chromium.chrome.browser.FileProviderHelper;
 import org.chromium.chrome.browser.IntentHandler;
 import org.chromium.chrome.browser.UrlConstants;
+import org.chromium.chrome.browser.download.home.metrics.FileExtensions;
 import org.chromium.chrome.browser.download.items.OfflineContentAggregatorFactory;
 import org.chromium.chrome.browser.download.ui.DownloadFilter;
 import org.chromium.chrome.browser.download.ui.DownloadHistoryItemWrapper;
 import org.chromium.chrome.browser.download.ui.DownloadHistoryItemWrapper.OfflineItemWrapper;
 import org.chromium.chrome.browser.feature_engagement.ScreenshotTabObserver;
 import org.chromium.chrome.browser.feature_engagement.TrackerFactory;
+import org.chromium.chrome.browser.init.ServiceManagerStartupUtils;
 import org.chromium.chrome.browser.media.MediaViewerUtils;
 import org.chromium.chrome.browser.offlinepages.DownloadUiActionFlags;
 import org.chromium.chrome.browser.offlinepages.OfflinePageBridge;
@@ -49,11 +51,12 @@ import org.chromium.chrome.browser.offlinepages.OfflinePageUtils;
 import org.chromium.chrome.browser.offlinepages.downloads.OfflinePageDownloadBridge;
 import org.chromium.chrome.browser.profiles.Profile;
 import org.chromium.chrome.browser.tab.Tab;
-import org.chromium.chrome.browser.tabmodel.TabModel.TabLaunchType;
+import org.chromium.chrome.browser.tabmodel.TabLaunchType;
 import org.chromium.chrome.browser.tabmodel.document.TabDelegate;
 import org.chromium.chrome.browser.util.ConversionUtils;
 import org.chromium.chrome.browser.util.IntentUtils;
 import org.chromium.components.download.DownloadState;
+import org.chromium.components.download.ResumeMode;
 import org.chromium.components.feature_engagement.EventConstants;
 import org.chromium.components.feature_engagement.Tracker;
 import org.chromium.components.offline_items_collection.ContentId;
@@ -79,9 +82,11 @@ import java.util.ArrayList;
 import java.util.Calendar;
 import java.util.Date;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -387,8 +392,7 @@ public class DownloadUtils {
             if (wrappedItem.getFilterType() == DownloadFilter.Type.OTHER) {
                 RecordHistogram.recordEnumeratedHistogram(
                         "Android.DownloadManager.OtherExtensions.Share",
-                        wrappedItem.getFileExtensionType(),
-                        DownloadHistoryItemWrapper.FileExtension.NUM_ENTRIES);
+                        wrappedItem.getFileExtensionType(), FileExtensions.Type.NUM_ENTRIES);
             }
 
             // If a mime type was not retrieved from the backend or could not be normalized,
@@ -910,21 +914,11 @@ public class DownloadUtils {
      * @return String representing the current download status.
      */
     public static String getFailStatusString(@FailState int failState) {
+        if (BrowserStartupController.get(LibraryProcessType.PROCESS_BROWSER)
+                        .isStartupSuccessfullyCompleted()) {
+            return nativeGetFailStateMessage(failState);
+        }
         Context context = ContextUtils.getApplicationContext();
-
-        // TODO(cmsy): Return correct status for failure reasons once strings are finalized.
-        // if (BrowserStartupController.get(LibraryProcessType.PROCESS_BROWSER)
-        //                .isStartupSuccessfullyCompleted()
-        //        && ChromeFeatureList.isEnabled(
-        //                   ChromeFeatureList.OFFLINE_PAGES_DESCRIPTIVE_FAIL_STATUS)) {
-        //    switch (failState) {
-        //        case FailState.CANNOT_DOWNLOAD:
-        //        case FailState.NETWORK_INSTABILITY:
-        //        default:
-        //          return context.getString(R.string.download_notification_failed);
-        //    }
-        // }
-
         return context.getString(R.string.download_notification_failed);
     }
 
@@ -954,6 +948,18 @@ public class DownloadUtils {
         } else {
             return context.getString(R.string.download_notification_pending);
         }
+    }
+
+    /**
+     * Get the resume mode based on the current fail state, to distinguish the case where download
+     * cannot be resumed at all or can be resumed in the middle, or should be restarted from the
+     * beginning.
+     * @param url URL of the download.
+     * @param failState Why the download failed.
+     * @return The resume mode for the current fail state.
+     */
+    public static @ResumeMode int getResumeMode(String url, @FailState int failState) {
+        return nativeGetResumeMode(url, failState);
     }
 
     /**
@@ -994,6 +1000,14 @@ public class DownloadUtils {
                 helper.getDownloadSharedPreferenceEntry(item.getContentId());
         return entry != null && item.getDownloadInfo().state() == DownloadState.INTERRUPTED
                 && entry.isAutoResumable;
+    }
+
+    /** @return Whether we should start service manager only, based off the features enabled. */
+    public static boolean shouldStartServiceManagerOnly() {
+        Set<String> features = new HashSet<String>();
+        features.add(ChromeFeatureList.SERVICE_MANAGER_FOR_DOWNLOAD);
+        features.add(ChromeFeatureList.NETWORK_SERVICE);
+        return ServiceManagerStartupUtils.canStartServiceManager(features);
     }
 
     /**
@@ -1139,6 +1153,15 @@ public class DownloadUtils {
     }
 
     /**
+     * Returns |true| if the offline item is not null and has already been viewed by the user.
+     * @param offlineItem The offline item to check.
+     * @return true if the item is valid has been viewed by the user.
+     */
+    public static boolean isOfflineItemViewed(OfflineItem offlineItem) {
+        return offlineItem != null && offlineItem.lastAccessedTimeMs > offlineItem.completionTimeMs;
+    }
+
+    /**
      * Given two timestamps, calculates if both occur on the same date.
      * @return True if they belong in the same day. False otherwise.
      */
@@ -1173,4 +1196,7 @@ public class DownloadUtils {
         String primaryPath = primaryDir.getAbsolutePath();
         return primaryPath == null ? false : path.contains(primaryPath);
     }
+
+    private static native String nativeGetFailStateMessage(@FailState int failState);
+    private static native int nativeGetResumeMode(String url, @FailState int failState);
 }

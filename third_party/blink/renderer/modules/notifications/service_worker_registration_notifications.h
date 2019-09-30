@@ -7,7 +7,7 @@
 
 #include <memory>
 #include "base/memory/scoped_refptr.h"
-#include "third_party/blink/public/platform/modules/notifications/notification.mojom-blink.h"
+#include "third_party/blink/public/mojom/notifications/notification.mojom-blink.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_promise.h"
 #include "third_party/blink/renderer/core/dom/context_lifecycle_observer.h"
 #include "third_party/blink/renderer/platform/heap/garbage_collected.h"
@@ -41,11 +41,14 @@ class ServiceWorkerRegistrationNotifications final
   static ScriptPromise showNotification(ScriptState* script_state,
                                         ServiceWorkerRegistration& registration,
                                         const String& title,
-                                        const NotificationOptions& options,
+                                        const NotificationOptions* options,
                                         ExceptionState& exception_state);
   static ScriptPromise getNotifications(ScriptState* script_state,
                                         ServiceWorkerRegistration& registration,
-                                        const GetNotificationOptions& options);
+                                        const GetNotificationOptions* options);
+
+  ServiceWorkerRegistrationNotifications(ExecutionContext*,
+                                         ServiceWorkerRegistration*);
 
   // ContextLifecycleObserver interface.
   void ContextDestroyed(ExecutionContext* context) override;
@@ -53,9 +56,6 @@ class ServiceWorkerRegistrationNotifications final
   void Trace(blink::Visitor* visitor) override;
 
  private:
-  ServiceWorkerRegistrationNotifications(ExecutionContext*,
-                                         ServiceWorkerRegistration*);
-
   static ServiceWorkerRegistrationNotifications& From(
       ExecutionContext* context,
       ServiceWorkerRegistration& registration);

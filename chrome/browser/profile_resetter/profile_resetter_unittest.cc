@@ -11,9 +11,10 @@
 #include <string>
 #include <utility>
 
-#include "base/macros.h"
+#include "base/bind.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/run_loop.h"
+#include "base/stl_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/bind_test_util.h"
 #include "base/test/scoped_path_override.h"
@@ -151,7 +152,7 @@ void ProfileResetterTest::SetUp() {
 
   profile()->CreateWebDataService();
   TemplateURLServiceFactory::GetInstance()->SetTestingFactory(
-      profile(), &CreateTemplateURLServiceForTesting);
+      profile(), base::BindRepeating(&CreateTemplateURLServiceForTesting));
   resetter_.reset(new ProfileResetter(profile()));
 }
 
@@ -658,7 +659,8 @@ TEST_F(ProfileResetterTest, ResetStartPageNonOrganic) {
   startup_pref = SessionStartupPref::GetStartupPref(prefs);
   EXPECT_EQ(SessionStartupPref::URLS, startup_pref.type);
   const GURL urls[] = {GURL("http://goo.gl"), GURL("http://foo.de")};
-  EXPECT_EQ(std::vector<GURL>(urls, urls + arraysize(urls)), startup_pref.urls);
+  EXPECT_EQ(std::vector<GURL>(urls, urls + base::size(urls)),
+            startup_pref.urls);
 }
 
 
@@ -668,14 +670,15 @@ TEST_F(ProfileResetterTest, ResetStartPagePartially) {
 
   const GURL urls[] = {GURL("http://foo"), GURL("http://bar")};
   SessionStartupPref startup_pref(SessionStartupPref::URLS);
-  startup_pref.urls.assign(urls, urls + arraysize(urls));
+  startup_pref.urls.assign(urls, urls + base::size(urls));
   SessionStartupPref::SetStartupPref(prefs, startup_pref);
 
   ResetAndWait(ProfileResetter::STARTUP_PAGES, std::string());
 
   startup_pref = SessionStartupPref::GetStartupPref(prefs);
   EXPECT_EQ(SessionStartupPref::GetDefaultStartupType(), startup_pref.type);
-  EXPECT_EQ(std::vector<GURL>(urls, urls + arraysize(urls)), startup_pref.urls);
+  EXPECT_EQ(std::vector<GURL>(urls, urls + base::size(urls)),
+            startup_pref.urls);
 }
 
 TEST_F(PinnedTabsResetTest, ResetPinnedTabs) {
@@ -777,8 +780,7 @@ TEST_F(ConfigParserTest, ParseConfig) {
       settings->GetUrlsToRestoreOnStartup());
   EXPECT_TRUE(startup_list);
   std::vector<std::string> startup_pages;
-  for (base::ListValue::iterator i = startup_list->begin();
-       i != startup_list->end(); ++i) {
+  for (auto i = startup_list->begin(); i != startup_list->end(); ++i) {
     std::string url;
     EXPECT_TRUE(i->GetAsString(&url));
     startup_pages.push_back(url);
@@ -854,7 +856,7 @@ TEST_F(ProfileResetterTest, CheckSnapshots) {
   EXPECT_EQ(diff_fields, nonorganic_snap.FindDifferentFields(organic_snap));
   nonorganic_snap.Subtract(organic_snap);
   const GURL urls[] = {GURL("http://foo.de"), GURL("http://goo.gl")};
-  EXPECT_EQ(std::vector<GURL>(urls, urls + arraysize(urls)),
+  EXPECT_EQ(std::vector<GURL>(urls, urls + base::size(urls)),
             nonorganic_snap.startup_urls());
   EXPECT_EQ(SessionStartupPref::URLS, nonorganic_snap.startup_type());
   EXPECT_EQ("http://www.foo.com", nonorganic_snap.homepage());

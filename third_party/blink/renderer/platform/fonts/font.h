@@ -29,7 +29,7 @@
 #include "third_party/blink/renderer/platform/fonts/font_fallback_list.h"
 #include "third_party/blink/renderer/platform/fonts/font_fallback_priority.h"
 #include "third_party/blink/renderer/platform/fonts/simple_font_data.h"
-#include "third_party/blink/renderer/platform/layout_unit.h"
+#include "third_party/blink/renderer/platform/geometry/layout_unit.h"
 #include "third_party/blink/renderer/platform/platform_export.h"
 #include "third_party/blink/renderer/platform/text/tab_size.h"
 #include "third_party/blink/renderer/platform/text/text_direction.h"
@@ -147,7 +147,7 @@ class PLATFORM_EXPORT Font {
                         BreakGlyphsOption) const;
   FloatRect SelectionRectForText(const TextRun&,
                                  const FloatPoint&,
-                                 int h,
+                                 float height,
                                  int from = 0,
                                  int to = -1) const;
   FloatRect BoundingBox(const TextRun&, int from = 0, int to = -1) const;

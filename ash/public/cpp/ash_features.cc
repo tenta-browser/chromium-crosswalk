@@ -13,17 +13,8 @@ namespace features {
 const base::Feature kDockedMagnifier{"DockedMagnifier",
                                      base::FEATURE_ENABLED_BY_DEFAULT};
 
-const base::Feature kDragAppsInTabletMode{"DragAppsInTabletMode",
-                                          base::FEATURE_ENABLED_BY_DEFAULT};
-
 const base::Feature kDragTabsInTabletMode{"DragTabsInTabletMode",
                                           base::FEATURE_ENABLED_BY_DEFAULT};
-
-const base::Feature kKeyboardShortcutViewer{"KeyboardShortcutViewer",
-                                            base::FEATURE_ENABLED_BY_DEFAULT};
-
-const base::Feature kKeyboardShortcutViewerApp{
-    "KeyboardShortcutViewerApp", base::FEATURE_ENABLED_BY_DEFAULT};
 
 const base::Feature kLockScreenNotifications{"LockScreenNotifications",
                                              base::FEATURE_DISABLED_BY_DEFAULT};
@@ -35,35 +26,42 @@ const base::Feature kLockScreenHideSensitiveNotificationsSupport{
     "LockScreenHideSensitiveNotificationsSupport",
     base::FEATURE_DISABLED_BY_DEFAULT};
 
-const base::Feature kNewWallpaperPicker{"NewWallpaperPicker",
-                                        base::FEATURE_ENABLED_BY_DEFAULT};
+const base::Feature kMediaSessionNotification{
+    "MediaSessionNotification", base::FEATURE_DISABLED_BY_DEFAULT};
 
 const base::Feature kNightLight{"NightLight", base::FEATURE_ENABLED_BY_DEFAULT};
+
+const base::Feature kNotificationExpansionAnimation{
+    "NotificationExpansionAnimation", base::FEATURE_DISABLED_BY_DEFAULT};
 
 const base::Feature kNotificationScrollBar{"NotificationScrollBar",
                                            base::FEATURE_DISABLED_BY_DEFAULT};
 
-const base::Feature kOverviewSwipeToClose{"OverviewSwipeToClose",
-                                          base::FEATURE_ENABLED_BY_DEFAULT};
+const base::Feature kPipRoundedCorners{"PipRoundedCorners",
+                                       base::FEATURE_DISABLED_BY_DEFAULT};
 
-const base::Feature kSystemTrayUnified{"SystemTrayUnified",
-                                       base::FEATURE_ENABLED_BY_DEFAULT};
+const base::Feature kSeparateNetworkIcons{"SeparateNetworkIcons",
+                                          base::FEATURE_DISABLED_BY_DEFAULT};
 
 const base::Feature kTrilinearFiltering{"TrilinearFiltering",
                                         base::FEATURE_DISABLED_BY_DEFAULT};
 
+const base::Feature kUnlockWithExternalBinary{
+    "UnlockWithExternalBinary", base::FEATURE_DISABLED_BY_DEFAULT};
+
+const base::Feature kContainedShell{"ContainedShell",
+                                    base::FEATURE_DISABLED_BY_DEFAULT};
+
 const base::Feature kViewsLogin{"ViewsLogin", base::FEATURE_ENABLED_BY_DEFAULT};
+
+const base::Feature kUseBluetoothSystemInAsh{"UseBluetoothSystemInAsh",
+                                             base::FEATURE_DISABLED_BY_DEFAULT};
+
+const base::Feature kSupervisedUserDeprecationNotice{
+    "SupervisedUserDeprecationNotice", base::FEATURE_ENABLED_BY_DEFAULT};
 
 bool IsDockedMagnifierEnabled() {
   return base::FeatureList::IsEnabled(kDockedMagnifier);
-}
-
-bool IsKeyboardShortcutViewerEnabled() {
-  return base::FeatureList::IsEnabled(kKeyboardShortcutViewer);
-}
-
-bool IsKeyboardShortcutViewerAppEnabled() {
-  return base::FeatureList::IsEnabled(kKeyboardShortcutViewerApp);
 }
 
 bool IsLockScreenNotificationsEnabled() {
@@ -79,22 +77,24 @@ bool IsLockScreenHideSensitiveNotificationsSupported() {
       kLockScreenHideSensitiveNotificationsSupport);
 }
 
-bool IsNewWallpaperPickerEnabled() {
-  static bool use_new_wallpaper_picker =
-      base::FeatureList::IsEnabled(kNewWallpaperPicker);
-  return use_new_wallpaper_picker;
-}
-
 bool IsNightLightEnabled() {
   return base::FeatureList::IsEnabled(kNightLight);
+}
+
+bool IsNotificationExpansionAnimationEnabled() {
+  return base::FeatureList::IsEnabled(kNotificationExpansionAnimation);
 }
 
 bool IsNotificationScrollBarEnabled() {
   return base::FeatureList::IsEnabled(kNotificationScrollBar);
 }
 
-bool IsSystemTrayUnifiedEnabled() {
-  return base::FeatureList::IsEnabled(kSystemTrayUnified);
+bool IsPipRoundedCornersEnabled() {
+  return base::FeatureList::IsEnabled(kPipRoundedCorners);
+}
+
+bool IsSeparateNetworkIconsEnabled() {
+  return base::FeatureList::IsEnabled(kSeparateNetworkIcons);
 }
 
 bool IsTrilinearFilteringEnabled() {
@@ -110,6 +110,10 @@ bool IsViewsLoginEnabled() {
   return !base::CommandLine::ForCurrentProcess()->HasSwitch(
              ash::switches::kShowWebUiLogin) &&
          base::FeatureList::IsEnabled(kViewsLogin);
+}
+
+bool IsSupervisedUserDeprecationNoticeEnabled() {
+  return base::FeatureList::IsEnabled(kSupervisedUserDeprecationNotice);
 }
 
 }  // namespace features

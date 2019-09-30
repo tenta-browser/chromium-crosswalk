@@ -63,6 +63,8 @@ if (enable_vr) {
         "android/gvr/gvr_gamepad_data_fetcher.cc",
         "android/gvr/gvr_gamepad_data_fetcher.h",
         "android/gvr/gvr_gamepad_data_provider.h",
+        "android/gvr/vr_module_delegate.cc",
+        "android/gvr/vr_module_delegate.h",
       ]
 
       if (enable_arcore) {
@@ -103,6 +105,13 @@ if (enable_vr) {
         "openvr/openvr_type_converters.cc",
         "openvr/openvr_type_converters.h",
         "openvr/test/test_hook.h",
+      ]
+    }
+
+    if (enable_openvr || enable_oculus_vr) {
+      sources += [
+        "windows/compositor_base.cc",
+        "windows/compositor_base.h",
       ]
     }
 
@@ -205,6 +214,8 @@ if (enable_openvr) {
 
     deps = [
       "//base",
+      "//device/vr/public/mojom:test_mojom",
+      "//third_party/openvr:openvr_headers",
     ]
   }
 }

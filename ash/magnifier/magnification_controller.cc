@@ -13,8 +13,7 @@
 #include "ash/display/root_window_transformers.h"
 #include "ash/host/ash_window_tree_host.h"
 #include "ash/host/root_window_transformer.h"
-#include "ash/magnifier/magnifier_scale_utils.h"
-#include "ash/public/cpp/config.h"
+#include "ash/magnifier/magnifier_utils.h"
 #include "ash/public/cpp/shell_window_ids.h"
 #include "ash/root_window_controller.h"
 #include "ash/shell.h"
@@ -23,6 +22,7 @@
 #include "ui/aura/client/cursor_client.h"
 #include "ui/aura/window.h"
 #include "ui/aura/window_tree_host.h"
+#include "ui/base/ime/ime_bridge.h"
 #include "ui/base/ime/input_method.h"
 #include "ui/base/ime/text_input_client.h"
 #include "ui/compositor/dip_util.h"
@@ -83,12 +83,6 @@ void MoveCursorTo(aura::WindowTreeHost* host, const gfx::Point& root_location) {
       gfx::ToCeiledPoint(host_location_3f.AsPointF()));
 }
 
-ui::InputMethod* GetInputMethod(aura::Window* root_window) {
-  if (root_window->GetHost())
-    return root_window->GetHost()->GetInputMethod();
-  return nullptr;
-}
-
 }  // namespace
 
 class MagnificationController::GestureProviderClient
@@ -122,6 +116,8 @@ MagnificationController::MagnificationController()
   Shell::Get()->AddPreTargetHandler(this);
   root_window_->AddObserver(this);
   root_window_->GetHost()->GetEventSource()->AddEventRewriter(this);
+  if (ui::IMEBridge::Get())
+    ui::IMEBridge::Get()->AddObserver(this);
 
   point_of_interest_in_root_ = root_window_->bounds().CenterPoint();
 
@@ -131,9 +127,11 @@ MagnificationController::MagnificationController()
 }
 
 MagnificationController::~MagnificationController() {
-  ui::InputMethod* input_method = GetInputMethod(root_window_);
-  if (input_method)
-    input_method->RemoveObserver(this);
+  if (input_method_)
+    input_method_->RemoveObserver(this);
+  input_method_ = nullptr;
+  if (ui::IMEBridge::Get())
+    ui::IMEBridge::Get()->RemoveObserver(this);
 
   root_window_->GetHost()->GetEventSource()->RemoveEventRewriter(this);
   root_window_->RemoveObserver(this);
@@ -142,11 +140,12 @@ MagnificationController::~MagnificationController() {
 }
 
 void MagnificationController::SetEnabled(bool enabled) {
-  ui::InputMethod* input_method = GetInputMethod(root_window_);
   if (enabled) {
-    if (!is_enabled_ && input_method)
-      input_method->AddObserver(this);
-
+    if (!is_enabled_) {
+      input_method_ = magnifier_utils::GetInputMethod(root_window_);
+      if (input_method_)
+        input_method_->AddObserver(this);
+    }
     Shell* shell = Shell::Get();
     float scale =
         shell->accessibility_delegate()->GetSavedScreenMagnifierScale();
@@ -166,8 +165,9 @@ void MagnificationController::SetEnabled(bool enabled) {
     if (!is_enabled_)
       return;
 
-    if (input_method)
-      input_method->RemoveObserver(this);
+    if (input_method_)
+      input_method_->RemoveObserver(this);
+    input_method_ = nullptr;
 
     RedrawKeepingMousePosition(kNonMagnifiedScale, true, false);
     is_enabled_ = enabled;
@@ -176,9 +176,11 @@ void MagnificationController::SetEnabled(bool enabled) {
   // Keyboard overscroll creates layout issues with fullscreen magnification
   // so it needs to be disabled when magnification is enabled.
   // TODO(spqchan): Fix the keyboard overscroll issues.
-  keyboard::SetKeyboardOverscrollOverride(
-      is_enabled_ ? keyboard::KEYBOARD_OVERSCROLL_OVERRIDE_DISABLED
-                  : keyboard::KEYBOARD_OVERSCROLL_OVERRIDE_NONE);
+  auto config = keyboard::KeyboardController::Get()->keyboard_config();
+  config.overscroll_behavior =
+      is_enabled_ ? keyboard::mojom::KeyboardOverscrollBehavior::kDisabled
+                  : keyboard::mojom::KeyboardOverscrollBehavior::kDefault;
+  keyboard::KeyboardController::Get()->UpdateKeyboardConfig(config);
 }
 
 bool MagnificationController::IsEnabled() const {
@@ -203,7 +205,7 @@ void MagnificationController::SetScale(float scale, bool animate) {
 }
 
 void MagnificationController::StepToNextScaleValue(int delta_index) {
-  SetScale(magnifier_scale_utils::GetNextMagnifierScaleValue(
+  SetScale(magnifier_utils::GetNextMagnifierScaleValue(
                delta_index, GetScale(), kNonMagnifiedScale, kMaxMagnifiedScale),
            true /* animate */);
 }
@@ -300,6 +302,21 @@ gfx::Transform MagnificationController::GetMagnifierTransform() const {
   return transform;
 }
 
+void MagnificationController::OnInputContextHandlerChanged() {
+  if (!is_enabled_)
+    return;
+
+  auto* new_input_method = magnifier_utils::GetInputMethod(root_window_);
+  if (new_input_method == input_method_)
+    return;
+
+  if (input_method_)
+    input_method_->RemoveObserver(this);
+  input_method_ = new_input_method;
+  if (input_method_)
+    input_method_->AddObserver(this);
+}
+
 void MagnificationController::OnCaretBoundsChanged(
     const ui::TextInputClient* client) {
   // caret bounds in screen coordinates.
@@ -354,6 +371,13 @@ void MagnificationController::OnCaretBoundsChanged(
       base::TimeDelta::FromMilliseconds(
           disable_move_magnifier_delay_ ? 0 : kMoveMagnifierDelayInMs),
       this, &MagnificationController::OnMoveMagnifierTimer);
+}
+
+void MagnificationController::OnInputMethodDestroyed(
+    const ui::InputMethod* input_method) {
+  DCHECK_EQ(input_method, input_method_);
+  input_method_->RemoveObserver(this);
+  input_method_ = nullptr;
 }
 
 void MagnificationController::OnImplicitAnimationsCompleted() {
@@ -442,7 +466,7 @@ void MagnificationController::OnScrollEvent(ui::ScrollEvent* event) {
     }
 
     if (event->type() == ui::ET_SCROLL) {
-      SetScale(magnifier_scale_utils::GetScaleFromScroll(
+      SetScale(magnifier_utils::GetScaleFromScroll(
                    event->y_offset() * kScrollScaleChangeFactor, GetScale(),
                    kMaxMagnifiedScale, kNonMagnifiedScale),
                false /* animate */);
@@ -705,11 +729,8 @@ void MagnificationController::OnMouseMove(const gfx::Point& location) {
   int margin = kCursorPanningMargin / scale_;  // No need to consider DPI.
 
   // Reduce the bottom margin if the keyboard is visible.
-  bool reduce_bottom_margin = false;
-  if (keyboard::KeyboardController::Get()->enabled()) {
-    reduce_bottom_margin =
-        keyboard::KeyboardController::Get()->IsKeyboardVisible();
-  }
+  bool reduce_bottom_margin =
+      keyboard::KeyboardController::Get()->IsKeyboardVisible();
 
   MoveMagnifierWindowFollowPoint(mouse, margin, margin, margin, margin,
                                  reduce_bottom_margin);
@@ -887,7 +908,7 @@ void MagnificationController::MoveMagnifierWindowCenterPoint(
   gfx::Rect window_rect = GetViewportRect();
 
   // Reduce the viewport bounds if the keyboard is up.
-  if (keyboard::KeyboardController::Get()->enabled()) {
+  if (keyboard::KeyboardController::Get()->IsEnabled()) {
     gfx::Rect keyboard_rect = keyboard::KeyboardController::Get()
                                   ->GetKeyboardWindow()
                                   ->GetBoundsInScreen();

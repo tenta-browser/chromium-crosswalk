@@ -82,6 +82,7 @@ class ConstrainedDialogWebView : public views::WebView,
   views::Widget* GetWidget() override;
   const views::Widget* GetWidget() const override;
   base::string16 GetWindowTitle() const override;
+  base::string16 GetAccessibleWindowTitle() const override;
   views::View* GetContentsView() override;
   views::NonClientFrameView* CreateNonClientFrameView(
       views::Widget* widget) override;
@@ -116,7 +117,7 @@ class WebDialogWebContentsDelegateViews
   ~WebDialogWebContentsDelegateViews() override {}
 
   // ui::WebDialogWebContentsDelegate:
-  void HandleKeyboardEvent(
+  bool HandleKeyboardEvent(
       content::WebContents* source,
       const content::NativeWebKeyboardEvent& event) override {
     // Forward shortcut keys in dialog to our initiator's delegate.
@@ -124,12 +125,15 @@ class WebDialogWebContentsDelegateViews
     // Disabled on Mac due to http://crbug.com/112173
 #if !defined(OS_MACOSX)
     if (!initiator_observer_->web_contents())
-      return;
+      return false;
 
     auto* delegate = initiator_observer_->web_contents()->GetDelegate();
     if (!delegate)
-      return;
-    delegate->HandleKeyboardEvent(initiator_observer_->web_contents(), event);
+      return false;
+    return delegate->HandleKeyboardEvent(initiator_observer_->web_contents(),
+                                         event);
+#else
+    return false;
 #endif
   }
 
@@ -190,10 +194,10 @@ class ConstrainedWebDialogDelegateViews
   }
 
   // contents::WebContentsDelegate:
-  void HandleKeyboardEvent(
+  bool HandleKeyboardEvent(
       content::WebContents* source,
       const content::NativeWebKeyboardEvent& event) override {
-    unhandled_keyboard_event_handler_.HandleKeyboardEvent(
+    return unhandled_keyboard_event_handler_.HandleKeyboardEvent(
         event, view_->GetFocusManager());
   }
 
@@ -293,6 +297,12 @@ base::string16 ConstrainedDialogWebView::GetWindowTitle() const {
                                    : GetWebDialogDelegate()->GetDialogTitle();
 }
 
+base::string16 ConstrainedDialogWebView::GetAccessibleWindowTitle() const {
+  return impl_->closed_via_webui()
+             ? base::string16()
+             : GetWebDialogDelegate()->GetAccessibleDialogTitle();
+}
+
 views::View* ConstrainedDialogWebView::GetContentsView() {
   return this;
 }
@@ -315,7 +325,8 @@ bool ConstrainedDialogWebView::AcceleratorPressed(
     const ui::Accelerator& accelerator) {
   // Pressing ESC closes the dialog.
   DCHECK_EQ(ui::VKEY_ESCAPE, accelerator.key_code());
-  GetWidget()->Close();
+  GetWebDialogDelegate()->OnDialogClosingFromKeyEvent();
+  GetWidget()->CloseWithReason(views::Widget::ClosedReason::kEscKeyPressed);
   return true;
 }
 

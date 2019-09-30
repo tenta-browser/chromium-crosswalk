@@ -38,13 +38,12 @@ class VROrientationDeviceProviderTest : public testing::Test {
         mojo::MakeRequest(&sensor_ptr_));
     shared_buffer_handle_ = mojo::SharedBufferHandle::Create(
         sizeof(SensorReadingSharedBuffer) *
-        static_cast<uint64_t>(mojom::SensorType::LAST));
+        (static_cast<uint64_t>(mojom::SensorType::kMaxValue) + 1));
 
     service_manager::mojom::ConnectorRequest request;
     connector_ = service_manager::Connector::Create(&request);
-    service_manager::Connector::TestApi test_api(connector_.get());
-    test_api.OverrideBinderForTesting(
-        service_manager::Identity(mojom::kServiceName),
+    connector_->OverrideBinderForTesting(
+        service_manager::ServiceFilter::ByName(mojom::kServiceName),
         mojom::SensorProvider::Name_,
         base::BindRepeating(&FakeSensorProvider::Bind,
                             base::Unretained(fake_sensor_provider_.get())));

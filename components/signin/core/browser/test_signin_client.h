@@ -16,6 +16,7 @@
 #include "components/signin/core/browser/signin_client.h"
 #include "services/network/public/cpp/shared_url_loader_factory.h"
 #include "services/network/public/cpp/weak_wrapper_shared_url_loader_factory.h"
+#include "services/network/public/mojom/cookie_manager.mojom.h"
 #include "services/network/test/test_url_loader_factory.h"
 
 class PrefService;
@@ -37,13 +38,16 @@ class TestSigninClient : public SigninClient {
   // once there is a unit test that requires it.
   PrefService* GetPrefs() override;
 
-  // Does nothing.
-  void OnSignedOut() override;
-
   // Trace that this was called.
   void PostSignedIn(const std::string& account_id,
                     const std::string& username,
                     const std::string& password) override;
+
+  // Allow or disallow continuation of sign-out depending on value of
+  // |is_signout_allowed_|;
+  void PreSignOut(
+      base::OnceCallback<void(SignoutDecision)> on_signout_decision_reached,
+      signin_metrics::ProfileSignout signout_source_metric) override;
 
   std::string get_signed_in_password() { return signed_in_password_; }
 
@@ -53,7 +57,7 @@ class TestSigninClient : public SigninClient {
   // Wraps the test_url_loader_factory().
   scoped_refptr<network::SharedURLLoaderFactory> GetURLLoaderFactory() override;
 
-  // Returns nullptr.
+  // Returns FakeCookieManager.
   network::mojom::CookieManager* GetCookieManager() override;
 
   network::TestURLLoaderFactory* test_url_loader_factory() {
@@ -63,6 +67,8 @@ class TestSigninClient : public SigninClient {
   void set_are_signin_cookies_allowed(bool value) {
     are_signin_cookies_allowed_ = value;
   }
+
+  void set_is_signout_allowed(bool value) { is_signout_allowed_ = value; }
 
   // When |value| is true, network calls posted through DelayNetworkCall() are
   // delayed indefinitely.
@@ -81,7 +87,7 @@ class TestSigninClient : public SigninClient {
   void DelayNetworkCall(const base::Closure& callback) override;
   std::unique_ptr<GaiaAuthFetcher> CreateGaiaAuthFetcher(
       GaiaAuthConsumer* consumer,
-      const std::string& source,
+      gaia::GaiaSource source,
       scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory)
       override;
   void PreGaiaLogout(base::OnceClosure callback) override;
@@ -91,8 +97,10 @@ class TestSigninClient : public SigninClient {
   scoped_refptr<network::SharedURLLoaderFactory> shared_factory_;
 
   PrefService* pref_service_;
+  std::unique_ptr<network::mojom::CookieManager> cookie_manager_;
   bool are_signin_cookies_allowed_;
   bool network_calls_delayed_;
+  bool is_signout_allowed_;
   std::vector<base::OnceClosure> delayed_network_calls_;
 
   // Pointer to be filled by PostSignedIn.

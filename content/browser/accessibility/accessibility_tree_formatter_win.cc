@@ -10,6 +10,7 @@
 #include <stdint.h>
 #include <wrl/client.h>
 
+#include <iostream>
 #include <string>
 #include <utility>
 
@@ -70,6 +71,8 @@ class AccessibilityTreeFormatterWin : public AccessibilityTreeFormatter {
       gfx::AcceleratedWidget hwnd) override;
   std::unique_ptr<base::DictionaryValue> BuildAccessibilityTreeForProcess(
       base::ProcessId pid) override;
+  std::unique_ptr<base::DictionaryValue> BuildAccessibilityTreeForPattern(
+      const base::StringPiece& pattern) override;
   std::unique_ptr<base::DictionaryValue> BuildAccessibilityTree(
       Microsoft::WRL::ComPtr<IAccessible> start,
       LONG window_x = 0,
@@ -116,9 +119,10 @@ class AccessibilityTreeFormatterWin : public AccessibilityTreeFormatter {
 };
 
 // static
-AccessibilityTreeFormatter* AccessibilityTreeFormatter::Create() {
+std::unique_ptr<AccessibilityTreeFormatter>
+AccessibilityTreeFormatter::Create() {
   base::win::AssertComInitialized();
-  return new AccessibilityTreeFormatterWin();
+  return std::make_unique<AccessibilityTreeFormatterWin>();
 }
 
 AccessibilityTreeFormatterWin::AccessibilityTreeFormatterWin() {
@@ -281,6 +285,14 @@ AccessibilityTreeFormatterWin::BuildAccessibilityTreeForProcess(
   return BuildAccessibilityTreeForWindow(hwnd);
 }
 
+std::unique_ptr<base::DictionaryValue>
+AccessibilityTreeFormatterWin::BuildAccessibilityTreeForPattern(
+    const base::StringPiece& pattern) {
+  LOG(ERROR) << "Windows does not yet support building accessibility trees for "
+                "patterns";
+  return nullptr;
+}
+
 void AccessibilityTreeFormatterWin::RecursiveBuildAccessibilityTree(
     const Microsoft::WRL::ComPtr<IAccessible> node,
     base::DictionaryValue* dict,
@@ -429,10 +441,7 @@ void AccessibilityTreeFormatterWin::AddMSAAProperties(
   // If S_FALSE it means there is no name
   if (S_OK == node->get_accName(variant_self, temp_bstr.Receive())) {
     base::string16 name = base::string16(temp_bstr, temp_bstr.Length());
-
-    // Ignore a JAWS workaround where the name of a document is " ".
-    if (name != L" " || ia_role != ROLE_SYSTEM_DOCUMENT)
-      dict->SetString("name", name);
+    dict->SetString("name", name);
   }
   temp_bstr.Reset();
 

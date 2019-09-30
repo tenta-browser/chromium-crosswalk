@@ -4,6 +4,7 @@
 
 #include "third_party/blink/renderer/modules/device_orientation/device_orientation_controller.h"
 
+#include "third_party/blink/public/mojom/feature_policy/feature_policy.mojom-blink.h"
 #include "third_party/blink/public/platform/platform.h"
 #include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/frame/deprecation.h"
@@ -15,7 +16,6 @@
 #include "third_party/blink/renderer/modules/device_orientation/device_orientation_event.h"
 #include "third_party/blink/renderer/modules/device_orientation/device_orientation_event_pump.h"
 #include "third_party/blink/renderer/modules/event_modules.h"
-#include "third_party/blink/renderer/platform/feature_policy/feature_policy.h"
 #include "third_party/blink/renderer/platform/weborigin/security_origin.h"
 #include "third_party/blink/renderer/platform/wtf/assertions.h"
 
@@ -41,7 +41,7 @@ DeviceOrientationController& DeviceOrientationController::From(
   DeviceOrientationController* controller =
       Supplement<Document>::From<DeviceOrientationController>(document);
   if (!controller) {
-    controller = new DeviceOrientationController(document);
+    controller = MakeGarbageCollected<DeviceOrientationController>(document);
     ProvideTo(document, controller);
   }
   return *controller;
@@ -122,7 +122,7 @@ bool DeviceOrientationController::IsNullEvent(Event* event) const {
 }
 
 const AtomicString& DeviceOrientationController::EventTypeName() const {
-  return EventTypeNames::deviceorientation;
+  return event_type_names::kDeviceorientation;
 }
 
 void DeviceOrientationController::SetOverride(
@@ -156,7 +156,7 @@ void DeviceOrientationController::RegisterWithOrientationEventPump(
     scoped_refptr<base::SingleThreadTaskRunner> task_runner =
         frame->GetTaskRunner(TaskType::kSensor);
     orientation_event_pump_ =
-        new DeviceOrientationEventPump(task_runner, absolute);
+        MakeGarbageCollected<DeviceOrientationEventPump>(task_runner, absolute);
   }
   orientation_event_pump_->AddController(this);
 }

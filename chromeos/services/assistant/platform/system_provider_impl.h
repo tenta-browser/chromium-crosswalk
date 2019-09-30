@@ -7,6 +7,7 @@
 
 #include <string>
 
+#include "base/component_export.h"
 #include "base/macros.h"
 #include "libassistant/shared/public/platform_system.h"
 #include "services/device/public/mojom/battery_monitor.mojom.h"
@@ -14,7 +15,8 @@
 namespace chromeos {
 namespace assistant {
 
-class SystemProviderImpl : public assistant_client::SystemProvider {
+class COMPONENT_EXPORT(ASSISTANT_SERVICE) SystemProviderImpl
+    : public assistant_client::SystemProvider {
  public:
   explicit SystemProviderImpl(device::mojom::BatteryMonitorPtr battery_monitor);
   ~SystemProviderImpl() override;
@@ -26,9 +28,6 @@ class SystemProviderImpl : public assistant_client::SystemProvider {
   bool GetBatteryState(BatteryState* state) override;
   void UpdateTimezoneAndLocale(const std::string& timezone,
                                const std::string& locale) override;
-  void ProcessTpm(TpmProcessingType type,
-                  const std::string& data,
-                  TpmCallback on_done) override;
 
  private:
   friend class SystemProviderImplTest;

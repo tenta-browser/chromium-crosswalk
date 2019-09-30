@@ -8,12 +8,13 @@
 #include "base/threading/thread_task_runner_handle.h"
 #include "build/build_config.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "ui/aura/test/mus/test_window_tree_delegate.h"
 
 namespace aura {
 
-TestWindowTree::TestWindowTree() {}
+TestWindowTree::TestWindowTree() = default;
 
-TestWindowTree::~TestWindowTree() {}
+TestWindowTree::~TestWindowTree() = default;
 
 bool TestWindowTree::WasEventAcked(uint32_t event_id) const {
   for (const AckedEvent& acked_event : acked_events_) {
@@ -168,6 +169,7 @@ void TestWindowTree::SetWindowBounds(
     const base::Optional<viz::LocalSurfaceId>& local_surface_id) {
   window_id_ = window_id;
   last_local_surface_id_ = local_surface_id;
+  second_last_set_window_bounds_ = last_set_window_bounds_;
   last_set_window_bounds_ = bounds;
   OnChangeReceived(change_id, WindowTreeChangeType::BOUNDS);
 }
@@ -185,12 +187,17 @@ void TestWindowTree::SetClientArea(
   last_client_area_ = insets;
 }
 
-void TestWindowTree::SetHitTestMask(ws::Id window_id,
-                                    const base::Optional<gfx::Rect>& mask) {
-  last_hit_test_mask_ = mask;
+void TestWindowTree::SetHitTestInsets(ws::Id window_id,
+                                      const gfx::Insets& mouse,
+                                      const gfx::Insets& touch) {
+  last_mouse_hit_test_insets_ = mouse;
+  last_touch_hit_test_insets_ = touch;
 }
 
-void TestWindowTree::SetCanAcceptDrops(ws::Id window_id, bool accepts_drops) {}
+void TestWindowTree::SetCanAcceptDrops(ws::Id window_id, bool accepts_drops) {
+  last_accepts_drops_ = accepts_drops;
+  ++accepts_drops_count_;
+}
 
 void TestWindowTree::SetWindowVisibility(uint32_t change_id,
                                          ws::Id window_id,
@@ -251,10 +258,6 @@ void TestWindowTree::SetModalType(uint32_t change_id,
   OnChangeReceived(change_id, WindowTreeChangeType::MODAL);
 }
 
-void TestWindowTree::SetChildModalParent(uint32_t change_id,
-                                         ws::Id window_id,
-                                         ws::Id parent_window_id) {}
-
 void TestWindowTree::ReorderWindow(uint32_t change_id,
                                    ws::Id window_id,
                                    ws::Id relative_window_id,
@@ -273,9 +276,8 @@ void TestWindowTree::ReleaseCapture(uint32_t change_id, ws::Id window_id) {
   OnChangeReceived(change_id, WindowTreeChangeType::CAPTURE);
 }
 
-void TestWindowTree::StartPointerWatcher(bool want_moves) {}
-
-void TestWindowTree::StopPointerWatcher() {}
+void TestWindowTree::ObserveEventTypes(
+    const std::vector<ui::mojom::EventType>& types) {}
 
 void TestWindowTree::Embed(ws::Id window_id,
                            ws::mojom::WindowTreeClientPtr client,
@@ -319,6 +321,11 @@ void TestWindowTree::ScheduleEmbedForExistingClient(
                      std::move(callback), token));
 }
 
+void TestWindowTree::AttachFrameSinkId(uint64_t window_id,
+                                       const viz::FrameSinkId& frame_sink_id) {}
+
+void TestWindowTree::UnattachFrameSinkId(uint64_t window_id) {}
+
 void TestWindowTree::SetFocus(uint32_t change_id, ws::Id window_id) {
   OnChangeReceived(change_id, WindowTreeChangeType::FOCUS);
 }
@@ -331,7 +338,7 @@ void TestWindowTree::SetEventTargetingPolicy(
 
 void TestWindowTree::SetCursor(uint32_t change_id,
                                ws::Id transport_window_id,
-                               ui::CursorData cursor_data) {
+                               ui::Cursor cursor) {
   OnChangeReceived(change_id);
 }
 
@@ -357,10 +364,9 @@ void TestWindowTree::StackAbove(uint32_t change_id,
 
 void TestWindowTree::StackAtTop(uint32_t change_id, ws::Id window_id) {}
 
-void TestWindowTree::PerformWmAction(ws::Id window_id,
-                                     const std::string& action) {
-  last_wm_action_ = action;
-}
+void TestWindowTree::BindWindowManagerInterface(
+    const std::string& name,
+    ws::mojom::WindowManagerAssociatedRequest window_manager) {}
 
 void TestWindowTree::GetCursorLocationMemory(
     GetCursorLocationMemoryCallback callback) {
@@ -393,5 +399,37 @@ void TestWindowTree::CancelWindowMove(ws::Id window_id) {}
 void TestWindowTree::ObserveTopmostWindow(ws::mojom::MoveLoopSource source,
                                           ws::Id window_id) {}
 void TestWindowTree::StopObservingTopmostWindow() {}
+
+void TestWindowTree::CancelActiveTouchesExcept(ws::Id not_cancelled_window_id) {
+  last_not_cancelled_window_id_ = not_cancelled_window_id;
+}
+
+void TestWindowTree::CancelActiveTouches(ws::Id window_id) {
+  last_cancelled_window_id_ = window_id;
+}
+void TestWindowTree::TransferGestureEventsTo(ws::Id current_id,
+                                             ws::Id new_id,
+                                             bool should_cancel) {
+  last_transfer_current_ = current_id;
+  last_transfer_new_ = new_id;
+  last_transfer_should_cancel_ = should_cancel;
+}
+
+void TestWindowTree::TrackOcclusionState(ws::Id window_id) {
+  DCHECK(delegate_);
+  delegate_->TrackOcclusionState(window_id);
+}
+
+void TestWindowTree::PauseWindowOcclusionTracking() {
+  // |delegate_| could reset during shutdown.
+  if (delegate_)
+    delegate_->PauseWindowOcclusionTracking();
+}
+
+void TestWindowTree::UnpauseWindowOcclusionTracking() {
+  // |delegate_| could reset during shutdown.
+  if (delegate_)
+    delegate_->UnpauseWindowOcclusionTracking();
+}
 
 }  // namespace aura

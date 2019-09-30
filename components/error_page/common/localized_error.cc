@@ -12,9 +12,9 @@
 #include "base/command_line.h"
 #include "base/i18n/rtl.h"
 #include "base/logging.h"
-#include "base/macros.h"
 #include "base/memory/ptr_util.h"
 #include "base/metrics/field_trial.h"
+#include "base/stl_util.h"
 #include "base/strings/string16.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
@@ -22,7 +22,6 @@
 #include "base/values.h"
 #include "build/build_config.h"
 #include "components/error_page/common/error.h"
-#include "components/error_page/common/error_page_features.h"
 #include "components/error_page/common/error_page_params.h"
 #include "components/error_page/common/error_page_switches.h"
 #include "components/error_page/common/net_error_info.h"
@@ -464,12 +463,11 @@ const LocalizedErrorMap* LookupErrorMap(const std::string& error_domain,
     // history to an uncached page created by a POST.
     if (is_post && error_code == net::ERR_CACHE_MISS)
       return &repost_error;
-    return FindErrorMapInArray(net_error_options,
-                               arraysize(net_error_options),
+    return FindErrorMapInArray(net_error_options, base::size(net_error_options),
                                error_code);
   } else if (error_domain == Error::kHttpErrorDomain) {
     const LocalizedErrorMap* map = FindErrorMapInArray(
-        http_error_options, arraysize(http_error_options), error_code);
+        http_error_options, base::size(http_error_options), error_code);
     // Handle miscellaneous 400/500 errors.
     return !map && error_code >= 400 && error_code < 600
                ? &generic_4xx_5xx_error
@@ -477,8 +475,7 @@ const LocalizedErrorMap* LookupErrorMap(const std::string& error_domain,
   } else if (error_domain == Error::kDnsProbeErrorDomain) {
     const LocalizedErrorMap* map =
         FindErrorMapInArray(dns_probe_error_options,
-                            arraysize(dns_probe_error_options),
-                            error_code);
+                            base::size(dns_probe_error_options), error_code);
     DCHECK(map);
     return map;
   } else {
@@ -669,7 +666,7 @@ void GetSuggestionsSummaryList(int error_code,
     DCHECK(suggestions_summary_list->empty());
     DCHECK(!(suggestions & ~SUGGEST_NAVIGATE_TO_ORIGIN));
     url::Origin failed_origin = url::Origin::Create(failed_url);
-    if (failed_origin.unique())
+    if (failed_origin.opaque())
       return;
 
     auto suggestion = std::make_unique<base::DictionaryValue>();
@@ -879,6 +876,7 @@ void LocalizedError::GetStrings(
     bool can_show_network_diagnostics_dialog,
     bool is_incognito,
     OfflineContentOnNetErrorFeatureState offline_content_feature_state,
+    bool auto_fetch_feature_enabled,
     const std::string& locale,
     std::unique_ptr<error_page::ErrorPageParams> params,
     base::DictionaryValue* error_strings) {
@@ -947,12 +945,6 @@ void LocalizedError::GetStrings(
     // The presence of this string disables the easter egg. Acts as a flag.
     error_strings->SetString("disabledEasterEgg",
         l10n_util::GetStringUTF16(IDS_ERRORPAGE_FUN_DISABLED));
-  }
-
-  if (command_line->HasSwitch(error_page::switches::kEnableEasterEggBdayMode) ||
-      base::FeatureList::IsEnabled(
-          error_page::features::kDinoEasterEggBdayMode)) {
-    error_strings->SetBoolean("bdayMode", true);
   }
 
   summary->SetString("failedUrl", failed_url_string);
@@ -1081,12 +1073,22 @@ void LocalizedError::GetStrings(
       !is_incognito && failed_url.is_valid() &&
       failed_url.SchemeIsHTTPOrHTTPS() &&
       IsOfflineError(error_domain, error_code)) {
-    error_strings->SetPath(
-        {"downloadButton", "msg"},
-        base::Value(l10n_util::GetStringUTF16(IDS_ERRORPAGES_BUTTON_DOWNLOAD)));
-    error_strings->SetPath({"downloadButton", "disabledMsg"},
-                           base::Value(l10n_util::GetStringUTF16(
-                               IDS_ERRORPAGES_BUTTON_DOWNLOADING)));
+    if (!auto_fetch_feature_enabled) {
+      error_strings->SetPath({"downloadButton", "msg"},
+                             base::Value(l10n_util::GetStringUTF16(
+                                 IDS_ERRORPAGES_BUTTON_DOWNLOAD)));
+      error_strings->SetPath({"downloadButton", "disabledMsg"},
+                             base::Value(l10n_util::GetStringUTF16(
+                                 IDS_ERRORPAGES_BUTTON_DOWNLOADING)));
+    } else {
+      error_strings->SetString("attemptAutoFetch", "true");
+      error_strings->SetPath({"savePageLater", "savePageMsg"},
+                             base::Value(l10n_util::GetStringUTF16(
+                                 IDS_ERRORPAGES_SAVE_PAGE_BUTTON)));
+      error_strings->SetPath({"savePageLater", "cancelMsg"},
+                             base::Value(l10n_util::GetStringUTF16(
+                                 IDS_ERRORPAGES_CANCEL_SAVE_PAGE_BUTTON)));
+    }
   }
 
   error_strings->SetString(
@@ -1107,6 +1109,12 @@ void LocalizedError::GetStrings(
             {"offlineContentList", "actionText"},
             base::Value(l10n_util::GetStringUTF16(
                 IDS_ERRORPAGES_OFFLINE_CONTENT_LIST_OPEN_ALL_BUTTON)));
+        error_strings->SetPath(
+            {"offlineContentList", "showText"},
+            base::Value(l10n_util::GetStringUTF16(IDS_SHOW)));
+        error_strings->SetPath(
+            {"offlineContentList", "hideText"},
+            base::Value(l10n_util::GetStringUTF16(IDS_HIDE)));
         break;
       case OfflineContentOnNetErrorFeatureState::kEnabledSummary:
         error_strings->SetString("suggestedOfflineContentPresentationMode",

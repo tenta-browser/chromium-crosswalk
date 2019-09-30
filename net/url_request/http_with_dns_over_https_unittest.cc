@@ -3,6 +3,7 @@
 // found in the LICENSE file.
 
 #include "net/dns/dns_client.h"
+#include "net/dns/dns_config.h"
 #include "net/dns/dns_transaction.h"
 #include "net/dns/host_resolver_impl.h"
 #include "net/http/http_stream_factory_test_util.h"
@@ -161,11 +162,11 @@ class TestHttpDelegate : public HttpStreamRequest::Delegate {
   void OnNeedsClientAuth(const SSLConfig& used_ssl_config,
                          SSLCertRequestInfo* cert_info) override {}
 
-  void OnHttpsProxyTunnelResponse(const HttpResponseInfo& response_info,
-                                  const SSLConfig& used_ssl_config,
-                                  const ProxyInfo& used_proxy_info,
-                                  std::unique_ptr<HttpStream> stream) override {
-  }
+  void OnHttpsProxyTunnelResponseRedirect(
+      const HttpResponseInfo& response_info,
+      const SSLConfig& used_ssl_config,
+      const ProxyInfo& used_proxy_info,
+      std::unique_ptr<HttpStream> stream) override {}
 
   void OnQuicBroken() override {}
 

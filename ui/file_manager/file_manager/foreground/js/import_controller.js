@@ -29,10 +29,9 @@ importer.ActivityState = {
  * @param {!importer.MediaScanner} scanner
  * @param {!importer.ImportRunner} importRunner
  * @param {!importer.CommandWidget} commandWidget
- * @param {!analytics.Tracker} tracker
  */
-importer.ImportController =
-    function(environment, scanner, importRunner, commandWidget, tracker) {
+importer.ImportController = function(
+    environment, scanner, importRunner, commandWidget) {
 
   /** @private {!importer.ControllerEnvironment} */
   this.environment_ = environment;
@@ -51,9 +50,6 @@ importer.ImportController =
 
   /** @type {!importer.ScanManager} */
   this.scanManager_ = new importer.ScanManager(environment, scanner);
-
-  /** @private {!analytics.Tracker} */
-  this.tracker_ = tracker;
 
   /**
    * The active import task, if any.
@@ -160,7 +156,7 @@ importer.ImportController.prototype.onVolumeUnmounted_ = function(volumeId) {
   if (this.activeImport_) {
     this.activeImport_.task.requestCancel();
     this.finalizeActiveImport_();
-    this.tracker_.send(metrics.ImportEvents.DEVICE_YANKED);
+    metrics.recordBoolean('ImportController.DeviceYanked');
   }
   this.scanManager_.reset();
   this.checkState_();
@@ -330,7 +326,7 @@ importer.ImportController.prototype.cancel_ = function() {
   if (this.activeImport_) {
     this.activeImport_.task.requestCancel();
     this.finalizeActiveImport_();
-    this.tracker_.send(metrics.ImportEvents.IMPORT_CANCELLED);
+    metrics.recordBoolean('ImportController.ImportCancelled');
   }
 
   this.scanManager_.reset();
@@ -467,7 +463,7 @@ importer.ImportController.prototype.isCurrentDirectoryScannable_ =
     function() {
   var directory = this.environment_.getCurrentDirectory();
   return !!directory &&
-      importer.isMediaDirectory(directory, this.environment_);
+      importer.isMediaDirectory(directory, this.environment_.volumeManager);
 };
 
 /**
@@ -481,8 +477,8 @@ importer.ImportController.prototype.isCurrentDirectoryScannable_ =
 importer.ImportController.prototype.tryScan_ = function(mode) {
   var entries = this.environment_.getSelection();
   if (entries.length) {
-    if (entries.every(
-        importer.isEligibleEntry.bind(null, this.environment_))) {
+    if (entries.every(importer.isEligibleEntry.bind(
+            null, this.environment_.volumeManager))) {
       return this.scanManager_.getSelectionScan(entries, mode);
     }
   } else if (this.isCurrentDirectoryScannable_()) {
@@ -670,8 +666,9 @@ importer.RuntimeCommandWidget.ensureTransitionEndEvent =
   });
   // Use a timeout of 400 ms.
   window.setTimeout(function() {
-    if (!fired)
+    if (!fired) {
       cr.dispatchSimpleEvent(element, 'transitionend', true);
+    }
   }, timeout);
 };
 
@@ -691,8 +688,9 @@ importer.RuntimeCommandWidget.prototype.onButtonClicked_ =
   console.assert(!!this.clickListener_, 'Listener not set.');
 
   // Clear focus from the toolbar button after it is clicked.
-  if (source === importer.ClickSource.MAIN)
+  if (source === importer.ClickSource.MAIN) {
     this.mainButton_.blur();
+  }
 
   switch (source) {
     case importer.ClickSource.MAIN:
@@ -745,13 +743,15 @@ importer.RuntimeCommandWidget.prototype.setDetailsVisible = function(visible) {
     // Align the detail panel horizontally to the dropdown button.
     if (document.documentElement.getAttribute('dir') === 'rtl') {
       var anchorLeft = this.comboButton_.getBoundingClientRect().left;
-      if (anchorLeft)
+      if (anchorLeft) {
         this.detailsPanel_.style.left = anchorLeft + 'px';
+      }
     } else {
       var availableWidth = document.body.getBoundingClientRect().width;
       var anchorRight = this.comboButton_.getBoundingClientRect().right;
-      if (anchorRight)
+      if (anchorRight) {
         this.detailsPanel_.style.right = (availableWidth - anchorRight) + 'px';
+      }
     }
 
     this.detailsPanel_.hidden = false;
@@ -798,7 +798,9 @@ importer.RuntimeCommandWidget.prototype.onDetailsFocusLost_ =
 importer.RuntimeCommandWidget.prototype.updateTabindexOfAnchors_ =
     function(root, newTabIndex) {
   var anchors = root.querySelectorAll('a');
-  anchors.forEach(element => { element.tabIndex = newTabIndex; });
+  anchors.forEach(element => {
+    element.tabIndex = newTabIndex;
+  });
 };
 
 /** @override */
@@ -931,9 +933,10 @@ importer.RuntimeCommandWidget.prototype.update = function(
       assertNotReached('Unrecognized response id: ' + activityState);
   }
   // Make all anchors synthesized from the localized text focusable.
-  if (this.cloudImportButtonTabIndex_)
-    this.updateTabindexOfAnchors_(this.statusContent_,
-                                  this.cloudImportButtonTabIndex_);
+  if (this.cloudImportButtonTabIndex_) {
+    this.updateTabindexOfAnchors_(
+        this.statusContent_, this.cloudImportButtonTabIndex_);
+  }
 };
 
 /**
@@ -1059,9 +1062,11 @@ importer.ScanManager.prototype.getDirectoryScan = function(mode) {
  * ImportController.
  *
  * @interface
- * @extends {VolumeManagerCommon.VolumeInfoProvider}
  */
 importer.ControllerEnvironment = function() {};
+
+/** @type {!VolumeManager} */
+importer.ControllerEnvironment.prototype.volumeManager;
 
 /**
  * Returns the current file selection, if any. May be empty.
@@ -1071,7 +1076,7 @@ importer.ControllerEnvironment.prototype.getSelection;
 
 /**
  * Returns the directory entry for the current directory.
- * @return {DirectoryEntry|FakeEntry|FilesAppEntry}
+ * @return {DirectoryEntry|FilesAppEntry}
  */
 importer.ControllerEnvironment.prototype.getCurrentDirectory;
 
@@ -1079,6 +1084,14 @@ importer.ControllerEnvironment.prototype.getCurrentDirectory;
  * @param {!DirectoryEntry} entry
  */
 importer.ControllerEnvironment.prototype.setCurrentDirectory;
+
+/**
+ * Obtains a volume info containing the passed entry.
+ * @param {!Entry|!FilesAppEntry} entry Entry on the volume to be
+ *     returned. Can be fake.
+ * @return {VolumeInfo} The VolumeInfo instance or null if not found.
+ */
+importer.ControllerEnvironment.prototype.getVolumeInfo;
 
 /**
  * Returns true if the Drive mount is present.
@@ -1168,6 +1181,8 @@ importer.ControllerEnvironment.prototype.showImportDestination;
  */
 importer.RuntimeControllerEnvironment = function(
     fileManager, selectionHandler) {
+  this.volumeManager = fileManager.volumeManager;
+
   /** @private {!CommandHandlerDeps} */
   this.fileManager_ = fileManager;
 

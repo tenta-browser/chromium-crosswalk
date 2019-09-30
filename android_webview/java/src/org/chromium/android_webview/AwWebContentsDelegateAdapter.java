@@ -18,10 +18,10 @@ import android.view.View;
 import android.webkit.URLUtil;
 import android.widget.FrameLayout;
 
-import org.chromium.base.AsyncTask;
 import org.chromium.base.Callback;
 import org.chromium.base.ContentUriUtils;
 import org.chromium.base.ThreadUtils;
+import org.chromium.base.task.AsyncTask;
 import org.chromium.content_public.browser.InvalidateTypes;
 import org.chromium.content_public.common.ContentUrlConstants;
 import org.chromium.content_public.common.ResourceRequestBody;
@@ -179,6 +179,7 @@ class AwWebContentsDelegateAdapter extends AwWebContentsDelegate {
     }
 
     @Override
+    @SuppressLint("HandlerLeak")
     public void showRepostFormWarningDialog() {
         // TODO(mkosiba) We should be using something akin to the JsResultReceiver as the
         // callback parameter (instead of WebContents) and implement a way of converting

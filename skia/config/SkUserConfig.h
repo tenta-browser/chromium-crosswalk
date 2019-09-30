@@ -130,7 +130,6 @@ SK_API void SkDebugf_FileLine(const char* file, int line, bool fatal,
 // until we update our call-sites (typically these are for API changes).
 //
 // Remove these as we update our sites.
-//
 
 // Workaround for poor anisotropic mipmap quality,
 // pending Skia ripmap support.
@@ -151,41 +150,18 @@ SK_API void SkDebugf_FileLine(const char* file, int line, bool fatal,
 #define SK_DISABLE_EXPLICIT_GPU_RESOURCE_ALLOCATION
 #endif
 
-#ifndef SK_SUPPORT_LEGACY_TILED_BITMAPS
-#define SK_SUPPORT_LEGACY_TILED_BITMAPS
-#endif
-
-// The matrix image filter imperceptibly alters the following two layout tests:
-//   fast/css/transformed-mask.html
-//   fast/reflections/opacity-reflection-transform.html
-// and changes the following cc_unittests:
-//   LayerTreeHostCommonTest.VisibleRectWithScalingClippingAndFilters
-//   LayerTreeHostCommonTest.VisibleRectWithClippingAndFilters
-// Landing the fix in Skia behind this flag will allow those all to be updated
-// together in Chrome (along with the removal of this flag).
-#ifndef SK_IGNORE_MATRIX_IMAGE_FILTER_FIX
-#define SK_IGNORE_MATRIX_IMAGE_FILTER_FIX
-#endif
-
-#ifndef SK_DISABLE_MASKFILTERED_MASK_CACHING
-#define SK_DISABLE_MASKFILTERED_MASK_CACHING
-#endif
-
-// remove after rebaselining svg layout tests
-#ifndef SK_SUPPORT_LEGACY_SVG_ARC_TO
-#define SK_SUPPORT_LEGACY_SVG_ARC_TO
+#ifndef SK_IGNORE_LINEONLY_AA_CONVEX_PATH_OPTS
+#define SK_IGNORE_LINEONLY_AA_CONVEX_PATH_OPTS
 #endif
 
 // Max. verb count for paths rendered by the edge-AA tessellating path renderer.
 #define GR_AA_TESSELLATOR_MAX_VERB_COUNT 100
 
-#ifndef SK_SUPPORT_LEGACY_THREADED_DAA_BUGS
-#define SK_SUPPORT_LEGACY_THREADED_DAA_BUGS
-#endif
-
 #ifndef SK_SUPPORT_LEGACY_AAA_CHOICE
 #define SK_SUPPORT_LEGACY_AAA_CHOICE
 #endif
+
+#define SK_LEGACY_SRGB_STAGE_CHOICE
 
 ///////////////////////// Imported from BUILD.gn and skia_common.gypi
 

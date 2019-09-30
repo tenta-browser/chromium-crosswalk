@@ -11,6 +11,7 @@
 #include "third_party/blink/renderer/core/event_target_names.h"
 #include "third_party/blink/renderer/core/event_type_names.h"
 #include "third_party/blink/renderer/core/execution_context/execution_context.h"
+#include "third_party/blink/renderer/platform/heap/persistent.h"
 #include "third_party/blink/renderer/platform/heap/visitor.h"
 #include "third_party/blink/renderer/platform/wtf/functional.h"
 #include "third_party/blink/renderer/platform/wtf/text/atomic_string.h"
@@ -22,7 +23,7 @@ AbortSignal::AbortSignal(ExecutionContext* execution_context)
 AbortSignal::~AbortSignal() = default;
 
 const AtomicString& AbortSignal::InterfaceName() const {
-  return EventTargetNames::AbortSignal;
+  return event_target_names::kAbortSignal;
 }
 
 ExecutionContext* AbortSignal::GetExecutionContext() const {
@@ -43,7 +44,7 @@ void AbortSignal::SignalAbort() {
     std::move(closure).Run();
   }
   abort_algorithms_.clear();
-  DispatchEvent(*Event::Create(EventTypeNames::abort));
+  DispatchEvent(*Event::Create(event_type_names::kAbort));
 }
 
 void AbortSignal::Follow(AbortSignal* parentSignal) {

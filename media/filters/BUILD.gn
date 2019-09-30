@@ -35,6 +35,8 @@ jumbo_source_set("filters") {
     "decrypting_audio_decoder.h",
     "decrypting_demuxer_stream.cc",
     "decrypting_demuxer_stream.h",
+    "decrypting_media_resource.cc",
+    "decrypting_media_resource.h",
     "decrypting_video_decoder.cc",
     "decrypting_video_decoder.h",
     "file_data_source.cc",
@@ -194,6 +196,8 @@ jumbo_source_set("filters") {
     sources += [
       "android/media_codec_audio_decoder.cc",
       "android/media_codec_audio_decoder.h",
+      "android/video_frame_extractor.cc",
+      "android/video_frame_extractor.h",
     ]
     deps += [ "//media/base/android" ]
   }
@@ -203,6 +207,14 @@ jumbo_source_set("filters") {
       "h264_bitstream_buffer.cc",
       "h264_bitstream_buffer.h",
     ]
+  }
+
+  if (is_fuchsia) {
+    sources += [
+      "fuchsia/fuchsia_video_decoder.cc",
+      "fuchsia/fuchsia_video_decoder.h",
+    ]
+    deps += [ "//third_party/fuchsia-sdk/sdk:mediacodec" ]
   }
 }
 
@@ -248,14 +260,15 @@ static_library("test_support") {
 source_set("unit_tests") {
   testonly = true
   sources = [
-    "audio_buffer_stream_unittest.cc",
     "audio_clock_unittest.cc",
+    "audio_decoder_stream_unittest.cc",
     "audio_renderer_algorithm_unittest.cc",
     "audio_timestamp_validator_unittest.cc",
     "chunk_demuxer_unittest.cc",
     "decoder_selector_unittest.cc",
     "decrypting_audio_decoder_unittest.cc",
     "decrypting_demuxer_stream_unittest.cc",
+    "decrypting_media_resource_unittest.cc",
     "decrypting_video_decoder_unittest.cc",
     "fake_video_decoder.cc",
     "fake_video_decoder.h",
@@ -271,7 +284,7 @@ source_set("unit_tests") {
     "source_buffer_state_unittest.cc",
     "source_buffer_stream_unittest.cc",
     "video_cadence_estimator_unittest.cc",
-    "video_frame_stream_unittest.cc",
+    "video_decoder_stream_unittest.cc",
     "video_renderer_algorithm_unittest.cc",
     "vp8_bool_decoder_unittest.cc",
     "vp8_parser_unittest.cc",
@@ -293,12 +306,17 @@ source_set("unit_tests") {
   ]
 
   if (is_android) {
+    sources += [ "android/video_frame_extractor_unittest.cc" ]
     sources -= [
       "decrypting_audio_decoder_unittest.cc",
       "decrypting_video_decoder_unittest.cc",
     ]
 
     deps += [ "//ui/gl" ]
+  }
+
+  if (is_fuchsia) {
+    sources += [ "fuchsia/fuchsia_video_decoder_unittest.cc" ]
   }
 
   # libvpx for running vpx test on chromecast doesn't support high bit depth.

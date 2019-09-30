@@ -45,8 +45,8 @@ void DiscoverModuleLaunchHelpAppHandler::DeclareLocalizedValues(
 void DiscoverModuleLaunchHelpAppHandler::Initialize() {}
 
 void DiscoverModuleLaunchHelpAppHandler::RegisterMessages() {
-  AddPrefixedCallback("handleLaunchHelpApp",
-                      &DiscoverModuleLaunchHelpAppHandler::HandleLaunchHelpApp);
+  AddCallback("discover.launch-help-app.handleLaunchHelpApp",
+              &DiscoverModuleLaunchHelpAppHandler::HandleLaunchHelpApp);
 }
 
 void DiscoverModuleLaunchHelpAppHandler::HandleLaunchHelpApp() {
@@ -70,7 +70,7 @@ bool DiscoverModuleLaunchHelpApp::IsCompleted() const {
 }
 
 std::unique_ptr<DiscoverHandler>
-DiscoverModuleLaunchHelpApp::CreateWebUIHandler() const {
+DiscoverModuleLaunchHelpApp::CreateWebUIHandler() {
   return std::make_unique<DiscoverModuleLaunchHelpAppHandler>();
 }
 

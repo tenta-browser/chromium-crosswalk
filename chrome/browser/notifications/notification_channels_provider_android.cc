@@ -14,6 +14,7 @@
 #include "base/macros.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
+#include "base/task/post_task.h"
 #include "base/time/default_clock.h"
 #include "base/values.h"
 #include "chrome/browser/content_settings/host_content_settings_map_factory.h"
@@ -30,6 +31,7 @@
 #include "components/prefs/scoped_user_pref_update.h"
 #include "components/search_engines/template_url.h"
 #include "components/search_engines/template_url_service.h"
+#include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
 #include "jni/NotificationSettingsBridge_jni.h"
 #include "url/gurl.h"
@@ -134,8 +136,7 @@ class ChannelsRuleIterator : public content_settings::RuleIterator {
         ContentSettingsPattern::FromURLNoWildcard(
             GURL(channels_[index_].origin)),
         ContentSettingsPattern::Wildcard(),
-        new base::Value(
-            ChannelStatusToContentSetting(channels_[index_].status)));
+        base::Value(ChannelStatusToContentSetting(channels_[index_].status)));
     index_++;
     return rule;
   }
@@ -222,9 +223,8 @@ void NotificationChannelsProviderAndroid::MigrateToChannelsIfNecessary(
 
     while (it && it->HasNext()) {
       content_settings::Rule rule = it->Next();
-      rules.push_back(rule);
-
       CreateChannelForRule(rule);
+      rules.push_back(std::move(rule));
     }
   }
 
@@ -317,7 +317,7 @@ NotificationChannelsProviderAndroid::UpdateCachedChannels() const {
     // underlying state of NotificationChannelsProviderAndroid, and allows us to
     // notify observers as soon as we detect changes to channels.
     auto* provider = const_cast<NotificationChannelsProviderAndroid*>(this);
-    content::BrowserThread::GetTaskRunnerForThread(content::BrowserThread::UI)
+    base::CreateSingleThreadTaskRunnerWithTraits({content::BrowserThread::UI})
         ->PostTask(FROM_HERE,
                    base::BindOnce(
                        &NotificationChannelsProviderAndroid::NotifyObservers,
@@ -350,7 +350,7 @@ bool NotificationChannelsProviderAndroid::SetWebsiteSetting(
   InitCachedChannels();
 
   url::Origin origin = url::Origin::Create(GURL(primary_pattern.ToString()));
-  DCHECK(!origin.unique());
+  DCHECK(!origin.opaque());
   const std::string origin_string = origin.Serialize();
 
   ContentSetting setting = content_settings::ValueToContentSetting(value);
@@ -376,6 +376,7 @@ bool NotificationChannelsProviderAndroid::SetWebsiteSetting(
       NOTREACHED();
       break;
   }
+  delete value;
   return true;
 }
 
@@ -410,7 +411,7 @@ base::Time NotificationChannelsProviderAndroid::GetWebsiteSettingLastModified(
     return base::Time();
   }
   url::Origin origin = url::Origin::Create(GURL(primary_pattern.ToString()));
-  if (origin.unique())
+  if (origin.opaque())
     return base::Time();
   const std::string origin_string = origin.Serialize();
 
@@ -449,10 +450,10 @@ void NotificationChannelsProviderAndroid::CreateChannelForRule(
     const content_settings::Rule& rule) {
   url::Origin origin =
       url::Origin::Create(GURL(rule.primary_pattern.ToString()));
-  DCHECK(!origin.unique());
+  DCHECK(!origin.opaque());
   const std::string origin_string = origin.Serialize();
   ContentSetting content_setting =
-      content_settings::ValueToContentSetting(rule.value.get());
+      content_settings::ValueToContentSetting(&rule.value);
   switch (content_setting) {
     case CONTENT_SETTING_ALLOW:
       CreateChannelIfRequired(origin_string,

@@ -39,14 +39,13 @@ class InvalidationService;
 }  // namespace invalidation
 
 namespace sync_sessions {
-class SyncSessionsClient;
+class SessionSyncService;
 }  // namespace sync_sessions
 
 namespace syncer {
 
-class LocalDeviceInfoProvider;
+class DeviceInfoSyncService;
 class ModelTypeStoreService;
-class SyncService;
 class SyncableService;
 
 // Interface for clients of the Sync API to plumb through necessary dependent
@@ -60,12 +59,6 @@ class SyncClient {
   SyncClient();
   virtual ~SyncClient();
 
-  // Initializes the sync client with the specified sync service.
-  virtual void Initialize() = 0;
-
-  // Returns the current SyncService instance.
-  virtual SyncService* GetSyncService() = 0;
-
   // Returns the current profile's preference service.
   virtual PrefService* GetPrefService() = 0;
 
@@ -76,16 +69,16 @@ class SyncClient {
   virtual base::FilePath GetLocalSyncBackendFolder() = 0;
 
   // DataType specific service getters.
+  virtual DeviceInfoSyncService* GetDeviceInfoSyncService() = 0;
   virtual bookmarks::BookmarkModel* GetBookmarkModel() = 0;
   virtual favicon::FaviconService* GetFaviconService() = 0;
   virtual history::HistoryService* GetHistoryService() = 0;
+  virtual sync_sessions::SessionSyncService* GetSessionSyncService() = 0;
   virtual bool HasPasswordStore() = 0;
 
   // Returns a vector with all supported datatypes and their controllers.
-  // TODO(crbug.com/681921): Remove |local_device_info_provider| once the
-  // migration to USS is completed.
   virtual DataTypeController::TypeVector CreateDataTypeControllers(
-      LocalDeviceInfoProvider* local_device_info_provider) = 0;
+      SyncService* sync_service) = 0;
 
   // Returns a callback that will be invoked when password sync state has
   // potentially been changed.
@@ -95,7 +88,6 @@ class SyncClient {
   virtual BookmarkUndoService* GetBookmarkUndoServiceIfExists() = 0;
   virtual invalidation::InvalidationService* GetInvalidationService() = 0;
   virtual scoped_refptr<ExtensionsActivity> GetExtensionsActivity() = 0;
-  virtual sync_sessions::SyncSessionsClient* GetSyncSessionsClient() = 0;
 
   // Returns a weak pointer to the syncable service specified by |type|.
   // Weak pointer may be unset if service is already destroyed.

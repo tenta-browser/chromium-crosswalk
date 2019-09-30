@@ -3,10 +3,10 @@
 // found in the LICENSE file.
 #include "chrome/browser/safe_browsing/chrome_password_protection_service.h"
 
+#include "base/bind.h"
 #include "base/run_loop.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/metrics/histogram_tester.h"
-#include "base/test/scoped_feature_list.h"
 #include "build/build_config.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/signin/account_fetcher_service_factory.h"
@@ -27,7 +27,6 @@
 #include "components/prefs/pref_service.h"
 #include "components/prefs/scoped_user_pref_update.h"
 #include "components/safe_browsing/common/safe_browsing_prefs.h"
-#include "components/safe_browsing/features.h"
 #include "components/safe_browsing/password_protection/password_protection_request.h"
 #include "components/security_state/core/security_state.h"
 #include "components/signin/core/browser/account_info.h"
@@ -96,9 +95,10 @@ class ChromePasswordProtectionServiceBrowserTest : public InProcessBrowserTest {
   void OnWillCreateBrowserContextServices(content::BrowserContext* context) {
     // Replace the signin manager and account fetcher service with fakes.
     SigninManagerFactory::GetInstance()->SetTestingFactory(
-        context, &BuildFakeSigninManagerBase);
+        context, base::BindRepeating(&BuildFakeSigninManagerForTesting));
     AccountFetcherServiceFactory::GetInstance()->SetTestingFactory(
-        context, &FakeAccountFetcherServiceBuilder::BuildForTests);
+        context,
+        base::BindRepeating(&FakeAccountFetcherServiceBuilder::BuildForTests));
   }
 
   // Makes user signed-in as |email| with |hosted_domain|.
@@ -130,7 +130,6 @@ class ChromePasswordProtectionServiceBrowserTest : public InProcessBrowserTest {
   void ConfigureEnterprisePasswordProtection(
       bool is_gsuite,
       PasswordProtectionTrigger trigger_type) {
-    scoped_features_.InitAndEnableFeature(kEnterprisePasswordProtectionV1);
     if (is_gsuite)
       PrepareSyncAccount("example.com", "stub-user@example.com");
     browser()->profile()->GetPrefs()->SetInteger(
@@ -144,7 +143,6 @@ class ChromePasswordProtectionServiceBrowserTest : public InProcessBrowserTest {
   std::unique_ptr<
       base::CallbackList<void(content::BrowserContext*)>::Subscription>
       will_create_browser_context_services_subscription_;
-  base::test::ScopedFeatureList scoped_features_;
 };
 
 IN_PROC_BROWSER_TEST_F(ChromePasswordProtectionServiceBrowserTest,
@@ -188,19 +186,9 @@ IN_PROC_BROWSER_TEST_F(ChromePasswordProtectionServiceBrowserTest,
   content::TestNavigationObserver observer(new_web_contents,
                                            /*number_of_navigations=*/1);
   observer.Wait();
-  // chrome://settings page should be opened in a new foreground tab.
-  ASSERT_EQ(2, browser()->tab_strip_model()->count());
-  ASSERT_EQ(GURL(chrome::kChromeUISettingsURL),
-            new_web_contents->GetVisibleURL());
-
-  // Simulates clicking "Change password" button on the chrome://settings card.
-  service->OnUserAction(new_web_contents, PasswordReuseEvent::SIGN_IN_PASSWORD,
-                        WarningUIType::CHROME_SETTINGS,
-                        WarningAction::CHANGE_PASSWORD);
-  base::RunLoop().RunUntilIdle();
   // Verify myaccount.google.com or Google signin page should be opened in a
   // new foreground tab.
-  ASSERT_EQ(3, browser()->tab_strip_model()->count());
+  ASSERT_EQ(2, browser()->tab_strip_model()->count());
   ASSERT_TRUE(browser()
                   ->tab_strip_model()
                   ->GetActiveWebContents()
@@ -217,6 +205,36 @@ IN_PROC_BROWSER_TEST_F(ChromePasswordProtectionServiceBrowserTest,
   EXPECT_EQ(security_state::DANGEROUS, security_info.security_level);
   EXPECT_EQ(security_state::MALICIOUS_CONTENT_STATUS_SOCIAL_ENGINEERING,
             security_info.malicious_content_status);
+}
+
+IN_PROC_BROWSER_TEST_F(ChromePasswordProtectionServiceBrowserTest,
+                       SuccessfullyShowWarningIncognito) {
+  ChromePasswordProtectionService* service = GetService(/*is_incognito=*/true);
+  Profile* profile = browser()->profile()->GetOffTheRecordProfile();
+  content::WebContents* web_contents =
+      browser()->tab_strip_model()->GetActiveWebContents();
+  security_state::SecurityInfo security_info;
+
+  // Initialize and verify initial state.
+  ui_test_utils::NavigateToURL(browser(),
+                               embedded_test_server()->GetURL(kLoginPageUrl));
+  ASSERT_EQ(1, browser()->tab_strip_model()->count());
+  ASSERT_FALSE(
+      ChromePasswordProtectionService::ShouldShowPasswordReusePageInfoBubble(
+          web_contents, PasswordReuseEvent::SIGN_IN_PASSWORD));
+  GetSecurityInfo(web_contents, &security_info);
+  ASSERT_EQ(security_state::NONE, security_info.security_level);
+  ASSERT_EQ(security_state::MALICIOUS_CONTENT_STATUS_NONE,
+            security_info.malicious_content_status);
+
+  // Shows modal dialog on current web_contents.
+  service->ShowModalWarning(web_contents, "unused_token",
+                            PasswordReuseEvent::SIGN_IN_PASSWORD);
+  base::RunLoop().RunUntilIdle();
+  // Change password card on chrome settings page should NOT show.
+  ASSERT_FALSE(
+      ChromePasswordProtectionService::ShouldShowChangePasswordSettingUI(
+          profile));
 }
 
 IN_PROC_BROWSER_TEST_F(ChromePasswordProtectionServiceBrowserTest,
@@ -317,17 +335,19 @@ IN_PROC_BROWSER_TEST_F(ChromePasswordProtectionServiceBrowserTest,
   content::TestNavigationObserver observer(new_web_contents,
                                            /*number_of_navigations=*/1);
   observer.Wait();
-  // chrome://settings page should be opened in a new foreground tab.
+  // Verify myaccount.google.com or Google signin page should be opened in a
+  // new foreground tab.
   ASSERT_EQ(2, browser()->tab_strip_model()->count());
-  ASSERT_EQ(
-      GURL(chrome::kChromeUISettingsURL),
-      browser()->tab_strip_model()->GetActiveWebContents()->GetVisibleURL());
+  ASSERT_TRUE(browser()
+                  ->tab_strip_model()
+                  ->GetActiveWebContents()
+                  ->GetVisibleURL()
+                  .DomainIs("google.com"));
 }
 
 IN_PROC_BROWSER_TEST_F(ChromePasswordProtectionServiceBrowserTest,
                        VerifyUnhandledPasswordReuse) {
-  PrepareSyncAccount(std::string(AccountTrackerService::kNoHostedDomainFound),
-                     "stub-user@example.com");
+  PrepareSyncAccount(kNoHostedDomainFound, "stub-user@example.com");
   // Prepare sync account will trigger a password change.
   ChromePasswordProtectionService* service = GetService(/*is_incognito=*/false);
   ASSERT_TRUE(service);
@@ -390,8 +410,7 @@ IN_PROC_BROWSER_TEST_F(ChromePasswordProtectionServiceBrowserTest,
 
 IN_PROC_BROWSER_TEST_F(ChromePasswordProtectionServiceBrowserTest,
                        VerifyCheckGaiaPasswordChange) {
-  PrepareSyncAccount(std::string(AccountTrackerService::kNoHostedDomainFound),
-                     "stub-user@example.com");
+  PrepareSyncAccount(kNoHostedDomainFound, "stub-user@example.com");
   Profile* profile = browser()->profile();
   ChromePasswordProtectionService* service = GetService(/*is_incognito=*/false);
   // Configures initial password to "password_1";
@@ -462,14 +481,6 @@ IN_PROC_BROWSER_TEST_F(ChromePasswordProtectionServiceBrowserTest,
                        VerifyIsPasswordReuseProtectionConfigured) {
   Profile* profile = browser()->profile();
   ChromePasswordProtectionService* service = GetService(/*is_incognito=*/false);
-  // When kEnterprisePasswordProtectionV1 feature is off.
-  // |IsPasswordReuseProtectionConfigured(..)| returns false.
-  EXPECT_FALSE(
-      ChromePasswordProtectionService::IsPasswordReuseProtectionConfigured(
-          profile));
-
-  base::test::ScopedFeatureList scoped_features;
-  scoped_features.InitAndEnableFeature(kEnterprisePasswordProtectionV1);
   // If prefs::kPasswordProtectionWarningTrigger isn't set to PASSWORD_REUSE,
   // |IsPasswordReuseProtectionConfigured(..)| returns false.
   EXPECT_EQ(PASSWORD_PROTECTION_OFF,
@@ -478,8 +489,7 @@ IN_PROC_BROWSER_TEST_F(ChromePasswordProtectionServiceBrowserTest,
       ChromePasswordProtectionService::IsPasswordReuseProtectionConfigured(
           profile));
 
-  PrepareSyncAccount(std::string(AccountTrackerService::kNoHostedDomainFound),
-                     "stub-user@example.com");
+  PrepareSyncAccount(kNoHostedDomainFound, "stub-user@example.com");
   profile->GetPrefs()->SetInteger(prefs::kPasswordProtectionWarningTrigger,
                                   PasswordProtectionTrigger::PASSWORD_REUSE);
   // Otherwise, |IsPasswordReuseProtectionConfigured(..)| returns true.
@@ -598,9 +608,6 @@ IN_PROC_BROWSER_TEST_F(ChromePasswordProtectionServiceBrowserTest,
                 ->GetActiveWebContents()
                 ->GetLastCommittedURL(),
             embedded_test_server()->GetURL(kChangePasswordUrl));
-  EXPECT_THAT(histograms.GetAllSamples(
-                  "PasswordProtection.InterstitialActionByUserNavigation"),
-              testing::ElementsAre(base::Bucket(0, 1), base::Bucket(1, 1)));
 }
 
 IN_PROC_BROWSER_TEST_F(ChromePasswordProtectionServiceBrowserTest,

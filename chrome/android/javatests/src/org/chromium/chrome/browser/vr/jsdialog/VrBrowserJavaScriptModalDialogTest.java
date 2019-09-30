@@ -17,20 +17,18 @@ import org.junit.runner.RunWith;
 
 import org.chromium.base.ThreadUtils;
 import org.chromium.base.test.util.CommandLineFlags;
-import org.chromium.base.test.util.DisabledTest;
 import org.chromium.base.test.util.Feature;
 import org.chromium.base.test.util.Restriction;
 import org.chromium.chrome.browser.ChromeSwitches;
 import org.chromium.chrome.browser.ChromeTabbedActivity;
-import org.chromium.chrome.browser.jsdialog.JavascriptTabModalDialog;
+import org.chromium.chrome.browser.jsdialog.JavascriptAppModalDialog;
 import org.chromium.chrome.browser.vr.rules.ChromeTabbedActivityVrTestRule;
 import org.chromium.chrome.browser.vr.util.NativeUiUtils;
 import org.chromium.chrome.browser.vr.util.VrBrowserTransitionUtils;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
 import org.chromium.chrome.test.util.RenderTestRule;
-import org.chromium.content.browser.test.util.Criteria;
-import org.chromium.content.browser.test.util.CriteriaHelper;
-import org.chromium.content.browser.test.util.JavaScriptUtils;
+import org.chromium.content_public.browser.test.util.JavaScriptUtils;
+import org.chromium.ui.modaldialog.ModalDialogProperties;
 
 import java.io.IOException;
 import java.util.concurrent.ExecutionException;
@@ -61,7 +59,6 @@ public class VrBrowserJavaScriptModalDialogTest {
      */
     @Test
     @MediumTest
-    @DisabledTest(message = "crbug.com/879130")
     @Feature({"Browser", "RenderTest"})
     public void testAlertModalDialog() throws ExecutionException, IOException {
         testModalDialogImpl("js_modal_view_vr_alert", "alert('Hello Android!')");
@@ -72,7 +69,6 @@ public class VrBrowserJavaScriptModalDialogTest {
      */
     @Test
     @MediumTest
-    @DisabledTest(message = "crbug.com/879130")
     @Feature({"Browser", "RenderTest"})
     public void testConfirmModalDialog() throws ExecutionException, IOException {
         testModalDialogImpl("js_modal_view_vr_confirm", "confirm('Deny?')");
@@ -83,7 +79,6 @@ public class VrBrowserJavaScriptModalDialogTest {
      */
     @Test
     @MediumTest
-    @DisabledTest(message = "crbug.com/879130")
     @Feature({"Browser", "RenderTest"})
     public void testPromptModalDialog() throws ExecutionException, IOException {
         testModalDialogImpl(
@@ -96,7 +91,7 @@ public class VrBrowserJavaScriptModalDialogTest {
 
         executeJavaScriptAndWaitForDialog(js);
 
-        JavascriptTabModalDialog jsDialog = getCurrentDialog();
+        JavascriptAppModalDialog jsDialog = getCurrentDialog();
         Assert.assertNotNull("No dialog showing.", jsDialog);
 
         Assert.assertEquals(NativeUiUtils.getVrViewContainer().getChildCount(), 1);
@@ -109,28 +104,17 @@ public class VrBrowserJavaScriptModalDialogTest {
      */
     private void executeJavaScriptAndWaitForDialog(String script) {
         JavaScriptUtils.executeJavaScript(mActivity.getCurrentWebContents(), script);
-        checkDialogShowing("Could not spawn or locate a modal dialog.", true);
+        NativeUiUtils.waitForModalDialogStatus(true /* shouldBeShown */, mActivity);
     }
 
     /**
      * Returns the current JavaScript modal dialog showing or null if no such dialog is currently
      * showing.
      */
-    private JavascriptTabModalDialog getCurrentDialog() throws ExecutionException {
-        return (JavascriptTabModalDialog) ThreadUtils.runOnUiThreadBlocking(
-                () -> mActivity.getModalDialogManager().getCurrentDialogForTest().getController());
-    }
-
-    /**
-     * Check whether dialog is showing as expected.
-     */
-    private void checkDialogShowing(final String errorMessage, final boolean shouldBeShown) {
-        CriteriaHelper.pollUiThread(new Criteria(errorMessage) {
-            @Override
-            public boolean isSatisfied() {
-                final boolean isShown = mActivity.getModalDialogManager().isShowing();
-                return shouldBeShown == isShown;
-            }
-        });
+    private JavascriptAppModalDialog getCurrentDialog() throws ExecutionException {
+        return (JavascriptAppModalDialog) ThreadUtils.runOnUiThreadBlocking(
+                ()
+                        -> mActivity.getModalDialogManager().getCurrentDialogForTest().get(
+                                ModalDialogProperties.CONTROLLER));
     }
 }

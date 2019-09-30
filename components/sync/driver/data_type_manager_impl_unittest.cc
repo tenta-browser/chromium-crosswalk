@@ -7,9 +7,10 @@
 #include <memory>
 #include <utility>
 
-#include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
+#include "base/test/scoped_task_environment.h"
 #include "components/sync/base/model_type.h"
+#include "components/sync/base/storage_option.h"
 #include "components/sync/driver/configure_context.h"
 #include "components/sync/driver/data_type_encryption_handler.h"
 #include "components/sync/driver/data_type_manager_observer.h"
@@ -33,9 +34,12 @@ ModelTypeSet AddControlTypesTo(ModelTypeSet types) {
   return Union(ControlTypes(), types);
 }
 
-ConfigureContext BuildConfigureContext(ConfigureReason reason) {
+ConfigureContext BuildConfigureContext(
+    ConfigureReason reason,
+    StorageOption storage_option = STORAGE_ON_DISK) {
   ConfigureContext context;
   context.reason = reason;
+  context.storage_option = storage_option;
   return context;
 }
 
@@ -274,6 +278,12 @@ class SyncDataTypeManagerImplTest : public testing::Test {
                     BuildConfigureContext(CONFIGURE_REASON_RECONFIGURATION));
   }
 
+  void Configure(ModelTypeSet desired_types, StorageOption storage_option) {
+    dtm_->Configure(desired_types,
+                    BuildConfigureContext(CONFIGURE_REASON_RECONFIGURATION,
+                                          storage_option));
+  }
+
   // Finish downloading for the given DTM. Should be done only after
   // a call to Configure().
   void FinishDownload(ModelTypeSet types_to_configure,
@@ -307,8 +317,7 @@ class SyncDataTypeManagerImplTest : public testing::Test {
   // Gets the fake controller for the given type, which should have
   // been previously added via AddController().
   FakeDataTypeController* GetController(ModelType model_type) const {
-    DataTypeController::TypeMap::const_iterator it =
-        controllers_.find(model_type);
+    auto it = controllers_.find(model_type);
     if (it == controllers_.end()) {
       return nullptr;
     }
@@ -324,7 +333,8 @@ class SyncDataTypeManagerImplTest : public testing::Test {
     return configurer_.last_params();
   }
 
-  base::MessageLoopForUI ui_loop_;
+  base::test::ScopedTaskEnvironment task_environment_{
+      base::test::ScopedTaskEnvironment::MainThreadType::UI};
   DataTypeController::TypeMap controllers_;
   TestSyncClient sync_client_;
   FakeModelTypeConfigurer configurer_;
@@ -1749,7 +1759,7 @@ TEST_F(SyncDataTypeManagerImplTest, RegisterWithBackendAfterLoadModelsError) {
 // Test that Stop with DISABLE_SYNC calls DTC Stop with CLEAR_METADATA for
 // active data types.
 TEST_F(SyncDataTypeManagerImplTest, StopWithDisableSync) {
-  // Initiate configuration for two datatypes but block them at LoadModels.
+  // Initiate configuration for a datatype but block it at LoadModels.
   AddController(BOOKMARKS, true, true);
   SetConfigureStartExpectation();
   SetConfigureDoneExpectation(DataTypeManager::ABORTED, DataTypeStatusTable());
@@ -1762,6 +1772,178 @@ TEST_F(SyncDataTypeManagerImplTest, StopWithDisableSync) {
   EXPECT_EQ(DataTypeManager::STOPPED, dtm_->state());
   EXPECT_TRUE(configurer_.activated_types().Empty());
   EXPECT_EQ(1, GetController(BOOKMARKS)->clear_metadata_call_count());
+}
+
+TEST_F(SyncDataTypeManagerImplTest, PurgeDataOnStartingPersistent) {
+  AddController(BOOKMARKS);
+  AddController(AUTOFILL_WALLET_DATA);
+
+  // Configure as usual.
+  SetConfigureStartExpectation();
+  SetConfigureDoneExpectation(DataTypeManager::OK, DataTypeStatusTable());
+
+  Configure(ModelTypeSet(BOOKMARKS, AUTOFILL_WALLET_DATA), STORAGE_ON_DISK);
+  ASSERT_EQ(DataTypeManager::CONFIGURING, dtm_->state());
+
+  FinishDownload(ModelTypeSet(), ModelTypeSet());
+  FinishDownload(ModelTypeSet(BOOKMARKS, AUTOFILL_WALLET_DATA), ModelTypeSet());
+  ASSERT_EQ(DataTypeManager::CONFIGURING, dtm_->state());
+
+  GetController(BOOKMARKS)->FinishStart(DataTypeController::OK);
+  GetController(AUTOFILL_WALLET_DATA)->FinishStart(DataTypeController::OK);
+  ASSERT_EQ(DataTypeManager::CONFIGURED, dtm_->state());
+  ASSERT_EQ(2U, configurer_.activated_types().Size());
+
+  // The user temporarily turns off Sync.
+  dtm_->Stop(STOP_SYNC);
+  ASSERT_EQ(DataTypeManager::STOPPED, dtm_->state());
+  ASSERT_TRUE(configurer_.activated_types().Empty());
+  ASSERT_EQ(0, GetController(BOOKMARKS)->clear_metadata_call_count());
+
+  // Now we restart with a reduced set of data types.
+  SetConfigureStartExpectation();
+  SetConfigureDoneExpectation(DataTypeManager::OK, DataTypeStatusTable());
+  Configure(ModelTypeSet(AUTOFILL_WALLET_DATA), STORAGE_ON_DISK);
+  ASSERT_EQ(DataTypeManager::CONFIGURING, dtm_->state());
+
+  FinishDownload(ModelTypeSet(), ModelTypeSet());
+  FinishDownload(ModelTypeSet(AUTOFILL_WALLET_DATA), ModelTypeSet());
+  ASSERT_EQ(DataTypeManager::CONFIGURING, dtm_->state());
+
+  GetController(AUTOFILL_WALLET_DATA)->FinishStart(DataTypeController::OK);
+  ASSERT_EQ(DataTypeManager::CONFIGURED, dtm_->state());
+  ASSERT_EQ(1U, configurer_.activated_types().Size());
+
+  // This should have purged the data for the excluded type.
+  EXPECT_TRUE(last_configure_params().to_purge.Has(BOOKMARKS));
+  // Stop(CLEAR_METADATA) has *not* been called on the controller though; that
+  // happens only when stopping or reconfiguring, not when (re)starting without
+  // the type.
+  EXPECT_EQ(0, GetController(BOOKMARKS)->clear_metadata_call_count());
+}
+
+TEST_F(SyncDataTypeManagerImplTest, DontPurgeDataOnStartingEphemeral) {
+  AddController(BOOKMARKS);
+  AddController(AUTOFILL_WALLET_DATA);
+
+  // Configure as usual.
+  SetConfigureStartExpectation();
+  SetConfigureDoneExpectation(DataTypeManager::OK, DataTypeStatusTable());
+
+  Configure(ModelTypeSet(BOOKMARKS, AUTOFILL_WALLET_DATA), STORAGE_ON_DISK);
+  ASSERT_EQ(DataTypeManager::CONFIGURING, dtm_->state());
+
+  FinishDownload(ModelTypeSet(), ModelTypeSet());
+  FinishDownload(ModelTypeSet(BOOKMARKS, AUTOFILL_WALLET_DATA), ModelTypeSet());
+  ASSERT_EQ(DataTypeManager::CONFIGURING, dtm_->state());
+
+  GetController(BOOKMARKS)->FinishStart(DataTypeController::OK);
+  GetController(AUTOFILL_WALLET_DATA)->FinishStart(DataTypeController::OK);
+  ASSERT_EQ(DataTypeManager::CONFIGURED, dtm_->state());
+  ASSERT_EQ(2U, configurer_.activated_types().Size());
+
+  // The user temporarily turns off Sync.
+  dtm_->Stop(STOP_SYNC);
+  ASSERT_EQ(DataTypeManager::STOPPED, dtm_->state());
+  ASSERT_TRUE(configurer_.activated_types().Empty());
+  ASSERT_EQ(0, GetController(BOOKMARKS)->clear_metadata_call_count());
+
+  // Now we restart in ephemeral mode, with a reduced set of data types.
+  SetConfigureStartExpectation();
+  SetConfigureDoneExpectation(DataTypeManager::OK, DataTypeStatusTable());
+  Configure(ModelTypeSet(AUTOFILL_WALLET_DATA), STORAGE_IN_MEMORY);
+  ASSERT_EQ(DataTypeManager::CONFIGURING, dtm_->state());
+
+  FinishDownload(ModelTypeSet(), ModelTypeSet());
+  FinishDownload(ModelTypeSet(AUTOFILL_WALLET_DATA), ModelTypeSet());
+  ASSERT_EQ(DataTypeManager::CONFIGURING, dtm_->state());
+
+  GetController(AUTOFILL_WALLET_DATA)->FinishStart(DataTypeController::OK);
+  ASSERT_EQ(DataTypeManager::CONFIGURED, dtm_->state());
+  ASSERT_EQ(1U, configurer_.activated_types().Size());
+
+  // This should *not* have purged the data for the excluded type.
+  EXPECT_TRUE(last_configure_params().to_purge.Empty());
+  EXPECT_EQ(0, GetController(BOOKMARKS)->clear_metadata_call_count());
+}
+
+TEST_F(SyncDataTypeManagerImplTest, PurgeDataOnReconfiguringPersistent) {
+  AddController(BOOKMARKS);
+  AddController(AUTOFILL_WALLET_DATA);
+
+  // Configure as usual.
+  SetConfigureStartExpectation();
+  SetConfigureDoneExpectation(DataTypeManager::OK, DataTypeStatusTable());
+
+  Configure(ModelTypeSet(BOOKMARKS, AUTOFILL_WALLET_DATA), STORAGE_ON_DISK);
+  ASSERT_EQ(DataTypeManager::CONFIGURING, dtm_->state());
+
+  FinishDownload(ModelTypeSet(), ModelTypeSet());
+  FinishDownload(ModelTypeSet(BOOKMARKS, AUTOFILL_WALLET_DATA), ModelTypeSet());
+  ASSERT_EQ(DataTypeManager::CONFIGURING, dtm_->state());
+
+  GetController(BOOKMARKS)->FinishStart(DataTypeController::OK);
+  GetController(AUTOFILL_WALLET_DATA)->FinishStart(DataTypeController::OK);
+  ASSERT_EQ(DataTypeManager::CONFIGURED, dtm_->state());
+  ASSERT_EQ(2U, configurer_.activated_types().Size());
+
+  // Now we reconfigure with a reduced set of data types.
+  SetConfigureStartExpectation();
+  SetConfigureDoneExpectation(DataTypeManager::OK, DataTypeStatusTable());
+  Configure(ModelTypeSet(AUTOFILL_WALLET_DATA), STORAGE_ON_DISK);
+  ASSERT_EQ(DataTypeManager::CONFIGURING, dtm_->state());
+
+  FinishDownload(ModelTypeSet(), ModelTypeSet());
+  FinishDownload(ModelTypeSet(AUTOFILL_WALLET_DATA), ModelTypeSet());
+  ASSERT_EQ(DataTypeManager::CONFIGURED, dtm_->state());
+  ASSERT_EQ(1U, configurer_.activated_types().Size());
+
+  // This should have purged the data for the excluded type.
+  EXPECT_TRUE(last_configure_params().to_purge.Has(BOOKMARKS));
+  // Also Stop(CLEAR_METADATA) has been called on the controller since the type
+  // is no longer enabled.
+  EXPECT_EQ(1, GetController(BOOKMARKS)->clear_metadata_call_count());
+}
+
+TEST_F(SyncDataTypeManagerImplTest, DontPurgeDataOnReconfiguringEphemeral) {
+  AddController(BOOKMARKS);
+  AddController(AUTOFILL_WALLET_DATA);
+
+  // Configure as usual.
+  SetConfigureStartExpectation();
+  SetConfigureDoneExpectation(DataTypeManager::OK, DataTypeStatusTable());
+
+  Configure(ModelTypeSet(BOOKMARKS, AUTOFILL_WALLET_DATA), STORAGE_ON_DISK);
+  ASSERT_EQ(DataTypeManager::CONFIGURING, dtm_->state());
+
+  FinishDownload(ModelTypeSet(), ModelTypeSet());
+  FinishDownload(ModelTypeSet(BOOKMARKS, AUTOFILL_WALLET_DATA), ModelTypeSet());
+  ASSERT_EQ(DataTypeManager::CONFIGURING, dtm_->state());
+
+  GetController(BOOKMARKS)->FinishStart(DataTypeController::OK);
+  GetController(AUTOFILL_WALLET_DATA)->FinishStart(DataTypeController::OK);
+  ASSERT_EQ(DataTypeManager::CONFIGURED, dtm_->state());
+  ASSERT_EQ(2U, configurer_.activated_types().Size());
+
+  // Now we reconfigure into ephemeral mode, with a reduced set of data types.
+  SetConfigureStartExpectation();
+  SetConfigureDoneExpectation(DataTypeManager::OK, DataTypeStatusTable());
+  Configure(ModelTypeSet(AUTOFILL_WALLET_DATA), STORAGE_IN_MEMORY);
+  ASSERT_EQ(DataTypeManager::CONFIGURING, dtm_->state());
+
+  FinishDownload(ModelTypeSet(), ModelTypeSet());
+  FinishDownload(ModelTypeSet(AUTOFILL_WALLET_DATA), ModelTypeSet());
+  ASSERT_EQ(DataTypeManager::CONFIGURING, dtm_->state());
+
+  // Since the storage option has changed, the controller has to re-associate
+  // even though we didn't actually stop. So we have to call FinishStart again.
+  GetController(AUTOFILL_WALLET_DATA)->FinishStart(DataTypeController::OK);
+  ASSERT_EQ(DataTypeManager::CONFIGURED, dtm_->state());
+  ASSERT_EQ(1U, configurer_.activated_types().Size());
+
+  // This should *not* have cleared the data for the excluded type.
+  EXPECT_TRUE(last_configure_params().to_purge.Empty());
+  EXPECT_EQ(0, GetController(BOOKMARKS)->clear_metadata_call_count());
 }
 
 }  // namespace syncer

@@ -12,11 +12,11 @@
 #include <vector>
 
 #include "base/callback_forward.h"
+#include "base/component_export.h"
 #include "base/gtest_prod_util.h"
 #include "base/macros.h"
 #include "base/observer_list.h"
 #include "base/sequence_checker.h"
-#include "chromeos/chromeos_export.h"
 #include "chromeos/network/managed_state.h"
 #include "chromeos/network/network_handler.h"
 #include "chromeos/network/network_handler_callbacks.h"
@@ -25,7 +25,6 @@
 #include "chromeos/network/shill_property_handler.h"
 
 namespace base {
-class DictionaryValue;
 class ListValue;
 class Location;
 class Value;
@@ -61,7 +60,7 @@ class NetworkStateHandlerTest;
 //   the initial properties are received. The GUID will be consistent for
 //   the duration of a session, even if the network drops out and returns.
 
-class CHROMEOS_EXPORT NetworkStateHandler
+class COMPONENT_EXPORT(CHROMEOS_NETWORK) NetworkStateHandler
     : public internal::ShillPropertyHandler::Listener {
  public:
   typedef std::vector<std::unique_ptr<ManagedState>> ManagedStateList;
@@ -337,6 +336,11 @@ class CHROMEOS_EXPORT NetworkStateHandler
                                   uint32_t upload_rate_kbits,
                                   uint32_t download_rate_kbits);
 
+  // Sets the Fast Transition property. 802.11r Fast BSS Transition allows
+  // wireless Access Points to share information before a device initiates a
+  // reassociation. This allows devices to roam much more quickly.
+  void SetFastTransitionStatus(bool enabled);
+
   const std::string& GetCheckPortalListForTest() const {
     return check_portal_list_;
   }
@@ -397,10 +401,10 @@ class CHROMEOS_EXPORT NetworkStateHandler
 
   // Parses the properties for the network service or device. Mostly calls
   // managed->PropertyChanged(key, value) for each dictionary entry.
-  void UpdateManagedStateProperties(
-      ManagedState::ManagedType type,
-      const std::string& path,
-      const base::DictionaryValue& properties) override;
+  // |properties| is expected to be type DICTIONARY.
+  void UpdateManagedStateProperties(ManagedState::ManagedType type,
+                                    const std::string& path,
+                                    const base::Value& properties) override;
 
   // Called by ShillPropertyHandler when a watched service property changes.
   void UpdateNetworkServiceProperty(const std::string& service_path,
@@ -413,12 +417,11 @@ class CHROMEOS_EXPORT NetworkStateHandler
                             const base::Value& value) override;
 
   // Called by ShillPropertyHandler when a watched network or device
-  // IPConfig property changes.
-  void UpdateIPConfigProperties(
-      ManagedState::ManagedType type,
-      const std::string& path,
-      const std::string& ip_config_path,
-      const base::DictionaryValue& properties) override;
+  // IPConfig property changes. |properties| is expected to be type DICTIONARY.
+  void UpdateIPConfigProperties(ManagedState::ManagedType type,
+                                const std::string& path,
+                                const std::string& ip_config_path,
+                                const base::Value& properties) override;
 
   // Called by ShillPropertyHandler when the portal check list manager property
   // changes.
@@ -464,9 +467,9 @@ class CHROMEOS_EXPORT NetworkStateHandler
   void UpdateNetworkStats();
 
   // NetworkState specific method for UpdateManagedStateProperties which
-  // notifies observers.
+  // notifies observers. |properties| is expected to be type DICTIONARY.
   void UpdateNetworkStateProperties(NetworkState* network,
-                                    const base::DictionaryValue& properties);
+                                    const base::Value& properties);
 
   // Ensure a valid GUID for NetworkState.
   void UpdateGuid(NetworkState* network);
@@ -475,11 +478,17 @@ class CHROMEOS_EXPORT NetworkStateHandler
   // |hex_ssid_to_captive_portal_provider_map_|.
   void UpdateCaptivePortalProvider(NetworkState* network);
 
+  // Update networkState properties from the associated DeviceState.
+  void UpdateCellularStateFromDevice(NetworkState* network);
+
   // Cellular networks may not have an associated Shill Service (e.g. when the
-  // SIM is locked or a mobile network is not available). To simplify the UI,
-  // if a Cellular Device exists |cellular_networks| will be modified to contain
-  // exactly one network, creating a default network if necessary.
-  void EnsureCellularNetwork(ManagedStateList* cellular_networks);
+  // SIM is locked or a mobile network is not available). This returns a new
+  // default cellular network if necessary.
+  std::unique_ptr<NetworkState> MaybeCreateDefaultCellularNetwork();
+
+  // Removes the default Cellular network if it exists. Called when there is
+  // more than one Cellular network in the list.
+  void RemoveDefaultCellularNetwork();
 
   // Sends NetworkListChanged() to observers and logs an event.
   void NotifyNetworkListChanged();

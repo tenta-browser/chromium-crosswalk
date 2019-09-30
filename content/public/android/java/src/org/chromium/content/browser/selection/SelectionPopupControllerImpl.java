@@ -25,23 +25,26 @@ import android.text.style.CharacterStyle;
 import android.text.style.ParagraphStyle;
 import android.text.style.UpdateAppearance;
 import android.view.ActionMode;
+import android.view.HapticFeedbackConstants;
 import android.view.Menu;
 import android.view.MenuInflater;
 import android.view.MenuItem;
 import android.view.View;
-import android.view.ViewConfiguration;
 import android.view.ViewGroup;
 import android.view.WindowManager;
 import android.view.textclassifier.TextClassifier;
 
 import org.chromium.base.ApiCompatibilityUtils;
+import org.chromium.base.BuildInfo;
 import org.chromium.base.Log;
+import org.chromium.base.UserData;
 import org.chromium.base.VisibleForTesting;
 import org.chromium.base.annotations.CalledByNative;
 import org.chromium.base.annotations.JNINamespace;
+import org.chromium.base.compat.ApiHelperForM;
 import org.chromium.base.metrics.RecordUserAction;
 import org.chromium.content.R;
-import org.chromium.content.browser.ApiHelperForM;
+import org.chromium.content.browser.ContentApiHelperForM;
 import org.chromium.content.browser.ContentClassFactory;
 import org.chromium.content.browser.GestureListenerManagerImpl;
 import org.chromium.content.browser.PopupController;
@@ -51,7 +54,6 @@ import org.chromium.content.browser.WindowEventObserverManager;
 import org.chromium.content.browser.input.ImeAdapterImpl;
 import org.chromium.content.browser.webcontents.WebContentsImpl;
 import org.chromium.content.browser.webcontents.WebContentsImpl.UserDataFactory;
-import org.chromium.content.browser.webcontents.WebContentsUserData;
 import org.chromium.content_public.browser.ActionModeCallbackHelper;
 import org.chromium.content_public.browser.ImeEventObserver;
 import org.chromium.content_public.browser.SelectionClient;
@@ -70,10 +72,10 @@ import java.util.List;
  * Implementation of the interface {@link SelectionPopupController}.
  */
 @JNINamespace("content")
-@TargetApi(Build.VERSION_CODES.M)
+@TargetApi(Build.VERSION_CODES.LOLLIPOP)
 public class SelectionPopupControllerImpl extends ActionModeCallbackHelper
         implements ImeEventObserver, SelectionPopupController, WindowEventObserver, HideablePopup,
-                   ContainerViewObserver {
+                   ContainerViewObserver, UserData {
     private static final String TAG = "SelectionPopupCtlr"; // 20 char limit
 
     /**
@@ -98,7 +100,7 @@ public class SelectionPopupControllerImpl extends ActionModeCallbackHelper
     // A flag to determine if we should get readback view from WindowAndroid.
     // The readback view could be the ContainerView, which WindowAndroid has no control on that.
     // Embedders should set this properly to use the correct view for readback.
-    private static boolean sShouldGetReadbackViewFromWindowAndroid = false;
+    private static boolean sShouldGetReadbackViewFromWindowAndroid;
 
     private static final class UserDataFactoryLazyHolder {
         private static final UserDataFactory<SelectionPopupControllerImpl> INSTANCE =
@@ -140,6 +142,7 @@ public class SelectionPopupControllerImpl extends ActionModeCallbackHelper
     private boolean mUnselectAllOnDismiss;
     private String mLastSelectedText;
     private int mLastSelectionOffset;
+    private boolean mIsInHandleDragging;
 
     // Tracks whether a touch selection is currently active.
     private boolean mHasSelection;
@@ -199,8 +202,9 @@ public class SelectionPopupControllerImpl extends ActionModeCallbackHelper
      *         {@link #create()} is not called yet.
      */
     public static SelectionPopupControllerImpl fromWebContents(WebContents webContents) {
-        return WebContentsUserData.fromWebContents(webContents, SelectionPopupControllerImpl.class,
-                UserDataFactoryLazyHolder.INSTANCE);
+        return ((WebContentsImpl) webContents)
+                .getOrSetUserData(
+                        SelectionPopupControllerImpl.class, UserDataFactoryLazyHolder.INSTANCE);
     }
 
     /**
@@ -442,7 +446,7 @@ public class SelectionPopupControllerImpl extends ActionModeCallbackHelper
 
     private ActionMode startFloatingActionMode() {
         assert Build.VERSION.SDK_INT >= Build.VERSION_CODES.M;
-        ActionMode actionMode = ApiHelperForM.startActionMode(mView, this, mCallback);
+        ActionMode actionMode = ContentApiHelperForM.startActionMode(mView, this, mCallback);
         return actionMode;
     }
 
@@ -551,7 +555,7 @@ public class SelectionPopupControllerImpl extends ActionModeCallbackHelper
      */
     public void invalidateContentRect() {
         if (supportsFloatingActionMode() && isActionModeValid()) {
-            mActionMode.invalidateContentRect();
+            ApiHelperForM.invalidateContentRectOnActionMode(mActionMode);
         }
     }
 
@@ -560,7 +564,7 @@ public class SelectionPopupControllerImpl extends ActionModeCallbackHelper
     @Override
     public void onWindowFocusChanged(boolean gainFocus) {
         if (supportsFloatingActionMode() && isActionModeValid()) {
-            mActionMode.onWindowFocusChanged(gainFocus);
+            ApiHelperForM.onWindowFocusChangedOnActionMode(mActionMode, gainFocus);
         }
     }
 
@@ -652,18 +656,18 @@ public class SelectionPopupControllerImpl extends ActionModeCallbackHelper
     private void hideActionModeTemporarily(long duration) {
         assert isFloatingActionMode();
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            if (isActionModeValid()) mActionMode.hide(duration);
+            if (isActionModeValid()) ApiHelperForM.hideActionMode(mActionMode, duration);
         }
     }
 
     private boolean isFloatingActionMode() {
         return supportsFloatingActionMode() && isActionModeValid()
-                && mActionMode.getType() == ActionMode.TYPE_FLOATING;
+                && ApiHelperForM.getActionModeType(mActionMode) == ActionMode.TYPE_FLOATING;
     }
 
     private long getDefaultHideDuration() {
         if (supportsFloatingActionMode()) {
-            return ViewConfiguration.getDefaultActionModeHideDuration();
+            return ApiHelperForM.getDefaultActionModeHideDuration();
         }
         return 2000;
     }
@@ -1238,6 +1242,9 @@ public class SelectionPopupControllerImpl extends ActionModeCallbackHelper
             case SelectionEventType.SELECTION_HANDLES_MOVED:
                 mSelectionRect.set(left, top, right, bottom);
                 invalidateContentRect();
+                if (mIsInHandleDragging) {
+                    performHapticFeedback();
+                }
                 break;
 
             case SelectionEventType.SELECTION_HANDLES_CLEARED:
@@ -1253,6 +1260,7 @@ public class SelectionPopupControllerImpl extends ActionModeCallbackHelper
 
             case SelectionEventType.SELECTION_HANDLE_DRAG_STARTED:
                 hideActionMode(true);
+                mIsInHandleDragging = true;
                 break;
 
             case SelectionEventType.SELECTION_HANDLE_DRAG_STOPPED:
@@ -1260,6 +1268,7 @@ public class SelectionPopupControllerImpl extends ActionModeCallbackHelper
                 if (mHandleObserver != null) {
                     mHandleObserver.handleDragStopped();
                 }
+                mIsInHandleDragging = false;
                 break;
 
             case SelectionEventType.INSERTION_HANDLE_SHOWN:
@@ -1273,6 +1282,9 @@ public class SelectionPopupControllerImpl extends ActionModeCallbackHelper
                     showPastePopup();
                 } else {
                     destroyPastePopup();
+                }
+                if (mIsInHandleDragging) {
+                    performHapticFeedback();
                 }
                 break;
 
@@ -1295,6 +1307,7 @@ public class SelectionPopupControllerImpl extends ActionModeCallbackHelper
             case SelectionEventType.INSERTION_HANDLE_DRAG_STARTED:
                 mWasPastePopupShowingOnInsertionDragStart = isPastePopupShowing();
                 destroyPastePopup();
+                mIsInHandleDragging = true;
                 break;
 
             case SelectionEventType.INSERTION_HANDLE_DRAG_STOPPED:
@@ -1306,6 +1319,7 @@ public class SelectionPopupControllerImpl extends ActionModeCallbackHelper
                 if (mHandleObserver != null) {
                     mHandleObserver.handleDragStopped();
                 }
+                mIsInHandleDragging = false;
                 break;
 
             default:
@@ -1320,7 +1334,8 @@ public class SelectionPopupControllerImpl extends ActionModeCallbackHelper
         }
     }
 
-    private GestureListenerManagerImpl getGestureListenerManager() {
+    @VisibleForTesting
+    /* package */ GestureListenerManagerImpl getGestureListenerManager() {
         return GestureListenerManagerImpl.fromWebContents(mWebContents);
     }
 
@@ -1349,6 +1364,13 @@ public class SelectionPopupControllerImpl extends ActionModeCallbackHelper
             mPopupController = PopupController.fromWebContents(mWebContents);
         }
         return mPopupController;
+    }
+
+    @VisibleForTesting
+    /* package */ void performHapticFeedback() {
+        if (BuildInfo.isAtLeastQ()) {
+            mView.performHapticFeedback(HapticFeedbackConstants.TEXT_HANDLE_MOVE);
+        }
     }
 
     /**
@@ -1538,6 +1560,11 @@ public class SelectionPopupControllerImpl extends ActionModeCallbackHelper
         assert Build.VERSION.SDK_INT >= Build.VERSION_CODES.O;
         SelectionClient client = getSelectionClient();
         return client == null ? null : client.getCustomTextClassifier();
+    }
+
+    @CalledByNative
+    private void nativeSelectionPopupControllerDestroyed() {
+        mNativeSelectionPopupController = 0;
     }
 
     private native long nativeInit(WebContents webContents);

@@ -10,7 +10,7 @@ import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
-import static org.chromium.webapk.lib.client.WebApkVersion.CURRENT_SHELL_APK_VERSION;
+import static org.chromium.webapk.lib.client.WebApkVersion.REQUEST_UPDATE_FOR_SHELL_APK_VERSION;
 
 import android.content.Intent;
 import android.graphics.Bitmap;
@@ -30,8 +30,8 @@ import org.chromium.base.ApiCompatibilityUtils;
 import org.chromium.base.Callback;
 import org.chromium.base.CommandLine;
 import org.chromium.base.PathUtils;
+import org.chromium.base.task.test.CustomShadowAsyncTask;
 import org.chromium.base.test.BaseRobolectricTestRunner;
-import org.chromium.base.test.asynctask.CustomShadowAsyncTask;
 import org.chromium.blink_public.platform.WebDisplayMode;
 import org.chromium.chrome.browser.ShortcutHelper;
 import org.chromium.chrome.browser.tab.Tab;
@@ -77,6 +77,8 @@ public class WebApkUpdateManagerUnitTest {
     private static final int ORIENTATION = ScreenOrientationValues.DEFAULT;
     private static final long THEME_COLOR = 1L;
     private static final long BACKGROUND_COLOR = 2L;
+    private static final String SHARE_TARGET_ACTION = "/share_action.html";
+    private static final String SHARE_TARGET_PARAM_TITLE = "share_params_title";
 
     /** Different name than the one used in {@link defaultManifestData()}. */
     private static final String DIFFERENT_NAME = "Different Name";
@@ -182,6 +184,8 @@ public class WebApkUpdateManagerUnitTest {
         public int orientation;
         public long themeColor;
         public long backgroundColor;
+        public String shareTargetAction;
+        public String shareTargetParamTitle;
     }
 
     private static String getWebApkId(String packageName) {
@@ -222,7 +226,14 @@ public class WebApkUpdateManagerUnitTest {
         metaData.putString(
                 WebApkMetaDataKeys.ICON_URLS_AND_ICON_MURMUR2_HASHES, iconUrlsAndIconMurmur2Hashes);
 
-        WebApkTestHelper.registerWebApkWithMetaData(packageName, metaData);
+        Bundle shareTargetMetaData = new Bundle();
+        shareTargetMetaData.putString(
+                WebApkMetaDataKeys.SHARE_ACTION, manifestData.shareTargetAction);
+        shareTargetMetaData.putString(
+                WebApkMetaDataKeys.SHARE_PARAM_TITLE, manifestData.shareTargetParamTitle);
+
+        WebApkTestHelper.registerWebApkWithMetaData(
+                packageName, metaData, new Bundle[] {shareTargetMetaData});
     }
 
     private static ManifestData defaultManifestData() {
@@ -244,6 +255,8 @@ public class WebApkUpdateManagerUnitTest {
         manifestData.orientation = ORIENTATION;
         manifestData.themeColor = THEME_COLOR;
         manifestData.backgroundColor = BACKGROUND_COLOR;
+        manifestData.shareTargetAction = SHARE_TARGET_ACTION;
+        manifestData.shareTargetParamTitle = SHARE_TARGET_PARAM_TITLE;
         return manifestData;
     }
 
@@ -257,7 +270,10 @@ public class WebApkUpdateManagerUnitTest {
                 manifestData.shortName, manifestData.displayMode, manifestData.orientation, -1,
                 manifestData.themeColor, manifestData.backgroundColor, kPackageName, -1,
                 WEB_MANIFEST_URL, manifestData.startUrl, WebApkInfo.WebApkDistributor.BROWSER,
-                manifestData.iconUrlToMurmur2HashMap, false /* forceNavigation */);
+                manifestData.iconUrlToMurmur2HashMap,
+                new WebApkInfo.ShareTarget(manifestData.shareTargetAction,
+                        manifestData.shareTargetParamTitle, null, null),
+                false /* forceNavigation */, false /* useTransparentSplash */, null);
     }
 
     /**
@@ -347,7 +363,8 @@ public class WebApkUpdateManagerUnitTest {
      */
     private boolean checkUpdateNeededForFetchedManifest(
             ManifestData androidManifestData, ManifestData fetchedManifestData) {
-        registerWebApk(WEBAPK_PACKAGE_NAME, androidManifestData, CURRENT_SHELL_APK_VERSION);
+        registerWebApk(
+                WEBAPK_PACKAGE_NAME, androidManifestData, REQUEST_UPDATE_FOR_SHELL_APK_VERSION);
         mClockRule.advance(WebappDataStorage.UPDATE_INTERVAL);
 
         TestWebApkUpdateManager updateManager =
@@ -364,7 +381,8 @@ public class WebApkUpdateManagerUnitTest {
         PathUtils.setPrivateDataDirectorySuffix("chrome");
         CommandLine.init(null);
 
-        registerWebApk(WEBAPK_PACKAGE_NAME, defaultManifestData(), CURRENT_SHELL_APK_VERSION);
+        registerWebApk(
+                WEBAPK_PACKAGE_NAME, defaultManifestData(), REQUEST_UPDATE_FOR_SHELL_APK_VERSION);
 
         WebappRegistry.getInstance().register(getWebApkId(WEBAPK_PACKAGE_NAME),
                 new WebappRegistry.FetchWebappDataStorageCallback() {
@@ -545,7 +563,8 @@ public class WebApkUpdateManagerUnitTest {
      */
     @Test
     public void testShellApkOutOfDateNoWebManifest() {
-        registerWebApk(WEBAPK_PACKAGE_NAME, defaultManifestData(), CURRENT_SHELL_APK_VERSION - 1);
+        registerWebApk(WEBAPK_PACKAGE_NAME, defaultManifestData(),
+                REQUEST_UPDATE_FOR_SHELL_APK_VERSION - 1);
         mClockRule.advance(WebappDataStorage.UPDATE_INTERVAL);
 
         TestWebApkUpdateManager updateManager =
@@ -568,7 +587,8 @@ public class WebApkUpdateManagerUnitTest {
      */
     @Test
     public void testShellApkOutOfDateStillHasWebManifest() {
-        registerWebApk(WEBAPK_PACKAGE_NAME, defaultManifestData(), CURRENT_SHELL_APK_VERSION - 1);
+        registerWebApk(WEBAPK_PACKAGE_NAME, defaultManifestData(),
+                REQUEST_UPDATE_FOR_SHELL_APK_VERSION - 1);
         mClockRule.advance(WebappDataStorage.UPDATE_INTERVAL);
 
         TestWebApkUpdateManager updateManager =
@@ -658,7 +678,8 @@ public class WebApkUpdateManagerUnitTest {
     public void testUnboundWebApkDoesNotUpgrade() {
         ManifestData androidManifestData = defaultManifestData();
 
-        registerWebApk(UNBOUND_WEBAPK_PACKAGE_NAME, androidManifestData, CURRENT_SHELL_APK_VERSION);
+        registerWebApk(UNBOUND_WEBAPK_PACKAGE_NAME, androidManifestData,
+                REQUEST_UPDATE_FOR_SHELL_APK_VERSION);
         mClockRule.advance(WebappDataStorage.UPDATE_INTERVAL);
 
         TestWebApkUpdateManager updateManager =
@@ -666,6 +687,18 @@ public class WebApkUpdateManagerUnitTest {
         updateIfNeeded(UNBOUND_WEBAPK_PACKAGE_NAME, updateManager);
         assertFalse(updateManager.updateCheckStarted());
         assertFalse(updateManager.updateRequested());
+    }
+
+    /**
+     * Test that an upgrade is requested when the share target specified in the Web Manifest
+     * changes.
+     */
+    @Test
+    public void testShareTargetChangedShouldUpgrade() {
+        ManifestData oldData = defaultManifestData();
+        ManifestData fetchedData = defaultManifestData();
+        fetchedData.shareTargetAction = "/action2.html";
+        assertTrue(checkUpdateNeededForFetchedManifest(oldData, fetchedData));
     }
 
     /**
@@ -819,7 +852,8 @@ public class WebApkUpdateManagerUnitTest {
      */
     @Test
     public void testShellApkOutOfDate() {
-        registerWebApk(WEBAPK_PACKAGE_NAME, defaultManifestData(), CURRENT_SHELL_APK_VERSION - 1);
+        registerWebApk(WEBAPK_PACKAGE_NAME, defaultManifestData(),
+                REQUEST_UPDATE_FOR_SHELL_APK_VERSION - 1);
         TestWebApkUpdateManager updateManager =
                 new TestWebApkUpdateManager(getStorage(WEBAPK_PACKAGE_NAME));
 

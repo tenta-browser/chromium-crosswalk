@@ -50,6 +50,7 @@
 #include "mojo/core/embedder/scoped_ipc_support.h"
 #include "net/base/network_change_notifier.h"
 #include "net/url_request/url_fetcher.h"
+#include "services/network/public/cpp/network_switches.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/material_design/material_design_controller.h"
 #include "ui/base/resource/resource_bundle.h"
@@ -170,6 +171,8 @@ bool ServiceProcess::Initialize(base::OnceClosure quit_closure,
   // The NetworkChangeNotifier must be created after TaskScheduler because it
   // posts tasks to it.
   network_change_notifier_.reset(net::NetworkChangeNotifier::Create());
+  network_connection_tracker_ =
+      std::make_unique<InProcessNetworkConnectionTracker>();
 
   // Initialize the IO and FILE threads.
   base::Thread::Options options;
@@ -201,7 +204,7 @@ bool ServiceProcess::Initialize(base::OnceClosure quit_closure,
   service_prefs_->ReadPrefs();
 
   // This switch it required to run connector with test gaia.
-  if (command_line.HasSwitch(switches::kIgnoreUrlFetcherCertRequests))
+  if (command_line.HasSwitch(network::switches::kIgnoreUrlFetcherCertRequests))
     net::URLFetcher::SetIgnoreCertificateRequests(true);
 
   // Check if a locale override has been specified on the command-line.
@@ -363,7 +366,8 @@ mojo::ScopedMessagePipeHandle ServiceProcess::CreateChannelMessagePipe() {
 cloud_print::CloudPrintProxy* ServiceProcess::GetCloudPrintProxy() {
   if (!cloud_print_proxy_.get()) {
     cloud_print_proxy_.reset(new cloud_print::CloudPrintProxy());
-    cloud_print_proxy_->Initialize(service_prefs_.get(), this);
+    cloud_print_proxy_->Initialize(service_prefs_.get(), this,
+                                   network_connection_tracker_.get());
   }
   return cloud_print_proxy_.get();
 }

@@ -13,6 +13,7 @@
 #include "base/macros.h"
 #include "base/scoped_observer.h"
 #include "chrome/browser/page_load_metrics/page_load_metrics_observer.h"
+#include "chrome/common/page_load_metrics/page_load_metrics.mojom.h"
 #include "components/subresource_filter/content/browser/subresource_filter_observer.h"
 #include "components/subresource_filter/content/browser/subresource_filter_observer_manager.h"
 #include "components/subresource_filter/core/common/load_policy.h"
@@ -25,14 +26,6 @@ class AdsPageLoadMetricsObserver
     : public page_load_metrics::PageLoadMetricsObserver,
       public subresource_filter::SubresourceFilterObserver {
  public:
-  // The types of ads that one can filter on.
-  enum AdType {
-    AD_TYPE_GOOGLE = 0,
-    AD_TYPE_SUBRESOURCE_FILTER = 1,
-    AD_TYPE_ALL = 2,
-    AD_TYPE_MAX = AD_TYPE_ALL
-  };
-
   // The origin of the ad relative to the main frame's origin.
   // Note: Logged to UMA, keep in sync with CrossOriginAdStatus in enums.xml.
   //   Add new entries to the end, and do not renumber.
@@ -43,7 +36,25 @@ class AdsPageLoadMetricsObserver
     kMaxValue = kCross,
   };
 
-  using AdTypes = std::bitset<AD_TYPE_MAX>;
+  // High level categories of mime types for resources loaded by the page.
+  enum class ResourceMimeType {
+    kJavascript = 0,
+    kVideo = 1,
+    kImage = 2,
+    kCss = 3,
+    kHtml = 4,
+    kOther = 5,
+    kMaxValue = kOther,
+  };
+
+  // These values are persisted to logs. Entries should not be renumbered and
+  // numeric values should never be reused. For any additions, also update the
+  // corresponding PageEndReason enum in enums.xml.
+  enum class UserActivationStatus {
+    kNoActivation = 0,
+    kReceivedActivation = 1,
+    kMaxValue = kReceivedActivation
+  };
 
   // Returns a new AdsPageLoadMetricObserver. If the feature is disabled it
   // returns nullptr.
@@ -59,31 +70,40 @@ class AdsPageLoadMetricsObserver
   ObservePolicy OnCommit(content::NavigationHandle* navigation_handle,
                          ukm::SourceId source_id) override;
   void RecordAdFrameData(FrameTreeNodeId ad_id,
-                         AdTypes ad_types,
+                         bool is_adframe,
                          content::RenderFrameHost* ad_host,
                          bool frame_navigated);
   void OnDidFinishSubFrameNavigation(
       content::NavigationHandle* navigation_handle) override;
+  void OnDidInternalNavigationAbort(
+      content::NavigationHandle* navigation_handle) override;
   ObservePolicy FlushMetricsOnAppEnterBackground(
       const page_load_metrics::mojom::PageLoadTiming& timing,
       const page_load_metrics::PageLoadExtraInfo& extra_info) override;
-  void OnLoadedResource(const page_load_metrics::ExtraRequestCompleteInfo&
-                            extra_request_info) override;
   void OnComplete(const page_load_metrics::mojom::PageLoadTiming& timing,
                   const page_load_metrics::PageLoadExtraInfo& info) override;
+  void OnResourceDataUseObserved(
+      FrameTreeNodeId frame_tree_node_id,
+      const std::vector<page_load_metrics::mojom::ResourceDataUpdatePtr>&
+          resources) override;
+  void OnPageInteractive(
+      const page_load_metrics::mojom::PageLoadTiming& timing,
+      const page_load_metrics::PageLoadExtraInfo& extra_info) override;
+  void FrameReceivedFirstUserActivation(content::RenderFrameHost* rfh) override;
 
  private:
   struct AdFrameData {
     AdFrameData(FrameTreeNodeId frame_tree_node_id,
-                AdTypes ad_types,
                 AdOriginStatus origin_status,
                 bool frame_navigated);
+    // Total bytes used to load resources on the page, including headers.
     size_t frame_bytes;
-    size_t frame_bytes_uncached;
+    size_t frame_network_bytes;
+
     const FrameTreeNodeId frame_tree_node_id;
-    AdTypes ad_types;
     AdOriginStatus origin_status;
     bool frame_navigated;
+    UserActivationStatus user_activation_status;
   };
 
   // subresource_filter::SubresourceFilterObserver:
@@ -102,17 +122,39 @@ class AdsPageLoadMetricsObserver
   // This should only be called once per frame navigation, as the
   // SubresourceFilter detector clears its state about detected frames after
   // each call in order to free up memory.
-  AdTypes DetectAds(content::NavigationHandle* navigation_handle);
+  bool DetectAds(content::NavigationHandle* navigation_handle);
 
-  void ProcessLoadedResource(
-      const page_load_metrics::ExtraRequestCompleteInfo& extra_request_info);
+  void ProcessResourceForFrame(
+      FrameTreeNodeId frame_tree_node_id,
+      const page_load_metrics::mojom::ResourceDataUpdatePtr& resource);
 
-  void RecordHistograms();
-  void RecordHistogramsForType(int ad_type);
+  // Get the mime type of a resource. This only returns a subset of mime types,
+  // grouped at a higher level. For example, all video mime types return the
+  // same value.
+  ResourceMimeType GetResourceMimeType(
+      const page_load_metrics::mojom::ResourceDataUpdatePtr& resource);
+
+  // Update all of the per-resource page counters given a new resource data
+  // update. Updates |page_resources_| to reflect the new state of the resource.
+  // Called once per ResourceDataUpdate.
+  void UpdateResource(
+      FrameTreeNodeId frame_tree_node_id,
+      const page_load_metrics::mojom::ResourceDataUpdatePtr& resource);
+
+  // Records size of resources by mime type.
+  void RecordResourceMimeHistograms(
+      const page_load_metrics::mojom::ResourceDataUpdatePtr& resource);
+
+  // Records per-resource histograms.
+  void RecordResourceHistograms(
+      const page_load_metrics::mojom::ResourceDataUpdatePtr& resource);
+  void RecordPageResourceTotalHistograms(ukm::SourceId source_id);
+  void RecordHistograms(ukm::SourceId source_id);
+  void RecordHistogramsForAdTagging();
 
   // Checks to see if a resource is waiting for a navigation with the given
   // |frame_tree_node_id| to commit before it can be processed. If so, call
-  // OnLoadedResource for the delayed resource.
+  // OnResourceDataUpdate for the delayed resource.
   void ProcessOngoingNavigationResource(FrameTreeNodeId frame_tree_node_id);
 
   // Stores the size data of each ad frame. Pointed to by ad_frames_ so use a
@@ -134,11 +176,33 @@ class AdsPageLoadMetricsObserver
   // When the observer receives report of a document resource loading for a
   // sub-frame before the sub-frame commit occurs, hold onto the resource
   // request info (delay it) until the sub-frame commits.
-  std::map<FrameTreeNodeId, page_load_metrics::ExtraRequestCompleteInfo>
+  std::map<FrameTreeNodeId, page_load_metrics::mojom::ResourceDataUpdatePtr>
       ongoing_navigation_resources_;
 
+  // Maps a request_id for a blink resource to the metadata for the resource
+  // load. Only contains resources that have not completed loading.
+  std::map<int, page_load_metrics::mojom::ResourceDataUpdatePtr>
+      page_resources_;
+
+  // Tallies for bytes and counts observed in resource data updates for the
+  // entire page.
+  size_t page_ad_javascript_bytes_ = 0u;
+  size_t page_ad_video_bytes_ = 0u;
+  size_t page_ad_resource_bytes_ = 0u;
+  size_t page_main_frame_ad_resource_bytes_ = 0u;
+  uint32_t total_number_page_resources_ = 0;
+
+  // Time the page was committed.
+  base::Time time_commit_;
+
+  // Time the page was observed to be interactive.
+  base::Time time_interactive_;
+
+  // Total ad bytes loaded by the page since it was observed to be interactive.
+  size_t page_ad_resource_bytes_since_interactive_ = 0u;
+
   size_t page_bytes_ = 0u;
-  size_t uncached_page_bytes_ = 0u;
+  size_t page_network_bytes_ = 0u;
   bool committed_ = false;
 
   ScopedObserver<subresource_filter::SubresourceFilterObserverManager,

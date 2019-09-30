@@ -10,6 +10,7 @@ import android.os.Message;
 
 import org.chromium.chrome.browser.UrlConstants;
 import org.chromium.chrome.browser.device.DeviceClassManager;
+import org.chromium.chrome.browser.tab.Tab.TabHidingType;
 import org.chromium.chrome.browser.util.AccessibilityUtil;
 import org.chromium.components.dom_distiller.core.DomDistillerUrlUtils;
 import org.chromium.components.security_state.ConnectionSecurityLevel;
@@ -103,7 +104,7 @@ public class TabStateBrowserControlsVisibilityDelegate
             }
 
             @Override
-            public void onPageLoadFinished(Tab tab) {
+            public void onPageLoadFinished(Tab tab, String url) {
                 // Handle the case where a commit or prerender swap notification failed to arrive
                 // and the enable fullscreen message was never enqueued.
                 scheduleEnableFullscreenLoadDelayIfNecessary();
@@ -116,7 +117,7 @@ public class TabStateBrowserControlsVisibilityDelegate
             }
 
             @Override
-            public void onHidden(Tab tab) {
+            public void onHidden(Tab tab, @TabHidingType int type) {
                 cancelEnableFullscreenLoadDelay();
             }
 

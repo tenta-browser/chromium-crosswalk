@@ -32,6 +32,10 @@ struct NonNestable {};
 // To obtain a TaskRunner for the UI thread (analogous for the IO thread):
 //     base::CreateSingleThreadTaskRunnerWithTraits({BrowserThread::UI});
 //
+// Tasks posted to the same BrowserThread with the same traits will be executed
+// in the order they were posted, regardless of the TaskRunners they were
+// posted via.
+//
 // See //base/task/post_task.h for more detailed documentation.
 //
 // Posting to a BrowserThread must only be done after it was initialized (ref.
@@ -41,9 +45,11 @@ class CONTENT_EXPORT BrowserTaskTraitsExtension {
   static constexpr uint8_t kExtensionId =
       base::TaskTraitsExtensionStorage::kFirstEmbedderExtensionId;
 
-  struct ValidTrait {
-    ValidTrait(BrowserThread::ID) {}
-    ValidTrait(NonNestable) {}
+  struct ValidTrait : public base::TaskTraits::ValidTrait {
+    using base::TaskTraits::ValidTrait::ValidTrait;
+
+    ValidTrait(BrowserThread::ID);
+    ValidTrait(NonNestable);
   };
 
   template <
@@ -51,13 +57,11 @@ class CONTENT_EXPORT BrowserTaskTraitsExtension {
       class CheckArgumentsAreValid = std::enable_if_t<
           base::trait_helpers::AreValidTraits<ValidTrait, ArgTypes...>::value>>
   constexpr BrowserTaskTraitsExtension(ArgTypes... args)
-      : browser_thread_(base::trait_helpers::GetValueFromArgList(
-            base::trait_helpers::RequiredEnumArgGetter<BrowserThread::ID>(),
-            args...)),
-        nestable_(!base::trait_helpers::GetValueFromArgList(
-            base::trait_helpers::BooleanArgGetter<NonNestable>(),
-            args...)) {}
+      : browser_thread_(
+            base::trait_helpers::GetEnum<BrowserThread::ID>(args...)),
+        nestable_(!base::trait_helpers::HasTrait<NonNestable>(args...)) {}
 
+  // Keep in sync with UiThreadTaskTraits.java
   constexpr base::TaskTraitsExtensionStorage Serialize() const {
     static_assert(8 == sizeof(BrowserTaskTraitsExtension),
                   "Update Serialize() and Parse() when changing "

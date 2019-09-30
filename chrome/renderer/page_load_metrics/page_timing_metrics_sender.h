@@ -17,6 +17,8 @@
 #include "third_party/blink/public/platform/web_feature.mojom-shared.h"
 #include "third_party/blink/public/platform/web_loading_behavior_flag.h"
 
+class GURL;
+
 namespace base {
 class OneShotTimer;
 }  // namespace base
@@ -44,14 +46,21 @@ class PageTimingMetricsSender {
   void DidObserveLoadingBehavior(blink::WebLoadingBehaviorFlag behavior);
   void DidObserveNewFeatureUsage(blink::mojom::WebFeature feature);
   void DidObserveNewCssPropertyUsage(int css_property, bool is_animated);
-  void DidStartResponse(int resource_id,
-                        const network::ResourceResponseHead& response_head);
+  void DidObserveLayoutJank(double jank_fraction);
+  void DidStartResponse(const GURL& response_url,
+                        int resource_id,
+                        const network::ResourceResponseHead& response_head,
+                        content::ResourceType resource_type);
   void DidReceiveTransferSizeUpdate(int resource_id, int received_data_length);
   void DidCompleteResponse(int resource_id,
                            const network::URLLoaderCompletionStatus& status);
   void DidCancelResponse(int resource_id);
 
   void Send(mojom::PageLoadTimingPtr timing);
+
+  void UpdateResourceMetadata(int resource_id,
+                              bool is_ad_resource,
+                              bool is_main_frame_resource);
 
  protected:
   base::OneShotTimer* timer() const { return timer_.get(); }
@@ -71,6 +80,7 @@ class PageTimingMetricsSender {
   // A list of newly observed features during page load, to be sent to the
   // browser.
   mojom::PageLoadFeaturesPtr new_features_;
+  mojom::PageRenderData render_data_;
 
   std::bitset<static_cast<size_t>(blink::mojom::WebFeature::kNumberOfFeatures)>
       features_sent_;
@@ -83,7 +93,7 @@ class PageTimingMetricsSender {
 
   // The page's resources that are currently loading,  or were completed after
   // the last timing update.
-  base::small_map<std::map<int, PageResourceDataUse>, 16>
+  base::small_map<std::map<int, std::unique_ptr<PageResourceDataUse>>, 16>
       page_resource_data_use_;
 
   // Set of all resources that have completed or received a transfer

@@ -11,6 +11,7 @@ import android.support.v4.util.ArrayMap;
 import android.text.TextUtils;
 import android.util.SparseArray;
 
+import com.google.android.gms.cast.ApplicationMetadata;
 import com.google.android.gms.common.api.PendingResult;
 import com.google.android.gms.common.api.Status;
 
@@ -70,9 +71,7 @@ public class CafMessageHandler {
     private ArrayMap<String, Queue<Integer>> mStopRequests;
     private Queue<RequestRecord> mVolumeRequests;
 
-    // The reference to CastSession, only valid after calling {@link onSessionCreated}, and will be
-    // reset to null when calling {@link onApplicationStopped}.
-    private CastSessionController mSessionController;
+    private final CastSessionController mSessionController;
     private final CafMediaRouteProvider mRouteProvider;
     private Handler mHandler;
 
@@ -95,10 +94,12 @@ public class CafMessageHandler {
      * @param session  The {@link CastSession} for communicating with the Cast SDK.
      * @param provider The {@link CafMediaRouteProvider} for communicating with the page.
      */
-    public CafMessageHandler(CafMediaRouteProvider provider) {
+    public CafMessageHandler(
+            CafMediaRouteProvider provider, CastSessionController sessionController) {
         mRouteProvider = provider;
         mRequests = new SparseArray<RequestRecord>();
         mStopRequests = new ArrayMap<String, Queue<Integer>>();
+        mSessionController = sessionController;
         mVolumeRequests = new ArrayDeque<RequestRecord>();
         mHandler = new Handler();
 
@@ -141,15 +142,12 @@ public class CafMessageHandler {
      * Set the session when a session is started, and notify all clients that are not connected.
      * @param session The newly created session.
      */
-    public void onSessionStarted(CastSessionController sessionController) {
-        mSessionController = sessionController;
+    public void onSessionStarted() {
         for (ClientRecord client : mRouteProvider.getClientIdToRecords().values()) {
             if (!client.isConnected) continue;
 
             notifySessionConnectedToClient(client.clientId);
         }
-        // TODO(zqzhang): Register namespaces.
-        // TODO(zqzhang): Request media status.
     }
 
     /** Notify a client that a session has connected. */
@@ -217,47 +215,50 @@ public class CafMessageHandler {
         if (clientId == null || !mSessionController.isConnected()) return false;
 
         String sessionId = jsonMessage.getString("message");
-        if (!mSessionController.getSession().getSessionId().equals(sessionId)) return false;
+        if (!mSessionController.getSessionId().equals(sessionId)) return false;
 
-        ClientRecord leavingClient = mRouteProvider.getClientIdToRecords().get(clientId);
-        if (leavingClient == null) return false;
+        ClientRecord currentClient = mRouteProvider.getClientIdToRecords().get(clientId);
+        if (currentClient == null) return false;
 
         int sequenceNumber = jsonMessage.optInt("sequenceNumber", VOID_SEQUENCE_NUMBER);
-        mRouteProvider.sendMessageToClient(clientId,
-                buildSimpleSessionMessage("leave_session", sequenceNumber, clientId, null));
 
-        // Send a "disconnect_session" message to all the clients that match with the leaving
-        // client's auto join policy.
+        // The web sender SDK doesn't actually recognize "leave_session" response, but this is to
+        // acknowledge the "leave_session" request.
+        mRouteProvider.sendMessageToClient(
+                clientId, buildSimpleSessionMessage("leave_session", sequenceNumber, clientId));
+
+        List<ClientRecord> leavingClients = new ArrayList<>();
+
         for (ClientRecord client : mRouteProvider.getClientIdToRecords().values()) {
             boolean shouldNotifyClient = false;
-            if (CastMediaSource.AUTOJOIN_TAB_AND_ORIGIN_SCOPED.equals(leavingClient.autoJoinPolicy)
-                    && isSameOrigin(client.origin, leavingClient.origin)
-                    && client.tabId == leavingClient.tabId) {
+            if (CastMediaSource.AUTOJOIN_TAB_AND_ORIGIN_SCOPED.equals(currentClient.autoJoinPolicy)
+                    && isSameOrigin(client.origin, currentClient.origin)
+                    && client.tabId == currentClient.tabId) {
                 shouldNotifyClient = true;
-            }
-            if (CastMediaSource.AUTOJOIN_ORIGIN_SCOPED.equals(leavingClient.autoJoinPolicy)
-                    && isSameOrigin(client.origin, leavingClient.origin)) {
+            } else if (CastMediaSource.AUTOJOIN_ORIGIN_SCOPED.equals(currentClient.autoJoinPolicy)
+                    && isSameOrigin(client.origin, currentClient.origin)) {
                 shouldNotifyClient = true;
             }
             if (shouldNotifyClient) {
-                mRouteProvider.sendMessageToClient(client.clientId,
-                        buildSimpleSessionMessage("disconnect_session", VOID_SEQUENCE_NUMBER,
-                                client.clientId, sessionId));
+                leavingClients.add(client);
             }
+        }
+
+        for (ClientRecord client : leavingClients) {
+            mRouteProvider.removeRoute(client.routeId, /* error= */ null);
         }
 
         return true;
     }
 
     /** Builds a simple message for session-related events. */
-    private String buildSimpleSessionMessage(
-            String type, int sequenceNumber, String clientId, String message) throws JSONException {
+    private String buildSimpleSessionMessage(String type, int sequenceNumber, String clientId)
+            throws JSONException {
         JSONObject jsonMessage = new JSONObject();
         jsonMessage.put("type", type);
         jsonMessage.put("sequenceNumber", sequenceNumber);
         jsonMessage.put("timeoutMillis", TIMEOUT_IMMEDIATE);
         jsonMessage.put("clientId", clientId);
-        jsonMessage.put("message", message);
         return jsonMessage.toString();
     }
 
@@ -411,7 +412,7 @@ public class CafMessageHandler {
 
         JSONObject jsonAppMessageWrapper = jsonMessage.getJSONObject("message");
 
-        if (!mSessionController.getSession().getSessionId().equals(
+        if (!mSessionController.getSessionId().equals(
                     jsonAppMessageWrapper.getString("sessionId"))) {
             return false;
         }
@@ -438,7 +439,7 @@ public class CafMessageHandler {
     @VisibleForTesting
     boolean sendJsonCastMessage(JSONObject message, final String namespace, final String clientId,
             final int sequenceNumber) throws JSONException {
-        if (mSessionController == null || !mSessionController.isConnected()) return false;
+        if (!mSessionController.isConnected()) return false;
 
         removeNullFields(message);
 
@@ -495,8 +496,6 @@ public class CafMessageHandler {
      */
     @VisibleForTesting
     void onMediaMessage(String message, RequestRecord request) {
-        mSessionController.updateRemoteMediaClient(message);
-
         if (isMediaStatusMessage(message)) {
             // MEDIA_STATUS needs to be sent to all the clients.
             for (String clientId : mRouteProvider.getClientIdToRecords().keySet()) {
@@ -521,7 +520,7 @@ public class CafMessageHandler {
     void onAppMessage(String message, String namespace, RequestRecord request) {
         try {
             JSONObject jsonMessage = new JSONObject();
-            jsonMessage.put("sessionId", mSessionController.getSession().getSessionId());
+            jsonMessage.put("sessionId", mSessionController.getSessionId());
             jsonMessage.put("namespaceName", namespace);
             jsonMessage.put("message", message);
             if (request != null) {
@@ -536,24 +535,23 @@ public class CafMessageHandler {
     }
 
     /**
-     * Notifies the application has stopped to all requesting clients.
+     * Notifies the session has stopped to all requesting clients.
      */
-    public void onApplicationStopped() {
+    public void onSessionEnded() {
         for (String clientId : mRouteProvider.getClientIdToRecords().keySet()) {
             Queue<Integer> sequenceNumbersForClient = mStopRequests.get(clientId);
             if (sequenceNumbersForClient == null) {
                 sendEnclosedMessageToClient(clientId, "remove_session",
-                        mSessionController.getSession().getSessionId(), VOID_SEQUENCE_NUMBER);
+                        mSessionController.getSessionId(), VOID_SEQUENCE_NUMBER);
                 continue;
             }
 
             for (int sequenceNumber : sequenceNumbersForClient) {
                 sendEnclosedMessageToClient(clientId, "remove_session",
-                        mSessionController.getSession().getSessionId(), sequenceNumber);
+                        mSessionController.getSessionId(), sequenceNumber);
             }
             mStopRequests.remove(clientId);
         }
-        mSessionController = null;
     }
 
     /**
@@ -659,7 +657,7 @@ public class CafMessageHandler {
      * @return A message containing the information of the {@link CastSession}.
      */
     public String buildSessionMessage() {
-        if (mSessionController == null || !mSessionController.isConnected()) return "{}";
+        if (!mSessionController.isConnected()) return "{}";
 
         try {
             // "volume" is a part of "receiver" initialized below.
@@ -688,15 +686,22 @@ public class CafMessageHandler {
             }
 
             JSONObject jsonMessage = new JSONObject();
-            jsonMessage.put("sessionId", mSessionController.getSession().getSessionId());
+            jsonMessage.put("sessionId", mSessionController.getSessionId());
             jsonMessage.put("statusText", mSessionController.getSession().getApplicationStatus());
             jsonMessage.put("receiver", jsonReceiver);
             jsonMessage.put("namespaces", jsonNamespaces);
             jsonMessage.put("media", toJSONArray(new ArrayList<>()));
             jsonMessage.put("status", "connected");
             jsonMessage.put("transportId", "web-4");
-            jsonMessage.put("appId",
-                    mSessionController.getSession().getApplicationMetadata().getApplicationId());
+
+            ApplicationMetadata applicationMetadata =
+                    mSessionController.getSession().getApplicationMetadata();
+            if (applicationMetadata != null) {
+                jsonMessage.put("appId", applicationMetadata.getApplicationId());
+            } else {
+                jsonMessage.put("appId",
+                        mSessionController.getRouteCreationInfo().source.getApplicationId());
+            }
             jsonMessage.put("displayName",
                     mSessionController.getSession().getCastDevice().getFriendlyName());
 
@@ -714,12 +719,12 @@ public class CafMessageHandler {
      * Modifies the received MediaStatus message to match the format expected by the client.
      */
     private void sanitizeMediaStatusMessage(JSONObject object) throws JSONException {
-        object.put("sessionId", mSessionController.getSession().getSessionId());
+        object.put("sessionId", mSessionController.getSessionId());
 
         JSONArray mediaStatus = object.getJSONArray("status");
         for (int i = 0; i < mediaStatus.length(); ++i) {
             JSONObject status = mediaStatus.getJSONObject(i);
-            status.put("sessionId", mSessionController.getSession().getSessionId());
+            status.put("sessionId", mSessionController.getSessionId());
             if (!status.has("supportedMediaCommands")) continue;
 
             JSONArray commands = new JSONArray();
@@ -776,9 +781,9 @@ public class CafMessageHandler {
         return result;
     }
 
-    private boolean sendStringCastMessage(
+    boolean sendStringCastMessage(
             String message, String namespace, String clientId, int sequenceNumber) {
-        if (mSessionController == null || !mSessionController.isConnected()) return false;
+        if (!mSessionController.isConnected()) return false;
 
         PendingResult<Status> pendingResult =
                 mSessionController.getSession().sendMessage(namespace, message);
@@ -795,7 +800,7 @@ public class CafMessageHandler {
      * @param clientId The client id the message is sent from.
      * @param sequenceNumber The sequence number of the message.
      */
-    private void onSendAppMessageResult(Status result, String clientId, int sequenceNumber) {
+    void onSendAppMessageResult(Status result, String clientId, int sequenceNumber) {
         if (!result.isSuccess()) {
             // TODO(avayvod): should actually report back to the page.
             // See https://crbug.com/550445.

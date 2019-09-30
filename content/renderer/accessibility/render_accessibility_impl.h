@@ -5,9 +5,9 @@
 #ifndef CONTENT_RENDERER_ACCESSIBILITY_RENDER_ACCESSIBILITY_IMPL_H_
 #define CONTENT_RENDERER_ACCESSIBILITY_RENDER_ACCESSIBILITY_IMPL_H_
 
+#include <unordered_map>
 #include <vector>
 
-#include "base/containers/hash_tables.h"
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "content/common/ax_content_node_data.h"
@@ -80,7 +80,8 @@ class CONTENT_EXPORT RenderAccessibilityImpl
 
   // Called when an accessibility notification occurs in Blink.
   void HandleWebAccessibilityEvent(const blink::WebAXObject& obj,
-                                   blink::WebAXEvent event);
+                                   ax::mojom::Event event);
+  void MarkWebAXObjectDirty(const blink::WebAXObject& obj, bool subtree);
 
   // Called when a new find in page result is highlighted.
   void HandleAccessibilityFindInPageResult(
@@ -131,7 +132,12 @@ class CONTENT_EXPORT RenderAccessibilityImpl
   void OnLoadInlineTextBoxes(const blink::WebAXObject& obj);
   void OnGetImageData(const blink::WebAXObject& obj, const gfx::Size& max_size);
   void AddPluginTreeToUpdate(AXContentTreeUpdate* update);
+  void Scroll(const blink::WebAXObject& target,
+              ax::mojom::Action scroll_action);
   void ScrollPlugin(int id_to_make_visible);
+  ax::mojom::EventFrom GetEventFrom();
+  void ScheduleSendAccessibilityEventsIfNeeded();
+  void RecordImageMetrics(AXContentTreeUpdate* update);
 
   // The RenderFrameImpl that owns us.
   RenderFrameImpl* render_frame_;
@@ -142,6 +148,11 @@ class CONTENT_EXPORT RenderAccessibilityImpl
   // Events from Blink are collected until they are ready to be
   // sent to the browser.
   std::vector<ui::AXEvent> pending_events_;
+
+  // Objects that need to be re-serialized, the next time
+  // we send an event bundle to the browser - but don't specifically need
+  // an event fired.
+  std::vector<DirtyObject> dirty_objects_;
 
   // The adapter that exposes Blink's accessibility tree to AXTreeSerializer.
   BlinkAXTreeSource tree_source_;
@@ -160,7 +171,7 @@ class CONTENT_EXPORT RenderAccessibilityImpl
   PluginAXTreeSource* plugin_tree_source_;
 
   // Current location of every object, so we can detect when it moves.
-  base::hash_map<int, ui::AXRelativeBounds> locations_;
+  std::unordered_map<int, ui::AXRelativeBounds> locations_;
 
   // The most recently observed scroll offset of the root document element.
   // TODO(dmazzoni): remove once https://bugs.webkit.org/show_bug.cgi?id=73460

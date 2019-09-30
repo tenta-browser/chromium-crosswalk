@@ -554,6 +554,7 @@ TEST_F(MediaEngagementSessionTest, CommitPendingData_UpdatePlaybackWhenNeeded) {
   EXPECT_TRUE(HasPendingMediaElementPlaybackToCommitForSession(session.get()));
   CommitPendingDataForSession(session.get());
 
+  ++expected_playbacks;
   {
     MediaEngagementScore score =
         service()->CreateEngagementScore(origin().GetURL());
@@ -707,6 +708,10 @@ TEST_F(MediaEngagementSessionTest, RecordUkmMetrics) {
 
     auto* ukm_entry = ukm_entries[0];
     test_ukm_recorder().ExpectEntrySourceHasUrl(ukm_entry, origin().GetURL());
+    EXPECT_EQ(0, *test_ukm_recorder().GetEntryMetric(
+                     ukm_entry, Entry::kPlaybacks_AudioContextTotalName));
+    EXPECT_EQ(1, *test_ukm_recorder().GetEntryMetric(
+                     ukm_entry, Entry::kPlaybacks_MediaElementTotalName));
     EXPECT_EQ(1, *test_ukm_recorder().GetEntryMetric(
                      ukm_entry, Entry::kPlaybacks_TotalName));
     EXPECT_EQ(1, *test_ukm_recorder().GetEntryMetric(ukm_entry,
@@ -733,8 +738,7 @@ TEST_F(MediaEngagementSessionTest, RecordUkmMetrics) {
                      ukm_entry, Entry::kEngagement_IsHigh_ChangedName));
   }
 
-  SetSignificantMediaElementPlaybackRecordedForSession(session.get(), false);
-  session->RecordSignificantMediaElementPlayback();
+  session->RecordSignificantAudioContextPlayback();
   CommitPendingDataForSession(session.get());
 
   RecordUkmMetricsForSession(session.get());
@@ -745,6 +749,10 @@ TEST_F(MediaEngagementSessionTest, RecordUkmMetrics) {
 
     auto* ukm_entry = ukm_entries[1];
     test_ukm_recorder().ExpectEntrySourceHasUrl(ukm_entry, origin().GetURL());
+    EXPECT_EQ(1, *test_ukm_recorder().GetEntryMetric(
+                     ukm_entry, Entry::kPlaybacks_AudioContextTotalName));
+    EXPECT_EQ(1, *test_ukm_recorder().GetEntryMetric(
+                     ukm_entry, Entry::kPlaybacks_MediaElementTotalName));
     EXPECT_EQ(2, *test_ukm_recorder().GetEntryMetric(
                      ukm_entry, Entry::kPlaybacks_TotalName));
     EXPECT_EQ(1, *test_ukm_recorder().GetEntryMetric(ukm_entry,

@@ -87,7 +87,6 @@ namespace autoplay {
 MEDIA_EXPORT extern const char kDocumentUserActivationRequiredPolicy[];
 MEDIA_EXPORT extern const char kNoUserGestureRequiredPolicy[];
 MEDIA_EXPORT extern const char kUserGestureRequiredPolicy[];
-MEDIA_EXPORT extern const char kUserGestureRequiredForCrossOriginPolicy[];
 
 }  // namespace autoplay
 
@@ -98,43 +97,49 @@ namespace media {
 // All features in alphabetical order. The features should be documented
 // alongside the definition of their values in the .cc file.
 
+MEDIA_EXPORT extern const base::Feature kAudioFocusDuckFlash;
 MEDIA_EXPORT extern const base::Feature kAutoplayIgnoreWebAudio;
-MEDIA_EXPORT extern const base::Feature kAutoplaySoundSettings;
-MEDIA_EXPORT extern const base::Feature kAv1Decoder;
+MEDIA_EXPORT extern const base::Feature kAutoplayDisableSettings;
+MEDIA_EXPORT extern const base::Feature kAutoplayWhitelistSettings;
+MEDIA_EXPORT extern const base::Feature kBackgroundSrcVideoTrackOptimization;
 MEDIA_EXPORT extern const base::Feature kBackgroundVideoPauseOptimization;
-MEDIA_EXPORT extern const base::Feature kBackgroundVideoTrackOptimization;
 MEDIA_EXPORT extern const base::Feature kD3D11VideoDecoder;
 MEDIA_EXPORT extern const base::Feature kExternalClearKeyForTesting;
+MEDIA_EXPORT extern const base::Feature kFallbackAfterDecodeError;
+MEDIA_EXPORT extern const base::Feature kHardwareMediaKeyHandling;
 MEDIA_EXPORT extern const base::Feature kHardwareSecureDecryption;
+MEDIA_EXPORT extern const base::Feature kInternalMediaSession;
 MEDIA_EXPORT extern const base::Feature kLowDelayVideoRenderingOnLiveStream;
+MEDIA_EXPORT extern const base::Feature kMediaCapabilitiesWithParameters;
 MEDIA_EXPORT extern const base::Feature kMediaCastOverlayButton;
-MEDIA_EXPORT extern const base::Feature kRecordMediaEngagementScores;
-MEDIA_EXPORT extern const base::Feature kRecordWebAudioEngagement;
 MEDIA_EXPORT extern const base::Feature kMediaEngagementBypassAutoplayPolicies;
+MEDIA_EXPORT extern const base::Feature kMediaLearningExperiment;
 MEDIA_EXPORT extern const base::Feature kMemoryPressureBasedSourceBufferGC;
 MEDIA_EXPORT extern const base::Feature kMojoVideoDecoder;
 MEDIA_EXPORT extern const base::Feature kMseBufferByPts;
-MEDIA_EXPORT extern const base::Feature kNewAudioRenderingMixingStrategy;
 MEDIA_EXPORT extern const base::Feature kNewEncodeCpuLoadEstimator;
 MEDIA_EXPORT extern const base::Feature kNewRemotePlaybackPipeline;
 MEDIA_EXPORT extern const base::Feature kOverflowIconsForMediaControls;
 MEDIA_EXPORT extern const base::Feature kOverlayFullscreenVideo;
 MEDIA_EXPORT extern const base::Feature kPictureInPicture;
 MEDIA_EXPORT extern const base::Feature kPreloadMediaEngagementData;
+MEDIA_EXPORT extern const base::Feature kPreloadMetadataLazyLoad;
 MEDIA_EXPORT extern const base::Feature kPreloadMetadataSuspend;
+MEDIA_EXPORT extern const base::Feature kRTCVideoDecoderAdapter;
+MEDIA_EXPORT extern const base::Feature kRecordMediaEngagementScores;
+MEDIA_EXPORT extern const base::Feature kRecordWebAudioEngagement;
 MEDIA_EXPORT extern const base::Feature kResumeBackgroundVideo;
 MEDIA_EXPORT extern const base::Feature kSpecCompliantCanPlayThrough;
+MEDIA_EXPORT extern const base::Feature kUnifiedAutoplay;
 MEDIA_EXPORT extern const base::Feature kUseAndroidOverlay;
 MEDIA_EXPORT extern const base::Feature kUseAndroidOverlayAggressively;
+MEDIA_EXPORT extern const base::Feature kUseModernMediaControls;
 MEDIA_EXPORT extern const base::Feature kUseNewMediaCache;
 MEDIA_EXPORT extern const base::Feature kUseR16Texture;
+MEDIA_EXPORT extern const base::Feature kUseSurfaceLayerForVideo;
+MEDIA_EXPORT extern const base::Feature kUseSurfaceLayerForVideoPIP;
 MEDIA_EXPORT extern const base::Feature kVaapiVP8Encoder;
 MEDIA_EXPORT extern const base::Feature kVideoBlitColorAccuracy;
-MEDIA_EXPORT extern const base::Feature kUnifiedAutoplay;
-MEDIA_EXPORT extern const base::Feature kUseSurfaceLayerForVideo;
-MEDIA_EXPORT extern const base::Feature kUseSurfaceLayerForVideoMS;
-MEDIA_EXPORT extern const base::Feature kUseSurfaceLayerForVideoPIP;
-MEDIA_EXPORT extern const base::Feature kUseModernMediaControls;
 
 #if defined(OS_ANDROID)
 MEDIA_EXPORT extern const base::Feature kMediaControlsExpandGesture;

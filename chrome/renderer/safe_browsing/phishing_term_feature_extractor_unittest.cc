@@ -9,10 +9,10 @@
 
 #include <memory>
 #include <string>
+#include <unordered_set>
 
 #include "base/bind.h"
 #include "base/callback.h"
-#include "base/containers/hash_tables.h"
 #include "base/location.h"
 #include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
@@ -40,7 +40,7 @@ namespace safe_browsing {
 class PhishingTermFeatureExtractorTest : public ::testing::Test {
  protected:
   void SetUp() override {
-    base::hash_set<std::string> terms;
+    std::unordered_set<std::string> terms;
     terms.insert("one");
     terms.insert("one one");
     terms.insert("two");
@@ -54,12 +54,11 @@ class PhishingTermFeatureExtractorTest : public ::testing::Test {
     // Chinese (translation of "goodbye")
     terms.insert("\xe5\x86\x8d\xe8\xa7\x81");
 
-    for (base::hash_set<std::string>::iterator it = terms.begin();
-         it != terms.end(); ++it) {
+    for (auto it = terms.begin(); it != terms.end(); ++it) {
       term_hashes_.insert(crypto::SHA256HashString(*it));
     }
 
-    base::hash_set<std::string> words;
+    std::unordered_set<std::string> words;
     words.insert("one");
     words.insert("two");
     words.insert("multi");
@@ -72,8 +71,7 @@ class PhishingTermFeatureExtractorTest : public ::testing::Test {
     words.insert("\xe4\xbd\xa0\xe5\xa5\xbd");
     words.insert("\xe5\x86\x8d\xe8\xa7\x81");
 
-    for (base::hash_set<std::string>::iterator it = words.begin();
-         it != words.end(); ++it) {
+    for (auto it = words.begin(); it != words.end(); ++it) {
       word_hashes_.insert(MurmurHash3String(*it, kMurmurHash3Seed));
     }
 
@@ -140,8 +138,8 @@ class PhishingTermFeatureExtractorTest : public ::testing::Test {
   std::unique_ptr<base::RunLoop> active_run_loop_;
   MockFeatureExtractorClock clock_;
   std::unique_ptr<PhishingTermFeatureExtractor> extractor_;
-  base::hash_set<std::string> term_hashes_;
-  base::hash_set<uint32_t> word_hashes_;
+  std::unordered_set<std::string> term_hashes_;
+  std::unordered_set<uint32_t> word_hashes_;
   bool success_;  // holds the success value from ExtractFeatures
 };
 
@@ -247,7 +245,7 @@ TEST_F(PhishingTermFeatureExtractorTest, ExtractFeatures) {
                                                    kMurmurHash3Seed));
   expected_shingle_hashes.insert(MurmurHash3String("way too many words ",
                                                    kMurmurHash3Seed));
-  std::set<uint32_t>::iterator it = expected_shingle_hashes.end();
+  auto it = expected_shingle_hashes.end();
   expected_shingle_hashes.erase(--it);
 
   features.Clear();

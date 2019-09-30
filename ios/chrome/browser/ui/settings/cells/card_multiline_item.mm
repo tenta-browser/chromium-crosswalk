@@ -4,12 +4,8 @@
 
 #import "ios/chrome/browser/ui/settings/cells/card_multiline_item.h"
 
-#import "ios/chrome/browser/experimental_flags.h"
-#include "ios/chrome/browser/ui/collection_view/cells/collection_view_cell_constants.h"
-#import "ios/chrome/browser/ui/uikit_ui_util.h"
+#import "ios/chrome/browser/ui/util/uikit_ui_util.h"
 #import "ios/chrome/common/ui_util/constraints_ui_util.h"
-#import "ios/third_party/material_components_ios/src/components/Palettes/src/MaterialPalettes.h"
-#import "ios/third_party/material_components_ios/src/components/Typography/src/MaterialTypography.h"
 
 #if !defined(__has_feature) || !__has_feature(objc_arc)
 #error "This file requires ARC support."
@@ -35,10 +31,12 @@ const CGFloat kVerticalPadding = 16;
   return self;
 }
 
-#pragma mark CollectionViewItem
+#pragma mark TableViewItem
 
-- (void)configureCell:(CardMultilineCell*)cell {
-  [super configureCell:cell];
+- (void)configureCell:(CardMultilineCell*)cell
+           withStyler:(ChromeTableViewStyler*)styler {
+  [super configureCell:cell withStyler:styler];
+  cell.selectionStyle = UITableViewCellSelectionStyleNone;
   cell.textLabel.text = self.text;
 }
 
@@ -48,24 +46,18 @@ const CGFloat kVerticalPadding = 16;
 
 @synthesize textLabel = _textLabel;
 
-- (instancetype)initWithFrame:(CGRect)frame {
-  self = [super initWithFrame:frame];
+- (instancetype)initWithStyle:(UITableViewCellStyle)style
+              reuseIdentifier:(NSString*)reuseIdentifier {
+  self = [super initWithStyle:style reuseIdentifier:reuseIdentifier];
   if (self) {
     UIView* contentView = self.contentView;
 
     _textLabel = [[UILabel alloc] init];
     _textLabel.translatesAutoresizingMaskIntoConstraints = NO;
     _textLabel.numberOfLines = 0;
+    _textLabel.font = [UIFont preferredFontForTextStyle:UIFontTextStyleBody];
+    _textLabel.adjustsFontForContentSizeCategory = YES;
     [contentView addSubview:_textLabel];
-
-    // Fonts and colors vary based on the UI reboot experiment.
-    if (experimental_flags::IsSettingsUIRebootEnabled()) {
-      _textLabel.font = [UIFont systemFontOfSize:kUIKitMainFontSize];
-      _textLabel.textColor = UIColorFromRGB(kUIKitMainTextColor);
-    } else {
-      _textLabel.font = [[MDCTypography fontLoader] regularFontOfSize:14];
-      _textLabel.textColor = [[MDCPalette greyPalette] tint900];
-    }
 
     // Set up the constraints.
     [NSLayoutConstraint activateConstraints:@[

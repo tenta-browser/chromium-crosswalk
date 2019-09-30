@@ -15,6 +15,9 @@ void FakeArcBridgeHost::OnAccessibilityHelperInstanceReady(
 
 void FakeArcBridgeHost::OnAppInstanceReady(mojom::AppInstancePtr app_ptr) {}
 
+void FakeArcBridgeHost::OnAppPermissionsInstanceReady(
+    mojom::AppPermissionsInstancePtr app_permissions_ptr) {}
+
 void FakeArcBridgeHost::OnAppfuseInstanceReady(
     mojom::AppfuseInstancePtr app_ptr) {}
 
@@ -66,6 +69,9 @@ void FakeArcBridgeHost::OnKioskInstanceReady(
 
 void FakeArcBridgeHost::OnLockScreenInstanceReady(
     mojom::LockScreenInstancePtr lock_screen_ptr) {}
+
+void FakeArcBridgeHost::OnMediaSessionInstanceReady(
+    mojom::MediaSessionInstancePtr media_sesssion_ptr) {}
 
 void FakeArcBridgeHost::OnMetricsInstanceReady(
     mojom::MetricsInstancePtr metrics_ptr) {}

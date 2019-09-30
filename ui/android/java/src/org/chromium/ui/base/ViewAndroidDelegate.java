@@ -21,6 +21,7 @@ import org.chromium.base.ObserverList;
 import org.chromium.base.VisibleForTesting;
 import org.chromium.base.annotations.CalledByNative;
 import org.chromium.base.annotations.JNINamespace;
+import org.chromium.base.compat.ApiHelperForN;
 import org.chromium.blink_public.web.WebCursorInfoType;
 
 /**
@@ -175,7 +176,7 @@ public class ViewAndroidDelegate {
         imageView.setImageBitmap(shadowImage);
         imageView.layout(0, 0, shadowImage.getWidth(), shadowImage.getHeight());
 
-        return containerView.startDragAndDrop(ClipData.newPlainText(null, text),
+        return ApiHelperForN.startDragAndDrop(containerView, ClipData.newPlainText(null, text),
                 new View.DragShadowBuilder(imageView), null, View.DRAG_FLAG_GLOBAL);
     }
 
@@ -183,8 +184,9 @@ public class ViewAndroidDelegate {
     @CalledByNative
     public void onCursorChangedToCustom(Bitmap customCursorBitmap, int hotspotX, int hotspotY) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-            PointerIcon icon = PointerIcon.create(customCursorBitmap, hotspotX, hotspotY);
-            getContainerView().setPointerIcon(icon);
+            PointerIcon icon =
+                    ApiHelperForN.createPointerIcon(customCursorBitmap, hotspotX, hotspotY);
+            ApiHelperForN.setPointerIcon(getContainerView(), icon);
         }
     }
 
@@ -316,7 +318,7 @@ public class ViewAndroidDelegate {
         }
         ViewGroup containerView = getContainerView();
         PointerIcon icon = PointerIcon.getSystemIcon(containerView.getContext(), pointerIconType);
-        containerView.setPointerIcon(icon);
+        ApiHelperForN.setPointerIcon(containerView, icon);
     }
 
     /**
@@ -332,7 +334,7 @@ public class ViewAndroidDelegate {
      * @param topContentOffsetY The Y offset of the content in physical pixels.
      */
     @CalledByNative
-    public void onTopControlsChanged(float topControlsOffsetY, float topContentOffsetY) {}
+    public void onTopControlsChanged(int topControlsOffsetY, int topContentOffsetY) {}
 
     /**
      * Notify the client of the position of the bottom controls.
@@ -340,7 +342,7 @@ public class ViewAndroidDelegate {
      * @param bottomContentOffsetY The Y offset of the content in physical pixels.
      */
     @CalledByNative
-    public void onBottomControlsChanged(float bottomControlsOffsetY, float bottomContentOffsetY) {}
+    public void onBottomControlsChanged(int bottomControlsOffsetY, int bottomContentOffsetY) {}
 
     /**
      * Returns the bottom system window inset in pixels. The system window inset represents the area

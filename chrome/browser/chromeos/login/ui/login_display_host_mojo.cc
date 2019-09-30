@@ -32,8 +32,9 @@ constexpr char kAccelReset[] = "reset";
 
 }  // namespace
 
-LoginDisplayHostMojo::AuthState::AuthState(AccountId account_id,
-                                           AuthenticateUserCallback callback)
+LoginDisplayHostMojo::AuthState::AuthState(
+    AccountId account_id,
+    AuthenticateUserWithPasswordOrPinCallback callback)
     : account_id(account_id), callback(std::move(callback)) {}
 
 LoginDisplayHostMojo::AuthState::~AuthState() = default;
@@ -149,7 +150,7 @@ void LoginDisplayHostMojo::OnFinalize() {
   if (dialog_)
     dialog_->Close();
 
-  base::ThreadTaskRunnerHandle::Get()->DeleteSoon(FROM_HERE, this);
+  ShutdownDisplayHost();
 }
 
 void LoginDisplayHostMojo::SetStatusAreaVisible(bool visible) {
@@ -233,15 +234,6 @@ void LoginDisplayHostMojo::OnStartArcKiosk() {
 
 void LoginDisplayHostMojo::OnBrowserCreated() {
   NOTIMPLEMENTED();
-}
-
-void LoginDisplayHostMojo::StartVoiceInteractionOobe() {
-  NOTIMPLEMENTED();
-}
-
-bool LoginDisplayHostMojo::IsVoiceInteractionOobe() {
-  NOTIMPLEMENTED();
-  return false;
 }
 
 void LoginDisplayHostMojo::ShowGaiaDialog(
@@ -330,11 +322,11 @@ void LoginDisplayHostMojo::OnCancelPasswordChangedFlow() {
   HideOobeDialog();
 }
 
-void LoginDisplayHostMojo::HandleAuthenticateUser(
+void LoginDisplayHostMojo::HandleAuthenticateUserWithPasswordOrPin(
     const AccountId& account_id,
     const std::string& password,
     bool authenticated_by_pin,
-    AuthenticateUserCallback callback) {
+    AuthenticateUserWithPasswordOrPinCallback callback) {
   DCHECK_EQ(account_id.GetUserEmail(),
             gaia::SanitizeEmail(account_id.GetUserEmail()));
 
@@ -362,27 +354,38 @@ void LoginDisplayHostMojo::HandleAuthenticateUser(
   //
   // More details can be found in https://crbug.com/386606
   user_context.SetPasswordKey(Key(password));
-  if (account_id.GetAccountType() == AccountType::ACTIVE_DIRECTORY &&
-      (user_context.GetUserType() !=
-       user_manager::UserType::USER_TYPE_ACTIVE_DIRECTORY)) {
-    LOG(FATAL) << "Incorrect Active Directory user type "
-               << user_context.GetUserType();
+  if (account_id.GetAccountType() == AccountType::ACTIVE_DIRECTORY) {
+    if (user_context.GetUserType() !=
+        user_manager::UserType::USER_TYPE_ACTIVE_DIRECTORY) {
+      LOG(FATAL) << "Incorrect Active Directory user type "
+                 << user_context.GetUserType();
+    }
+    user_context.SetIsUsingOAuth(false);
   }
 
   existing_user_controller_->Login(user_context, chromeos::SigninSpecifics());
 }
 
-void LoginDisplayHostMojo::HandleAttemptUnlock(const AccountId& account_id) {
+void LoginDisplayHostMojo::HandleAuthenticateUserWithExternalBinary(
+    const AccountId& account_id,
+    AuthenticateUserWithExternalBinaryCallback callback) {
+  // Authenticating with an external binary is not supported for login.
+  std::move(callback).Run(false);
+}
+
+void LoginDisplayHostMojo::HandleEnrollUserWithExternalBinary(
+    EnrollUserWithExternalBinaryCallback callback) {
+  // Enroll in external binary auth system is not supported for login.
+  std::move(callback).Run(false);
+}
+
+void LoginDisplayHostMojo::HandleAuthenticateUserWithEasyUnlock(
+    const AccountId& account_id) {
   user_selection_screen_->AttemptEasyUnlock(account_id);
 }
 
 void LoginDisplayHostMojo::HandleHardlockPod(const AccountId& account_id) {
   user_selection_screen_->HardLockPod(account_id);
-}
-
-void LoginDisplayHostMojo::HandleRecordClickOnLockIcon(
-    const AccountId& account_id) {
-  user_selection_screen_->RecordClickOnLockIcon(account_id);
 }
 
 void LoginDisplayHostMojo::HandleOnFocusPod(const AccountId& account_id) {
@@ -403,10 +406,11 @@ bool LoginDisplayHostMojo::HandleFocusLockScreenApps(bool reverse) {
   return false;
 }
 
-void LoginDisplayHostMojo::HandleLoginAsGuest() {
-  existing_user_controller_->Login(UserContext(user_manager::USER_TYPE_GUEST,
-                                               user_manager::GuestAccountId()),
-                                   chromeos::SigninSpecifics());
+void LoginDisplayHostMojo::HandleFocusOobeDialog() {
+  if (!dialog_->IsVisible())
+    return;
+
+  dialog_->GetWebContents()->Focus();
 }
 
 void LoginDisplayHostMojo::HandleLaunchPublicSession(

@@ -30,6 +30,7 @@
 #include "third_party/blink/renderer/core/fullscreen/fullscreen.h"
 
 #include "base/macros.h"
+#include "third_party/blink/public/mojom/feature_policy/feature_policy.mojom-blink.h"
 #include "third_party/blink/public/platform/task_type.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_promise_resolver.h"
 #include "third_party/blink/renderer/core/css/style_change_reason.h"
@@ -54,7 +55,6 @@
 #include "third_party/blink/renderer/core/page/page.h"
 #include "third_party/blink/renderer/core/svg/svg_svg_element.h"
 #include "third_party/blink/renderer/platform/bindings/microtask.h"
-#include "third_party/blink/renderer/platform/feature_policy/feature_policy.h"
 
 namespace blink {
 
@@ -116,7 +116,7 @@ void FullscreenElementChanged(Document& document,
     // Update paint properties on the visual viewport since
     // user-input-scrollable bits will change based on fullscreen state.
     if (Page* page = frame->GetPage())
-      page->GetVisualViewport().SetNeedsPaintPropertiesUpdate();
+      page->GetVisualViewport().SetNeedsPaintPropertyUpdate();
   }
 }
 
@@ -124,8 +124,9 @@ using ElementRequestTypeMap =
     HeapHashMap<WeakMember<Element>, Fullscreen::RequestType>;
 
 ElementRequestTypeMap& FullscreenFlagMap() {
-  DEFINE_STATIC_LOCAL(ElementRequestTypeMap, map, (new ElementRequestTypeMap));
-  return map;
+  DEFINE_STATIC_LOCAL(Persistent<ElementRequestTypeMap>, map,
+                      (MakeGarbageCollected<ElementRequestTypeMap>()));
+  return *map;
 }
 
 bool HasFullscreenFlag(Element& element) {
@@ -204,19 +205,19 @@ void Unfullscreen(Document& document) {
 }
 
 // https://html.spec.whatwg.org/multipage/embedded-content.html#allowed-to-use
-bool AllowedToUseFullscreen(const Frame* frame,
+bool AllowedToUseFullscreen(const Document& document,
                             ReportOptions report_on_failure) {
   // To determine whether a Document object |document| is allowed to use the
   // feature indicated by attribute name |allowattribute|, run these steps:
 
   // 1. If |document| has no browsing context, then return false.
-  if (!frame)
+  if (!document.GetFrame())
     return false;
 
   // 2. If Feature Policy is enabled, return the policy for "fullscreen"
   // feature.
-  return frame->IsFeatureEnabled(mojom::FeaturePolicyFeature::kFullscreen,
-                                 report_on_failure);
+  return document.IsFeatureEnabled(mojom::FeaturePolicyFeature::kFullscreen,
+                                   report_on_failure);
 }
 
 bool AllowedToRequestFullscreen(Document& document) {
@@ -224,7 +225,7 @@ bool AllowedToRequestFullscreen(Document& document) {
   // true:
 
   //  The algorithm is triggered by a user activation.
-  if (Frame::HasTransientUserActivation(document.GetFrame()))
+  if (LocalFrame::HasTransientUserActivation(document.GetFrame()))
     return true;
 
   //  The algorithm is triggered by a user generated orientation change.
@@ -268,8 +269,7 @@ bool FullscreenElementReady(const Element& element,
 
   // |element|'s node document is allowed to use the feature indicated by
   // attribute name allowfullscreen.
-  if (!AllowedToUseFullscreen(element.GetDocument().GetFrame(),
-                              report_on_failure))
+  if (!AllowedToUseFullscreen(element.GetDocument(), report_on_failure))
     return false;
 
   return true;
@@ -440,14 +440,14 @@ void FireEvent(const AtomicString& type, Element* element, Document* document) {
 
 const AtomicString& AdjustEventType(const AtomicString& type,
                                     Fullscreen::RequestType request_type) {
-  DCHECK(type == EventTypeNames::fullscreenchange ||
-         type == EventTypeNames::fullscreenerror);
+  DCHECK(type == event_type_names::kFullscreenchange ||
+         type == event_type_names::kFullscreenerror);
 
   if (request_type == Fullscreen::RequestType::kUnprefixed)
     return type;
-  return type == EventTypeNames::fullscreenchange
-             ? EventTypeNames::webkitfullscreenchange
-             : EventTypeNames::webkitfullscreenerror;
+  return type == event_type_names::kFullscreenchange
+             ? event_type_names::kWebkitfullscreenchange
+             : event_type_names::kWebkitfullscreenerror;
 }
 
 void EnqueueEvent(const AtomicString& type,
@@ -472,7 +472,7 @@ const char Fullscreen::kSupplementName[] = "Fullscreen";
 Fullscreen& Fullscreen::From(Document& document) {
   Fullscreen* fullscreen = FromIfExists(document);
   if (!fullscreen) {
-    fullscreen = new Fullscreen(document);
+    fullscreen = MakeGarbageCollected<Fullscreen>(document);
     ProvideTo(document, fullscreen);
   }
   return *fullscreen;
@@ -532,7 +532,7 @@ Fullscreen::Fullscreen(Document& document)
 Fullscreen::~Fullscreen() = default;
 
 Document* Fullscreen::GetDocument() {
-  return ToDocument(LifecycleContext());
+  return To<Document>(LifecycleContext());
 }
 
 void Fullscreen::ContextDestroyed(ExecutionContext*) {
@@ -544,11 +544,13 @@ void Fullscreen::ContextDestroyed(ExecutionContext*) {
 void Fullscreen::RequestFullscreen(Element& pending) {
   // TODO(foolip): Make RequestType::Unprefixed the default when the unprefixed
   // API is enabled. https://crbug.com/383813
-  RequestFullscreen(pending, FullscreenOptions(), RequestType::kPrefixed);
+  FullscreenOptions* options = FullscreenOptions::Create();
+  options->setNavigationUI("hide");
+  RequestFullscreen(pending, options, RequestType::kPrefixed);
 }
 
 ScriptPromise Fullscreen::RequestFullscreen(Element& pending,
-                                            const FullscreenOptions& options,
+                                            const FullscreenOptions* options,
                                             RequestType request_type,
                                             ScriptState* script_state) {
   RequestFullscreenScope scope;
@@ -618,7 +620,7 @@ ScriptPromise Fullscreen::RequestFullscreen(Element& pending,
     }
 
     From(document).pending_requests_.push_back(
-        new PendingRequest(&pending, request_type, resolver));
+        MakeGarbageCollected<PendingRequest>(&pending, request_type, resolver));
     LocalFrame& frame = *document.GetFrame();
     frame.GetChromeClient().EnterFullscreen(frame, options);
   } else {
@@ -671,12 +673,12 @@ void Fullscreen::ContinueRequestFullscreen(Document& document,
   if (error) {
     // 10.1. Append (fullscreenerror, |pending|) to |pendingDoc|'s list of
     // pending fullscreen events.
-    EnqueueEvent(EventTypeNames::fullscreenerror, pending, document,
+    EnqueueEvent(event_type_names::kFullscreenerror, pending, document,
                  request_type);
 
     // 10.2. Reject |promise| with a TypeError exception and terminate these
     // steps.
-    if (resolver) {
+    if (resolver && resolver->GetScriptState()->ContextIsValid()) {
       ScriptState::Scope scope(resolver->GetScriptState());
       // TODO(dtapuska): Change error to be something useful instead of just a
       // boolean and return this to the user.
@@ -728,7 +730,8 @@ void Fullscreen::ContinueRequestFullscreen(Document& document,
 
     // 13.5. Append (fullscreenchange, |element|) to |doc|'s list of pending
     // fullscreen events.
-    EnqueueEvent(EventTypeNames::fullscreenchange, *element, doc, request_type);
+    EnqueueEvent(event_type_names::kFullscreenchange, *element, doc,
+                 request_type);
   }
 
   // 14. Resolve |promise| with undefined.
@@ -821,7 +824,8 @@ ScriptPromise Fullscreen::ExitFullscreen(Document& doc,
 
     // 7.1. Append (fullscreenchange, |doc|'s fullscreen element) to
     // |doc|'s list of pending fullscreen events.
-    EnqueueEvent(EventTypeNames::fullscreenchange, *element, doc, request_type);
+    EnqueueEvent(event_type_names::kFullscreenchange, *element, doc,
+                 request_type);
 
     // 7.2. Unfullscreen |element|.
     Unfullscreen(*element);
@@ -917,7 +921,7 @@ void Fullscreen::ContinueExitFullscreen(Document* doc,
 
     // 12.1. Append (fullscreenchange, |exitDoc|'s fullscreen element) to
     // |exitDoc|'s list of pending fullscreen events.
-    EnqueueEvent(EventTypeNames::fullscreenchange, *exit_element, *exit_doc,
+    EnqueueEvent(event_type_names::kFullscreenchange, *exit_element, *exit_doc,
                  request_type);
 
     // 12.2. If |resize| is true, unfullscreen |exitDoc|.
@@ -936,7 +940,7 @@ void Fullscreen::ContinueExitFullscreen(Document* doc,
 
     // 13.1. Append (fullscreenchange, |descendantDoc|'s fullscreen element) to
     // |descendantDoc|'s list of pending fullscreen events.
-    EnqueueEvent(EventTypeNames::fullscreenchange, *descendant_element,
+    EnqueueEvent(event_type_names::kFullscreenchange, *descendant_element,
                  *descendant_doc, request_type);
 
     // 13.2. Unfullscreen |descendantDoc|.
@@ -955,8 +959,7 @@ bool Fullscreen::FullscreenEnabled(Document& document) {
   // The fullscreenEnabled attribute's getter must return true if the context
   // object is allowed to use the feature indicated by attribute name
   // allowfullscreen and fullscreen is supported, and false otherwise.
-  return AllowedToUseFullscreen(document.GetFrame(),
-                                ReportOptions::kDoNotReport) &&
+  return AllowedToUseFullscreen(document, ReportOptions::kDoNotReport) &&
          FullscreenIsSupported(document);
 }
 
@@ -966,7 +969,7 @@ void Fullscreen::DidUpdateSize(Element& element) {
   // bit surprising.
   element.SetNeedsStyleRecalc(
       kLocalStyleChange,
-      StyleChangeReasonForTracing::Create(StyleChangeReason::kFullscreen));
+      StyleChangeReasonForTracing::Create(style_change_reason::kFullscreen));
 }
 
 void Fullscreen::ElementRemoved(Element& node) {

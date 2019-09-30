@@ -25,12 +25,15 @@ enum MobileSessionCallerApp {
   CALLER_APP_GOOGLE_MAPS,
   CALLER_APP_NOT_AVAILABLE,  // Includes being launched from Smart App Banner.
   CALLER_APP_GOOGLE_CHROME_TODAY_EXTENSION,
+  CALLER_APP_GOOGLE_CHROME_SEARCH_EXTENSION,
+  CALLER_APP_GOOGLE_CHROME_CONTENT_EXTENSION,
   MOBILE_SESSION_CALLER_APP_COUNT,
 };
 
 @interface ChromeAppStartupParameters : AppStartupParameters
 
-- (instancetype)initWithExternalURL:(const GURL&)externalURL NS_UNAVAILABLE;
+- (instancetype)initWithExternalURL:(const GURL&)externalURL
+                        completeURL:(const GURL&)completeURL NS_UNAVAILABLE;
 
 - (instancetype)initWithExternalURL:(const GURL&)externalURL
                   declaredSourceApp:(NSString*)declaredSourceApp

@@ -34,7 +34,6 @@ Action.prototype.getTitle = function() {
  *  alertDialog: FilesAlertDialog,
  *  errorDialog: ErrorDialog,
  *  listContainer: ListContainer,
- *  shareDialog: ShareDialog,
  * }}
  */
 var ActionModelUI;
@@ -43,7 +42,7 @@ var ActionModelUI;
  * @param {!Entry} entry
  * @param {!MetadataModel} metadataModel
  * @param {!ActionModelUI} ui
- * @param {!VolumeManagerWrapper} volumeManager
+ * @param {!VolumeManager} volumeManager
  * @implements {Action}
  * @constructor
  * @struct
@@ -62,7 +61,7 @@ function DriveShareAction(entry, metadataModel, volumeManager, ui) {
   this.metadataModel_ = metadataModel;
 
   /**
-   * @private {!VolumeManagerWrapper}
+   * @private {!VolumeManager}
    * @const
    */
   this.volumeManager_ = volumeManager;
@@ -78,12 +77,13 @@ function DriveShareAction(entry, metadataModel, volumeManager, ui) {
  * @param {!Array<!Entry>} entries
  * @param {!MetadataModel} metadataModel
  * @param {!ActionModelUI} ui
- * @param {!VolumeManagerWrapper} volumeManager
+ * @param {!VolumeManager} volumeManager
  * @return {DriveShareAction}
  */
 DriveShareAction.create = function(entries, metadataModel, volumeManager, ui) {
-  if (entries.length !== 1)
+  if (entries.length !== 1) {
     return null;
+  }
   return new DriveShareAction(entries[0], metadataModel, volumeManager, ui);
 };
 
@@ -91,32 +91,25 @@ DriveShareAction.create = function(entries, metadataModel, volumeManager, ui) {
  * @override
  */
 DriveShareAction.prototype.execute = function() {
-  // For Team Drives entries, open the Sharing dialog in a new window.
-  if (util.isTeamDriveEntry(this.entry_)) {
-    chrome.fileManagerPrivate.getEntryProperties(
-        [this.entry_], ['shareUrl'], function(results) {
-          if (chrome.runtime.lastError) {
-            console.error(chrome.runtime.lastError.message);
-            return;
-          }
-          if (results.length != 1) {
-            console.error(
-                'getEntryProperties for shareUrl should return 1 entry ' +
-                '(returned ' + results.length + ')');
-            return;
-          }
-          if (results[0].shareUrl === undefined) {
-            console.error('getEntryProperties shareUrl is undefined');
-            return;
-          }
-          util.visitURL(results[0].shareUrl);
-        }.bind(this));
-    return;
-  }
-  this.ui_.shareDialog.showEntry(this.entry_, function(result) {
-    if (result == ShareDialog.Result.NETWORK_ERROR)
-      this.ui_.errorDialog.show(str('SHARE_ERROR'), null, null, null);
-  }.bind(this));
+  // Open the Sharing dialog in a new window.
+  chrome.fileManagerPrivate.getEntryProperties(
+      [this.entry_], ['shareUrl'], function(results) {
+        if (chrome.runtime.lastError) {
+          console.error(chrome.runtime.lastError.message);
+          return;
+        }
+        if (results.length != 1) {
+          console.error(
+              'getEntryProperties for shareUrl should return 1 entry ' +
+              '(returned ' + results.length + ')');
+          return;
+        }
+        if (results[0].shareUrl === undefined) {
+          console.error('getEntryProperties shareUrl is undefined');
+          return;
+        }
+        util.visitURL(results[0].shareUrl);
+      }.bind(this));
 };
 
 /**
@@ -128,7 +121,9 @@ DriveShareAction.prototype.canExecute = function() {
   const canShareItem = metadata[0].canShare !== false;
   return this.volumeManager_.getDriveConnectionState().type !==
       VolumeManagerCommon.DriveConnectionType.OFFLINE &&
-      !util.isTeamDriveRoot(this.entry_) && canShareItem;
+      (loadTimeData.getBoolean('DRIVE_FS_ENABLED') ||
+       !util.isTeamDriveRoot(this.entry_)) &&
+      canShareItem;
 };
 
 /**
@@ -197,28 +192,32 @@ function DriveToggleOfflineAction(entries, metadataModel, driveSyncHandler, ui,
  * @param {function()} onExecute
  * @return {DriveToggleOfflineAction}
  */
-DriveToggleOfflineAction.create = function(entries, metadataModel,
-    driveSyncHandler, ui, value, onExecute) {
-  var directoryEntries = entries.filter(function(entry) {
-    return entry.isDirectory;
-  });
-  if (directoryEntries.length > 0)
-    return null;
+DriveToggleOfflineAction.create = function(
+    entries, metadataModel, driveSyncHandler, ui, value, onExecute) {
+  if (!loadTimeData.getBoolean('DRIVE_FS_ENABLED')) {
+    if (entries.some((entry) => entry.isDirectory)) {
+      return null;
+    }
+  }
 
   var actionableEntries = entries.filter(function(entry) {
-    if (entry.isDirectory)
+    if (entry.isDirectory && !loadTimeData.getBoolean('DRIVE_FS_ENABLED')) {
       return false;
+    }
     var metadata = metadataModel.getCache(
         [entry], ['hosted', 'pinned'])[0];
-    if (metadata.hosted)
+    if (metadata.hosted) {
       return false;
-    if (metadata.pinned === value)
+    }
+    if (metadata.pinned === value) {
       return false;
+    }
     return true;
   });
 
-  if (actionableEntries.length === 0)
+  if (actionableEntries.length === 0) {
     return null;
+  }
 
   return new DriveToggleOfflineAction(actionableEntries, metadataModel,
       driveSyncHandler, ui, value, onExecute);
@@ -229,8 +228,9 @@ DriveToggleOfflineAction.create = function(entries, metadataModel,
  */
 DriveToggleOfflineAction.prototype.execute = function() {
   var entries = this.entries_;
-  if (entries.length == 0)
+  if (entries.length == 0) {
     return;
+  }
 
   var currentEntry;
   var error = false;
@@ -268,8 +268,9 @@ DriveToggleOfflineAction.prototype.execute = function() {
     updateUI: function() {
       this.ui_.listContainer.currentView.updateListItemsMetadata(
           'external', [currentEntry]);
-      if (!error)
+      if (!error) {
         steps.start();
+      }
     }.bind(this),
 
     // Show an error.
@@ -284,8 +285,9 @@ DriveToggleOfflineAction.prototype.execute = function() {
   };
   steps.start();
 
-  if (this.value_ && this.driveSyncHandler_.isSyncSuppressed())
+  if (this.value_ && this.driveSyncHandler_.isSyncSuppressed()) {
     this.driveSyncHandler_.showDisabledMobileSyncNotification();
+  }
 };
 
 /**
@@ -332,15 +334,16 @@ function DriveCreateFolderShortcutAction(entry, shortcutsModel, onExecute) {
 
 /**
  * @param {!Array<!Entry>} entries
- * @param {!VolumeManagerWrapper} volumeManager
+ * @param {!VolumeManager} volumeManager
  * @param {!FolderShortcutsDataModel} shortcutsModel
  * @param {function()} onExecute
  * @return {DriveCreateFolderShortcutAction}
  */
-DriveCreateFolderShortcutAction.create = function(entries, volumeManager,
-    shortcutsModel, onExecute) {
-  if (entries.length !== 1 || entries[0].isFile)
+DriveCreateFolderShortcutAction.create = function(
+    entries, volumeManager, shortcutsModel, onExecute) {
+  if (entries.length !== 1 || entries[0].isFile) {
     return null;
+  }
   var locationInfo = volumeManager.getLocationInfo(entries[0]);
   if (!locationInfo || locationInfo.isSpecialSearchRoot ||
       locationInfo.isRootEntry) {
@@ -444,7 +447,7 @@ DriveRemoveFolderShortcutAction.prototype.getTitle = function() {
  *
  * @param {!Entry} entry The entry to open the 'Manage' page for.
  * @param {!ActionModelUI} ui
- * @param {!VolumeManagerWrapper} volumeManager
+ * @param {!VolumeManager} volumeManager
  * @implements {Action}
  * @constructor
  * @struct
@@ -459,7 +462,7 @@ function DriveManageAction(entry, volumeManager, ui) {
   this.entry_ = entry;
 
   /**
-   * @private {!VolumeManagerWrapper}
+   * @private {!VolumeManager}
    * @const
    */
   this.volumeManager_ = volumeManager;
@@ -477,12 +480,13 @@ function DriveManageAction(entry, volumeManager, ui) {
  *
  * @param {!Array<!Entry>} entries
  * @param {!ActionModelUI} ui
- * @param {!VolumeManagerWrapper} volumeManager
+ * @param {!VolumeManager} volumeManager
  * @return {DriveManageAction}
  */
 DriveManageAction.create = function(entries, volumeManager, ui) {
-  if (entries.length !== 1)
+  if (entries.length !== 1) {
     return null;
+  }
 
   return new DriveManageAction(entries[0], volumeManager, ui);
 };
@@ -517,7 +521,8 @@ DriveManageAction.prototype.execute = function() {
 DriveManageAction.prototype.canExecute = function() {
   return this.volumeManager_.getDriveConnectionState().type !==
       VolumeManagerCommon.DriveConnectionType.OFFLINE &&
-      !util.isTeamDriveRoot(this.entry_);
+      (loadTimeData.getBoolean('DRIVE_FS_ENABLED') ||
+       !util.isTeamDriveRoot(this.entry_));
 };
 
 /**
@@ -597,7 +602,7 @@ CustomAction.prototype.getTitle = function() {
  * Represents a set of actions for a set of entries. Includes actions set
  * locally in JS, as well as those retrieved from the FSP API.
  *
- * @param {!VolumeManagerWrapper} volumeManager
+ * @param {!VolumeManager} volumeManager
  * @param {!MetadataModel} metadataModel
  * @param {!FolderShortcutsDataModel} shortcutsModel
  * @param {!DriveSyncHandler} driveSyncHandler
@@ -611,7 +616,7 @@ function ActionsModel(
     volumeManager, metadataModel, shortcutsModel, driveSyncHandler, ui,
     entries) {
   /**
-   * @private {!VolumeManagerWrapper}
+   * @private {!VolumeManager}
    * @const
    */
   this.volumeManager_ = volumeManager;
@@ -697,8 +702,9 @@ ActionsModel.InternalActionId = {
  * @return {!Promise}
  */
 ActionsModel.prototype.initialize = function() {
-  if (this.initializePromise_)
+  if (this.initializePromise_) {
     return this.initializePromise_;
+  }
 
   this.initializePromise_ = new Promise(function(fulfill, reject) {
     if (this.destroyed_) {
@@ -732,8 +738,9 @@ ActionsModel.prototype.initialize = function() {
       case VolumeManagerCommon.VolumeType.DRIVE:
         var shareAction = DriveShareAction.create(
             this.entries_, this.metadataModel_, this.volumeManager_, this.ui_);
-        if (shareAction)
+        if (shareAction) {
           actions[ActionsModel.CommonActionId.SHARE] = shareAction;
+        }
 
         var saveForOfflineAction = DriveToggleOfflineAction.create(
             this.entries_, this.metadataModel_, this.driveSyncHandler_,

@@ -54,10 +54,18 @@ RootCompositorFrameSinkImpl::Create(
     external_begin_frame_source =
         std::make_unique<ExternalBeginFrameSourceAndroid>(restart_id);
 #else
-    synthetic_begin_frame_source = std::make_unique<DelayBasedBeginFrameSource>(
-        std::make_unique<DelayBasedTimeSource>(
-            base::ThreadTaskRunnerHandle::Get().get()),
-        restart_id);
+    if (params->disable_frame_rate_limit) {
+      synthetic_begin_frame_source =
+          std::make_unique<BackToBackBeginFrameSource>(
+              std::make_unique<DelayBasedTimeSource>(
+                  base::ThreadTaskRunnerHandle::Get().get()));
+    } else {
+      synthetic_begin_frame_source =
+          std::make_unique<DelayBasedBeginFrameSource>(
+              std::make_unique<DelayBasedTimeSource>(
+                  base::ThreadTaskRunnerHandle::Get().get()),
+              restart_id);
+    }
 #endif
   }
 
@@ -125,12 +133,6 @@ void RootCompositorFrameSinkImpl::SetDisplayColorSpace(
 
 void RootCompositorFrameSinkImpl::SetOutputIsSecure(bool secure) {
   display_->SetOutputIsSecure(secure);
-}
-
-void RootCompositorFrameSinkImpl::SetAuthoritativeVSyncInterval(
-    base::TimeDelta interval) {
-  if (synthetic_begin_frame_source_)
-    synthetic_begin_frame_source_->SetAuthoritativeVSyncInterval(interval);
 }
 
 void RootCompositorFrameSinkImpl::SetDisplayVSyncParameters(
@@ -255,9 +257,10 @@ void RootCompositorFrameSinkImpl::DisplayOutputSurfaceLost() {
 
 void RootCompositorFrameSinkImpl::DisplayWillDrawAndSwap(
     bool will_draw_and_swap,
-    const RenderPassList& render_pass) {
+    RenderPassList* render_passes) {
   DCHECK(support_->GetHitTestAggregator());
-  support_->GetHitTestAggregator()->Aggregate(display_->CurrentSurfaceId());
+  support_->GetHitTestAggregator()->Aggregate(display_->CurrentSurfaceId(),
+                                              render_passes);
 }
 
 void RootCompositorFrameSinkImpl::DisplayDidReceiveCALayerParams(

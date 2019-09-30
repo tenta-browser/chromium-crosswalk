@@ -124,12 +124,24 @@ public class DownloadGlue implements DownloadObserver {
                 item.id, item.isOffTheRecord);
     }
 
-    /** @see OfflineContentProvider#resumeDownload(ContentId) */
+    /** @see OfflineContentProvider#resumeDownload(ContentId, boolean) */
     public void resumeDownload(OfflineItem item, boolean hasUserGesture) {
-        DownloadItem downloadItem = new DownloadItem(
-                false /* useAndroidDownloadManager */, DownloadInfo.fromOfflineItem(item, null));
-        DownloadManagerService.getDownloadManagerService().resumeDownload(
-                item.id, downloadItem, hasUserGesture);
+        DownloadInfo.Builder builder = DownloadInfo.builderFromOfflineItem(item, null);
+
+        // This is a temporary hack to work around the assumption that the DownloadItem passed to
+        // DownloadManagerService#resumeDownload() will not be paused.
+        builder.setIsPaused(false);
+
+        DownloadItem downloadItem =
+                new DownloadItem(false /* useAndroidDownloadManager */, builder.build());
+
+        if (item.isResumable) {
+            DownloadManagerService.getDownloadManagerService().resumeDownload(
+                    item.id, downloadItem, hasUserGesture);
+        } else {
+            DownloadManagerService.getDownloadManagerService().retryDownload(
+                    item.id, downloadItem, hasUserGesture);
+        }
     }
 
     /** @see OfflineContentProvider#getItemById(ContentId, Callback) */

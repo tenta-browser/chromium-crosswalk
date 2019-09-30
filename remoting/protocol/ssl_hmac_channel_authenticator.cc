@@ -148,7 +148,6 @@ class NetStreamSocketAdapter : public net::StreamSocket {
     NOTREACHED();
     return true;
   }
-  void EnableTCPFastOpenIfSupported() override { NOTREACHED(); }
   bool WasAlpnNegotiated() const override {
     NOTREACHED();
     return false;
@@ -359,7 +358,7 @@ void SslHmacChannelAuthenticator::OnConnected(int result) {
       base::MakeRefCounted<net::StringIOBuffer>(auth_bytes), auth_bytes.size());
 
   // Read an incoming token.
-  auth_read_buf_ = new net::GrowableIOBuffer();
+  auth_read_buf_ = base::MakeRefCounted<net::GrowableIOBuffer>();
   auth_read_buf_->SetCapacity(kAuthDigestLength);
 
   // If WriteAuthenticationBytes() results in |done_callback_| being

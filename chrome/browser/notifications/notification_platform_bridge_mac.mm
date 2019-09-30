@@ -22,6 +22,7 @@
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/sys_string_conversions.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/task/post_task.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/notifications/notification_common.h"
 #include "chrome/browser/notifications/notification_display_service_impl.h"
@@ -36,6 +37,7 @@
 #include "chrome/grit/generated_resources.h"
 #include "components/crash/content/app/crashpad.h"
 #include "components/url_formatter/elide_url.h"
+#include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
 #include "net/base/registry_controlled_domains/registry_controlled_domain.h"
 #include "third_party/blink/public/platform/modules/notifications/web_notification_constants.h"
@@ -77,6 +79,13 @@ void DoProcessNotificationResponse(NotificationCommon::Operation operation,
                                    const base::Optional<base::string16>& reply,
                                    const base::Optional<bool>& by_user) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
+
+  // Profile ID can be empty for system notifications, which are not bound to a
+  // profile, but system notifications are transient and thus not handled by
+  // this NotificationPlatformBridge.
+  // When transient notifications are supported, this should route the
+  // notification response to the system NotificationDisplayService.
+  DCHECK(!profile_id.empty());
 
   ProfileManager* profileManager = g_browser_process->profile_manager();
   DCHECK(profileManager);
@@ -191,10 +200,11 @@ NotificationPlatformBridgeMac::~NotificationPlatformBridgeMac() {
 }
 
 // static
-NotificationPlatformBridge* NotificationPlatformBridge::Create() {
+std::unique_ptr<NotificationPlatformBridge>
+NotificationPlatformBridge::Create() {
   base::scoped_nsobject<AlertDispatcherImpl> alert_dispatcher(
       [[AlertDispatcherImpl alloc] init]);
-  return new NotificationPlatformBridgeMac(
+  return std::make_unique<NotificationPlatformBridgeMac>(
       [NSUserNotificationCenter defaultUserNotificationCenter],
       alert_dispatcher.get());
 }
@@ -334,6 +344,8 @@ void NotificationPlatformBridgeMac::SetReadyCallback(
   std::move(callback).Run(true);
 }
 
+void NotificationPlatformBridgeMac::DisplayServiceShutDown(Profile* profile) {}
+
 // static
 void NotificationPlatformBridgeMac::ProcessNotificationResponse(
     NSDictionary* response) {
@@ -362,8 +374,8 @@ void NotificationPlatformBridgeMac::ProcessNotificationResponse(
     action_index = button_index.intValue;
   }
 
-  content::BrowserThread::PostTask(
-      content::BrowserThread::UI, FROM_HERE,
+  base::PostTaskWithTraits(
+      FROM_HERE, {content::BrowserThread::UI},
       base::Bind(DoProcessNotificationResponse,
                  static_cast<NotificationCommon::Operation>(
                      operation.unsignedIntValue),
@@ -562,8 +574,8 @@ getDisplayedAlertsForProfileId:(NSString*)profileId
     for (NSString* alert in alerts)
       displayedNotifications->insert(base::SysNSStringToUTF8(alert));
 
-    content::BrowserThread::PostTask(
-        content::BrowserThread::UI, FROM_HERE,
+    base::PostTaskWithTraits(
+        FROM_HERE, {content::BrowserThread::UI},
         base::Bind(callback, base::Passed(&displayedNotifications),
                    true /* supports_synchronization */));
   };

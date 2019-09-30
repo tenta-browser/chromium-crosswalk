@@ -6,7 +6,9 @@ package org.chromium.chrome.browser.media.router.caf;
 
 import static org.chromium.chrome.browser.media.router.caf.CastUtils.isSameOrigin;
 
+import android.support.annotation.NonNull;
 import android.support.annotation.Nullable;
+import android.support.annotation.VisibleForTesting;
 import android.support.v7.media.MediaRouter;
 
 import com.google.android.gms.cast.framework.CastSession;
@@ -35,12 +37,16 @@ public class CafMediaRouteProvider extends CafBaseMediaRouteProvider {
 
     private CreateRouteRequestInfo mPendingCreateRouteRequestInfo;
 
-    private ClientRecord mLastRemovedRouteRecord;
+    @VisibleForTesting
+    ClientRecord mLastRemovedRouteRecord;
     // The records for clients, which must match mRoutes. This is used for the saving last record
     // for autojoin.
     private final Map<String, ClientRecord> mClientIdToRecords =
             new HashMap<String, ClientRecord>();
-    private CafMessageHandler mMessageHandler;
+    @VisibleForTesting
+    CafMessageHandler mMessageHandler;
+    // The session controller which is always attached to the current CastSession.
+    private final CastSessionController mSessionController;
 
     public static CafMediaRouteProvider create(MediaRouteManager manager) {
         return new CafMediaRouteProvider(ChromeMediaRouter.getAndroidMediaRouter(), manager);
@@ -86,8 +92,7 @@ public class CafMediaRouteProvider extends CafBaseMediaRouteProvider {
 
         ClientRecord client = getClientRecordByRouteId(routeId);
         if (client != null) {
-            MediaSink sink = MediaSink.fromSinkId(
-                    sessionController().getSink().getId(), getAndroidMediaRouter());
+            MediaSink sink = sessionController().getSink();
             if (sink != null) {
                 mMessageHandler.sendReceiverActionToClient(routeId, sink, client.clientId, "stop");
             }
@@ -95,26 +100,24 @@ public class CafMediaRouteProvider extends CafBaseMediaRouteProvider {
     }
 
     @Override
-    public void detachRoute(String routeId) {
-        removeRoute(routeId, /* error= */ null);
-    }
-
-    @Override
-    public void sendStringMessage(String routeId, String message, int nativeCallbackId) {
+    public void sendStringMessage(String routeId, String message) {
         Log.d(TAG, "Received message from client: %s", message);
 
         if (!mRoutes.containsKey(routeId)) {
-            mManager.onMessageSentResult(false, nativeCallbackId);
             return;
         }
 
-        mManager.onMessageSentResult(
-                mMessageHandler.handleMessageFromClient(message), nativeCallbackId);
+        mMessageHandler.handleMessageFromClient(message);
     }
 
     @Override
     protected MediaSource getSourceFromId(String sourceId) {
         return CastMediaSource.from(sourceId);
+    }
+
+    @Override
+    public BaseSessionController sessionController() {
+        return mSessionController;
     }
 
     public void sendMessageToClient(String clientId, String message) {
@@ -140,24 +143,22 @@ public class CafMediaRouteProvider extends CafBaseMediaRouteProvider {
         clientRecord.pendingMessages.clear();
     }
 
-    @Override
+    @NonNull
     public CafMessageHandler getMessageHandler() {
         return mMessageHandler;
     }
 
     @Override
-    public void onSessionStarted(CastSession session, String sessionId) {
-        super.onSessionStarted(session, sessionId);
+    protected void handleSessionStart(CastSession session, String sessionId) {
+        super.handleSessionStart(session, sessionId);
 
         for (ClientRecord clientRecord : mClientIdToRecords.values()) {
             // Should be exactly one instance of MediaRoute/ClientRecord at this moment.
-            MediaRoute route = mRoutes.get(clientRecord.routeId);
-            MediaSink sink = MediaSink.fromSinkId(route.sinkId, getAndroidMediaRouter());
-            mMessageHandler.sendReceiverActionToClient(
-                    clientRecord.routeId, sink, clientRecord.clientId, "cast");
+            mMessageHandler.sendReceiverActionToClient(clientRecord.routeId,
+                    sessionController().getSink(), clientRecord.clientId, "cast");
         }
 
-        mMessageHandler.onSessionStarted(sessionController());
+        mMessageHandler.onSessionStarted();
         sessionController().getSession().getRemoteMediaClient().requestStatus();
     }
 
@@ -176,12 +177,12 @@ public class CafMediaRouteProvider extends CafBaseMediaRouteProvider {
     }
 
     @Override
-    protected void removeRoute(String routeId, @Nullable String error) {
+    protected void removeRouteFromRecord(String routeId) {
         ClientRecord record = getClientRecordByRouteId(routeId);
         if (record != null) {
             mLastRemovedRouteRecord = mClientIdToRecords.remove(record.clientId);
         }
-        super.removeRoute(routeId, error);
+        super.removeRouteFromRecord(routeId);
     }
 
     @Nullable
@@ -194,17 +195,19 @@ public class CafMediaRouteProvider extends CafBaseMediaRouteProvider {
 
     private CafMediaRouteProvider(MediaRouter androidMediaRouter, MediaRouteManager manager) {
         super(androidMediaRouter, manager);
-        mMessageHandler = new CafMessageHandler(this);
+        mSessionController = new CastSessionController(this);
+        mMessageHandler = new CafMessageHandler(this, mSessionController);
     }
 
-    private boolean canJoinExistingSession(
+    @VisibleForTesting
+    boolean canJoinExistingSession(
             String presentationId, String origin, int tabId, CastMediaSource source) {
         if (AUTO_JOIN_PRESENTATION_ID.equals(presentationId)) {
             return canAutoJoin(source, origin, tabId);
         }
         if (presentationId.startsWith(PRESENTATION_ID_SESSION_ID_PREFIX)) {
             String sessionId = presentationId.substring(PRESENTATION_ID_SESSION_ID_PREFIX.length());
-            return sessionController().getSession().getSessionId().equals(sessionId);
+            return sessionId != null && sessionId.equals(sessionController().getSessionId());
         }
         for (MediaRoute route : mRoutes.values()) {
             if (route.presentationId.equals(presentationId)) return true;

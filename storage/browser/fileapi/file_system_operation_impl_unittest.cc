@@ -19,6 +19,7 @@
 #include "base/memory/ptr_util.h"
 #include "base/memory/weak_ptr.h"
 #include "base/run_loop.h"
+#include "base/stl_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/test/scoped_task_environment.h"
 #include "base/threading/thread_task_runner_handle.h"
@@ -177,10 +178,8 @@ class FileSystemOperationImplTest
   FileSystemOperation::StatusCallback RecordStatusCallback(
       const base::Closure& closure,
       base::File::Error* status) {
-    return base::Bind(&FileSystemOperationImplTest::DidFinish,
-                      weak_factory_.GetWeakPtr(),
-                      closure,
-                      status);
+    return base::BindOnce(&FileSystemOperationImplTest::DidFinish,
+                          weak_factory_.GetWeakPtr(), closure, status);
   }
 
   FileSystemOperation::ReadDirectoryCallback RecordReadDirectoryCallback(
@@ -194,10 +193,8 @@ class FileSystemOperationImplTest
   FileSystemOperation::GetMetadataCallback RecordMetadataCallback(
       const base::Closure& closure,
       base::File::Error* status) {
-    return base::Bind(&FileSystemOperationImplTest::DidGetMetadata,
-                      weak_factory_.GetWeakPtr(),
-                      closure,
-                      status);
+    return base::BindOnce(&FileSystemOperationImplTest::DidGetMetadata,
+                          weak_factory_.GetWeakPtr(), closure, status);
   }
 
   FileSystemOperation::SnapshotFileCallback RecordSnapshotFileCallback(
@@ -255,7 +252,8 @@ class FileSystemOperationImplTest
   void GetUsageAndQuota(int64_t* usage, int64_t* quota) {
     blink::mojom::QuotaStatusCode status =
         AsyncFileTestHelper::GetUsageAndQuota(
-            quota_manager_.get(), sandbox_file_system_.origin(),
+            quota_manager_.get(),
+            url::Origin::Create(sandbox_file_system_.origin()),
             sandbox_file_system_.type(), usage, quota);
     scoped_task_environment_.RunUntilIdle();
     ASSERT_EQ(blink::mojom::QuotaStatusCode::kOk, status);
@@ -279,9 +277,9 @@ class FileSystemOperationImplTest
   void GrantQuotaForCurrentUsage() {
     int64_t usage;
     GetUsageAndQuota(&usage, nullptr);
-    quota_manager()->SetQuota(sandbox_file_system_.origin(),
-                              sandbox_file_system_.storage_type(),
-                              usage);
+    quota_manager()->SetQuota(
+        url::Origin::Create(sandbox_file_system_.origin()),
+        sandbox_file_system_.storage_type(), usage);
   }
 
   int64_t GetUsage() {
@@ -293,9 +291,9 @@ class FileSystemOperationImplTest
   void AddQuota(int64_t quota_delta) {
     int64_t quota;
     GetUsageAndQuota(nullptr, &quota);
-    quota_manager()->SetQuota(sandbox_file_system_.origin(),
-                              sandbox_file_system_.storage_type(),
-                              quota + quota_delta);
+    quota_manager()->SetQuota(
+        url::Origin::Create(sandbox_file_system_.origin()),
+        sandbox_file_system_.storage_type(), quota + quota_delta);
   }
 
   base::File::Error Move(
@@ -826,7 +824,7 @@ TEST_F(FileSystemOperationImplTest, TestCopyInForeignFileSuccess) {
   base::FilePath src_local_disk_file_path;
   base::CreateTemporaryFile(&src_local_disk_file_path);
   const char test_data[] = "foo";
-  int data_size = arraysize(test_data);
+  int data_size = base::size(test_data);
   base::WriteFile(src_local_disk_file_path, test_data, data_size);
 
   FileSystemURL dest_dir(CreateDirectory("dest"));
@@ -857,7 +855,7 @@ TEST_F(FileSystemOperationImplTest, TestCopyInForeignFileFailureByQuota) {
   base::FilePath src_local_disk_file_path;
   base::CreateTemporaryFile(&src_local_disk_file_path);
   const char test_data[] = "foo";
-  base::WriteFile(src_local_disk_file_path, test_data, arraysize(test_data));
+  base::WriteFile(src_local_disk_file_path, test_data, base::size(test_data));
 
   FileSystemURL dest_dir(CreateDirectory("dest"));
 

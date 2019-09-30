@@ -8,6 +8,7 @@
 #include "base/strings/string16.h"
 #include "chrome/browser/ui/views/chrome_layout_provider.h"
 #include "chrome/browser/ui/views/chrome_typography.h"
+#include "chrome/browser/ui/views/md_text_button_with_down_arrow.h"
 #include "chrome/browser/ui/views/webauthn/authenticator_request_sheet_view.h"
 #include "chrome/browser/ui/views/webauthn/sheet_view_factory.h"
 #include "chrome/browser/ui/webauthn/authenticator_request_sheet_model.h"
@@ -21,7 +22,6 @@
 #include "ui/gfx/geometry/insets.h"
 #include "ui/gfx/paint_vector_icon.h"
 #include "ui/views/border.h"
-#include "ui/views/controls/button/md_text_button.h"
 #include "ui/views/layout/fill_layout.h"
 #include "ui/views/vector_icons.h"
 #include "ui/views/window/dialog_client_view.h"
@@ -123,6 +123,12 @@ AuthenticatorRequestDialogView::~AuthenticatorRequestDialogView() {
   // invoked straight after, which destroys child views. views::View subclasses
   // shouldn't be doing anything interesting in their destructors, so it should
   // be okay to destroy the |sheet_| immediately after this line.
+  //
+  // However, as AuthenticatorRequestDialogModel is owned by |this|, and
+  // ObservableAuthenticatorList is owned by AuthenticatorRequestDialogModel,
+  // destroy all view components that might own models observing the list prior
+  // to destroying AuthenticatorRequestDialogModel.
+  RemoveAllChildViews(true /* delete_children */);
 }
 
 gfx::Size AuthenticatorRequestDialogView::CalculatePreferredSize() const {
@@ -132,7 +138,7 @@ gfx::Size AuthenticatorRequestDialogView::CalculatePreferredSize() const {
 }
 
 views::View* AuthenticatorRequestDialogView::CreateExtraView() {
-  other_transports_button_ = new MdTextButtonWithDropArrow(
+  other_transports_button_ = new views::MdTextButtonWithDownArrow(
       this, l10n_util::GetStringUTF16(IDS_WEBAUTHN_TRANSPORT_POPUP_LABEL));
   ToggleOtherTransportsButtonVisibility();
   return other_transports_button_;

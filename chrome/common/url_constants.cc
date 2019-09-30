@@ -103,9 +103,6 @@ const char kCloudPrintCertificateErrorLearnMoreURL[] =
         "cloudprint?p=cloudprint_error_offline_linux";
 #endif
 
-const char kCloudPrintNoDestinationsLearnMoreURL[] =
-    "https://www.google.com/cloudprint/learn/";
-
 const char kContentSettingsExceptionsLearnMoreURL[] =
     "https://support.google.com/chrome/?p=settings_manage_exceptions";
 
@@ -144,6 +141,10 @@ const char kExtensionInvalidRequestURL[] = "chrome-extension://invalid/";
 const char kGoogleAccountActivityControlsURL[] =
     "https://myaccount.google.com/activitycontrols/search";
 
+const char kGoogleAccountURL[] = "https://myaccount.google.com";
+
+const char kGooglePasswordManagerURL[] = "https://passwords.google.com";
+
 const char kLearnMoreReportingURL[] =
     "https://support.google.com/chrome/?p=ui_usagestat";
 
@@ -151,6 +152,9 @@ const char kLegacySupervisedUserManagementDisplayURL[] =
     "www.chrome.com/manage";
 const char kLegacySupervisedUserManagementURL[] =
     "https://www.chrome.com/manage";
+
+const char kManagedUiLearnMoreUrl[] =
+    "https://support.google.com/chromebook/?p=is_chrome_managed";
 
 const char kMyActivityUrlInClearBrowsingData[] =
     "https://myactivity.google.com/myactivity/?utm_source=chrome_cbd";
@@ -176,6 +180,13 @@ const char kPasswordManagerLearnMoreURL[] =
     "https://support.google.com/chrome/?p=settings_password";
 #endif
 
+const char kPaymentMethodsLearnMoreURL[] =
+#if defined(OS_CHROMEOS)
+    "https://support.google.com/chromebook/?p=settings_autofill";
+#else
+    "https://support.google.com/chrome/?p=settings_autofill";
+#endif
+
 const char kPrivacyLearnMoreURL[] =
 #if defined(OS_CHROMEOS)
     "https://support.google.com/chromebook/?p=settings_privacy";
@@ -195,9 +206,6 @@ const char kSettingsSearchHelpURL[] =
 #else
     "https://support.google.com/chrome/?p=settings_search_help";
 #endif
-
-const char kSmartLockHelpPage[] =
-    "https://support.google.com/accounts/answer/6197437";
 
 const char kSyncAndGoogleServicesLearnMoreURL[] =
     "https://support.google.com/chrome?p=syncgoogleservices";
@@ -262,6 +270,10 @@ const char kEasyUnlockLearnMoreUrl[] =
 
 const char kEULAPathFormat[] = "/usr/share/chromeos-assets/eula/%s/eula.html";
 
+const char kArcTermsPathFormat[] = "arc_tos/%s/terms.html";
+
+const char kArcPrivacyPolicyPathFormat[] = "arc_tos/%s/privacy_policy.pdf";
+
 const char kEolNotificationURL[] = "https://www.google.com/chromebook/older/";
 
 const char kGoogleNameserversLearnMoreURL[] =
@@ -271,10 +283,10 @@ const char kInstantTetheringLearnMoreURL[] =
     "https://support.google.com/chromebook?p=instant_tethering";
 
 const char kMultiDeviceLearnMoreURL[] =
-    "https://support.google.com/pixelbook/?p=better_together";
+    "https://support.google.com/chromebook/?p=multi_device";
 
 const char kAndroidMessagesLearnMoreURL[] =
-    "https://support.google.com/pixelbook/?p=bettertogether_android_messages";
+    "https://support.google.com/chromebook/?p=multi_device_messages";
 
 const char kLanguageSettingsLearnMoreUrl[] =
     "https://support.google.com/chromebook/answer/1059490";
@@ -292,6 +304,10 @@ const char kNaturalScrollHelpURL[] =
     "https://support.google.com/chromebook/?p=simple_scrolling";
 
 const char kOemEulaURLPath[] = "oem";
+
+const char kArcTermsURLPath[] = "arc/terms";
+
+const char kArcPrivacyPolicyURLPath[] = "arc/privacy_policy";
 
 const char kOnlineEulaURLPath[] =
     "https://www.google.com/intl/%s/chrome/eula_text.html";

@@ -4,7 +4,9 @@
 
 #include "chrome/browser/ui/toolbar/toolbar_actions_bar.h"
 
+#include <algorithm>
 #include <set>
+#include <string>
 #include <utility>
 
 #include "base/auto_reset.h"
@@ -136,11 +138,6 @@ void ToolbarActionsBar::RegisterProfilePrefs(
 
 // static
 gfx::Size ToolbarActionsBar::GetIconAreaSize() {
-#if defined(OS_MACOSX)
-  // On Cocoa, the spec is a 24x24 button in a 28x28 space.
-  if (!base::FeatureList::IsEnabled(features::kViewsBrowserWindows))
-    return gfx::Size(24, 24);
-#endif
   return gfx::Size(28, 28);
 }
 
@@ -169,7 +166,7 @@ gfx::Size ToolbarActionsBar::GetFullSize() const {
     num_rows += (std::max(0, icon_count - 1) / num_icons);
   }
 
-  return gfx::ScaleToFlooredSize(GetViewSize(), num_icons, num_rows);
+  return gfx::Size(IconCountToWidth(num_icons), IconCountToWidth(num_rows));
 }
 
 int ToolbarActionsBar::GetMinimumWidth() const {
@@ -181,12 +178,21 @@ int ToolbarActionsBar::GetMaximumWidth() const {
 }
 
 int ToolbarActionsBar::IconCountToWidth(size_t icons) const {
-  return icons * GetViewSize().width();
+  if (icons == 0)
+    return 0;
+  return icons * GetViewSize().width() +
+         (icons - 1) * GetLayoutConstant(TOOLBAR_ELEMENT_PADDING);
+}
+
+size_t ToolbarActionsBar::WidthToIconCountUnclamped(int pixels) const {
+  const int element_padding = GetLayoutConstant(TOOLBAR_ELEMENT_PADDING);
+  return std::max(
+      (pixels + element_padding) / (GetViewSize().width() + element_padding),
+      0);
 }
 
 size_t ToolbarActionsBar::WidthToIconCount(int pixels) const {
-  return base::ClampToRange(pixels / GetViewSize().width(), 0,
-                            static_cast<int>(toolbar_actions_.size()));
+  return std::min(WidthToIconCountUnclamped(pixels), toolbar_actions_.size());
 }
 
 size_t ToolbarActionsBar::GetIconCount() const {
@@ -277,8 +283,10 @@ gfx::Rect ToolbarActionsBar::GetFrameForIndex(
                                   : relative_index;
 
   const auto size = GetViewSize();
-  return gfx::Rect(
-      gfx::Point(index_in_row * size.width(), row_index * size.height()), size);
+  const int element_padding = GetLayoutConstant(TOOLBAR_ELEMENT_PADDING);
+  return gfx::Rect(gfx::Point(index_in_row * (size.width() + element_padding),
+                              row_index * (size.height() + element_padding)),
+                   size);
 }
 
 std::vector<ToolbarActionViewController*>
@@ -374,8 +382,10 @@ bool ToolbarActionsBar::ShowToolbarActionPopup(const std::string& action_id,
 
 void ToolbarActionsBar::SetOverflowRowWidth(int width) {
   DCHECK(in_overflow_mode());
+  // This uses the unclamped icon count to allow the in-menu bar to span the
+  // menu width.
   platform_settings_.icons_per_overflow_menu_row =
-      std::max(width / GetViewSize().width(), 1);
+      std::max(WidthToIconCountUnclamped(width), static_cast<size_t>(1));
 }
 
 void ToolbarActionsBar::OnResizeComplete(int width) {
@@ -568,6 +578,10 @@ void ToolbarActionsBar::ShowToolbarActionBubbleAsync(
                      weak_ptr_factory_.GetWeakPtr(), std::move(bubble)));
 }
 
+bool ToolbarActionsBar::CloseOverflowMenuIfOpen() {
+  return delegate_->CloseOverflowMenuIfOpen();
+}
+
 void ToolbarActionsBar::MaybeShowExtensionBubble() {
   std::unique_ptr<extensions::ExtensionMessageBubbleController> controller =
       model_->GetExtensionMessageBubbleController(browser_);
@@ -637,7 +651,7 @@ void ToolbarActionsBar::OnToolbarActionLoadFailed() {
 }
 
 void ToolbarActionsBar::OnToolbarActionRemoved(const std::string& action_id) {
-  ToolbarActions::iterator iter = toolbar_actions_.begin();
+  auto iter = toolbar_actions_.begin();
   while (iter != toolbar_actions_.end() && (*iter)->GetId() != action_id)
     ++iter;
 
@@ -650,9 +664,12 @@ void ToolbarActionsBar::OnToolbarActionRemoved(const std::string& action_id) {
   std::unique_ptr<ToolbarActionViewController> removed_action =
       std::move(*iter);
   toolbar_actions_.erase(iter);
-  delegate_->RemoveViewForAction(removed_action.get());
+
+  // If we kill the view before we undo the popout, highlights and pop-ups can
+  // get left in weird states, so undo the popout first.
   if (popped_out_action_ == removed_action.get())
     UndoPopOut();
+  delegate_->RemoveViewForAction(removed_action.get());
   removed_action.reset();
 
   // If the extension is being upgraded we don't want the bar to shrink
@@ -717,9 +734,6 @@ void ToolbarActionsBar::ResizeDelegate(gfx::Tween::Type tween_type) {
     // action and added a different one in quick succession).
     delegate_->Redraw(false);
   }
-
-  for (ToolbarActionsBarObserver& observer : observers_)
-    observer.OnToolbarActionsBarDidStartResize();
 }
 
 void ToolbarActionsBar::OnToolbarHighlightModeChanged(bool is_highlighting) {
@@ -770,12 +784,15 @@ void ToolbarActionsBar::OnToolbarModelInitialized() {
   ResizeDelegate(gfx::Tween::EASE_OUT);
 }
 
-void ToolbarActionsBar::TabInsertedAt(TabStripModel* tab_strip_model,
-                                      content::WebContents* contents,
-                                      int index,
-                                      bool foreground) {
-  if (foreground)
-    extensions::MaybeShowExtensionControlledNewTabPage(browser_, contents);
+void ToolbarActionsBar::OnTabStripModelChanged(
+    TabStripModel* tab_strip_model,
+    const TabStripModelChange& change,
+    const TabStripSelectionChange& selection) {
+  if (tab_strip_model->empty() || !selection.active_tab_changed())
+    return;
+
+  extensions::MaybeShowExtensionControlledNewTabPage(browser_,
+                                                     selection.new_contents);
 }
 
 void ToolbarActionsBar::ReorderActions() {

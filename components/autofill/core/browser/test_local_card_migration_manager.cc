@@ -52,16 +52,17 @@ void TestLocalCardMigrationManager::
   LocalCardMigrationManager::OnUserAcceptedIntermediateMigrationDialog();
 }
 
-void TestLocalCardMigrationManager::OnUserAcceptedMainMigrationDialog() {
+void TestLocalCardMigrationManager::OnUserAcceptedMainMigrationDialog(
+    const std::vector<std::string>& selected_cards) {
   main_prompt_was_shown_ = true;
-  LocalCardMigrationManager::OnUserAcceptedMainMigrationDialog();
+  LocalCardMigrationManager::OnUserAcceptedMainMigrationDialog(selected_cards);
 }
 
 void TestLocalCardMigrationManager::OnDidGetUploadDetails(
     bool is_from_settings_page,
     AutofillClient::PaymentsRpcResult result,
     const base::string16& context_token,
-    std::unique_ptr<base::DictionaryValue> legal_message) {
+    std::unique_ptr<base::Value> legal_message) {
   if (result == AutofillClient::SUCCESS) {
     local_card_migration_was_triggered_ = true;
     LocalCardMigrationManager::OnDidGetUploadDetails(

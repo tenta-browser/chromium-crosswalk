@@ -7,6 +7,7 @@
 
 #include <stdint.h>
 
+#include <functional>
 #include <memory>
 #include <string>
 #include <vector>
@@ -38,6 +39,8 @@ class VideoPlane;
 // from other tests.
 class CHROMECAST_EXPORT CastMediaShlib {
  public:
+  using ResultCallback =
+      std::function<void(bool success, const std::string& message)>;
   // Observer for audio loopback data.
   class LoopbackAudioObserver {
    public:
@@ -126,21 +129,16 @@ class CHROMECAST_EXPORT CastMediaShlib {
   static void RemoveLoopbackAudioObserver(LoopbackAudioObserver* observer)
       __attribute__((__weak__));
 
-  // Reset the post processing pipeline.
-  static void ResetPostProcessors() __attribute__((__weak__));
+  // Reset the post processing pipeline. |callback| will be called with
+  // |success| = |true| if the new config loads without error.
+  static void ResetPostProcessors(ResultCallback callback)
+      __attribute__((__weak__));
 
   // Updates all postprocessors with the given |name| to have new configuration
   // |config|.
   static void SetPostProcessorConfig(const std::string& name,
                                      const std::string& config)
       __attribute__((__weak__));
-
-  // Only used on Chromecast: set and clear an image on the video plane.
-  // Image data is 8-bit ARGB format; |data| buffer byte length must be
-  // |width|*|height|*4. Returns whether the image could be successfully set.
-  static bool SetVideoPlaneImage(int width, int height, const uint8_t* data)
-      __attribute__((__weak__));
-  static void ClearVideoPlaneImage() __attribute__((__weak__));
 
   // Sets up a direct audio source for output. The media backend will pull audio
   // directly from |source| whenever more output data is needed; this provides

@@ -16,6 +16,12 @@ namespace network {
 class NetworkQualityTracker;
 }
 
+namespace ukm {
+namespace builders {
+class PageLoad;
+}
+}  // namespace ukm
+
 // If URL-Keyed-Metrics (UKM) is enabled in the system, this is used to
 // populate it with top-level page-load metrics.
 class UkmPageLoadMetricsObserver
@@ -33,6 +39,9 @@ class UkmPageLoadMetricsObserver
   ObservePolicy OnStart(content::NavigationHandle* navigation_handle,
                         const GURL& currently_committed_url,
                         bool started_in_foreground) override;
+
+  ObservePolicy OnRedirect(
+      content::NavigationHandle* navigation_handle) override;
 
   ObservePolicy OnCommit(content::NavigationHandle* navigation_handle,
                          ukm::SourceId source_id) override;
@@ -60,7 +69,7 @@ class UkmPageLoadMetricsObserver
   // as first contentful paint.
   void RecordTimingMetrics(
       const page_load_metrics::mojom::PageLoadTiming& timing,
-      ukm::SourceId source_id);
+      const page_load_metrics::PageLoadExtraInfo& info);
 
   // Records metrics based on the PageLoadExtraInfo struct, as well as updating
   // the URL. |app_background_time| should be set to a timestamp if the app was
@@ -68,6 +77,13 @@ class UkmPageLoadMetricsObserver
   void RecordPageLoadExtraInfoMetrics(
       const page_load_metrics::PageLoadExtraInfo& info,
       base::TimeTicks app_background_time);
+
+  // Adds main resource timing metrics to |builder|.
+  void ReportMainResourceTimingMetrics(
+      const page_load_metrics::mojom::PageLoadTiming& timing,
+      ukm::builders::PageLoad* builder);
+
+  void ReportLayoutStability(const page_load_metrics::PageLoadExtraInfo& info);
 
   // Guaranteed to be non-null during the lifetime of |this|.
   network::NetworkQualityTracker* network_quality_tracker_;
@@ -85,8 +101,23 @@ class UkmPageLoadMetricsObserver
   base::Optional<base::TimeDelta> transport_rtt_estimate_;
   base::Optional<int32_t> downstream_kbps_estimate_;
 
+  // Load timing metrics of the main frame resource request.
+  base::Optional<net::LoadTimingInfo> main_frame_timing_;
+
   // PAGE_TRANSITION_LINK is the default PageTransition value.
   ui::PageTransition page_transition_ = ui::PAGE_TRANSITION_LINK;
+
+  // Time of navigation start.
+  base::TimeTicks navigation_start_;
+
+  // True if the page started hidden, or ever became hidden.
+  bool was_hidden_ = false;
+
+  // True if the page main resource was served from disk cache.
+  bool was_cached_ = false;
+
+  // The number of main frame redirects that occurred before commit.
+  uint32_t main_frame_request_redirect_count_ = 0;
 
   DISALLOW_COPY_AND_ASSIGN(UkmPageLoadMetricsObserver);
 };

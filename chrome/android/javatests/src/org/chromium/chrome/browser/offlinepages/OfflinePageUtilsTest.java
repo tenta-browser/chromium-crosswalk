@@ -20,6 +20,7 @@ import org.junit.Test;
 import org.junit.runner.RunWith;
 
 import org.chromium.base.Callback;
+import org.chromium.base.ContextUtils;
 import org.chromium.base.ThreadUtils;
 import org.chromium.base.test.util.CommandLineFlags;
 import org.chromium.base.test.util.DisableIf;
@@ -36,8 +37,8 @@ import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.chrome.test.ChromeActivityTestRule;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
 import org.chromium.components.offlinepages.SavePageResult;
-import org.chromium.content.browser.test.util.Criteria;
-import org.chromium.content.browser.test.util.CriteriaHelper;
+import org.chromium.content_public.browser.test.util.Criteria;
+import org.chromium.content_public.browser.test.util.CriteriaHelper;
 import org.chromium.net.ConnectionType;
 import org.chromium.net.NetworkChangeNotifier;
 import org.chromium.net.test.EmbeddedTestServer;
@@ -66,8 +67,9 @@ public class OfflinePageUtilsTest {
             new ClientId(OfflinePageBridge.SUGGESTED_ARTICLES_NAMESPACE, "90");
     private static final String SHARED_URI = "http://127.0.0.1/chrome/test/data/android/about.html";
     private static final String CONTENT_URI = "content://chromium/some-content-id";
-    private static final String CONTENT_URI_PREFIX =
-            "content://org.chromium.chrome.FileProvider/offline-cache/";
+    private static final String CONTENT_URI_PREFIX = "content://"
+            + ContextUtils.getApplicationContext().getPackageName()
+            + ".FileProvider/offline-cache/";
     private static final String FILE_URI = "file://some-dir/some-file.mhtml";
     private static final String INVALID_URI = "This is not a uri.";
     private static final String EMPTY_URI = "";
@@ -83,7 +85,7 @@ public class OfflinePageUtilsTest {
     private OfflinePageBridge mOfflinePageBridge;
     private EmbeddedTestServer mTestServer;
     private String mTestPage;
-    private boolean mServerTurnedOn = false;
+    private boolean mServerTurnedOn;
 
     @Before
     public void setUp() throws Exception {

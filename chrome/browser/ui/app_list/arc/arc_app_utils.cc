@@ -84,15 +84,12 @@ constexpr char kLaunchFlags[] = "launchFlags";
 
 constexpr char kAndroidClockAppId[] = "ddmmnabaeomoacfpfjgghfpocfolhjlg";
 constexpr char kAndroidFilesAppId[] = "gmiohhmfhgfclpeacmdfancbipocempm";
-constexpr char kAndroidCameraAppId[] = "goamfaniemdfcajgcmmflhchgkmbngka";
-constexpr char kAndroidLegacyCameraAppId[] = "obfofkigjfamlldmipdegnjlcpincibc";
-constexpr char kAndroidCameraMigrationAppId[] =
-    "ngmkobaiicipbagcngcmilfkhejlnfci";
+constexpr char kAndroidContactsAppId[] = "kipfkokfekalckplgaikemhghlbkgpfl";
 
 constexpr char const* kAppIdsHiddenInLauncher[] = {
-    kAndroidClockAppId,        kSettingsAppId,
-    kAndroidFilesAppId,        kAndroidCameraAppId,
-    kAndroidLegacyCameraAppId, kAndroidCameraMigrationAppId};
+    kAndroidClockAppId,   kSettingsAppId,     kAndroidFilesAppId,
+    kCameraAppId,         kLegacyCameraAppId, kCameraMigrationAppId,
+    kAndroidContactsAppId};
 
 // Returns true if |event_flags| came from a mouse or touch event.
 bool IsMouseOrTouchEventFromFlags(int event_flags) {
@@ -179,9 +176,15 @@ int64_t GetValidDisplayId(int64_t display_id) {
 
 }  // namespace
 
+const char kCameraAppId[] = "goamfaniemdfcajgcmmflhchgkmbngka";
+const char kCameraMigrationAppId[] = "ngmkobaiicipbagcngcmilfkhejlnfci";
+const char kGoogleDuo[] = "djkcbcmkefiiphjkonbeknmcgiheajce";
+const char kInfinitePainter[] = "afihfgfghkmdmggakhkgnfhlikhdpima";
+const char kLightRoom[] = "fpegfnbgomakooccabncdaelhfppceni";
 const char kPlayStoreAppId[] = "cnbgggchhmkkdmeppjobngjoejnihlei";
 const char kPlayBooksAppId[] = "cafegjnmmjpfibnlddppihpnkbkgicbg";
 const char kPlayGamesAppId[] = "nplnnjkbeijcggmpdcecpabgbjgeiedc";
+const char kLegacyCameraAppId[] = "obfofkigjfamlldmipdegnjlcpincibc";
 const char kPlayMoviesAppId[] = "dbbihmicnlldbflflckpafphlekmjfnm";
 const char kPlayMusicAppId[] = "ophbaopahelaolbjliokocojjbgfadfn";
 const char kPlayStorePackage[] = "com.android.vending";
@@ -244,8 +247,7 @@ bool LaunchAppWithIntent(content::BrowserContext* context,
                          int64_t display_id) {
   DCHECK(!launch_intent.has_value() || !launch_intent->empty());
   if (user_action != UserInteractionType::NOT_USER_INITIATED)
-    UMA_HISTOGRAM_ENUMERATION("Arc.UserInteraction", user_action,
-                              UserInteractionType::SIZE);
+    UMA_HISTOGRAM_ENUMERATION("Arc.UserInteraction", user_action);
 
   Profile* const profile = Profile::FromBrowserContext(context);
 
@@ -398,13 +400,6 @@ void ShowTalkBackSettings() {
       kShowTalkbackSettingsIntent,
       ArcIntentHelperBridge::kArcIntentHelperPackageName,
       kIntentHelperClassName, "{}");
-}
-
-void StartPaiFlow() {
-  arc::mojom::AppInstance* app_instance = GET_APP_INSTANCE(StartPaiFlow);
-  if (!app_instance)
-    return;
-  app_instance->StartPaiFlow();
 }
 
 std::vector<std::string> GetSelectedPackagesFromPrefs(

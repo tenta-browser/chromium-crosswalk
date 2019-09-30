@@ -103,8 +103,6 @@ MOCK_METHOD4(
     ColorMask,
     void(GLboolean red, GLboolean green, GLboolean blue, GLboolean alpha));
 MOCK_METHOD1(CompileShader, void(GLuint shader));
-MOCK_METHOD2(CompressedCopyTextureCHROMIUM,
-             void(GLuint sourceId, GLuint destId));
 MOCK_METHOD8(CompressedTexImage2D,
              void(GLenum target,
                   GLint level,
@@ -588,7 +586,9 @@ MOCK_METHOD4(
 MOCK_METHOD3(GetProgramPipelineiv,
              void(GLuint pipeline, GLenum pname, GLint* params));
 MOCK_METHOD3(GetProgramResourceIndex,
-             void(GLuint program, GLenum programInterface, const GLchar* name));
+             GLuint(GLuint program,
+                    GLenum programInterface,
+                    const GLchar* name));
 MOCK_METHOD8(GetProgramResourceiv,
              void(GLuint program,
                   GLenum programInterface,
@@ -870,9 +870,34 @@ MOCK_METHOD4(MapBufferRange,
                    GLbitfield access));
 MOCK_METHOD2(MatrixLoadfEXT, void(GLenum matrixMode, const GLfloat* m));
 MOCK_METHOD1(MatrixLoadIdentityEXT, void(GLenum matrixMode));
+MOCK_METHOD1(MaxShaderCompilerThreadsKHR, void(GLuint count));
 MOCK_METHOD1(MemoryBarrierByRegion, void(GLbitfield barriers));
 MOCK_METHOD1(MemoryBarrierEXT, void(GLbitfield barriers));
 MOCK_METHOD1(MinSampleShading, void(GLfloat value));
+MOCK_METHOD4(MultiDrawArraysANGLE,
+             void(GLenum mode,
+                  const GLint* firsts,
+                  const GLsizei* counts,
+                  GLsizei drawcount));
+MOCK_METHOD5(MultiDrawArraysInstancedANGLE,
+             void(GLenum mode,
+                  const GLint* firsts,
+                  const GLsizei* counts,
+                  const GLsizei* instanceCounts,
+                  GLsizei drawcount));
+MOCK_METHOD5(MultiDrawElementsANGLE,
+             void(GLenum mode,
+                  const GLsizei* counts,
+                  GLenum type,
+                  const GLvoid* const* indices,
+                  GLsizei drawcount));
+MOCK_METHOD6(MultiDrawElementsInstancedANGLE,
+             void(GLenum mode,
+                  const GLsizei* counts,
+                  GLenum type,
+                  const GLvoid* const* indices,
+                  const GLsizei* instanceCounts,
+                  GLsizei drawcount));
 MOCK_METHOD4(
     ObjectLabel,
     void(GLenum identifier, GLuint name, GLsizei length, const char* label));

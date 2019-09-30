@@ -257,6 +257,10 @@ class FileManagerPrivateInternalStartCopyFunction
   void RunAfterGetFileMetadata(base::File::Error result,
                                const base::File::Info& file_info);
 
+  // Part of RunAsync(). Called after the amount of space on the destination
+  // is known.
+  void RunAfterCheckDiskSpace(int64_t space_needed, int64_t space_available);
+
   // Part of RunAsync(). Called after FreeDiskSpaceIfNeededFor() is completed on
   // IO thread.
   void RunAfterFreeDiskSpace(bool available);
@@ -325,6 +329,7 @@ class FileManagerPrivateInternalComputeChecksumFunction
 };
 
 // Implements the chrome.fileManagerPrivate.searchFilesByHashes method.
+// TODO(b/883628): Write some tests maybe?
 class FileManagerPrivateSearchFilesByHashesFunction
     : public LoggedAsyncExtensionFunction {
  public:
@@ -337,6 +342,14 @@ class FileManagerPrivateSearchFilesByHashesFunction
  private:
   // ChromeAsyncExtensionFunction overrides.
   bool RunAsync() override;
+
+  // Fallback to walking the filesystem and checking file attributes.
+  std::vector<drive::HashAndFilePath> SearchByAttribute(
+      const std::set<std::string>& hashes,
+      const base::FilePath& dir,
+      const base::FilePath& prefix);
+  void OnSearchByAttribute(const std::set<std::string>& hashes,
+                           const std::vector<drive::HashAndFilePath>& results);
 
   // Sends a response with |results| to the extension.
   void OnSearchByHashes(const std::set<std::string>& hashes,

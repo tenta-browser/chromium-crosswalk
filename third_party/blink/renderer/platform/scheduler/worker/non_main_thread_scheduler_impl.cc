@@ -25,7 +25,10 @@ std::unique_ptr<NonMainThreadSchedulerImpl> NonMainThreadSchedulerImpl::Create(
     WorkerSchedulerProxy* proxy) {
   return std::make_unique<WorkerThreadScheduler>(
       thread_type,
-      base::sequence_manager::CreateSequenceManagerOnCurrentThread(), proxy);
+      base::sequence_manager::CreateSequenceManagerOnCurrentThread(
+          base::sequence_manager::SequenceManager::Settings{
+              .randomised_sampling_enabled = true}),
+      proxy);
 }
 
 void NonMainThreadSchedulerImpl::Init() {
@@ -40,13 +43,13 @@ NonMainThreadSchedulerImpl::CreateTaskQueue(const char* name) {
                                   .SetTimeDomain(nullptr));
 }
 
-void NonMainThreadSchedulerImpl::RunIdleTask(blink::WebThread::IdleTask task,
+void NonMainThreadSchedulerImpl::RunIdleTask(Thread::IdleTask task,
                                              base::TimeTicks deadline) {
   std::move(task).Run(deadline);
 }
 
 void NonMainThreadSchedulerImpl::PostIdleTask(const base::Location& location,
-                                              blink::WebThread::IdleTask task) {
+                                              Thread::IdleTask task) {
   IdleTaskRunner()->PostIdleTask(
       location, base::BindOnce(&NonMainThreadSchedulerImpl::RunIdleTask,
                                std::move(task)));
@@ -54,7 +57,7 @@ void NonMainThreadSchedulerImpl::PostIdleTask(const base::Location& location,
 
 void NonMainThreadSchedulerImpl::PostNonNestableIdleTask(
     const base::Location& location,
-    blink::WebThread::IdleTask task) {
+    Thread::IdleTask task) {
   IdleTaskRunner()->PostNonNestableIdleTask(
       location, base::BindOnce(&NonMainThreadSchedulerImpl::RunIdleTask,
                                std::move(task)));
@@ -79,7 +82,7 @@ NonMainThreadSchedulerImpl::MonotonicallyIncreasingVirtualTime() {
 
 scoped_refptr<base::SingleThreadTaskRunner>
 NonMainThreadSchedulerImpl::ControlTaskRunner() {
-  return helper_.ControlNonMainThreadTaskQueue();
+  return helper_.ControlNonMainThreadTaskQueue()->task_runner();
 }
 
 void NonMainThreadSchedulerImpl::RegisterTimeDomain(

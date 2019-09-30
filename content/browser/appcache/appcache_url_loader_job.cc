@@ -13,6 +13,7 @@
 #include "content/public/common/resource_type.h"
 #include "net/http/http_status_code.h"
 #include "services/network/public/cpp/net_adapters.h"
+#include "third_party/blink/public/mojom/appcache/appcache_info.mojom.h"
 
 namespace content {
 
@@ -22,8 +23,8 @@ AppCacheURLLoaderJob::~AppCacheURLLoaderJob() {
 }
 
 bool AppCacheURLLoaderJob::IsStarted() const {
-  return delivery_type_ != AWAITING_DELIVERY_ORDERS &&
-         delivery_type_ != NETWORK_DELIVERY;
+  return delivery_type_ != DeliveryType::kAwaitingDeliverCall &&
+         delivery_type_ != DeliveryType::kNetwork;
 }
 
 void AppCacheURLLoaderJob::DeliverAppCachedResponse(const GURL& manifest_url,
@@ -35,7 +36,7 @@ void AppCacheURLLoaderJob::DeliverAppCachedResponse(const GURL& manifest_url,
     return;
   }
 
-  delivery_type_ = APPCACHED_DELIVERY;
+  delivery_type_ = DeliveryType::kAppCached;
 
   // In tests we only care about the delivery_type_ state.
   if (AppCacheRequestHandler::IsRunningInTests())
@@ -57,7 +58,7 @@ void AppCacheURLLoaderJob::DeliverAppCachedResponse(const GURL& manifest_url,
 }
 
 void AppCacheURLLoaderJob::DeliverNetworkResponse() {
-  delivery_type_ = NETWORK_DELIVERY;
+  delivery_type_ = DeliveryType::kNetwork;
 
   // In tests we only care about the delivery_type_ state.
   if (AppCacheRequestHandler::IsRunningInTests())
@@ -71,7 +72,7 @@ void AppCacheURLLoaderJob::DeliverNetworkResponse() {
 }
 
 void AppCacheURLLoaderJob::DeliverErrorResponse() {
-  delivery_type_ = ERROR_DELIVERY;
+  delivery_type_ = DeliveryType::kError;
 
   // In tests we only care about the delivery_type_ state.
   if (AppCacheRequestHandler::IsRunningInTests())
@@ -106,9 +107,9 @@ base::WeakPtr<AppCacheURLLoaderJob> AppCacheURLLoaderJob::GetDerivedWeakPtr() {
 }
 
 void AppCacheURLLoaderJob::FollowRedirect(
-    const base::Optional<std::vector<std::string>>&
-        to_be_removed_request_headers,
-    const base::Optional<net::HttpRequestHeaders>& modified_request_headers) {
+    const std::vector<std::string>& modified_headers,
+    const net::HttpRequestHeaders& removed_headers,
+    const base::Optional<GURL>& new_url) {
   NOTREACHED() << "appcache never produces redirects";
 }
 
@@ -149,7 +150,7 @@ AppCacheURLLoaderJob::AppCacheURLLoaderJob(
     NavigationLoaderInterceptor::LoaderCallback loader_callback)
     : storage_(storage->GetWeakPtr()),
       start_time_tick_(base::TimeTicks::Now()),
-      cache_id_(kAppCacheNoCacheId),
+      cache_id_(blink::mojom::kAppCacheNoCacheId),
       is_fallback_(false),
       binding_(this),
       writable_handle_watcher_(FROM_HERE,
@@ -190,8 +191,8 @@ void AppCacheURLLoaderJob::OnResponseInfoLoaded(
     }
 
     info_ = response_info;
-    reader_.reset(
-        storage_->CreateResponseReader(manifest_url_, entry_.response_id()));
+    reader_ =
+        storage_->CreateResponseReader(manifest_url_, entry_.response_id());
 
     if (is_range_request())
       SetupRangeResponse();
@@ -205,8 +206,8 @@ void AppCacheURLLoaderJob::OnResponseInfoLoaded(
     // Wait for the data pipe to be ready to accept data.
     writable_handle_watcher_.Watch(
         response_body_stream_.get(), MOJO_HANDLE_SIGNAL_WRITABLE,
-        base::Bind(&AppCacheURLLoaderJob::OnResponseBodyStreamReady,
-                   GetDerivedWeakPtr()));
+        base::BindRepeating(&AppCacheURLLoaderJob::OnResponseBodyStreamReady,
+                            GetDerivedWeakPtr()));
 
     SendResponseInfo();
     ReadMore();
@@ -353,7 +354,7 @@ void AppCacheURLLoaderJob::NotifyCompleted(int error_code) {
   }
   client_->OnComplete(status);
 
-  if (delivery_type_ == APPCACHED_DELIVERY) {
+  if (delivery_type_ == DeliveryType::kAppCached) {
     AppCacheHistograms::CountResponseRetrieval(
         error_code == 0, is_main_resource_load_,
         url::Origin::Create(manifest_url_));

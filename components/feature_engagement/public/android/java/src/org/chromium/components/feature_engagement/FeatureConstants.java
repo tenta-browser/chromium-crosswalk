@@ -19,9 +19,12 @@ public final class FeatureConstants {
     public static final String DATA_SAVER_PREVIEW_FEATURE = "IPH_DataSaverPreview";
     public static final String DATA_SAVER_DETAIL_FEATURE = "IPH_DataSaverDetail";
     public static final String NTP_BUTTON_FEATURE = "IPH_NewTabPageButton";
+    public static final String PREVIEWS_OMNIBOX_UI_FEATURE = "IPH_PreviewsOmniboxUI";
     public static final String HOMEPAGE_TILE_FEATURE = "IPH_HomepageTile";
 
     public static final String MEDIA_DOWNLOAD_FEATURE = "IPH_MediaDownload";
+
+    public static final String TRANSLATE_MENU_BUTTON_FEATURE = "IPH_TranslateMenuButton";
 
     /**
      * An IPH feature that encourages users who search a query from a web page in a new tab, to use

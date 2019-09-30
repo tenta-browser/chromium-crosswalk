@@ -10,6 +10,7 @@
 
 #include "base/macros.h"
 #include "base/metrics/histogram_macros.h"
+#include "base/stl_util.h"
 #include "base/strings/string_util.h"
 #include "components/google/core/common/google_util.h"
 #include "components/variations/variations_http_header_provider.h"
@@ -37,6 +38,7 @@ const char* kSuffixesToSetHeadersFor[] = {
     ".googleusercontent.com",
     ".googlevideo.com",
     ".gstatic.com",
+    ".litepages.googlezip.net",
     ".ytimg.com",
 };
 
@@ -73,12 +75,12 @@ bool IsGoogleDomain(const GURL& url) {
   // Some domains don't have international TLD extensions, so testing for them
   // is very straight forward.
   const std::string host = url.host();
-  for (size_t i = 0; i < arraysize(kSuffixesToSetHeadersFor); ++i) {
+  for (size_t i = 0; i < base::size(kSuffixesToSetHeadersFor); ++i) {
     if (base::EndsWith(host, kSuffixesToSetHeadersFor[i],
                        base::CompareCase::INSENSITIVE_ASCII))
       return true;
   }
-  for (size_t i = 0; i < arraysize(kHostsToSetHeadersFor); ++i) {
+  for (size_t i = 0; i < base::size(kHostsToSetHeadersFor); ++i) {
     if (base::LowerCaseEqualsASCII(host, kHostsToSetHeadersFor[i]))
       return true;
   }

@@ -69,18 +69,19 @@ class CONTENT_EXPORT RendererWebMediaPlayerDelegate
       int delegate_id,
       const viz::SurfaceId&,
       const gfx::Size&,
-      blink::WebMediaPlayer::PipWindowOpenedCallback) override;
+      blink::WebMediaPlayer::PipWindowOpenedCallback,
+      bool show_play_pause_button) override;
   void DidPictureInPictureModeEnd(int delegate_id, base::OnceClosure) override;
   void DidSetPictureInPictureCustomControls(
       int delegate_id,
       const std::vector<blink::PictureInPictureControlInfo>& controls) override;
   void DidPictureInPictureSurfaceChange(int delegate_id,
                                         const viz::SurfaceId&,
-                                        const gfx::Size&) override;
+                                        const gfx::Size&,
+                                        bool show_play_pause_button) override;
   void RegisterPictureInPictureWindowResizeCallback(
       int player_id,
       blink::WebMediaPlayer::PipWindowResizedCallback) override;
-  bool IsBackgroundMediaSuspendEnabled() override;
 
   // content::RenderFrameObserver overrides.
   void WasHidden() override;
@@ -149,9 +150,6 @@ class CONTENT_EXPORT RendererWebMediaPlayerDelegate
   // Flag for gating if players should ever transition to a stale state after a
   // period of inactivity.
   bool allow_idle_cleanup_ = true;
-
-  // Flag for whether players should suspend when tab is in background.
-  bool background_suspend_enabled_ = true;
 
   // Tracks which players have entered an idle state. After some period of
   // inactivity these players will be notified and become stale.

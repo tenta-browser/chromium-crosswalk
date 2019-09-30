@@ -10,7 +10,7 @@
 #include "base/json/json_writer.h"
 #include "base/logging.h"
 #include "base/path_service.h"
-#include "base/sys_info.h"
+#include "base/system/sys_info.h"
 #include "base/values.h"
 #include "chromeos/assistant/internal/internal_constants.h"
 #include "chromeos/dbus/util/version_loader.h"
@@ -53,6 +53,11 @@ std::string CreateLibAssistantConfig(bool disable_hotword) {
     logging.SetKey(
         "directory",
         Value(GetRootPath().Append(FILE_PATH_LITERAL("log")).value()));
+    // Maximum disk space consumed by all log files. There are 5 rotating log
+    // files on disk.
+    logging.SetKey("max_size_kb", Value(3 * 1024));
+    // Empty "output_type" disables logging to stderr.
+    logging.SetKey("output_type", Value(Type::LIST));
     config.SetKey("logging", std::move(logging));
   } else {
     // Print logs to console if running in desktop mode.
@@ -67,6 +72,8 @@ std::string CreateLibAssistantConfig(bool disable_hotword) {
   dict.SetKey("disable_hotword", Value(disable_hotword));
   sources.GetList().push_back(std::move(dict));
   audio_input.SetKey("sources", std::move(sources));
+  // Skip sending speaker ID selection info to disable user verification.
+  audio_input.SetKey("should_send_speaker_id_selection_info", Value(false));
   config.SetKey("audio_input", std::move(audio_input));
 
   std::string json;

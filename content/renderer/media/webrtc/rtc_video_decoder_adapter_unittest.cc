@@ -28,6 +28,7 @@
 #include "media/video/mock_gpu_video_accelerator_factories.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "third_party/webrtc/api/video_codecs/video_codec.h"
 #include "ui/gfx/geometry/rect.h"
 #include "ui/gfx/geometry/size.h"
 
@@ -46,14 +47,13 @@ namespace {
 class MockVideoDecoder : public media::VideoDecoder {
  public:
   std::string GetDisplayName() const override { return "MockVideoDecoder"; }
-  MOCK_METHOD6(
-      Initialize,
-      void(const media::VideoDecoderConfig& config,
-           bool low_delay,
-           media::CdmContext* cdm_context,
-           const InitCB& init_cb,
-           const OutputCB& output_cb,
-           const WaitingForDecryptionKeyCB& waiting_for_decryption_key_cb));
+  MOCK_METHOD6(Initialize,
+               void(const media::VideoDecoderConfig& config,
+                    bool low_delay,
+                    media::CdmContext* cdm_context,
+                    const InitCB& init_cb,
+                    const OutputCB& output_cb,
+                    const media::WaitingCB& waiting_cb));
   MOCK_METHOD2(Decode,
                void(scoped_refptr<media::DecoderBuffer> buffer,
                     const DecodeCB&));
@@ -92,29 +92,39 @@ class RTCVideoDecoderAdapterTest : public ::testing::Test {
         gpu_factories_(nullptr),
         decoded_image_callback_(decoded_cb_.Get()) {
     media_thread_.Start();
+
+    owned_video_decoder_ = std::make_unique<StrictMock<MockVideoDecoder>>();
+    video_decoder_ = owned_video_decoder_.get();
+
     ON_CALL(gpu_factories_, GetTaskRunner())
         .WillByDefault(Return(media_thread_.task_runner()));
     EXPECT_CALL(gpu_factories_, GetTaskRunner()).Times(AtLeast(0));
-    owned_video_decoder_ = std::make_unique<StrictMock<MockVideoDecoder>>();
-    video_decoder_ = owned_video_decoder_.get();
+
+    ON_CALL(gpu_factories_, IsDecoderConfigSupported(_))
+        .WillByDefault(Return(true));
+    EXPECT_CALL(gpu_factories_, IsDecoderConfigSupported(_)).Times(AtLeast(0));
+
+    ON_CALL(gpu_factories_, CreateVideoDecoder(_, _, _))
+        .WillByDefault(
+            [this](media::MediaLog* media_log,
+                   const media::RequestOverlayInfoCB& request_overlay_info_cb,
+                   const gfx::ColorSpace& target_color_space) {
+              DCHECK(this->owned_video_decoder_);
+              return std::move(this->owned_video_decoder_);
+            });
+    EXPECT_CALL(gpu_factories_, CreateVideoDecoder(_, _, _)).Times(AtLeast(0));
   }
 
   ~RTCVideoDecoderAdapterTest() {
     if (!rtc_video_decoder_adapter_)
       return;
 
-    RTCVideoDecoderAdapter::DeleteSoonOnMediaThread(
-        std::move(rtc_video_decoder_adapter_), &gpu_factories_);
+    media_thread_.task_runner()->DeleteSoon(
+        FROM_HERE, std::move(rtc_video_decoder_adapter_));
     media_thread_.FlushForTesting();
   }
 
  protected:
-  std::unique_ptr<media::VideoDecoder> CreateVideoDecoder(
-      media::MediaLog* media_log) {
-    DCHECK(owned_video_decoder_);
-    return std::move(owned_video_decoder_);
-  }
-
   bool BasicSetup() {
     if (!CreateAndInitialize())
       return false;
@@ -136,9 +146,9 @@ class RTCVideoDecoderAdapterTest : public ::testing::Test {
         .WillOnce(DoAll(SaveArg<4>(&output_cb_),
                         media::RunCallback<3>(init_cb_result)));
     rtc_video_decoder_adapter_ = RTCVideoDecoderAdapter::Create(
-        webrtc::kVideoCodecVP9, &gpu_factories_,
-        base::BindRepeating(&RTCVideoDecoderAdapterTest::CreateVideoDecoder,
-                            base::Unretained(this)));
+        &gpu_factories_,
+        webrtc::SdpVideoFormat(
+            webrtc::CodecTypeToPayloadString(webrtc::kVideoCodecVP9)));
     return !!rtc_video_decoder_adapter_;
   }
 
@@ -157,7 +167,7 @@ class RTCVideoDecoderAdapterTest : public ::testing::Test {
     uint8_t buf[] = {0};
     webrtc::EncodedImage input_image(&buf[0], 1, 1);
     input_image._completeFrame = true;
-    input_image._timeStamp = timestamp;
+    input_image.SetTimestamp(timestamp);
     return rtc_video_decoder_adapter_->Decode(input_image, false, nullptr, 0);
   }
 
@@ -193,15 +203,32 @@ class RTCVideoDecoderAdapterTest : public ::testing::Test {
       base::RepeatingCallback<void(const webrtc::VideoFrame&)>>>
       decoded_cb_;
 
- private:
   StrictMock<media::MockGpuVideoAcceleratorFactories> gpu_factories_;
   std::unique_ptr<RTCVideoDecoderAdapter> rtc_video_decoder_adapter_;
+
+ private:
   std::unique_ptr<StrictMock<MockVideoDecoder>> owned_video_decoder_;
   DecodedImageCallback decoded_image_callback_;
   media::VideoDecoder::OutputCB output_cb_;
 
   DISALLOW_COPY_AND_ASSIGN(RTCVideoDecoderAdapterTest);
 };
+
+TEST_F(RTCVideoDecoderAdapterTest, Create_UnknownFormat) {
+  rtc_video_decoder_adapter_ = RTCVideoDecoderAdapter::Create(
+      &gpu_factories_, webrtc::SdpVideoFormat(webrtc::CodecTypeToPayloadString(
+                           webrtc::kVideoCodecGeneric)));
+  ASSERT_FALSE(rtc_video_decoder_adapter_);
+}
+
+TEST_F(RTCVideoDecoderAdapterTest, Create_UnsupportedFormat) {
+  EXPECT_CALL(gpu_factories_, IsDecoderConfigSupported(_))
+      .WillOnce(Return(false));
+  rtc_video_decoder_adapter_ = RTCVideoDecoderAdapter::Create(
+      &gpu_factories_, webrtc::SdpVideoFormat(webrtc::CodecTypeToPayloadString(
+                           webrtc::kVideoCodecVP9)));
+  ASSERT_FALSE(rtc_video_decoder_adapter_);
+}
 
 TEST_F(RTCVideoDecoderAdapterTest, Lifecycle) {
   ASSERT_TRUE(BasicSetup());

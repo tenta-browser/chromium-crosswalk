@@ -13,7 +13,6 @@
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/browser/ui/views/frame/browser_view.h"
-#include "chrome/browser/ui/views_mode_controller.h"
 #include "chrome/browser/ui/webui/signin/sync_confirmation_ui.h"
 #include "chrome/common/url_constants.h"
 #include "components/constrained_window/constrained_window_views.h"
@@ -26,7 +25,6 @@
 
 namespace {
 
-const int kFixedGaiaViewHeight = 612;
 const int kModalDialogWidth = 448;
 const int kModalDialogWidthForUnifiedConsent = 512;
 const int kSyncConfirmationDialogHeight = 487;
@@ -122,7 +120,7 @@ void SigninViewControllerDelegateViews::ResizeNativeView(int height) {
   }
 }
 
-void SigninViewControllerDelegateViews::HandleKeyboardEvent(
+bool SigninViewControllerDelegateViews::HandleKeyboardEvent(
     content::WebContents* source,
     const content::NativeWebKeyboardEvent& event) {
   // If this is a MODAL_TYPE_CHILD, then GetFocusManager() will return the focus
@@ -130,8 +128,8 @@ void SigninViewControllerDelegateViews::HandleKeyboardEvent(
   // accelerators will fire. If this is a MODAL_TYPE_WINDOW, then this will have
   // no effect, since no accelerators have been registered for this standalone
   // window.
-  unhandled_keyboard_event_handler_.HandleKeyboardEvent(event,
-                                                        GetFocusManager());
+  return unhandled_keyboard_event_handler_.HandleKeyboardEvent(
+      event, GetFocusManager());
 }
 
 void SigninViewControllerDelegateViews::DisplayModal() {
@@ -163,6 +161,7 @@ void SigninViewControllerDelegateViews::DisplayModal() {
   content_view_->RequestFocus();
 }
 
+#if defined(OS_CHROMEOS)
 // static
 std::unique_ptr<views::WebView>
 SigninViewControllerDelegateViews::CreateGaiaWebView(
@@ -170,10 +169,10 @@ SigninViewControllerDelegateViews::CreateGaiaWebView(
     profiles::BubbleViewMode mode,
     Browser* browser,
     signin_metrics::AccessPoint access_point) {
-  GURL url =
-      signin::GetSigninURLFromBubbleViewMode(
-          browser->profile(), mode, access_point);
+  GURL url = signin::GetEmbeddedSigninURLFromBubbleViewMode(browser->profile(),
+                                                            mode, access_point);
 
+  constexpr int kFixedGaiaViewHeight = 612;
   int max_height = browser
       ->window()
       ->GetWebContentsModalDialogHost()
@@ -195,15 +194,13 @@ SigninViewControllerDelegateViews::CreateGaiaWebView(
 
   return std::unique_ptr<views::WebView>(web_view);
 }
+#endif
 
 std::unique_ptr<views::WebView>
 SigninViewControllerDelegateViews::CreateSyncConfirmationWebView(
-    Browser* browser,
-    bool is_consent_bump) {
+    Browser* browser) {
   return CreateDialogWebView(
-      browser,
-      is_consent_bump ? chrome::kChromeUISyncConsentBumpURL
-                      : chrome::kChromeUISyncConfirmationURL,
+      browser, chrome::kChromeUISyncConfirmationURL,
       GetSyncConfirmationDialogPreferredHeight(browser->profile()),
       GetSyncConfirmationDialogPreferredWidth(browser->profile()));
 }
@@ -241,40 +238,28 @@ SigninViewControllerDelegateViews::CreateDialogWebView(
   return std::unique_ptr<views::WebView>(web_view);
 }
 
+#if defined(OS_CHROMEOS)
 SigninViewControllerDelegate*
 SigninViewControllerDelegate::CreateModalSigninDelegate(
     SigninViewController* signin_view_controller,
     profiles::BubbleViewMode mode,
     Browser* browser,
     signin_metrics::AccessPoint access_point) {
-#if defined(OS_MACOSX)
-  if (views_mode_controller::IsViewsBrowserCocoa()) {
-    return CreateModalSigninDelegateCocoa(signin_view_controller, mode, browser,
-                                          access_point);
-  }
-#endif
   return new SigninViewControllerDelegateViews(
       signin_view_controller,
       SigninViewControllerDelegateViews::CreateGaiaWebView(
           nullptr, mode, browser, access_point),
       browser, ui::MODAL_TYPE_CHILD, false);
 }
+#endif
 
 SigninViewControllerDelegate*
 SigninViewControllerDelegate::CreateSyncConfirmationDelegate(
     SigninViewController* signin_view_controller,
-    Browser* browser,
-    bool is_consent_bump) {
-#if defined(OS_MACOSX)
-  if (views_mode_controller::IsViewsBrowserCocoa()) {
-    return CreateSyncConfirmationDelegateCocoa(signin_view_controller, browser,
-                                               is_consent_bump);
-  }
-#endif
+    Browser* browser) {
   return new SigninViewControllerDelegateViews(
       signin_view_controller,
-      SigninViewControllerDelegateViews::CreateSyncConfirmationWebView(
-          browser, is_consent_bump),
+      SigninViewControllerDelegateViews::CreateSyncConfirmationWebView(browser),
       browser, ui::MODAL_TYPE_WINDOW, true);
 }
 
@@ -282,11 +267,6 @@ SigninViewControllerDelegate*
 SigninViewControllerDelegate::CreateSigninErrorDelegate(
     SigninViewController* signin_view_controller,
     Browser* browser) {
-#if defined(OS_MACOSX)
-  if (views_mode_controller::IsViewsBrowserCocoa()) {
-    return CreateSigninErrorDelegateCocoa(signin_view_controller, browser);
-  }
-#endif
   return new SigninViewControllerDelegateViews(
       signin_view_controller,
       SigninViewControllerDelegateViews::CreateSigninErrorWebView(browser),

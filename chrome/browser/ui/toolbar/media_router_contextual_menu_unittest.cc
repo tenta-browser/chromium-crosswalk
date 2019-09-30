@@ -4,15 +4,14 @@
 
 #include <memory>
 
+#include "base/bind.h"
 #include "base/macros.h"
 #include "chrome/app/chrome_command_ids.h"
 #include "chrome/browser/extensions/extension_action_test_util.h"
 #include "chrome/browser/extensions/load_error_reporter.h"
 #include "chrome/browser/media/router/media_router_factory.h"
 #include "chrome/browser/media/router/test/mock_media_router.h"
-#include "chrome/browser/signin/fake_signin_manager_builder.h"
-#include "chrome/browser/signin/identity_manager_factory.h"
-#include "chrome/browser/signin/signin_manager_factory.h"
+#include "chrome/browser/signin/identity_test_environment_profile_adaptor.h"
 #include "chrome/browser/ui/extensions/browser_action_test_util.h"
 #include "chrome/browser/ui/media_router/media_router_ui_service.h"
 #include "chrome/browser/ui/media_router/media_router_ui_service_factory.h"
@@ -26,7 +25,6 @@
 #include "chrome/grit/generated_resources.h"
 #include "chrome/test/base/browser_with_test_window_test.h"
 #include "services/identity/public/cpp/identity_manager.h"
-#include "services/identity/public/cpp/identity_test_utils.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/base/l10n/l10n_util.h"
@@ -73,6 +71,9 @@ class MediaRouterContextualMenuUnitTest : public BrowserWithTestWindowTest {
     BrowserWithTestWindowTest::SetUp();
     extensions::LoadErrorReporter::Init(true);
 
+    identity_test_env_adaptor_ =
+        std::make_unique<IdentityTestEnvironmentProfileAdaptor>(profile());
+
     toolbar_actions_model_ =
         extensions::extension_action_test_util::CreateToolbarModelForProfile(
             profile());
@@ -85,26 +86,42 @@ class MediaRouterContextualMenuUnitTest : public BrowserWithTestWindowTest {
     MediaRouterActionController::SetAlwaysShowActionPref(profile(), true);
 
     media_router::MediaRouterUIServiceFactory::GetInstance()->SetTestingFactory(
-        profile()->GetOffTheRecordProfile(), &BuildUIService);
+        profile()->GetOffTheRecordProfile(),
+        base::BindRepeating(&BuildUIService));
   }
 
   void TearDown() override {
+    // |identity_test_env_adaptor_| must be destroyed before the TestingProfile,
+    // which occurs in BrowserWithTestWindowTest::TearDown().
+    identity_test_env_adaptor_.reset();
     action_.reset();
     browser_action_test_util_.reset();
     BrowserWithTestWindowTest::TearDown();
   }
 
   TestingProfile::TestingFactories GetTestingFactories() override {
-    return {{media_router::MediaRouterFactory::GetInstance(),
-             &media_router::MockMediaRouter::Create},
-            {media_router::MediaRouterUIServiceFactory::GetInstance(),
-             &BuildUIService},
-            {SigninManagerFactory::GetInstance(), &BuildFakeSigninManagerBase}};
+    TestingProfile::TestingFactories factories = {
+        {media_router::MediaRouterFactory::GetInstance(),
+         base::BindRepeating(&media_router::MockMediaRouter::Create)},
+        {media_router::MediaRouterUIServiceFactory::GetInstance(),
+         base::BindRepeating(&BuildUIService)}};
+
+    IdentityTestEnvironmentProfileAdaptor::
+        AppendIdentityTestEnvironmentFactories(&factories);
+
+    return factories;
   }
 
  protected:
+  identity::IdentityTestEnvironment* identity_test_env() {
+    DCHECK(identity_test_env_adaptor_);
+    return identity_test_env_adaptor_->identity_test_env();
+  }
+
   std::unique_ptr<BrowserActionTestUtil> browser_action_test_util_;
   std::unique_ptr<MediaRouterAction> action_;
+  std::unique_ptr<IdentityTestEnvironmentProfileAdaptor>
+      identity_test_env_adaptor_;
 
   ToolbarActionsModel* toolbar_actions_model_ = nullptr;
   MockMediaRouterContextualMenuObserver observer_;
@@ -126,12 +143,6 @@ TEST_F(MediaRouterContextualMenuUnitTest, Basic) {
   // Report an issue
   int expected_number_items = 9;
 
-#if defined(OS_WIN) || defined(OS_MACOSX) || defined(OS_CHROMEOS)
-  // On all platforms except Linux, there's an additional menu item to access
-  // Cast device management.
-  expected_number_items++;
-#endif  // defined(OS_WIN) || defined(OS_MACOSX) || defined(OS_CHROMEOS)
-
   ui::SimpleMenuModel* model =
       static_cast<ui::SimpleMenuModel*>(action_->GetContextMenu());
   // Verify the number of menu items, including separators.
@@ -148,9 +159,7 @@ TEST_F(MediaRouterContextualMenuUnitTest, Basic) {
   }
 
   // Set up an authenticated account.
-  (void)identity::SetPrimaryAccount(
-      SigninManagerFactory::GetInstance()->GetForProfile(profile()),
-      IdentityManagerFactory::GetForProfile(profile()), "foo@bar.com");
+  identity_test_env()->SetPrimaryAccount("foo@bar.com");
 
   // Run the same checks as before. All existing menu items should be now
   // enabled and visible.
@@ -159,22 +168,6 @@ TEST_F(MediaRouterContextualMenuUnitTest, Basic) {
     EXPECT_TRUE(model->IsEnabledAt(i));
     EXPECT_TRUE(model->IsVisibleAt(i));
   }
-}
-
-// Note that "Manage devices" is always disabled on Linux.
-TEST_F(MediaRouterContextualMenuUnitTest, ManageDevicesDisabledInIncognito) {
-  std::unique_ptr<BrowserWindow> window(CreateBrowserWindow());
-  std::unique_ptr<Browser> incognito_browser(
-      CreateBrowser(profile()->GetOffTheRecordProfile(), Browser::TYPE_TABBED,
-                    false, window.get()));
-
-  action_ = std::make_unique<MediaRouterAction>(
-      incognito_browser.get(),
-      browser_action_test_util_->GetToolbarActionsBar());
-  ui::SimpleMenuModel* model =
-      static_cast<ui::SimpleMenuModel*>(action_->GetContextMenu());
-  EXPECT_EQ(-1, model->GetIndexOfCommandId(IDC_MEDIA_ROUTER_MANAGE_DEVICES));
-  action_.reset();
 }
 
 // "Report an issue" should be present for normal profiles but not for
@@ -209,9 +202,7 @@ TEST_F(MediaRouterContextualMenuUnitTest, ToggleCloudServicesItem) {
 
   // Set up an authenticated account such that the cloud services menu item is
   // surfaced. Whether or not it is surfaced is tested in the "Basic" test.
-  (void)identity::SetPrimaryAccount(
-      SigninManagerFactory::GetInstance()->GetForProfile(profile()),
-      IdentityManagerFactory::GetForProfile(profile()), "foo@bar.com");
+  identity_test_env()->SetPrimaryAccount("foo@bar.com");
 
   // Set this preference so that the cloud services can be enabled without
   // showing the opt-in dialog.
@@ -229,6 +220,25 @@ TEST_F(MediaRouterContextualMenuUnitTest, ToggleCloudServicesItem) {
   menu.ExecuteCommand(IDC_MEDIA_ROUTER_CLOUD_SERVICES_TOGGLE, 0);
   EXPECT_FALSE(menu.IsCommandIdChecked(
       IDC_MEDIA_ROUTER_CLOUD_SERVICES_TOGGLE));
+}
+
+TEST_F(MediaRouterContextualMenuUnitTest, ToggleMediaRemotingItem) {
+  MediaRouterContextualMenu menu(browser(), kInToolbar, kShownByPolicy,
+                                 &observer_);
+
+  PrefService* pref_service = browser()->profile()->GetPrefs();
+  pref_service->SetBoolean(prefs::kMediaRouterMediaRemotingEnabled, false);
+  EXPECT_FALSE(menu.IsCommandIdChecked(IDC_MEDIA_ROUTER_TOGGLE_MEDIA_REMOTING));
+
+  menu.ExecuteCommand(IDC_MEDIA_ROUTER_TOGGLE_MEDIA_REMOTING, 0);
+  EXPECT_TRUE(menu.IsCommandIdChecked(IDC_MEDIA_ROUTER_TOGGLE_MEDIA_REMOTING));
+  EXPECT_TRUE(
+      pref_service->GetBoolean(prefs::kMediaRouterMediaRemotingEnabled));
+
+  menu.ExecuteCommand(IDC_MEDIA_ROUTER_TOGGLE_MEDIA_REMOTING, 0);
+  EXPECT_FALSE(menu.IsCommandIdChecked(IDC_MEDIA_ROUTER_TOGGLE_MEDIA_REMOTING));
+  EXPECT_FALSE(
+      pref_service->GetBoolean(prefs::kMediaRouterMediaRemotingEnabled));
 }
 
 TEST_F(MediaRouterContextualMenuUnitTest, ToggleAlwaysShowIconItem) {

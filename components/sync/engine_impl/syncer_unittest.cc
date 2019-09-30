@@ -19,9 +19,10 @@
 #include "base/bind_helpers.h"
 #include "base/compiler_specific.h"
 #include "base/location.h"
-#include "base/message_loop/message_loop.h"
+#include "base/stl_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/test/metrics/histogram_tester.h"
+#include "base/test/scoped_task_environment.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
 #include "components/sync/base/cancelation_signal.h"
@@ -119,8 +120,7 @@ TypeDebugInfoCache::~TypeDebugInfoCache() {}
 
 CommitCounters TypeDebugInfoCache::GetLatestCommitCounters(
     ModelType type) const {
-  std::map<ModelType, CommitCounters>::const_iterator it =
-      commit_counters_map_.find(type);
+  auto it = commit_counters_map_.find(type);
   if (it == commit_counters_map_.end()) {
     return CommitCounters();
   } else {
@@ -130,8 +130,7 @@ CommitCounters TypeDebugInfoCache::GetLatestCommitCounters(
 
 UpdateCounters TypeDebugInfoCache::GetLatestUpdateCounters(
     ModelType type) const {
-  std::map<ModelType, UpdateCounters>::const_iterator it =
-      update_counters_map_.find(type);
+  auto it = update_counters_map_.find(type);
   if (it == update_counters_map_.end()) {
     return UpdateCounters();
   } else {
@@ -141,8 +140,7 @@ UpdateCounters TypeDebugInfoCache::GetLatestUpdateCounters(
 
 StatusCounters TypeDebugInfoCache::GetLatestStatusCounters(
     ModelType type) const {
-  std::map<ModelType, StatusCounters>::const_iterator it =
-      status_counters_map_.find(type);
+  auto it = status_counters_map_.find(type);
   if (it == status_counters_map_.end()) {
     return StatusCounters();
   } else {
@@ -203,8 +201,7 @@ class SyncerTest : public testing::Test,
   }
   void OnReceivedCustomNudgeDelays(
       const std::map<ModelType, base::TimeDelta>& delay_map) override {
-    std::map<ModelType, base::TimeDelta>::const_iterator iter =
-        delay_map.find(SESSIONS);
+    auto iter = delay_map.find(SESSIONS);
     if (iter != delay_map.end() && iter->second > base::TimeDelta())
       last_sessions_commit_delay_ = iter->second;
     iter = delay_map.find(BOOKMARKS);
@@ -429,7 +426,7 @@ class SyncerTest : public testing::Test,
         const base::Time& now_minus_2h =
             base::Time::Now() - base::TimeDelta::FromHours(2);
         entry.PutMtime(now_plus_30s);
-        for (size_t i = 0; i < arraysize(test->features); ++i) {
+        for (size_t i = 0; i < base::size(test->features); ++i) {
           switch (test->features[i]) {
             case LIST_END:
               break;
@@ -530,7 +527,7 @@ class SyncerTest : public testing::Test,
     ASSERT_FALSE(nudge_tracker_.IsGetUpdatesRequired());
   }
 
-  base::MessageLoop message_loop_;
+  base::test::ScopedTaskEnvironment task_environment_;
 
   // Some ids to aid tests. Only the root one's value is specific. The rest
   // are named for test clarity.
@@ -650,10 +647,8 @@ TEST_F(SyncerTest, GetCommitIdsFiltersThrottledEntries) {
   } while (0)
 
 TEST_F(SyncerTest, GetCommitIdsFiltersUnreadyEntries) {
-  KeyParams key_params = {
-      KeyDerivationParams::CreateForPbkdf2("localhost", "dummy"), "foobar"};
-  KeyParams other_params = {
-      KeyDerivationParams::CreateForPbkdf2("localhost", "dummy"), "foobar2"};
+  KeyParams key_params = {KeyDerivationParams::CreateForPbkdf2(), "foobar"};
+  KeyParams other_params = {KeyDerivationParams::CreateForPbkdf2(), "foobar2"};
   sync_pb::EntitySpecifics bookmark, encrypted_bookmark;
   bookmark.mutable_bookmark()->set_url("url");
   bookmark.mutable_bookmark()->set_title("title");
@@ -755,7 +750,8 @@ TEST_F(SyncerTest, GetCommitIdsFiltersUnreadyEntries) {
   {
     const StatusController& status_controller = cycle_->status_controller();
     // Expect success.
-    EXPECT_EQ(SYNCER_OK, status_controller.model_neutral_state().commit_result);
+    EXPECT_EQ(SyncerError::SYNCER_OK,
+              status_controller.model_neutral_state().commit_result.value());
     // None should be unsynced anymore.
     syncable::ReadTransaction rtrans(FROM_HERE, directory());
     VERIFY_ENTRY(1, false, false, false, 0, 21, 21, ids_, &rtrans);
@@ -1027,8 +1023,7 @@ TEST_F(SyncerTest, GetCommitIds_VerifyDeletionCommitOrderMaxEntries) {
 }
 
 TEST_F(SyncerTest, EncryptionAwareConflicts) {
-  KeyParams key_params = {
-      KeyDerivationParams::CreateForPbkdf2("localhost", "dummy"), "foobar"};
+  KeyParams key_params = {KeyDerivationParams::CreateForPbkdf2(), "foobar"};
   Cryptographer other_cryptographer(&encryptor_);
   other_cryptographer.AddKey(key_params);
   sync_pb::EntitySpecifics bookmark, encrypted_bookmark, modified_bookmark;
@@ -1721,15 +1716,13 @@ TEST_F(SyncerTest, TestCommitListOrderingWithNewItems) {
   // first two IDs, and that the children make up the next four.  Other than
   // that, ordering doesn't matter.
 
-  vector<syncable::Id>::const_iterator i =
-      mock_server_->committed_ids().begin();
-  vector<syncable::Id>::const_iterator parents_begin = i;
+  auto i = mock_server_->committed_ids().begin();
+  auto parents_begin = i;
   i++;
   i++;
-  vector<syncable::Id>::const_iterator parents_end = i;
-  vector<syncable::Id>::const_iterator children_begin = i;
-  vector<syncable::Id>::const_iterator children_end =
-      mock_server_->committed_ids().end();
+  auto parents_end = i;
+  auto children_begin = i;
+  auto children_end = mock_server_->committed_ids().end();
 
   EXPECT_EQ(1, count(parents_begin, parents_end, parent1_id));
   EXPECT_EQ(1, count(parents_begin, parents_end, parent2_id));
@@ -3087,8 +3080,9 @@ TEST_F(SyncerTest, CommitManyItemsInOneGo_PostBufferFail) {
   EXPECT_FALSE(SyncShareNudge());
 
   EXPECT_EQ(1U, mock_server_->commit_messages().size());
-  EXPECT_EQ(SYNC_SERVER_ERROR,
-            cycle_->status_controller().model_neutral_state().commit_result);
+  EXPECT_EQ(
+      SyncerError::SYNC_SERVER_ERROR,
+      cycle_->status_controller().model_neutral_state().commit_result.value());
   EXPECT_EQ(items_to_commit - kDefaultMaxCommitBatchSize,
             directory()->unsynced_entity_count());
 }
@@ -4872,7 +4866,8 @@ TEST_F(SyncerTest, GetKeySuccess) {
 
   SyncShareConfigure();
 
-  EXPECT_EQ(SYNCER_OK, cycle_->status_controller().last_get_key_result());
+  EXPECT_EQ(SyncerError::SYNCER_OK,
+            cycle_->status_controller().last_get_key_result().value());
   {
     syncable::ReadTransaction rtrans(FROM_HERE, directory());
     EXPECT_FALSE(directory()->GetNigoriHandler()->NeedKeystoreKey(&rtrans));
@@ -4888,7 +4883,8 @@ TEST_F(SyncerTest, GetKeyEmpty) {
   mock_server_->SetKeystoreKey(std::string());
   SyncShareConfigure();
 
-  EXPECT_NE(SYNCER_OK, cycle_->status_controller().last_get_key_result());
+  EXPECT_NE(SyncerError::SYNCER_OK,
+            cycle_->status_controller().last_get_key_result().value());
   {
     syncable::ReadTransaction rtrans(FROM_HERE, directory());
     EXPECT_TRUE(directory()->GetNigoriHandler()->NeedKeystoreKey(&rtrans));

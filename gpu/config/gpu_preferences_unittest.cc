@@ -35,6 +35,8 @@ void CheckGpuPreferencesEqual(GpuPreferences left, GpuPreferences right) {
             right.disable_software_rasterizer);
   EXPECT_EQ(left.log_gpu_control_list_decisions,
             right.log_gpu_control_list_decisions);
+  EXPECT_EQ(left.enable_trace_export_events_to_etw,
+            right.enable_trace_export_events_to_etw);
   EXPECT_EQ(left.compile_shader_always_succeeds,
             right.compile_shader_always_succeeds);
   EXPECT_EQ(left.disable_gl_error_limit, right.disable_gl_error_limit);
@@ -98,10 +100,10 @@ TEST(GpuPreferencesTest, EncodeDecode) {
     GpuPreferences default_prefs;
     mojom::GpuPreferences prefs_mojom;
 
-    // Make sure all feilds are included in mojo struct.
+    // Make sure all fields are included in mojo struct.
     // TODO(zmo): This test isn't perfect. If a field isn't included in
-    // mojom::GpuPreferences, but because of alignment, the two struct sizes
-    // could still be the same.
+    // mojom::GpuPreferences, the two struct sizes might still be equal due to
+    // alignment.
     EXPECT_EQ(sizeof(default_prefs), sizeof(prefs_mojom));
 
 #define GPU_PREFERENCES_FIELD(name, value)         \
@@ -125,6 +127,7 @@ TEST(GpuPreferencesTest, EncodeDecode) {
     GPU_PREFERENCES_FIELD(enable_media_foundation_vea_on_windows7, true)
     GPU_PREFERENCES_FIELD(disable_software_rasterizer, true)
     GPU_PREFERENCES_FIELD(log_gpu_control_list_decisions, true)
+    GPU_PREFERENCES_FIELD(enable_trace_export_events_to_etw, true)
     GPU_PREFERENCES_FIELD(compile_shader_always_succeeds, true)
     GPU_PREFERENCES_FIELD(disable_gl_error_limit, true)
     GPU_PREFERENCES_FIELD(disable_glsl_translator, true)

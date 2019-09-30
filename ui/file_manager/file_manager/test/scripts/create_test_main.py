@@ -12,9 +12,12 @@ as a regular web page in a single renderer.
 
 
 import argparse
+import json
 import os
+import re
 import sys
 import time
+import xml.etree.ElementTree as ET
 
 
 assert __name__ == '__main__'
@@ -33,6 +36,12 @@ output = args.output or os.path.abspath(
 ROOT_SRC = os.path.abspath(os.path.join(sys.path[0], '../..'))
 ROOT_GEN = os.path.dirname(os.path.abspath(output))
 ROOT = os.path.relpath(ROOT_SRC, ROOT_GEN) + '/'
+POLYMER_1 = '../../../third_party/polymer/v1_0/components-chromium/'
+ROOT_POLYMER = '%s/%s' % (ROOT_SRC, POLYMER_1)
+# Replacement for chrome://resources/html/polymer.html.
+POLYMER_IMPORTS = (
+    '<script src="../../webui/resources/js/polymer_config.js"></script>\n'
+    '<link rel="import" href="%spolymer/polymer.html">' % POLYMER_1)
 scripts = []
 GENERATED = 'Generated at %s by: %s' % (time.ctime(), sys.path[0])
 GENERATED_HTML = '<!-- %s -->\n\n' % GENERATED
@@ -72,10 +81,6 @@ def includes2scripts(include_filename):
       continue
     if l.startswith('// <include '):
       l = l.replace('// <include ', '<script ')
-      # Special fix for analytics.
-      if 'webui/resources/js/analytics.js' in l:
-        l = l.replace('webui/resources/js/analytics.js',
-                      '../third_party/analytics/google-analytics-bundle.js')
       # main.js should be defer.
       if 'src="main.js"' in l:
         l = l.replace('src="main.js"', 'src="main.js" defer')
@@ -96,16 +101,11 @@ main_html = (read('main.html')
                       '../../webui/resources/css/action_link.css')
              .replace('<link rel="import" '
                       'href="chrome://resources/html/polymer.html">',
-                      '<script src="../../webui/resources/js/'
-                      'polymer_config.js"></script>')
+                      POLYMER_IMPORTS)
              .replace('href="', 'href="' + ROOT)
              .replace('src="', 'src="' + ROOT)
              .replace(ROOT + 'chrome://resources/css/text_defaults.css',
                       'test/gen/css/text_defaults.css')
-             .replace(('chrome-extension://fbjakikfhfdajcamjleinfciajelkpek/'
-                       'cws_widget/cws_widget_container.css'),
-                      ('../../../components/chrome_apps/'
-                       'webstore_widget/cws_widget/cws_widget_container.css'))
              .split('\n'))
 
 # Fix text_defaults.css.  Copy and replace placeholders.
@@ -126,9 +126,10 @@ scripts += ['<script src="%s%s"></script>' % (ROOT, s) for s in [
     '../../webui/resources/js/load_time_data.js',
     '../../webui/resources/js/webui_resource_test.js',
     'test/js/strings.js',
+    'common/js/files_app_entry_types.js',
     'common/js/util.js',
     'common/js/mock_entry.js',
-    'common/js/volume_manager_common.js',
+    '../base/js/volume_manager_types.js',
     'background/js/volume_info_impl.js',
     'background/js/volume_info_list_impl.js',
     'background/js/volume_manager_impl.js',
@@ -149,17 +150,39 @@ scripts += ['<script src="%s%s"></script>' % (ROOT, s) for s in [
 includes2scripts('foreground/js/main_scripts.js')
 includes2scripts('background/js/background_common_scripts.js')
 includes2scripts('background/js/background_scripts.js')
+
+# test_util_base.js in background_common_scripts.js loads this at runtime.
+# However, test/js/test_util.js copies some functions from it into its own
+# test context, so provide it here.
+scripts += ['<script src="%s%s"></script>' %
+            (ROOT, 'background/js/runtime_loaded_test_util.js')]
+
 main_html = replaceline(main_html, 'foreground/js/main_scripts.js', [
-    ('<link rel="import" href="%s../../../third_party/polymer/v1_0/'
-     'components-chromium/polymer/polymer.html">' % ROOT),
-    ('<link rel="import" href="%s../../../third_party/polymer/v1_0/'
-     'components-chromium/paper-progress/paper-progress.html">' % ROOT),
     "<script>var FILE_MANAGER_ROOT = '%s';</script>" % ROOT,
     ] + scripts)
 
+# Get strings from grdp files.  Remove any ph/ex elements before getting text.
+# Parse private_api_strings.cc to match the string name to the grdp message.
+strings = {}
+grdp_files = [
+    '../../../chrome/app/chromeos_strings.grdp',
+    '../../../chrome/app/file_manager_strings.grdp',
+    ]
+resource_bundle = {}
+for grdp in grdp_files:
+  for msg in ET.fromstring(read(grdp)):
+    for ph in msg.findall('ph'):
+      for ex in ph.findall('ex'):
+        ph.remove(ex)
+    resource_bundle[msg.attrib['name']] = ''.join(msg.itertext()).strip()
+private_api_strings = read('../../../chrome/browser/chromeos/'
+                           'file_manager/file_manager_string_util.cc')
+for m in re.finditer(r'SET_STRING\(\"(.*?)\",\s+(\w+)\);', private_api_strings):
+  strings[m.group(1)] = resource_bundle.get(m.group(2), m.group(2))
+
 
 def elements_path(elements_filename):
-  return '="../../../%sforeground/elements/%s' % (ROOT, elements_filename)
+  return '="../../../../%sforeground/elements/%s' % (ROOT, elements_filename)
 
 # Fix relative file paths in elements_bundle.html
 # Load QuickView in iframe rather than webview.
@@ -167,25 +190,30 @@ def elements_path(elements_filename):
 # files_safe_media.html which will use webview rather than iframe,
 # and sets src directly on iframe.
 for filename, substitutions in (
-    ('elements/elements_bundle.html', (
+    ('test/js/strings.js', (
+        ('$GRDP', json.dumps(strings, sort_keys=True, indent=2)),
+    )),
+    ('foreground/elements/elements_bundle.html', (
+        ('chrome://resources/polymer/v1_0/', ROOT_POLYMER),
         ('="files_ripple', elements_path('files_ripple')),
+        ('="files_toast', elements_path('files_toast')),
         ('="files_toggle_ripple', elements_path('files_toggle_ripple')),
         ('="files_tooltip', elements_path('files_tooltip')),
         ('="icons', elements_path('icons')),
     )),
-    ('js/elements_importer.js', (
-        ("= 'foreground", "= 'test/gen"),
+    ('foreground/js/elements_importer.js', (
+        ("= 'foreground", "= 'test/gen/foreground"),
     )),
-    ('elements/files_quick_view.html', (
+    ('foreground/elements/files_quick_view.html', (
+        ('chrome://resources/polymer/v1_0/', ROOT_POLYMER),
         ('="files_icon', elements_path('files_icon')),
         ('="files_metadata', elements_path('files_metadata')),
         ('="files_tooltip', elements_path('files_tooltip')),
         ('="files_quick', elements_path('files_quick')),
-        ('="icons', elements_path('icons')),
         ('webview', 'iframe'),
     )),
-    ('elements/files_safe_media.html', (('webview', 'iframe'),)),
-    ('elements/files_safe_media.js', (
+    ('foreground/elements/files_safe_media.html', (('webview', 'iframe'),)),
+    ('foreground/elements/files_safe_media.js', (
         ("'foreground/elements", "'%sforeground/elements" % ROOT),
         ("'webview'", "'iframe'"),
         ("'contentload'", "'load'"),
@@ -193,12 +221,15 @@ for filename, substitutions in (
          ('this.webview_.contentWindow.content.type = this.type;'
           'this.webview_.contentWindow.content.src = this.src;')),
     )),
+    ('foreground/elements/icons.html', (
+        ('chrome://resources/polymer/v1_0/', ROOT_POLYMER),
+    )),
     ):
-  buf = read('foreground/' + filename)
+  buf = read(filename)
   for old, new in substitutions:
     buf = buf.replace(old, new)
   write('test/gen/' + filename, buf)
-  main_html = replaceline(main_html, 'foreground/' + filename,
+  main_html = replaceline(main_html, filename,
                           ['<script src="test/gen/%s"></script>' % filename])
 
 test_html = GENERATED_HTML + '\n'.join(main_html)

@@ -105,7 +105,16 @@ suite('AllSites', function() {
     return browserProxy.whenCalled('getAllSites').then(() => {
       // Use resolver to ensure that the list container is populated.
       const resolver = new PromiseResolver();
-      testElement.async(resolver.resolve);
+      // In Polymer2, we need to wait until after the next render for the list
+      // to be populated. TODO (rbpotter): Remove conditional when migration to
+      // Polymer 2 is completed.
+      if (Polymer.DomIf) {
+        Polymer.RenderStatus.beforeNextRender(testElement, () => {
+          resolver.resolve();
+        });
+      } else {
+        testElement.async(resolver.resolve);
+      }
       return resolver.promise.then(() => {
         assertEquals(3, testElement.siteGroupMap.size);
 
@@ -205,7 +214,7 @@ suite('AllSites', function() {
               testElement.$.listContainer.querySelectorAll('site-entry');
           // Add additional origins to SiteGroups with cookies to simulate their
           // being grouped entries, plus add local storage.
-          siteEntries[0].siteGroup.origins[0].usage = 1000;
+          siteEntries[0].siteGroup.origins[0].usage = 900;
           siteEntries[1].siteGroup.origins.push(
               test_util.createOriginInfo('http://bar.com'));
           siteEntries[1].siteGroup.origins[0].usage = 500;
@@ -229,11 +238,10 @@ suite('AllSites', function() {
           // name.
           testElement.root.querySelector('select').value = 'data-stored';
           testElement.onSortMethodChanged_();
-          return localDataBrowserProxy.whenCalled('getNumCookiesList');
-        })
-        .then(() => {
+
+
           Polymer.dom.flush();
-          let siteEntries =
+          siteEntries =
               testElement.$.listContainer.querySelectorAll('site-entry');
           assertEquals(
               'bar.com',
@@ -292,7 +300,7 @@ suite('AllSites', function() {
       const addEtldPlus1 = 'additional-site.net';
       const fooOrigin = 'https://login.foo.com';
       const addOrigin = 'http://www.additional-site.net';
-      const LOCAL_STORAGE_SITE_GROUP_LIST = /** @type {!Array{!SiteGroup}} */ ([
+      const STORAGE_SITE_GROUP_LIST = /** @type {!Array{!SiteGroup}}*/ ([
         {
           // Test merging an existing site works, with overlapping origin lists.
           'etldPlus1': fooEtldPlus1,
@@ -307,7 +315,7 @@ suite('AllSites', function() {
           'origins': [test_util.createOriginInfo(addOrigin)],
         }
       ]);
-      testElement.onLocalStorageListFetched(LOCAL_STORAGE_SITE_GROUP_LIST);
+      testElement.onStorageListFetched(STORAGE_SITE_GROUP_LIST);
 
       Polymer.dom.flush();
       siteEntries = testElement.$.listContainer.querySelectorAll('site-entry');
@@ -315,9 +323,9 @@ suite('AllSites', function() {
 
       assertEquals(fooEtldPlus1, siteEntries[0].siteGroup.etldPlus1);
       assertEquals(2, siteEntries[0].siteGroup.origins.length);
+      assertEquals(fooOrigin, siteEntries[0].siteGroup.origins[0].origin);
       assertEquals(
-          'https://foo.com', siteEntries[0].siteGroup.origins[0].origin);
-      assertEquals(fooOrigin, siteEntries[0].siteGroup.origins[1].origin);
+          'https://foo.com', siteEntries[0].siteGroup.origins[1].origin);
 
       assertEquals(addEtldPlus1, siteEntries[3].siteGroup.etldPlus1);
       assertEquals(1, siteEntries[3].siteGroup.origins.length);

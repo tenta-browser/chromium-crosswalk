@@ -5,6 +5,7 @@
 package org.chromium.chrome.browser.payments;
 
 import android.os.Handler;
+import android.support.annotation.Nullable;
 import android.text.SpannableStringBuilder;
 import android.text.TextUtils;
 import android.text.style.AbsoluteSizeSpan;
@@ -12,8 +13,8 @@ import android.text.style.ForegroundColorSpan;
 import android.util.Pair;
 
 import org.chromium.base.ApiCompatibilityUtils;
-import org.chromium.base.AsyncTask;
 import org.chromium.base.Callback;
+import org.chromium.base.task.AsyncTask;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.ChromeActivity;
 import org.chromium.chrome.browser.autofill.CardType;
@@ -43,8 +44,6 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ExecutionException;
-
-import javax.annotation.Nullable;
 
 /**
  * A credit card editor. Can be used for editing both local and server credit cards. Everything in

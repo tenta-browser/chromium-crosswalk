@@ -119,14 +119,6 @@ int64_t TimeDelta::InMillisecondsRoundedUp() const {
   return result;
 }
 
-int64_t TimeDelta::InMicroseconds() const {
-  if (is_max()) {
-    // Preserve max to prevent overflow.
-    return std::numeric_limits<int64_t>::max();
-  }
-  return delta_;
-}
-
 double TimeDelta::InMicrosecondsF() const {
   if (is_max()) {
     // Preserve max to prevent overflow.

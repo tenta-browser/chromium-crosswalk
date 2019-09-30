@@ -100,6 +100,8 @@ void RegisterAutofillPrefs(user_prefs::PrefRegistrySyncable* registry) {
                                 true);
   registry->RegisterIntegerPref(autofill::prefs::kAutofillLastVersionDeduped,
                                 atoi(version_info::GetVersionNumber().c_str()));
+  registry->RegisterIntegerPref(autofill::prefs::kAutofillLastVersionValidated,
+                                atoi(version_info::GetVersionNumber().c_str()));
   registry->RegisterDoublePref(autofill::prefs::kAutofillBillingCustomerNumber,
                                0.0);
   registry->RegisterBooleanPref(
@@ -157,9 +159,9 @@ class WebDatabaseFake : public WebDatabase {
   }
 };
 
-class MockAutofillBackend : public autofill::AutofillWebDataBackend {
+class FakeAutofillBackend : public autofill::AutofillWebDataBackend {
  public:
-  MockAutofillBackend(
+  FakeAutofillBackend(
       WebDatabase* web_database,
       const base::RepeatingClosure& on_changed,
       const base::RepeatingCallback<void(syncer::ModelType)>& on_sync_started,
@@ -169,7 +171,7 @@ class MockAutofillBackend : public autofill::AutofillWebDataBackend {
         on_sync_started_(on_sync_started),
         ui_task_runner_(ui_task_runner) {}
 
-  ~MockAutofillBackend() override {}
+  ~FakeAutofillBackend() override {}
   WebDatabase* GetDatabase() override { return web_database_; }
   void AddObserver(
       autofill::AutofillWebDataServiceObserverOnDBSequence* observer) override {
@@ -178,6 +180,11 @@ class MockAutofillBackend : public autofill::AutofillWebDataBackend {
       autofill::AutofillWebDataServiceObserverOnDBSequence* observer) override {
   }
   void RemoveExpiredFormElements() override {}
+
+  void NotifyOfAutofillProfileChanged(
+      const autofill::AutofillProfileChange& change) override {}
+  void NotifyOfCreditCardChanged(
+      const autofill::CreditCardChange& change) override {}
   void NotifyOfMultipleAutofillChanges() override {
     DCHECK(!ui_task_runner_->RunsTasksInCurrentSequence());
     ui_task_runner_->PostTask(FROM_HERE, on_changed_);
@@ -290,7 +297,7 @@ class WebDataServiceFake : public AutofillWebDataService {
       const base::RepeatingCallback<void(syncer::ModelType)>& on_sync_started) {
     ASSERT_TRUE(db_task_runner_->RunsTasksInCurrentSequence());
     // These services are deleted in DestroySyncableService().
-    backend_ = std::make_unique<MockAutofillBackend>(
+    backend_ = std::make_unique<FakeAutofillBackend>(
         GetDatabase(), on_changed_callback, on_sync_started,
         ui_task_runner_.get());
     AutofillProfileSyncableService::CreateForWebDataServiceAndBackend(
@@ -348,8 +355,13 @@ class ProfileSyncServiceAutofillTest
   void OnDataTypeConfigureComplete(
       const std::vector<syncer::DataTypeConfigurationStats>&
           configuration_stats) override {
-    ASSERT_EQ(1u, configuration_stats.size());
-    association_stats_ = configuration_stats[0].association_stats;
+    for (const syncer::DataTypeConfigurationStats& stat : configuration_stats) {
+      if (stat.model_type == syncer::AUTOFILL_PROFILE) {
+        association_stats_ = stat.association_stats;
+        return;
+      }
+    }
+    ASSERT_TRUE(false) << "Autofill profile type did not get configured!";
   }
 
  protected:
@@ -382,6 +394,9 @@ class ProfileSyncServiceAutofillTest
                                  /*account_database=*/nullptr,
                                  profile_sync_service_bundle()->pref_service(),
                                  /*identity_manager=*/nullptr,
+                                 /*client_profile_validator=*/nullptr,
+                                 /*history_service=*/nullptr,
+                                 /*cookie_manager_sevice=*/nullptr,
                                  /*is_off_the_record=*/false);
 
     web_data_service_->StartSyncableService();
@@ -389,7 +404,6 @@ class ProfileSyncServiceAutofillTest
     ProfileSyncServiceBundle::SyncClientBuilder builder(
         profile_sync_service_bundle());
     builder.SetPersonalDataManager(personal_data_manager_.get());
-    builder.SetSyncServiceCallback(GetSyncServiceCallback());
     builder.SetSyncableServiceCallback(base::BindRepeating(
         &ProfileSyncServiceAutofillTest::GetSyncableServiceForType,
         base::Unretained(this)));
@@ -419,11 +433,9 @@ class ProfileSyncServiceAutofillTest
   }
 
   void StartAutofillProfileSyncService(base::OnceClosure callback) {
-    identity::MakePrimaryAccountAvailable(
-        profile_sync_service_bundle()->signin_manager(),
-        profile_sync_service_bundle()->auth_service(),
-        profile_sync_service_bundle()->identity_manager(),
-        "test_user@gmail.com");
+    profile_sync_service_bundle()
+        ->identity_test_env()
+        ->MakePrimaryAccountAvailable("test_user@gmail.com");
     CreateSyncService(std::move(sync_client_owned_), std::move(callback));
 
     EXPECT_CALL(*profile_sync_service_bundle()->component_factory(),
@@ -433,7 +445,7 @@ class ProfileSyncServiceAutofillTest
           controllers.push_back(
               std::make_unique<AutofillProfileDataTypeController>(
                   data_type_thread()->task_runner(), base::DoNothing(),
-                  sync_client_, web_data_service_));
+                  sync_service(), sync_client_, web_data_service_));
           return controllers;
         }));
     EXPECT_CALL(*profile_sync_service_bundle()->component_factory(),
@@ -450,7 +462,7 @@ class ProfileSyncServiceAutofillTest
 
     // It's possible this test triggered an unrecoverable error, in which case
     // we can't get the sync count.
-    if (sync_service()->IsSyncActive()) {
+    if (sync_service()->IsSyncFeatureActive()) {
       EXPECT_EQ(GetSyncCount(),
                 association_stats_.num_sync_items_after_association);
     }

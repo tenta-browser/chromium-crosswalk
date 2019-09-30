@@ -29,15 +29,18 @@
 #include "chrome/browser/ui/browser_finder.h"
 #include "chrome/common/chrome_paths.h"
 #include "chrome/common/chrome_result_codes.h"
+#include "chrome/common/chrome_switches.h"
 #include "chrome/test/base/in_process_browser_test.h"
 #include "components/policy/core/common/cloud/cloud_policy_constants.h"
 #include "components/policy/core/common/cloud/device_management_service.h"
+#include "components/policy/core/common/cloud/dm_auth.h"
 #include "components/policy/core/common/cloud/machine_level_user_cloud_policy_manager.h"
 #include "components/policy/core/common/cloud/machine_level_user_cloud_policy_metrics.h"
 #include "components/policy/core/common/cloud/machine_level_user_cloud_policy_store.h"
 #include "components/policy/core/common/cloud/mock_cloud_external_data_manager.h"
 #include "components/policy/core/common/cloud/mock_device_management_service.h"
 #include "components/policy/core/common/policy_switches.h"
+#include "content/public/browser/network_service_instance.h"
 #include "net/base/upload_bytes_element_reader.h"
 #include "net/base/upload_data_stream.h"
 #include "testing/gmock/include/gmock/gmock.h"
@@ -70,7 +73,7 @@ class MachineLevelUserCloudPolicyControllerObserver
     : public MachineLevelUserCloudPolicyController::Observer {
  public:
   void OnPolicyRegisterFinished(bool succeeded) override {
-    if (!succeeded) {
+    if (!succeeded && should_display_error_message_) {
       EXPECT_EQ(0u, chrome::GetTotalBrowserCount());
 #if defined(OS_MACOSX)
       PostAppControllerNSNotifications();
@@ -84,10 +87,21 @@ class MachineLevelUserCloudPolicyControllerObserver
     g_browser_process->browser_policy_connector()
         ->machine_level_user_cloud_policy_controller()
         ->RemoveObserver(this);
+    // If enrollment fails, the manager should be marked as initialized
+    // immediately. Otherwise, this will be done after the policy data is
+    // downloaded.
+    EXPECT_EQ(!succeeded, g_browser_process->browser_policy_connector()
+                              ->machine_level_user_cloud_policy_manager()
+                              ->IsInitializationComplete(
+                                  PolicyDomain::POLICY_DOMAIN_CHROME));
   }
 
   void SetShouldSucceed(bool should_succeed) {
     should_succeed_ = should_succeed;
+  }
+
+  void SetShouldDisplayErrorMessage(bool should_display) {
+    should_display_error_message_ = should_display;
   }
 
   bool IsFinished() { return is_finished_; }
@@ -95,6 +109,7 @@ class MachineLevelUserCloudPolicyControllerObserver
  private:
   bool is_finished_ = false;
   bool should_succeed_ = false;
+  bool should_display_error_message_ = false;
 };
 
 class FakeBrowserDMTokenStorage : public BrowserDMTokenStorage {
@@ -113,9 +128,15 @@ class FakeBrowserDMTokenStorage : public BrowserDMTokenStorage {
     std::move(callback).Run(storage_enabled_);
   }
   std::string RetrieveDMToken() override { return dm_token_; }
+  bool ShouldDisplayErrorMessageOnFailure() override {
+    return should_display_error_message_on_failure_;
+  }
 
   void SetEnrollmentToken(const std::string& enrollment_token) {
     enrollment_token_ = enrollment_token;
+  }
+  void SetErrorMessageOption(bool should_displayed) {
+    should_display_error_message_on_failure_ = should_displayed;
   }
 
   void SetClientId(std::string client_id) { client_id_ = client_id; }
@@ -132,6 +153,11 @@ class FakeBrowserDMTokenStorage : public BrowserDMTokenStorage {
     NOTREACHED();
     return std::string();
   }
+  bool InitEnrollmentErrorOption() override {
+    NOTREACHED();
+    return true;
+  }
+
   void SaveDMToken(const std::string& dm_token) override { NOTREACHED(); }
 
   void EnableStorage(bool storage_enabled) {
@@ -143,6 +169,7 @@ class FakeBrowserDMTokenStorage : public BrowserDMTokenStorage {
   std::string client_id_;
   std::string dm_token_;
   bool storage_enabled_ = true;
+  bool should_display_error_message_on_failure_ = true;
 
   DISALLOW_COPY_AND_ASSIGN(FakeBrowserDMTokenStorage);
 };
@@ -209,8 +236,11 @@ class MachineLevelUserCloudPolicyServiceIntegrationTest
       job->GetRequest()->mutable_register_browser_request()->set_machine_name(
           machine_name);
     }
-    if (!enrollment_token.empty())
-      job->SetEnrollmentToken(enrollment_token);
+    if (!enrollment_token.empty()) {
+      job->SetAuthData(DMAuth::FromEnrollmentToken(enrollment_token));
+    } else {
+      job->SetAuthData(DMAuth::NoAuth());
+    }
     job->SetClientID(kClientID);
     job->Start(base::Bind(
         &MachineLevelUserCloudPolicyServiceIntegrationTest::OnJobDone,
@@ -238,7 +268,7 @@ class MachineLevelUserCloudPolicyServiceIntegrationTest
           *chrome_desktop_report;
     }
 
-    job->SetDMToken(kDMToken);
+    job->SetAuthData(DMAuth::FromDMToken(kDMToken));
     job->SetClientID(kClientID);
     job->Start(base::Bind(
         &MachineLevelUserCloudPolicyServiceIntegrationTest::OnJobDone,
@@ -351,7 +381,8 @@ class MachineLevelUserCloudPolicyManagerTest : public InProcessBrowserTest {
     std::unique_ptr<MachineLevelUserCloudPolicyManager> manager =
         std::make_unique<MachineLevelUserCloudPolicyManager>(
             std::move(policy_store), nullptr, policy_dir,
-            base::ThreadTaskRunnerHandle::Get());
+            base::ThreadTaskRunnerHandle::Get(),
+            base::BindRepeating(&content::GetNetworkConnectionTracker));
     manager->Init(&schema_registry);
 
     manager->store()->RemoveObserver(&observer);
@@ -370,7 +401,7 @@ IN_PROC_BROWSER_TEST_F(MachineLevelUserCloudPolicyManagerTest, WithDmToken) {
 
 class MachineLevelUserCloudPolicyEnrollmentTest
     : public InProcessBrowserTest,
-      public ::testing::WithParamInterface<std::tuple<bool, bool>> {
+      public ::testing::WithParamInterface<std::tuple<bool, bool, bool>> {
  public:
   MachineLevelUserCloudPolicyEnrollmentTest() {
     BrowserDMTokenStorage::SetForTesting(&storage_);
@@ -379,8 +410,12 @@ class MachineLevelUserCloudPolicyEnrollmentTest
                                     : kInvalidEnrollmentToken);
     storage_.SetClientId("client_id");
     storage_.EnableStorage(storage_enabled());
+    storage_.SetErrorMessageOption(should_display_error_message());
+
     observer_.SetShouldSucceed(is_enrollment_token_valid());
-    if (!is_enrollment_token_valid()) {
+    observer_.SetShouldDisplayErrorMessage(should_display_error_message());
+
+    if (!is_enrollment_token_valid() && should_display_error_message()) {
       set_expected_exit_code(
           chrome::RESULT_CODE_CLOUD_POLICY_ENROLLMENT_FAILED);
     }
@@ -395,6 +430,13 @@ class MachineLevelUserCloudPolicyEnrollmentTest
 
     histogram_tester_.ExpectTotalCount(kEnrollmentResultMetrics, 0);
   }
+
+#if !defined(GOOGLE_CHROME_BUILD)
+  void SetUpDefaultCommandLine(base::CommandLine* command_line) override {
+    InProcessBrowserTest::SetUpDefaultCommandLine(command_line);
+    command_line->AppendSwitch(::switches::kEnableMachineLevelUserCloudPolicy);
+  }
+#endif
 
   void TearDownInProcessBrowserTestFixture() override {
     // Test body is skipped if enrollment failed as Chrome quit early.
@@ -435,6 +477,7 @@ class MachineLevelUserCloudPolicyEnrollmentTest
  protected:
   bool is_enrollment_token_valid() const { return std::get<0>(GetParam()); }
   bool storage_enabled() const { return std::get<1>(GetParam()); }
+  bool should_display_error_message() const { return std::get<2>(GetParam()); }
 
   base::HistogramTester histogram_tester_;
 
@@ -447,8 +490,9 @@ class MachineLevelUserCloudPolicyEnrollmentTest
 };
 
 IN_PROC_BROWSER_TEST_P(MachineLevelUserCloudPolicyEnrollmentTest, Test) {
-  // Test body is ran only if enrollment is succeeded.
-  EXPECT_TRUE(is_enrollment_token_valid());
+  // Test body is run only if enrollment is succeeded or failed without error
+  // message.
+  EXPECT_TRUE(is_enrollment_token_valid() || !should_display_error_message());
 
   EXPECT_EQ(1u, chrome::GetTotalBrowserCount());
 
@@ -465,6 +509,7 @@ IN_PROC_BROWSER_TEST_P(MachineLevelUserCloudPolicyEnrollmentTest, Test) {
 INSTANTIATE_TEST_CASE_P(,
                         MachineLevelUserCloudPolicyEnrollmentTest,
                         ::testing::Combine(::testing::Bool(),
+                                           ::testing::Bool(),
                                            ::testing::Bool()));
 
 }  // namespace policy

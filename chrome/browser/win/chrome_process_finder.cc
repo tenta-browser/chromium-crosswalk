@@ -11,8 +11,8 @@
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/logging.h"
+#include "base/numerics/safe_conversions.h"
 #include "base/process/process.h"
-#include "base/process/process_info.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/win/message_window.h"
@@ -25,7 +25,7 @@
 
 namespace {
 
-int timeout_in_milliseconds = 20 * 1000;
+uint32_t g_timeout_in_milliseconds = 20 * 1000;
 
 }  // namespace
 
@@ -47,7 +47,7 @@ NotifyChromeResult AttemptToNotifyRunningChrome(HWND remote_window,
   command_line.AppendSwitchASCII(
       switches::kOriginalProcessStartTime,
       base::Int64ToString(
-          base::CurrentProcessInfo::CreationTime().ToInternalValue()));
+          base::Process::Current().CreationTime().ToInternalValue()));
 
   if (fast_start)
     command_line.AppendSwitch(switches::kFastStart);
@@ -74,7 +74,7 @@ NotifyChromeResult AttemptToNotifyRunningChrome(HWND remote_window,
   DWORD_PTR result = 0;
   if (::SendMessageTimeout(remote_window, WM_COPYDATA, NULL,
                            reinterpret_cast<LPARAM>(&cds), SMTO_ABORTIFHUNG,
-                           timeout_in_milliseconds, &result)) {
+                           g_timeout_in_milliseconds, &result)) {
     return result ? NOTIFY_SUCCESS : NOTIFY_FAILED;
   }
 
@@ -93,8 +93,9 @@ NotifyChromeResult AttemptToNotifyRunningChrome(HWND remote_window,
 
 base::TimeDelta SetNotificationTimeoutForTesting(base::TimeDelta new_timeout) {
   base::TimeDelta old_timeout =
-      base::TimeDelta::FromMilliseconds(timeout_in_milliseconds);
-  timeout_in_milliseconds = new_timeout.InMilliseconds();
+      base::TimeDelta::FromMilliseconds(g_timeout_in_milliseconds);
+  g_timeout_in_milliseconds =
+      base::checked_cast<uint32_t>(new_timeout.InMilliseconds());
   return old_timeout;
 }
 

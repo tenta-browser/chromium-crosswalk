@@ -12,6 +12,7 @@
 #include "content/browser/dom_storage/session_storage_data_map.h"
 #include "content/browser/dom_storage/session_storage_metadata.h"
 #include "content/browser/dom_storage/test/storage_area_test_util.h"
+#include "content/browser/site_instance_impl.h"
 #include "content/public/test/test_browser_thread_bundle.h"
 #include "content/test/fake_leveldb_database.h"
 #include "content/test/gmock_util.h"
@@ -49,9 +50,9 @@ class SessionStorageNamespaceImplMojoTest
   SessionStorageNamespaceImplMojoTest()
       : test_namespace_id1_(base::GenerateGUID()),
         test_namespace_id2_(base::GenerateGUID()),
-        test_origin1_(url::Origin::Create(GURL("https://host1.com:1/"))),
-        test_origin2_(url::Origin::Create(GURL("https://host2.com:2/"))),
-        test_origin3_(url::Origin::Create(GURL("https://host3.com:3/"))),
+        test_origin1_(url::Origin::Create(GURL("https://host1.com/"))),
+        test_origin2_(url::Origin::Create(GURL("https://host2.com/"))),
+        test_origin3_(url::Origin::Create(GURL("https://host3.com/"))),
         database_(&mock_data_) {}
   ~SessionStorageNamespaceImplMojoTest() override = default;
 
@@ -59,8 +60,7 @@ class SessionStorageNamespaceImplMojoTest
     // Create a database that already has a namespace saved.
     metadata_.SetupNewDatabase();
     std::vector<leveldb::mojom::BatchedOperationPtr> save_operations;
-    NamespaceEntry entry =
-        metadata_.GetOrCreateNamespaceEntry(test_namespace_id1_);
+    auto entry = metadata_.GetOrCreateNamespaceEntry(test_namespace_id1_);
     auto map_id =
         metadata_.RegisterNewMap(entry, test_origin1_, &save_operations);
     DCHECK(map_id->KeyPrefix() == StdStringToUint8Vector("map-0-"));
@@ -75,9 +75,9 @@ class SessionStorageNamespaceImplMojoTest
     security_policy->Add(kTestProcessIdOrigin3);
     security_policy->AddIsolatedOrigins(
         {test_origin1_, test_origin2_, test_origin3_});
-    security_policy->LockToOrigin(kTestProcessIdOrigin1,
+    security_policy->LockToOrigin(IsolationContext(), kTestProcessIdOrigin1,
                                   test_origin1_.GetURL());
-    security_policy->LockToOrigin(kTestProcessIdOrigin3,
+    security_policy->LockToOrigin(IsolationContext(), kTestProcessIdOrigin3,
                                   test_origin3_.GetURL());
 
     mojo::core::SetDefaultProcessErrorCallback(
@@ -130,7 +130,7 @@ class SessionStorageNamespaceImplMojoTest
       const SessionStorageNamespaceImplMojo::OriginAreas& areas_to_clone)
       override {
     std::vector<leveldb::mojom::BatchedOperationPtr> save_operations;
-    NamespaceEntry namespace_entry =
+    auto namespace_entry =
         metadata_.GetOrCreateNamespaceEntry(destination_namespace);
     metadata_.RegisterShallowClonedNamespace(source_namespace, namespace_entry,
                                              &save_operations);
@@ -395,7 +395,7 @@ TEST_F(SessionStorageNamespaceImplMojoTest, RemoveOriginData) {
       .WillOnce(base::test::RunClosure(loop.QuitClosure()));
 
   EXPECT_CALL(listener_, OnCommitResult(DatabaseError::OK)).Times(1);
-  namespace_impl->RemoveOriginData(test_origin1_);
+  namespace_impl->RemoveOriginData(test_origin1_, base::DoNothing());
 
   std::vector<blink::mojom::KeyValuePtr> data;
   EXPECT_TRUE(test::GetAllSync(leveldb_1.get(), &data));
@@ -423,7 +423,7 @@ TEST_F(SessionStorageNamespaceImplMojoTest, RemoveOriginDataWithoutBinding) {
   base::RunLoop loop;
   EXPECT_CALL(listener_, OnCommitResult(DatabaseError::OK))
       .WillOnce(base::test::RunClosure(loop.QuitClosure()));
-  namespace_impl->RemoveOriginData(test_origin1_);
+  namespace_impl->RemoveOriginData(test_origin1_, base::DoNothing());
   loop.Run();
 
   EXPECT_CALL(listener_, OnDataMapDestruction(StdStringToUint8Vector("0")))

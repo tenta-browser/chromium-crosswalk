@@ -15,6 +15,7 @@
 #include "chrome/browser/chromeos/login/users/fake_chrome_user_manager.h"
 #include "chrome/browser/chromeos/settings/scoped_cros_settings_test_helper.h"
 #include "chrome/common/extensions/api/gcm.h"
+#include "chrome/test/base/chrome_render_view_host_test_harness.h"
 #include "chrome/test/base/testing_browser_process.h"
 #include "chrome/test/base/testing_profile.h"
 #include "chrome/test/base/testing_profile_manager.h"
@@ -32,39 +33,28 @@
 #include "extensions/common/manifest_handlers/background_info.h"
 #include "extensions/common/value_builder.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "ui/aura/test/test_screen.h"
-#include "ui/display/screen.h"
 
 namespace chromeos {
 
-class ExtensionEventObserverTest : public ::testing::Test {
+class ExtensionEventObserverTest : public ChromeRenderViewHostTestHarness {
  public:
   ExtensionEventObserverTest()
       : power_manager_client_(new FakePowerManagerClient()),
-        test_screen_(aura::TestScreen::Create(gfx::Size())),
         fake_user_manager_(new FakeChromeUserManager()),
-        scoped_user_manager_enabler_(base::WrapUnique(fake_user_manager_)) {
+        scoped_user_manager_enabler_(base::WrapUnique(fake_user_manager_)) {}
+
+  ~ExtensionEventObserverTest() override = default;
+
+  // ChromeRenerViewHostTestHarness overrides:
+  void SetUp() override {
+    ChromeRenderViewHostTestHarness::SetUp();
+
     DBusThreadManager::GetSetterForTesting()->SetPowerManagerClient(
         base::WrapUnique(power_manager_client_));
-
-    profile_manager_.reset(
-        new TestingProfileManager(TestingBrowserProcess::GetGlobal()));
-
-    extension_event_observer_.reset(new ExtensionEventObserver());
+    profile_manager_ = std::make_unique<TestingProfileManager>(
+        TestingBrowserProcess::GetGlobal());
+    extension_event_observer_ = std::make_unique<ExtensionEventObserver>();
     test_api_ = extension_event_observer_->CreateTestApi();
-  }
-
-  ~ExtensionEventObserverTest() override {
-    extension_event_observer_.reset();
-    profile_manager_.reset();
-    DBusThreadManager::Shutdown();
-  }
-
-  // ::testing::Test overrides.
-  void SetUp() override {
-    ::testing::Test::SetUp();
-
-    display::Screen::SetScreenInstance(test_screen_.get());
 
     // Must be called from ::testing::Test::SetUp.
     ASSERT_TRUE(profile_manager_->SetUp());
@@ -79,16 +69,18 @@ class ExtensionEventObserverTest : public ::testing::Test {
     profile_manager_->SetLoggedIn(true);
   }
   void TearDown() override {
+    extension_event_observer_.reset();
     profile_ = NULL;
     profile_manager_->DeleteAllTestingProfiles();
-    display::Screen::SetScreenInstance(nullptr);
-    ::testing::Test::TearDown();
+    profile_manager_.reset();
+    DBusThreadManager::Shutdown();
+    ChromeRenderViewHostTestHarness::TearDown();
   }
 
  protected:
-  scoped_refptr<extensions::Extension> CreateApp(const std::string& name,
-                                                 bool uses_gcm) {
-    scoped_refptr<extensions::Extension> app =
+  scoped_refptr<const extensions::Extension> CreateApp(const std::string& name,
+                                                       bool uses_gcm) {
+    scoped_refptr<const extensions::Extension> app =
         extensions::ExtensionBuilder()
             .SetManifest(
                 extensions::DictionaryBuilder()
@@ -115,8 +107,9 @@ class ExtensionEventObserverTest : public ::testing::Test {
     return app;
   }
 
-  extensions::ExtensionHost* CreateHostForApp(Profile* profile,
-                                              extensions::Extension* app) {
+  extensions::ExtensionHost* CreateHostForApp(
+      Profile* profile,
+      const extensions::Extension* app) {
     extensions::ProcessManager::Get(profile)->CreateBackgroundHost(
         app, extensions::BackgroundInfo::GetBackgroundURL(app));
     base::RunLoop().RunUntilIdle();
@@ -136,13 +129,6 @@ class ExtensionEventObserverTest : public ::testing::Test {
   std::unique_ptr<TestingProfileManager> profile_manager_;
 
  private:
-  std::unique_ptr<aura::TestScreen> test_screen_;
-  content::TestBrowserThreadBundle browser_thread_bundle_;
-
-  // Needed to ensure we don't end up creating actual RenderViewHosts
-  // and RenderProcessHosts.
-  content::RenderViewHostTestEnabler render_view_host_test_enabler_;
-
   // Chrome OS needs the CrosSettings test helper.
   ScopedCrosSettingsTestHelper cros_settings_test_helper_;
 
@@ -150,7 +136,7 @@ class ExtensionEventObserverTest : public ::testing::Test {
   FakeChromeUserManager* fake_user_manager_;
   user_manager::ScopedUserManager scoped_user_manager_enabler_;
 
-  std::vector<scoped_refptr<extensions::Extension>> created_apps_;
+  std::vector<scoped_refptr<const extensions::Extension>> created_apps_;
 
   DISALLOW_COPY_AND_ASSIGN(ExtensionEventObserverTest);
 };
@@ -186,7 +172,7 @@ TEST_F(ExtensionEventObserverTest, CanceledSuspend) {
 // Tests that the ExtensionEventObserver delays suspends and dark suspends while
 // there is a push message pending for an app that uses GCM.
 TEST_F(ExtensionEventObserverTest, PushMessagesDelaySuspend) {
-  scoped_refptr<extensions::Extension> gcm_app =
+  scoped_refptr<const extensions::Extension> gcm_app =
       CreateApp("DelaysSuspendForPushMessages", true /* uses_gcm */);
   extensions::ExtensionHost* host = CreateHostForApp(profile_, gcm_app.get());
   ASSERT_TRUE(host);
@@ -230,7 +216,7 @@ TEST_F(ExtensionEventObserverTest, PushMessagesDelaySuspend) {
 
 // Tests that messages sent for apps that don't use GCM are ignored.
 TEST_F(ExtensionEventObserverTest, IgnoresNonGCMApps) {
-  scoped_refptr<extensions::Extension> app = CreateApp("Non-GCM", false);
+  scoped_refptr<const extensions::Extension> app = CreateApp("Non-GCM", false);
   extensions::ExtensionHost* host = CreateHostForApp(profile_, app.get());
   ASSERT_TRUE(host);
 
@@ -245,7 +231,8 @@ TEST_F(ExtensionEventObserverTest, IgnoresNonGCMApps) {
 // Tests that network requests started by an app while it is processing a push
 // message delay any suspend attempt.
 TEST_F(ExtensionEventObserverTest, NetworkRequestsMayDelaySuspend) {
-  scoped_refptr<extensions::Extension> app = CreateApp("NetworkRequests", true);
+  scoped_refptr<const extensions::Extension> app =
+      CreateApp("NetworkRequests", true);
   extensions::ExtensionHost* host = CreateHostForApp(profile_, app.get());
   ASSERT_TRUE(host);
   EXPECT_TRUE(test_api_->WillDelaySuspendForExtensionHost(host));
@@ -282,7 +269,7 @@ TEST_F(ExtensionEventObserverTest, NetworkRequestsMayDelaySuspend) {
 // Tests that any outstanding push messages or network requests for an
 // ExtensionHost that is destroyed do not end up blocking system suspend.
 TEST_F(ExtensionEventObserverTest, DeletedExtensionHostDoesNotBlockSuspend) {
-  scoped_refptr<extensions::Extension> app =
+  scoped_refptr<const extensions::Extension> app =
       CreateApp("DeletedExtensionHost", true);
 
   // The easiest way to delete an extension host is to delete the Profile it is
@@ -313,7 +300,7 @@ TEST_F(ExtensionEventObserverTest, DeletedExtensionHostDoesNotBlockSuspend) {
 // Tests that the ExtensionEventObserver does not delay suspend attempts when it
 // is disabled.
 TEST_F(ExtensionEventObserverTest, DoesNotDelaySuspendWhenDisabled) {
-  scoped_refptr<extensions::Extension> app =
+  scoped_refptr<const extensions::Extension> app =
       CreateApp("NoDelayWhenDisabled", true);
   extensions::ExtensionHost* host = CreateHostForApp(profile_, app.get());
   ASSERT_TRUE(host);

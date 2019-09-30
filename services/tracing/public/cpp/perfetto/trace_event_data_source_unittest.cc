@@ -4,6 +4,7 @@
 
 #include "services/tracing/public/cpp/perfetto/trace_event_data_source.h"
 
+#include <map>
 #include <utility>
 #include <vector>
 
@@ -18,6 +19,7 @@
 #include "services/tracing/public/mojom/perfetto_service.mojom.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/perfetto/include/perfetto/protozero/scattered_stream_null_delegate.h"
+#include "third_party/perfetto/include/perfetto/protozero/scattered_stream_writer.h"
 #include "third_party/perfetto/include/perfetto/tracing/core/trace_writer.h"
 #include "third_party/perfetto/protos/perfetto/trace/trace_packet.pb.h"
 #include "third_party/perfetto/protos/perfetto/trace/trace_packet.pbzero.h"
@@ -26,17 +28,15 @@ namespace tracing {
 
 namespace {
 
-const char kCategoryGroup[] = "foo";
+constexpr const char kCategoryGroup[] = "foo";
 
 class MockProducerClient : public ProducerClient {
  public:
   explicit MockProducerClient(
-      scoped_refptr<base::SequencedTaskRunner> main_thread_task_runner,
-      const char* wanted_event_category)
+      scoped_refptr<base::SequencedTaskRunner> main_thread_task_runner)
       : delegate_(perfetto::base::kPageSize),
         stream_(&delegate_),
-        main_thread_task_runner_(std::move(main_thread_task_runner)),
-        wanted_event_category_(wanted_event_category) {
+        main_thread_task_runner_(std::move(main_thread_task_runner)) {
     trace_packet_.Reset(&stream_);
   }
 
@@ -56,9 +56,7 @@ class MockProducerClient : public ProducerClient {
       auto proto = std::make_unique<perfetto::protos::TracePacket>();
       EXPECT_TRUE(proto->ParseFromArray(buffer.begin, message_size));
       if (proto->has_chrome_events() &&
-          proto->chrome_events().trace_events().size() > 0 &&
-          proto->chrome_events().trace_events()[0].category_group_name() ==
-              wanted_event_category_) {
+          proto->chrome_events().trace_events().size() > 0) {
         finalized_packets_.push_back(std::move(proto));
       } else if (proto->has_chrome_events() &&
                  proto->chrome_events().metadata().size() > 0) {
@@ -87,6 +85,7 @@ class MockProducerClient : public ProducerClient {
     EXPECT_GT(finalized_packets_.size(), packet_index);
 
     auto event_bundle = finalized_packets_[packet_index]->chrome_events();
+    PopulateStringTable(event_bundle);
     return event_bundle.trace_events();
   }
 
@@ -99,7 +98,25 @@ class MockProducerClient : public ProducerClient {
     return event_bundle.metadata();
   }
 
+  void PopulateStringTable(
+      const perfetto::protos::ChromeEventBundle& event_bundle) {
+    string_table_.clear();
+
+    auto& string_table = event_bundle.string_table();
+    for (int i = 0; i < string_table.size(); ++i) {
+      string_table_[string_table[i].index()] = string_table[i].value();
+    }
+  }
+
+  std::string GetStringTableEntry(int index) {
+    auto it = string_table_.find(index);
+    CHECK(it != string_table_.end());
+
+    return it->second;
+  }
+
  private:
+  std::map<int, std::string> string_table_;
   std::vector<std::unique_ptr<perfetto::protos::TracePacket>>
       finalized_packets_;
   std::vector<std::unique_ptr<perfetto::protos::TracePacket>> metadata_packets_;
@@ -107,7 +124,6 @@ class MockProducerClient : public ProducerClient {
   protozero::ScatteredStreamWriterNullDelegate delegate_;
   protozero::ScatteredStreamWriter stream_;
   scoped_refptr<base::SequencedTaskRunner> main_thread_task_runner_;
-  const char* wanted_event_category_;
 };
 
 // For sequences/threads other than our own, we just want to ignore
@@ -130,6 +146,10 @@ class DummyTraceWriter : public perfetto::TraceWriter {
     return perfetto::WriterID(0);
   }
 
+  uint64_t written() const override {
+    return 0u;
+  }
+
  private:
   perfetto::protos::pbzero::TracePacket trace_packet_;
   protozero::ScatteredStreamWriterNullDelegate delegate_;
@@ -150,6 +170,10 @@ class MockTraceWriter : public perfetto::TraceWriter {
 
   perfetto::WriterID writer_id() const override {
     return perfetto::WriterID(0);
+  }
+
+  uint64_t written() const override {
+    return 0u;
   }
 
  private:
@@ -196,11 +220,9 @@ class TraceEventDataSourceTest : public testing::Test {
     producer_client_.reset();
   }
 
-  void CreateTraceEventDataSource(
-      const char* wanted_event_category = kCategoryGroup) {
+  void CreateTraceEventDataSource() {
     producer_client_ = std::make_unique<MockProducerClient>(
-        scoped_task_environment_.GetMainThreadTaskRunner(),
-        wanted_event_category);
+        scoped_task_environment_.GetMainThreadTaskRunner());
 
     auto data_source_config = mojom::DataSourceConfig::New();
     TraceEventDataSource::GetInstance()->StartTracing(producer_client(),
@@ -276,9 +298,9 @@ TEST_F(TraceEventDataSourceTest, MetadataSourceBasicTypes) {
   auto data_source_config = mojom::DataSourceConfig::New();
   metadata_source->StartTracing(producer_client(), *data_source_config);
 
-  base::RunLoop wait_for_flush;
-  metadata_source->Flush(wait_for_flush.QuitClosure());
-  wait_for_flush.Run();
+  base::RunLoop wait_for_stop;
+  metadata_source->StopTracing(wait_for_stop.QuitClosure());
+  wait_for_stop.Run();
 
   auto metadata = producer_client()->GetChromeMetadata();
   EXPECT_EQ(4, metadata.size());
@@ -292,7 +314,7 @@ TEST_F(TraceEventDataSourceTest, MetadataSourceBasicTypes) {
 }
 
 TEST_F(TraceEventDataSourceTest, TraceLogMetadataEvents) {
-  CreateTraceEventDataSource("__metadata");
+  CreateTraceEventDataSource();
 
   base::RunLoop wait_for_flush;
   TraceEventDataSource::GetInstance()->StopTracing(
@@ -303,7 +325,8 @@ TEST_F(TraceEventDataSourceTest, TraceLogMetadataEvents) {
   for (size_t i = 0; i < producer_client()->GetFinalizedPacketCount(); ++i) {
     auto trace_events = producer_client()->GetChromeTraceEvents(i);
     for (auto& event : trace_events) {
-      if (event.name() == "process_uptime_seconds") {
+      if (producer_client()->GetStringTableEntry(event.name_index()) ==
+          "process_uptime_seconds") {
         has_process_uptime_event = true;
         break;
       }
@@ -322,8 +345,10 @@ TEST_F(TraceEventDataSourceTest, BasicTraceEvent) {
   EXPECT_EQ(trace_events.size(), 1);
 
   auto trace_event = trace_events[0];
-  EXPECT_EQ("bar", trace_event.name());
-  EXPECT_EQ(kCategoryGroup, trace_event.category_group_name());
+  EXPECT_EQ("bar",
+            producer_client()->GetStringTableEntry(trace_event.name_index()));
+  EXPECT_EQ(kCategoryGroup, producer_client()->GetStringTableEntry(
+                                trace_event.category_group_name_index()));
   EXPECT_EQ(TRACE_EVENT_PHASE_BEGIN, trace_event.phase());
 }
 
@@ -338,8 +363,10 @@ TEST_F(TraceEventDataSourceTest, TimestampedTraceEvent) {
   EXPECT_EQ(trace_events.size(), 1);
 
   auto trace_event = trace_events[0];
-  EXPECT_EQ("bar", trace_event.name());
-  EXPECT_EQ(kCategoryGroup, trace_event.category_group_name());
+  EXPECT_EQ("bar",
+            producer_client()->GetStringTableEntry(trace_event.name_index()));
+  EXPECT_EQ(kCategoryGroup, producer_client()->GetStringTableEntry(
+                                trace_event.category_group_name_index()));
   EXPECT_EQ(42u, trace_event.id());
   EXPECT_EQ(4242, trace_event.thread_id());
   EXPECT_EQ(424242, trace_event.timestamp());
@@ -355,8 +382,10 @@ TEST_F(TraceEventDataSourceTest, InstantTraceEvent) {
   EXPECT_EQ(trace_events.size(), 1);
 
   auto trace_event = trace_events[0];
-  EXPECT_EQ("bar", trace_event.name());
-  EXPECT_EQ(kCategoryGroup, trace_event.category_group_name());
+  EXPECT_EQ("bar",
+            producer_client()->GetStringTableEntry(trace_event.name_index()));
+  EXPECT_EQ(kCategoryGroup, producer_client()->GetStringTableEntry(
+                                trace_event.category_group_name_index()));
   EXPECT_EQ(TRACE_EVENT_SCOPE_THREAD, trace_event.flags());
   EXPECT_EQ(TRACE_EVENT_PHASE_INSTANT, trace_event.phase());
 }
@@ -373,10 +402,32 @@ TEST_F(TraceEventDataSourceTest, EventWithStringArgs) {
   auto trace_args = trace_events[0].args();
   EXPECT_EQ(trace_args.size(), 2);
 
-  EXPECT_EQ("arg1_name", trace_args[0].name());
+  EXPECT_EQ("arg1_name",
+            producer_client()->GetStringTableEntry(trace_args[0].name_index()));
   EXPECT_EQ("arg1_val", trace_args[0].string_value());
-  EXPECT_EQ("arg2_name", trace_args[1].name());
+  EXPECT_EQ("arg2_name",
+            producer_client()->GetStringTableEntry(trace_args[1].name_index()));
   EXPECT_EQ("arg2_val", trace_args[1].string_value());
+}
+
+TEST_F(TraceEventDataSourceTest, NoStringTableTest) {
+  CreateTraceEventDataSource();
+
+  TRACE_EVENT_INSTANT2(kCategoryGroup, "bar",
+                       TRACE_EVENT_SCOPE_THREAD | TRACE_EVENT_FLAG_COPY,
+                       "arg1_name", "arg1_val", "arg2_name", "arg2_val");
+
+  auto trace_events = producer_client()->GetChromeTraceEvents();
+  EXPECT_EQ(trace_events.size(), 1);
+
+  EXPECT_EQ("bar", trace_events[0].name());
+  EXPECT_EQ(kCategoryGroup, trace_events[0].category_group_name());
+
+  auto trace_args = trace_events[0].args();
+  EXPECT_EQ(trace_args.size(), 2);
+
+  EXPECT_EQ("arg1_name", trace_args[0].name());
+  EXPECT_EQ("arg2_name", trace_args[1].name());
 }
 
 TEST_F(TraceEventDataSourceTest, EventWithUIntArgs) {
@@ -505,7 +556,7 @@ TEST_F(TraceEventDataSourceTest, EventWithConvertableArgs) {
   EXPECT_EQ(kArgValue2, trace_args[1].json_value());
 }
 
-TEST_F(TraceEventDataSourceTest, CompleteTraceEventsIntoSeparateBeginAndEnd) {
+TEST_F(TraceEventDataSourceTest, UpdateDurationOfCompleteEvent) {
   static const char kEventName[] = "bar";
 
   CreateTraceEventDataSource();
@@ -526,28 +577,31 @@ TEST_F(TraceEventDataSourceTest, CompleteTraceEventsIntoSeparateBeginAndEnd) {
 
   base::trace_event::TraceLog::GetInstance()->UpdateTraceEventDurationExplicit(
       category_group_enabled, kEventName, handle,
-      base::TimeTicks() + base::TimeDelta::FromMicroseconds(20),
+      base::TimeTicks() + base::TimeDelta::FromMicroseconds(30),
       base::ThreadTicks() + base::TimeDelta::FromMicroseconds(50));
 
-  // TRACE_EVENT_PHASE_COMPLETE events should internally emit a
-  // TRACE_EVENT_PHASE_BEGIN event first, and then a TRACE_EVENT_PHASE_END event
-  // when the duration is attempted set on the first event.
-  EXPECT_EQ(2u, producer_client()->GetFinalizedPacketCount());
+  // The call to UpdateTraceEventDurationExplicit should have successfully
+  // updated the duration of the event which was added in the
+  // AddTraceEventWithThreadIdAndTimestamp call.
+  auto events = producer_client()->GetChromeTraceEvents(0);
+  EXPECT_EQ(events.size(), 1);
 
-  auto events_from_first_packet = producer_client()->GetChromeTraceEvents(0);
-  EXPECT_EQ(events_from_first_packet.size(), 1);
+  auto trace_event = events[0];
+  EXPECT_EQ(TRACE_EVENT_PHASE_COMPLETE, trace_event.phase());
+  EXPECT_EQ(10, trace_event.timestamp());
+  EXPECT_EQ(20, trace_event.duration());
 
-  auto begin_trace_event = events_from_first_packet[0];
-  EXPECT_EQ(TRACE_EVENT_PHASE_BEGIN, begin_trace_event.phase());
-  EXPECT_EQ(10, begin_trace_event.timestamp());
+  // Updating the duration of an invalid event should cause no further events to
+  // be emitted.
+  handle.event_index = 0;
 
-  auto events_from_second_packet = producer_client()->GetChromeTraceEvents(1);
-  EXPECT_EQ(events_from_second_packet.size(), 1);
+  base::trace_event::TraceLog::GetInstance()->UpdateTraceEventDurationExplicit(
+      category_group_enabled, kEventName, handle,
+      base::TimeTicks() + base::TimeDelta::FromMicroseconds(30),
+      base::ThreadTicks() + base::TimeDelta::FromMicroseconds(50));
 
-  auto end_trace_event = events_from_second_packet[0];
-  EXPECT_EQ(TRACE_EVENT_PHASE_END, end_trace_event.phase());
-  EXPECT_EQ(20, end_trace_event.timestamp());
-  EXPECT_EQ(50, end_trace_event.thread_timestamp());
+  auto new_events = producer_client()->GetChromeTraceEvents(0);
+  EXPECT_EQ(new_events.size(), 1);
 }
 
 }  // namespace

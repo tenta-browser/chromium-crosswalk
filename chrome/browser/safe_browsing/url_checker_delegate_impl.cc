@@ -5,6 +5,9 @@
 #include "chrome/browser/safe_browsing/url_checker_delegate_impl.h"
 
 #include "base/bind.h"
+#include "base/feature_list.h"
+#include "base/task/post_task.h"
+#include "chrome/browser/browser_process.h"
 #include "chrome/browser/data_reduction_proxy_util.h"
 #include "chrome/browser/prerender/prerender_contents.h"
 #include "chrome/browser/prerender/prerender_final_status.h"
@@ -16,6 +19,7 @@
 #include "components/safe_browsing/db/v4_protocol_manager_util.h"
 #include "components/safe_browsing/features.h"
 #include "components/safe_browsing/triggers/suspicious_site_trigger.h"
+#include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/web_contents.h"
 #include "services/network/public/cpp/features.h"
@@ -51,8 +55,8 @@ void StartDisplayingBlockingPage(
   }
 
   // Tab is gone or it's being prerendered.
-  content::BrowserThread::PostTask(content::BrowserThread::IO, FROM_HERE,
-                                   base::Bind(resource.callback, false));
+  base::PostTaskWithTraits(FROM_HERE, {content::BrowserThread::IO},
+                           base::Bind(resource.callback, false));
 }
 
 }  // namespace
@@ -83,8 +87,8 @@ UrlCheckerDelegateImpl::~UrlCheckerDelegateImpl() = default;
 void UrlCheckerDelegateImpl::MaybeDestroyPrerenderContents(
     const base::Callback<content::WebContents*()>& web_contents_getter) {
   // Destroy the prefetch with FINAL_STATUS_SAFEBROSWING.
-  content::BrowserThread::PostTask(
-      content::BrowserThread::UI, FROM_HERE,
+  base::PostTaskWithTraits(
+      FROM_HERE, {content::BrowserThread::UI},
       base::BindOnce(&DestroyPrerenderContents, web_contents_getter));
 }
 
@@ -94,9 +98,19 @@ void UrlCheckerDelegateImpl::StartDisplayingBlockingPageHelper(
     const net::HttpRequestHeaders& headers,
     bool is_main_frame,
     bool has_user_gesture) {
-  content::BrowserThread::PostTask(
-      content::BrowserThread::UI, FROM_HERE,
-      base::BindOnce(&StartDisplayingBlockingPage, ui_manager_, resource));
+  if (base::FeatureList::IsEnabled(kCommittedSBInterstitials) &&
+      is_main_frame) {
+    ui_manager_->AddUnsafeResource(resource.url, resource);
+    // With committed interstitials we just cancel the load from here, the
+    // actual interstitial will be shown from the
+    // SafeBrowsingNavigationThrottle.
+    base::PostTaskWithTraits(FROM_HERE, {content::BrowserThread::IO},
+                             base::BindOnce(resource.callback, false));
+  } else {
+    base::PostTaskWithTraits(
+        FROM_HERE, {content::BrowserThread::UI},
+        base::BindOnce(&StartDisplayingBlockingPage, ui_manager_, resource));
+  }
 }
 
 bool UrlCheckerDelegateImpl::IsUrlWhitelisted(const GURL& url) {
@@ -121,10 +135,9 @@ bool UrlCheckerDelegateImpl::ShouldSkipRequestCheck(
 void UrlCheckerDelegateImpl::NotifySuspiciousSiteDetected(
     const base::RepeatingCallback<content::WebContents*()>&
         web_contents_getter) {
-  content::BrowserThread::PostTask(
-      content::BrowserThread::UI, FROM_HERE,
-      base::BindOnce(&NotifySuspiciousSiteTriggerDetected,
-                     web_contents_getter));
+  base::PostTaskWithTraits(FROM_HERE, {content::BrowserThread::UI},
+                           base::BindOnce(&NotifySuspiciousSiteTriggerDetected,
+                                          web_contents_getter));
 }
 
 const SBThreatTypeSet& UrlCheckerDelegateImpl::GetThreatTypes() {

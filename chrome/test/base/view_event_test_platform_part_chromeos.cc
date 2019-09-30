@@ -7,7 +7,6 @@
 #include <memory>
 #include <utility>
 
-#include "ash/content/content_gpu_interface_provider.h"
 #include "ash/session/test_session_controller_client.h"
 #include "ash/shell.h"
 #include "ash/shell_init_params.h"
@@ -15,13 +14,16 @@
 #include "ash/test_shell_delegate.h"
 #include "base/command_line.h"
 #include "base/macros.h"
+#include "chrome/browser/ui/ash/keyboard/chrome_keyboard_ui_factory.h"
 #include "chromeos/audio/cras_audio_handler.h"
 #include "chromeos/dbus/dbus_thread_manager.h"
 #include "chromeos/dbus/power_policy_controller.h"
 #include "chromeos/network/network_handler.h"
+#include "content/public/browser/gpu_interface_provider_factory.h"
 #include "device/bluetooth/dbus/bluez_dbus_manager.h"
 #include "ui/aura/env.h"
 #include "ui/aura/window_tree_host.h"
+#include "ui/base/ui_base_features.h"
 #include "ui/display/display_switches.h"
 #include "ui/wm/core/wm_state.h"
 
@@ -56,19 +58,22 @@ ViewEventTestPlatformPartChromeOS::ViewEventTestPlatformPartChromeOS(
   // it is initialized by window manager service.
   chromeos::PowerPolicyController::Initialize(
       chromeos::DBusThreadManager::Get()->GetPowerManagerClient());
-  bluez::BluezDBusManager::Initialize(
-      chromeos::DBusThreadManager::Get()->GetSystemBus(),
-      chromeos::DBusThreadManager::Get()->IsUsingFakes());
+  bluez::BluezDBusManager::Initialize();
   chromeos::CrasAudioHandler::InitializeForTesting();
   chromeos::NetworkHandler::Initialize();
 
-  env_ = aura::Env::CreateInstance();
+  env_ = aura::Env::CreateInstance(features::IsSingleProcessMash()
+                                       ? aura::Env::Mode::MUS
+                                       : aura::Env::Mode::LOCAL);
   ash::ShellInitParams init_params;
   init_params.delegate = std::make_unique<ash::TestShellDelegate>();
   init_params.context_factory = context_factory;
   init_params.context_factory_private = context_factory_private;
-  init_params.gpu_interface_provider =
-      std::make_unique<ash::ContentGpuInterfaceProvider>();
+  init_params.gpu_interface_provider = content::CreateGpuInterfaceProvider();
+  if (!features::IsUsingWindowService()) {
+    init_params.keyboard_ui_factory =
+        std::make_unique<ChromeKeyboardUIFactory>();
+  }
   base::CommandLine::ForCurrentProcess()->AppendSwitchASCII(
       switches::kHostWindowBounds, "0+0-1280x800");
   ash::Shell::CreateInstance(std::move(init_params));

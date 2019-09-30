@@ -34,7 +34,7 @@ public class AuthenticatorImpl implements Authenticator, HandlerResponseCallback
     private static final int GMSCORE_MIN_VERSION = 12800000;
 
     /** Ensures only one request is processed at a time. */
-    private boolean mIsOperationPending = false;
+    private boolean mIsOperationPending;
 
     private org.chromium.mojo.bindings.Callbacks
             .Callback2<Integer, MakeCredentialAuthenticatorResponse> mMakeCredentialCallback;
@@ -95,6 +95,11 @@ public class AuthenticatorImpl implements Authenticator, HandlerResponseCallback
     public void isUserVerifyingPlatformAuthenticatorAvailable(
             IsUserVerifyingPlatformAuthenticatorAvailableResponse callback) {
         Context context = ChromeActivity.fromWebContents(mWebContents);
+        // ChromeActivity could be null.
+        if (context == null) {
+            callback.call(false);
+        }
+
         if (PackageUtils.getPackageVersion(context, GMSCORE_PACKAGE_NAME) < GMSCORE_MIN_VERSION
                 || Build.VERSION.SDK_INT < Build.VERSION_CODES.N) {
             callback.call(false);

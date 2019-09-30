@@ -5,6 +5,8 @@
 #ifndef CHROME_BROWSER_UI_VIEWS_IME_DRIVER_REMOTE_TEXT_INPUT_CLIENT_H_
 #define CHROME_BROWSER_UI_VIEWS_IME_DRIVER_REMOTE_TEXT_INPUT_CLIENT_H_
 
+#include "base/containers/queue.h"
+#include "base/memory/weak_ptr.h"
 #include "services/ws/public/mojom/ime/ime.mojom.h"
 #include "ui/base/ime/input_method_delegate.h"
 #include "ui/base/ime/text_input_client.h"
@@ -15,18 +17,17 @@
 class RemoteTextInputClient : public ui::TextInputClient,
                               public ui::internal::InputMethodDelegate {
  public:
-  RemoteTextInputClient(ws::mojom::TextInputClientPtr remote_client,
-                        ui::TextInputType text_input_type,
-                        ui::TextInputMode text_input_mode,
-                        base::i18n::TextDirection text_direction,
-                        int text_input_flags,
-                        gfx::Rect caret_bounds);
+  RemoteTextInputClient(ws::mojom::TextInputClientPtr client,
+                        ws::mojom::SessionDetailsPtr details);
   ~RemoteTextInputClient() override;
 
-  void SetTextInputType(ui::TextInputType text_input_type);
+  void SetTextInputState(ws::mojom::TextInputStatePtr text_input_state);
   void SetCaretBounds(const gfx::Rect& caret_bounds);
 
  private:
+  // See |pending_callbacks_| for details.
+  void OnDispatchKeyEventPostIMECompleted(bool completed);
+
   // ui::TextInputClient:
   void SetCompositionText(const ui::CompositionText& composition) override;
   void ConfirmCompositionText() override;
@@ -45,8 +46,8 @@ class RemoteTextInputClient : public ui::TextInputClient,
   FocusReason GetFocusReason() const override;
   bool GetTextRange(gfx::Range* range) const override;
   bool GetCompositionTextRange(gfx::Range* range) const override;
-  bool GetSelectionRange(gfx::Range* range) const override;
-  bool SetSelectionRange(const gfx::Range& range) override;
+  bool GetEditableSelectionRange(gfx::Range* range) const override;
+  bool SetEditableSelectionRange(const gfx::Range& range) override;
   bool DeleteRange(const gfx::Range& range) override;
   bool GetTextFromRange(const gfx::Range& range,
                         base::string16* text) const override;
@@ -62,16 +63,25 @@ class RemoteTextInputClient : public ui::TextInputClient,
 
   // ui::internal::InputMethodDelegate:
   ui::EventDispatchDetails DispatchKeyEventPostIME(
-      ui::KeyEvent* event) override;
+      ui::KeyEvent* event,
+      base::OnceCallback<void(bool)> ack_callback) override;
+
+  // Removes the callback at the front of |pending_callbacks_| and runs it with
+  // |completed| as the argument.
+  void RunNextPendingCallback(bool completed);
 
   ws::mojom::TextInputClientPtr remote_client_;
-  ui::TextInputType text_input_type_;
-  ui::TextInputMode text_input_mode_;
-  base::i18n::TextDirection text_direction_;
-  int text_input_flags_;
-  gfx::Rect caret_bounds_;
-  std::deque<std::unique_ptr<base::OnceCallback<void(bool)>>>
-      pending_callbacks_;
+  ws::mojom::SessionDetailsPtr details_;
+
+  // Callbacks supplied to DispatchKeyEventPostIME() are added here. When the
+  // response from the remote side is received
+  // (OnDispatchKeyEventPostIMECompleted()), the callback is removed and run.
+  // This is done to ensure if we are destroyed all the callbacks are run.
+  // This is necessary as the callbacks may have originated from a remote
+  // client.
+  base::queue<base::OnceCallback<void(bool)>> pending_callbacks_;
+
+  base::WeakPtrFactory<RemoteTextInputClient> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(RemoteTextInputClient);
 };

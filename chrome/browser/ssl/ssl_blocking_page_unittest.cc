@@ -4,6 +4,7 @@
 
 #include "chrome/browser/ssl/ssl_blocking_page.h"
 
+#include "base/bind.h"
 #include "base/strings/string_number_conversions.h"
 #include "chrome/browser/extensions/api/safe_browsing_private/safe_browsing_private_event_router_factory.h"
 #include "chrome/browser/safe_browsing/test_extension_event_observer.h"
@@ -34,8 +35,10 @@ class SSLBlockingPageTest : public ChromeRenderViewHostTestHarness {
     test_event_router_ =
         extensions::CreateAndUseTestEventRouter(browser_context());
     extensions::SafeBrowsingPrivateEventRouterFactory::GetInstance()
-        ->SetTestingFactory(browser_context(),
-                            safe_browsing::BuildSafeBrowsingPrivateEventRouter);
+        ->SetTestingFactory(
+            browser_context(),
+            base::BindRepeating(
+                &safe_browsing::BuildSafeBrowsingPrivateEventRouter));
   }
 
   extensions::TestEventRouter* test_event_router() {
@@ -62,8 +65,7 @@ TEST_F(SSLBlockingPageTest, VerifySecurityInterstitialExtensionEvents) {
       web_contents(), net::ERR_CERT_DATE_INVALID, ssl_info, request_url,
       /*options_mask=*/0, base::Time::NowFromSystemTime(),
       /*support_url=*/GURL(),
-      /*ssl_cert_reporter=*/nullptr,
-      /*is superfish=*/false, callback);
+      /*ssl_cert_reporter=*/nullptr, callback);
   blocking_page->DontCreateViewForTesting();
   blocking_page->Show();
 

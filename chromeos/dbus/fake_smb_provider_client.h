@@ -14,9 +14,11 @@
 namespace chromeos {
 
 // A fake implementation of SmbProviderClient.
-class CHROMEOS_EXPORT FakeSmbProviderClient : public SmbProviderClient {
+class COMPONENT_EXPORT(CHROMEOS_DBUS) FakeSmbProviderClient
+    : public SmbProviderClient {
  public:
   FakeSmbProviderClient();
+  explicit FakeSmbProviderClient(bool should_run_synchronously);
   ~FakeSmbProviderClient() override;
 
   // Adds an entry in the |netbios_parse_results_| map for <packetid,
@@ -29,6 +31,7 @@ class CHROMEOS_EXPORT FakeSmbProviderClient : public SmbProviderClient {
 
   // SmbProviderClient override.
   void Mount(const base::FilePath& share_path,
+             bool ntlm_enabled,
              const std::string& workgroup,
              const std::string& username,
              base::ScopedFD password_fd,
@@ -36,6 +39,7 @@ class CHROMEOS_EXPORT FakeSmbProviderClient : public SmbProviderClient {
 
   void Remount(const base::FilePath& share_path,
                int32_t mount_id,
+               bool ntlm_enabled,
                const std::string& workgroup,
                const std::string& username,
                base::ScopedFD password_fd,
@@ -119,13 +123,39 @@ class CHROMEOS_EXPORT FakeSmbProviderClient : public SmbProviderClient {
                     int32_t copy_token,
                     StatusCallback callback) override;
 
+  void StartReadDirectory(int32_t mount_id,
+                          const base::FilePath& directory_path,
+                          StartReadDirectoryCallback callback) override;
+
+  void ContinueReadDirectory(int32_t mount_id,
+                             int32_t read_dir_token,
+                             ReadDirectoryCallback callback) override;
+
+  void UpdateMountCredentials(int32_t mount_id,
+                              std::string workgroup,
+                              std::string username,
+                              base::ScopedFD password_fd,
+                              StatusCallback callback) override;
+
+  void Premount(const base::FilePath& share_path,
+                bool ntlm_enabled,
+                MountCallback callback) override;
+
   // Adds |share| to the list of shares for |server_url| in |shares_|.
   void AddToShares(const std::string& server_url, const std::string& share);
 
   // Clears |shares_|.
   void ClearShares();
 
+  // Runs |stored_callback_|.
+  void RunStoredReadDirCallback();
+
  private:
+  // Controls whether |stored_readdir_callback_| should run synchronously.
+  bool should_run_synchronously_ = true;
+
+  base::OnceClosure stored_readdir_callback_;
+
   std::map<uint8_t, std::vector<std::string>> netbios_parse_results_;
 
   // Mapping of a server url to its shares.

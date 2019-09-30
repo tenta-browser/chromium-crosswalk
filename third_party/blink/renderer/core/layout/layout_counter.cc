@@ -30,7 +30,6 @@
 #include "third_party/blink/renderer/core/dom/pseudo_element.h"
 #include "third_party/blink/renderer/core/html/html_olist_element.h"
 #include "third_party/blink/renderer/core/html/list_item_ordinal.h"
-#include "third_party/blink/renderer/core/html_names.h"
 #include "third_party/blink/renderer/core/layout/counter_node.h"
 #include "third_party/blink/renderer/core/layout/layout_list_item.h"
 #include "third_party/blink/renderer/core/layout/layout_view.h"
@@ -43,8 +42,6 @@
 #endif
 
 namespace blink {
-
-using namespace HTMLNames;
 
 typedef HashMap<AtomicString, scoped_refptr<CounterNode>> CounterMap;
 typedef HashMap<const LayoutObject*, std::unique_ptr<CounterMap>> CounterMaps;
@@ -158,7 +155,7 @@ static bool PlanCounter(LayoutObject& object,
   switch (style.StyleType()) {
     case kPseudoIdNone:
       // Sometimes nodes have more than one layout object. Only the first one
-      // gets the counter. See LayoutTests/http/tests/css/counter-crash.html
+      // gets the counter. See web_tests/http/tests/css/counter-crash.html
       if (generating_node->GetLayoutObject() != &object)
         return false;
       break;
@@ -498,14 +495,14 @@ scoped_refptr<StringImpl> LayoutCounter::OriginalText() const {
   CounterNode* child = counter_node_;
   int value = child->ActsAsReset() ? child->Value() : child->CountInParent();
 
-  String text = ListMarkerText::GetText(counter_.ListStyle(), value);
+  String text = list_marker_text::GetText(counter_.ListStyle(), value);
 
   if (!counter_.Separator().IsNull()) {
     if (!child->ActsAsReset())
       child = child->Parent();
     while (CounterNode* parent = child->Parent()) {
-      text = ListMarkerText::GetText(counter_.ListStyle(),
-                                     child->CountInParent()) +
+      text = list_marker_text::GetText(counter_.ListStyle(),
+                                       child->CountInParent()) +
              counter_.Separator() + text;
       child = parent;
     }
@@ -524,7 +521,7 @@ void LayoutCounter::Invalidate() {
   if (DocumentBeingDestroyed())
     return;
   SetNeedsLayoutAndPrefWidthsRecalcAndFullPaintInvalidation(
-      LayoutInvalidationReason::kCountersChanged);
+      layout_invalidation_reason::kCountersChanged);
 }
 
 static void DestroyCounterNodeWithoutMapRemoval(const AtomicString& identifier,

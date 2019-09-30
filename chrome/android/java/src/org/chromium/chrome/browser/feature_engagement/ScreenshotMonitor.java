@@ -4,13 +4,16 @@
 
 package org.chromium.chrome.browser.feature_engagement;
 
+import android.Manifest;
 import android.content.Context;
+import android.content.pm.PackageManager;
 import android.database.ContentObserver;
 import android.database.Cursor;
 import android.net.Uri;
 import android.os.Handler;
 import android.provider.MediaStore;
 import android.provider.MediaStore.Images.Media;
+import android.support.v4.content.ContextCompat;
 import android.util.DisplayMetrics;
 import android.view.WindowManager;
 
@@ -33,9 +36,9 @@ public class ScreenshotMonitor {
      * This tracks whether monitoring is on (i.e. started but not stopped). It must only be accessed
      * on the UI thread.
      */
-    private boolean mIsMonitoring = false;
+    private boolean mIsMonitoring;
 
-    private boolean mSkipOsCallsForUnitTesting = false;
+    private boolean mSkipOsCallsForUnitTesting;
 
     /**
      * Observe content changes in the Media database looking for screenshots.
@@ -102,6 +105,15 @@ public class ScreenshotMonitor {
         String[] mediaProjection = new String[] {MediaStore.Images.ImageColumns.DATE_TAKEN,
                 MediaStore.MediaColumns.DATA, MediaStore.MediaColumns.HEIGHT,
                 MediaStore.MediaColumns.WIDTH, MediaStore.MediaColumns._ID};
+
+        // Check if READ_EXTERNAL_STORAGE permission are enabled.
+        if (ContextCompat.checkSelfPermission(
+                    ContextUtils.getApplicationContext(), Manifest.permission.READ_EXTERNAL_STORAGE)
+                != PackageManager.PERMISSION_GRANTED) {
+            RecordUserAction.record("Tab.Screenshot.WithoutStoragePermission");
+            return false;
+        }
+
         try {
             cursor = ContextUtils.getApplicationContext().getContentResolver().query(
                     storeUri, mediaProjection, null, null, null);

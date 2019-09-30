@@ -296,7 +296,10 @@ void V4Database::OnChecksumVerified(
 
 bool V4Database::IsStoreAvailable(const ListIdentifier& identifier) const {
   const auto& store_pair = store_map_->find(identifier);
-  if (store_pair == store_map_->end()) {
+  bool store_found = store_pair != store_map_->end();
+  UMA_HISTOGRAM_BOOLEAN("SafeBrowsing.V4Store.IsStoreAvailable.ValidStore",
+                        store_found);
+  if (!store_found) {
     // Store not in our list
     return false;
   }
@@ -315,7 +318,7 @@ void V4Database::RecordFileSizeHistograms() {
     db_size += size;
   }
   const int64_t db_size_kilobytes = static_cast<int64_t>(db_size / 1024);
-  UMA_HISTOGRAM_COUNTS(kV4DatabaseSizeMetric, db_size_kilobytes);
+  UMA_HISTOGRAM_COUNTS_1M(kV4DatabaseSizeMetric, db_size_kilobytes);
 }
 
 void V4Database::CollectDatabaseInfo(

@@ -20,7 +20,6 @@ import org.junit.runner.RunWith;
 import org.chromium.base.ThreadUtils;
 import org.chromium.base.test.util.CommandLineFlags;
 import org.chromium.base.test.util.DisabledTest;
-import org.chromium.base.test.util.Feature;
 import org.chromium.base.test.util.RetryOnFailure;
 import org.chromium.base.test.util.UrlUtils;
 import org.chromium.chrome.R;
@@ -32,11 +31,10 @@ import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.chrome.test.ChromeActivityTestRule;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
 import org.chromium.chrome.test.util.browser.Features.EnableFeatures;
-import org.chromium.content.browser.test.util.Criteria;
-import org.chromium.content.browser.test.util.CriteriaHelper;
-import org.chromium.content.browser.test.util.DOMUtils;
 import org.chromium.content_public.browser.WebContents;
-import org.chromium.ui.UiUtils;
+import org.chromium.content_public.browser.test.util.Criteria;
+import org.chromium.content_public.browser.test.util.CriteriaHelper;
+import org.chromium.content_public.browser.test.util.DOMUtils;
 
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeoutException;
@@ -103,11 +101,7 @@ public class AutofillKeyboardAccessoryIntegrationTest {
      */
     @Test
     @MediumTest
-    @Feature({"keyboard-accessory"})
-    @DisabledTest(message = "crbug.com/854224")
-    // TODO(fhorschig): Figure out why this test exists. If a keyboard is shown, the accessory
-    // should be there. If there is no keyboard, there shouldn't be an accessory. Looks more like a
-    // keyboard test than an accessory test.
+    @EnableFeatures({ChromeFeatureList.PASSWORDS_KEYBOARD_ACCESSORY})
     public void testAutofocusedFieldDoesNotShowKeyboardAccessory()
             throws ExecutionException, InterruptedException, TimeoutException {
         loadTestPage(false);
@@ -119,7 +113,7 @@ public class AutofillKeyboardAccessoryIntegrationTest {
      */
     @Test
     @MediumTest
-    @Feature({"keyboard-accessory"})
+    @EnableFeatures({ChromeFeatureList.PASSWORDS_KEYBOARD_ACCESSORY})
     @DisabledTest(message = "crbug.com/854224")
     public void testTapInputFieldShowsKeyboardAccessory()
             throws ExecutionException, InterruptedException, TimeoutException {
@@ -128,7 +122,7 @@ public class AutofillKeyboardAccessoryIntegrationTest {
 
         CriteriaHelper.pollUiThread(Criteria.equals(true,
                 ()
-                        -> UiUtils.isKeyboardShowing(
+                        -> mActivityTestRule.getKeyboardDelegate().isKeyboardShowing(
                                 mActivityTestRule.getActivity(), mContainerRef.get())));
         Assert.assertTrue("Keyboard accessory should be showing.", isAccessoryVisible());
     }
@@ -138,7 +132,7 @@ public class AutofillKeyboardAccessoryIntegrationTest {
      */
     @Test
     @MediumTest
-    @Feature({"keyboard-accessory"})
+    @EnableFeatures({ChromeFeatureList.PASSWORDS_KEYBOARD_ACCESSORY})
     @DisabledTest(message = "crbug.com/836027")
     public void testSwitchFieldsRescrollsKeyboardAccessory()
             throws ExecutionException, InterruptedException, TimeoutException {
@@ -147,7 +141,7 @@ public class AutofillKeyboardAccessoryIntegrationTest {
 
         CriteriaHelper.pollUiThread(Criteria.equals(true,
                 ()
-                        -> UiUtils.isKeyboardShowing(
+                        -> mActivityTestRule.getKeyboardDelegate().isKeyboardShowing(
                                 mActivityTestRule.getActivity(), mContainerRef.get())));
 
         ThreadUtils.runOnUiThreadBlocking(() -> getSuggestionsComponent().scrollToPosition(2));
@@ -164,7 +158,7 @@ public class AutofillKeyboardAccessoryIntegrationTest {
      */
     @Test
     @MediumTest
-    @Feature({"keyboard-accessory"})
+    @EnableFeatures({ChromeFeatureList.PASSWORDS_KEYBOARD_ACCESSORY})
     @DisabledTest(message = "crbug.com/847959")
     public void testSelectSuggestionHidesKeyboardAccessory()
             throws ExecutionException, InterruptedException, TimeoutException {
@@ -173,7 +167,7 @@ public class AutofillKeyboardAccessoryIntegrationTest {
 
         CriteriaHelper.pollUiThread(Criteria.equals(true,
                 ()
-                        -> UiUtils.isKeyboardShowing(
+                        -> mActivityTestRule.getKeyboardDelegate().isKeyboardShowing(
                                 mActivityTestRule.getActivity(), mContainerRef.get())));
         Assert.assertTrue("Keyboard accessory should be visible.", isAccessoryVisible());
 
@@ -181,7 +175,7 @@ public class AutofillKeyboardAccessoryIntegrationTest {
 
         CriteriaHelper.pollUiThread(Criteria.equals(false,
                 ()
-                        -> UiUtils.isKeyboardShowing(
+                        -> mActivityTestRule.getKeyboardDelegate().isKeyboardShowing(
                                 mActivityTestRule.getActivity(), mContainerRef.get())));
         Assert.assertTrue("Keyboard accessory should be hidden.", isAccessoryGone());
     }
@@ -202,7 +196,7 @@ public class AutofillKeyboardAccessoryIntegrationTest {
                 () -> mActivityTestRule.getActivity().findViewById(R.id.keyboard_accessory));
         if (keyboardAccessory == null) return null; // It might still be loading, so don't assert!
 
-        final View recyclerView = keyboardAccessory.findViewById(R.id.actions_view);
+        final View recyclerView = keyboardAccessory.findViewById(R.id.bar_items_view);
         if (recyclerView == null) return null; // It might still be loading, so don't assert!
 
         return (RecyclerView) recyclerView;

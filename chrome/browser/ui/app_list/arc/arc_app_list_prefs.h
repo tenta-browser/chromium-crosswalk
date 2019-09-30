@@ -24,12 +24,12 @@
 #include "chrome/browser/chromeos/arc/arc_session_manager.h"
 #include "chrome/browser/chromeos/arc/policy/arc_policy_bridge.h"
 #include "chrome/browser/ui/app_list/arc/arc_app_icon_descriptor.h"
-#include "chrome/browser/ui/app_list/arc/arc_default_app_list.h"
 #include "components/arc/common/app.mojom.h"
 #include "components/arc/connection_observer.h"
 #include "components/keyed_service/core/keyed_service.h"
 #include "ui/base/layout.h"
 
+class ArcDefaultAppList;
 class PrefService;
 class Profile;
 
@@ -47,6 +47,10 @@ namespace user_prefs {
 class PrefRegistrySyncable;
 }  // namespace user_prefs
 
+namespace app_list {
+class ArcAppShortcutsSearchProviderTest;
+}  // namespace app_list
+
 // Declares shareable ARC app specific preferences, that keep information
 // about app attributes (name, package_name, activity) and its state. This
 // information is used to pre-create non-ready app items while ARC bridge
@@ -56,7 +60,6 @@ class ArcAppListPrefs : public KeyedService,
                         public arc::mojom::AppHost,
                         public arc::ConnectionObserver<arc::mojom::AppInstance>,
                         public arc::ArcSessionManager::Observer,
-                        public ArcDefaultAppList::Delegate,
                         public arc::ArcPolicyBridge::Observer {
  public:
   struct AppInfo {
@@ -210,6 +213,8 @@ class ArcAppListPrefs : public KeyedService,
   // It is called from chrome/browser/prefs/browser_prefs.cc.
   static void RegisterProfilePrefs(user_prefs::PrefRegistrySyncable* registry);
 
+  static void UprevCurrentIconsVersionForTesting();
+
   ~ArcAppListPrefs() override;
 
   // Returns a list of all app ids, including ready and non-ready apps.
@@ -273,9 +278,6 @@ class ArcAppListPrefs : public KeyedService,
   // arc::ArcSessionManager::Observer:
   void OnArcPlayStoreEnabledChanged(bool enabled) override;
 
-  // ArcDefaultAppList::Delegate:
-  void OnDefaultAppsReady() override;
-
   // arc::ArcPolicyBridge::Observer:
   void OnPolicySent(const std::string& policy) override;
 
@@ -307,12 +309,20 @@ class ArcAppListPrefs : public KeyedService,
                        const std::string& key,
                        base::Value value);
 
-  void SetDefaltAppsReadyCallback(base::Closure callback);
+  void SetDefaultAppsReadyCallback(base::OnceClosure callback);
   void SimulateDefaultAppAvailabilityTimeoutForTesting();
+
+  // Returns true if:
+  // 1. specified package is new in the system
+  // 2. is not installed.
+  // 3. is not scheduled to install by sync
+  // 4. Is not currently installing.
+  bool IsUnknownPackage(const std::string& package_name) const;
 
  private:
   friend class ChromeLauncherControllerTest;
   friend class ArcAppModelBuilderTest;
+  friend class app_list::ArcAppShortcutsSearchProviderTest;
   // To support deprecated mojom icon requests.
   class ResizeRequest;
 
@@ -391,17 +401,20 @@ class ArcAppListPrefs : public KeyedService,
                          const bool shortcut,
                          const bool launchable);
   // Adds or updates local pref for given package.
-  void AddOrUpdatePackagePrefs(PrefService* prefs,
-                               const arc::mojom::ArcPackageInfo& package);
+  void AddOrUpdatePackagePrefs(const arc::mojom::ArcPackageInfo& package);
   // Removes given package from local pref.
-  void RemovePackageFromPrefs(PrefService* prefs,
-                              const std::string& package_name);
+  void RemovePackageFromPrefs(const std::string& package_name);
 
   void DisableAllApps();
   void RemoveAllAppsAndPackages();
   std::vector<std::string> GetAppIdsNoArcEnabledCheck() const;
+  // Retrieves registered apps and shortcuts for specific package |package_name|
+  // If |include_only_launchable_apps| is set to true then only launchable apps
+  // are included and runtime apps are ignored. Otherwise all apps are returned.
+  // |include_shortcuts| specifies if shorcuts needs to be included.
   std::unordered_set<std::string> GetAppsAndShortcutsForPackage(
       const std::string& package_name,
+      bool include_only_launchable_apps,
       bool include_shortcuts) const;
 
   // Enumerates apps from preferences and notifies listeners about available
@@ -437,10 +450,6 @@ class ArcAppListPrefs : public KeyedService,
   void HandleTaskCreated(const base::Optional<std::string>& name,
                          const std::string& package_name,
                          const std::string& activity);
-
-  // Returns true is specified package is new in the system, was not installed
-  // and it is not scheduled to install by sync.
-  bool IsUnknownPackage(const std::string& package_name) const;
 
   // Detects that default apps either exist or installation session is started.
   void DetectDefaultAppAvailability();
@@ -492,6 +501,9 @@ class ArcAppListPrefs : public KeyedService,
                      const std::vector<uint8_t>& icon_png_data);
   void DiscardResizeRequest(ResizeRequest* request);
 
+  // Callback called once default apps are ready.
+  void OnDefaultAppsReady();
+
   Profile* const profile_;
 
   // Owned by the BrowserContext.
@@ -537,14 +549,14 @@ class ArcAppListPrefs : public KeyedService,
   // Default apps should be either already installed or their installations
   // should be started soon after initial app list refresh.
   base::OneShotTimer detect_default_app_availability_timeout_;
-  // Set of currently installing default apps_.
-  std::unordered_set<std::string> default_apps_installations_;
+  // Set of currently installing apps_.
+  std::unordered_set<std::string> apps_installations_;
 
   arc::ArcPackageSyncableService* sync_service_ = nullptr;
 
   bool default_apps_ready_ = false;
-  ArcDefaultAppList default_apps_;
-  base::Closure default_apps_ready_callback_;
+  std::unique_ptr<ArcDefaultAppList> default_apps_;
+  base::OnceClosure default_apps_ready_callback_;
   // Set of packages installed by policy in case of managed user.
   std::set<std::string> packages_by_policy_;
 

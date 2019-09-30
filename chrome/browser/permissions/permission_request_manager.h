@@ -40,8 +40,11 @@ class PermissionRequestManager
  public:
   class Observer {
    public:
-    virtual ~Observer();
-    virtual void OnBubbleAdded();
+    virtual void OnBubbleAdded() {}
+    virtual void OnBubbleRemoved() {}
+
+   protected:
+    virtual ~Observer() = default;
   };
 
   enum AutoResponseType {
@@ -154,6 +157,7 @@ class PermissionRequestManager
   void RequestFinishedIncludingDuplicates(PermissionRequest* request);
 
   void NotifyBubbleAdded();
+  void NotifyBubbleRemoved();
 
   void DoAutoResponseForTesting();
 
@@ -180,6 +184,7 @@ class PermissionRequestManager
   AutoResponseType auto_response_for_test_;
 
   base::WeakPtrFactory<PermissionRequestManager> weak_factory_;
+  WEB_CONTENTS_USER_DATA_KEY_DECL();
 };
 
 #endif  // CHROME_BROWSER_PERMISSIONS_PERMISSION_REQUEST_MANAGER_H_

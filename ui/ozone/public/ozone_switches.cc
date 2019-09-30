@@ -12,4 +12,10 @@ const char kOzonePlatform[] = "ozone-platform";
 // Specify location for image dumps.
 const char kOzoneDumpFile[] = "ozone-dump-file";
 
+// Try to enable wayland input method editor.
+const char kEnableWaylandIme[] = "enable-wayland-ime";
+
+// Enable explicit DMA-fences
+const char kEnableExplicitDmaFences[] = "enable-explicit-dma-fences";
+
 }  // namespace switches

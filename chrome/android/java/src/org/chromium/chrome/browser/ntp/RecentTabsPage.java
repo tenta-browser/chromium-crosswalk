@@ -25,8 +25,6 @@ import org.chromium.chrome.browser.ChromeActivity;
 import org.chromium.chrome.browser.UrlConstants;
 import org.chromium.chrome.browser.compositor.layouts.content.InvalidationAwareThumbnailProvider;
 import org.chromium.chrome.browser.native_page.NativePage;
-import org.chromium.chrome.browser.util.ColorUtils;
-import org.chromium.chrome.browser.util.FeatureUtilities;
 import org.chromium.chrome.browser.util.ViewUtils;
 
 import java.util.concurrent.TimeUnit;
@@ -104,7 +102,8 @@ public class RecentTabsPage
         View recentTabsRoot = mView.findViewById(R.id.recent_tabs_root);
         if (activity.getFullscreenManager().getBottomControlsHeight() != 0) {
             ViewCompat.setPaddingRelative(recentTabsRoot,
-                    ViewCompat.getPaddingStart(recentTabsRoot), 0,
+                    ViewCompat.getPaddingStart(recentTabsRoot),
+                    activity.getFullscreenManager().getTopControlsHeight(),
                     ViewCompat.getPaddingEnd(recentTabsRoot),
                     activity.getFullscreenManager().getBottomControlsHeight());
         }
@@ -149,12 +148,6 @@ public class RecentTabsPage
     @Override
     public int getBackgroundColor() {
         return Color.WHITE;
-    }
-
-    @Override
-    public int getThemeColor() {
-        return ColorUtils.getDefaultThemeColor(
-                mActivity.getResources(), FeatureUtilities.isChromeModernDesignEnabled(), false);
     }
 
     @Override

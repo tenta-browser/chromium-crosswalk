@@ -25,7 +25,6 @@ class PasswordStore;
 }
 
 namespace syncer {
-class DeviceInfoTracker;
 class SyncApiComponentFactory;
 class SyncService;
 }
@@ -37,24 +36,25 @@ class ChromeSyncClient : public syncer::SyncClient {
   explicit ChromeSyncClient(Profile* profile);
   ~ChromeSyncClient() override;
 
+  void Initialize();
+
   // SyncClient implementation.
-  void Initialize() override;
-  syncer::SyncService* GetSyncService() override;
   PrefService* GetPrefService() override;
   base::FilePath GetLocalSyncBackendFolder() override;
   syncer::ModelTypeStoreService* GetModelTypeStoreService() override;
+  syncer::DeviceInfoSyncService* GetDeviceInfoSyncService() override;
   bookmarks::BookmarkModel* GetBookmarkModel() override;
   favicon::FaviconService* GetFaviconService() override;
   history::HistoryService* GetHistoryService() override;
+  sync_sessions::SessionSyncService* GetSessionSyncService() override;
   bool HasPasswordStore() override;
   base::Closure GetPasswordStateChangedCallback() override;
   syncer::DataTypeController::TypeVector CreateDataTypeControllers(
-      syncer::LocalDeviceInfoProvider* local_device_info_provider) override;
+      syncer::SyncService* sync_service) override;
   autofill::PersonalDataManager* GetPersonalDataManager() override;
   invalidation::InvalidationService* GetInvalidationService() override;
   BookmarkUndoService* GetBookmarkUndoServiceIfExists() override;
   scoped_refptr<syncer::ExtensionsActivity> GetExtensionsActivity() override;
-  sync_sessions::SyncSessionsClient* GetSyncSessionsClient() override;
   base::WeakPtr<syncer::SyncableService> GetSyncableServiceForType(
       syncer::ModelType type) override;
   base::WeakPtr<syncer::ModelTypeControllerDelegate>
@@ -66,12 +66,6 @@ class ChromeSyncClient : public syncer::SyncClient {
   // Helpers for overriding getters in tests.
   void SetSyncApiComponentFactoryForTesting(
       std::unique_ptr<syncer::SyncApiComponentFactory> component_factory);
-
-  // Iterates over all of the profiles that have been loaded so far, and
-  // extracts their tracker if present. If some profiles don't have trackers, no
-  // indication is given in the passed vector.
-  static void GetDeviceInfoTrackers(
-      std::vector<const syncer::DeviceInfoTracker*>* trackers);
 
  private:
   Profile* const profile_;
@@ -87,8 +81,6 @@ class ChromeSyncClient : public syncer::SyncClient {
 
   // The task runner for the |web_data_service_|, if any.
   scoped_refptr<base::SingleThreadTaskRunner> web_data_service_thread_;
-
-  std::unique_ptr<sync_sessions::SyncSessionsClient> sync_sessions_client_;
 
   // Generates and monitors the ExtensionsActivity object used by sync.
   ExtensionsActivityMonitor extensions_activity_monitor_;

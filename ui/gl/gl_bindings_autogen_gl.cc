@@ -285,6 +285,8 @@ void DriverGL::InitializeDynamicBindings(const GLVersionInfo* ver,
       gfx::HasExtension(extensions, "GL_ANGLE_framebuffer_multisample");
   ext.b_GL_ANGLE_instanced_arrays =
       gfx::HasExtension(extensions, "GL_ANGLE_instanced_arrays");
+  ext.b_GL_ANGLE_multi_draw =
+      gfx::HasExtension(extensions, "GL_ANGLE_multi_draw");
   ext.b_GL_ANGLE_multiview =
       gfx::HasExtension(extensions, "GL_ANGLE_multiview");
   ext.b_GL_ANGLE_request_extension =
@@ -334,10 +336,6 @@ void DriverGL::InitializeDynamicBindings(const GLVersionInfo* ver,
       gfx::HasExtension(extensions, "GL_ARB_vertex_array_object");
   ext.b_GL_CHROMIUM_bind_uniform_location =
       gfx::HasExtension(extensions, "GL_CHROMIUM_bind_uniform_location");
-  ext.b_GL_CHROMIUM_compressed_copy_texture =
-      gfx::HasExtension(extensions, "GL_CHROMIUM_compressed_copy_texture");
-  ext.b_GL_CHROMIUM_copy_compressed_texture =
-      gfx::HasExtension(extensions, "GL_CHROMIUM_copy_compressed_texture");
   ext.b_GL_CHROMIUM_copy_texture =
       gfx::HasExtension(extensions, "GL_CHROMIUM_copy_texture");
   ext.b_GL_CHROMIUM_framebuffer_mixed_samples =
@@ -400,6 +398,8 @@ void DriverGL::InitializeDynamicBindings(const GLVersionInfo* ver,
   ext.b_GL_KHR_blend_equation_advanced =
       gfx::HasExtension(extensions, "GL_KHR_blend_equation_advanced");
   ext.b_GL_KHR_debug = gfx::HasExtension(extensions, "GL_KHR_debug");
+  ext.b_GL_KHR_parallel_shader_compile =
+      gfx::HasExtension(extensions, "GL_KHR_parallel_shader_compile");
   ext.b_GL_KHR_robustness = gfx::HasExtension(extensions, "GL_KHR_robustness");
   ext.b_GL_NV_blend_equation_advanced =
       gfx::HasExtension(extensions, "GL_NV_blend_equation_advanced");
@@ -615,13 +615,6 @@ void DriverGL::InitializeDynamicBindings(const GLVersionInfo* ver,
       ext.b_GL_ARB_sync) {
     fn.glClientWaitSyncFn = reinterpret_cast<glClientWaitSyncProc>(
         GetGLProcAddress("glClientWaitSync"));
-  }
-
-  if (ext.b_GL_CHROMIUM_copy_compressed_texture ||
-      ext.b_GL_CHROMIUM_compressed_copy_texture) {
-    fn.glCompressedCopyTextureCHROMIUMFn =
-        reinterpret_cast<glCompressedCopyTextureCHROMIUMProc>(
-            GetGLProcAddress("glCompressedCopyTextureCHROMIUM"));
   }
 
   if (ext.b_GL_ANGLE_robust_client_memory) {
@@ -1839,6 +1832,12 @@ void DriverGL::InitializeDynamicBindings(const GLVersionInfo* ver,
             GetGLProcAddress("glMatrixLoadIdentityCHROMIUM"));
   }
 
+  if (ext.b_GL_KHR_parallel_shader_compile) {
+    fn.glMaxShaderCompilerThreadsKHRFn =
+        reinterpret_cast<glMaxShaderCompilerThreadsKHRProc>(
+            GetGLProcAddress("glMaxShaderCompilerThreadsKHR"));
+  }
+
   if (ver->IsAtLeastGLES(3u, 1u) || ver->IsAtLeastGL(4u, 5u)) {
     fn.glMemoryBarrierByRegionFn =
         reinterpret_cast<glMemoryBarrierByRegionProc>(
@@ -1857,6 +1856,29 @@ void DriverGL::InitializeDynamicBindings(const GLVersionInfo* ver,
   if (ver->IsAtLeastGLES(3u, 2u) || ver->IsAtLeastGL(4u, 0u)) {
     fn.glMinSampleShadingFn = reinterpret_cast<glMinSampleShadingProc>(
         GetGLProcAddress("glMinSampleShading"));
+  }
+
+  if (ext.b_GL_ANGLE_multi_draw) {
+    fn.glMultiDrawArraysANGLEFn = reinterpret_cast<glMultiDrawArraysANGLEProc>(
+        GetGLProcAddress("glMultiDrawArraysANGLE"));
+  }
+
+  if (ext.b_GL_ANGLE_multi_draw) {
+    fn.glMultiDrawArraysInstancedANGLEFn =
+        reinterpret_cast<glMultiDrawArraysInstancedANGLEProc>(
+            GetGLProcAddress("glMultiDrawArraysInstancedANGLE"));
+  }
+
+  if (ext.b_GL_ANGLE_multi_draw) {
+    fn.glMultiDrawElementsANGLEFn =
+        reinterpret_cast<glMultiDrawElementsANGLEProc>(
+            GetGLProcAddress("glMultiDrawElementsANGLE"));
+  }
+
+  if (ext.b_GL_ANGLE_multi_draw) {
+    fn.glMultiDrawElementsInstancedANGLEFn =
+        reinterpret_cast<glMultiDrawElementsInstancedANGLEProc>(
+            GetGLProcAddress("glMultiDrawElementsInstancedANGLE"));
   }
 
   if (ver->IsAtLeastGL(4u, 3u) || ver->IsAtLeastGLES(3u, 2u)) {
@@ -2918,11 +2940,6 @@ void GLApiBase::glCompileShaderFn(GLuint shader) {
   driver_->fn.glCompileShaderFn(shader);
 }
 
-void GLApiBase::glCompressedCopyTextureCHROMIUMFn(GLuint sourceId,
-                                                  GLuint destId) {
-  driver_->fn.glCompressedCopyTextureCHROMIUMFn(sourceId, destId);
-}
-
 void GLApiBase::glCompressedTexImage2DFn(GLenum target,
                                          GLint level,
                                          GLenum internalformat,
@@ -3918,10 +3935,11 @@ void GLApiBase::glGetProgramPipelineivFn(GLuint pipeline,
   driver_->fn.glGetProgramPipelineivFn(pipeline, pname, params);
 }
 
-void GLApiBase::glGetProgramResourceIndexFn(GLuint program,
-                                            GLenum programInterface,
-                                            const GLchar* name) {
-  driver_->fn.glGetProgramResourceIndexFn(program, programInterface, name);
+GLuint GLApiBase::glGetProgramResourceIndexFn(GLuint program,
+                                              GLenum programInterface,
+                                              const GLchar* name) {
+  return driver_->fn.glGetProgramResourceIndexFn(program, programInterface,
+                                                 name);
 }
 
 void GLApiBase::glGetProgramResourceivFn(GLuint program,
@@ -4478,6 +4496,10 @@ void GLApiBase::glMatrixLoadIdentityEXTFn(GLenum matrixMode) {
   driver_->fn.glMatrixLoadIdentityEXTFn(matrixMode);
 }
 
+void GLApiBase::glMaxShaderCompilerThreadsKHRFn(GLuint count) {
+  driver_->fn.glMaxShaderCompilerThreadsKHRFn(count);
+}
+
 void GLApiBase::glMemoryBarrierByRegionFn(GLbitfield barriers) {
   driver_->fn.glMemoryBarrierByRegionFn(barriers);
 }
@@ -4488,6 +4510,42 @@ void GLApiBase::glMemoryBarrierEXTFn(GLbitfield barriers) {
 
 void GLApiBase::glMinSampleShadingFn(GLfloat value) {
   driver_->fn.glMinSampleShadingFn(value);
+}
+
+void GLApiBase::glMultiDrawArraysANGLEFn(GLenum mode,
+                                         const GLint* firsts,
+                                         const GLsizei* counts,
+                                         GLsizei drawcount) {
+  driver_->fn.glMultiDrawArraysANGLEFn(mode, firsts, counts, drawcount);
+}
+
+void GLApiBase::glMultiDrawArraysInstancedANGLEFn(GLenum mode,
+                                                  const GLint* firsts,
+                                                  const GLsizei* counts,
+                                                  const GLsizei* instanceCounts,
+                                                  GLsizei drawcount) {
+  driver_->fn.glMultiDrawArraysInstancedANGLEFn(mode, firsts, counts,
+                                                instanceCounts, drawcount);
+}
+
+void GLApiBase::glMultiDrawElementsANGLEFn(GLenum mode,
+                                           const GLsizei* counts,
+                                           GLenum type,
+                                           const GLvoid* const* indices,
+                                           GLsizei drawcount) {
+  driver_->fn.glMultiDrawElementsANGLEFn(mode, counts, type, indices,
+                                         drawcount);
+}
+
+void GLApiBase::glMultiDrawElementsInstancedANGLEFn(
+    GLenum mode,
+    const GLsizei* counts,
+    GLenum type,
+    const GLvoid* const* indices,
+    const GLsizei* instanceCounts,
+    GLsizei drawcount) {
+  driver_->fn.glMultiDrawElementsInstancedANGLEFn(mode, counts, type, indices,
+                                                  instanceCounts, drawcount);
 }
 
 void GLApiBase::glObjectLabelFn(GLenum identifier,
@@ -5995,13 +6053,6 @@ void TraceGLApi::glCompileShaderFn(GLuint shader) {
   gl_api_->glCompileShaderFn(shader);
 }
 
-void TraceGLApi::glCompressedCopyTextureCHROMIUMFn(GLuint sourceId,
-                                                   GLuint destId) {
-  TRACE_EVENT_BINARY_EFFICIENT0("gpu",
-                                "TraceGLAPI::glCompressedCopyTextureCHROMIUM")
-  gl_api_->glCompressedCopyTextureCHROMIUMFn(sourceId, destId);
-}
-
 void TraceGLApi::glCompressedTexImage2DFn(GLenum target,
                                           GLint level,
                                           GLenum internalformat,
@@ -7170,11 +7221,11 @@ void TraceGLApi::glGetProgramPipelineivFn(GLuint pipeline,
   gl_api_->glGetProgramPipelineivFn(pipeline, pname, params);
 }
 
-void TraceGLApi::glGetProgramResourceIndexFn(GLuint program,
-                                             GLenum programInterface,
-                                             const GLchar* name) {
+GLuint TraceGLApi::glGetProgramResourceIndexFn(GLuint program,
+                                               GLenum programInterface,
+                                               const GLchar* name) {
   TRACE_EVENT_BINARY_EFFICIENT0("gpu", "TraceGLAPI::glGetProgramResourceIndex")
-  gl_api_->glGetProgramResourceIndexFn(program, programInterface, name);
+  return gl_api_->glGetProgramResourceIndexFn(program, programInterface, name);
 }
 
 void TraceGLApi::glGetProgramResourceivFn(GLuint program,
@@ -7836,6 +7887,12 @@ void TraceGLApi::glMatrixLoadIdentityEXTFn(GLenum matrixMode) {
   gl_api_->glMatrixLoadIdentityEXTFn(matrixMode);
 }
 
+void TraceGLApi::glMaxShaderCompilerThreadsKHRFn(GLuint count) {
+  TRACE_EVENT_BINARY_EFFICIENT0("gpu",
+                                "TraceGLAPI::glMaxShaderCompilerThreadsKHR")
+  gl_api_->glMaxShaderCompilerThreadsKHRFn(count);
+}
+
 void TraceGLApi::glMemoryBarrierByRegionFn(GLbitfield barriers) {
   TRACE_EVENT_BINARY_EFFICIENT0("gpu", "TraceGLAPI::glMemoryBarrierByRegion")
   gl_api_->glMemoryBarrierByRegionFn(barriers);
@@ -7849,6 +7906,48 @@ void TraceGLApi::glMemoryBarrierEXTFn(GLbitfield barriers) {
 void TraceGLApi::glMinSampleShadingFn(GLfloat value) {
   TRACE_EVENT_BINARY_EFFICIENT0("gpu", "TraceGLAPI::glMinSampleShading")
   gl_api_->glMinSampleShadingFn(value);
+}
+
+void TraceGLApi::glMultiDrawArraysANGLEFn(GLenum mode,
+                                          const GLint* firsts,
+                                          const GLsizei* counts,
+                                          GLsizei drawcount) {
+  TRACE_EVENT_BINARY_EFFICIENT0("gpu", "TraceGLAPI::glMultiDrawArraysANGLE")
+  gl_api_->glMultiDrawArraysANGLEFn(mode, firsts, counts, drawcount);
+}
+
+void TraceGLApi::glMultiDrawArraysInstancedANGLEFn(
+    GLenum mode,
+    const GLint* firsts,
+    const GLsizei* counts,
+    const GLsizei* instanceCounts,
+    GLsizei drawcount) {
+  TRACE_EVENT_BINARY_EFFICIENT0("gpu",
+                                "TraceGLAPI::glMultiDrawArraysInstancedANGLE")
+  gl_api_->glMultiDrawArraysInstancedANGLEFn(mode, firsts, counts,
+                                             instanceCounts, drawcount);
+}
+
+void TraceGLApi::glMultiDrawElementsANGLEFn(GLenum mode,
+                                            const GLsizei* counts,
+                                            GLenum type,
+                                            const GLvoid* const* indices,
+                                            GLsizei drawcount) {
+  TRACE_EVENT_BINARY_EFFICIENT0("gpu", "TraceGLAPI::glMultiDrawElementsANGLE")
+  gl_api_->glMultiDrawElementsANGLEFn(mode, counts, type, indices, drawcount);
+}
+
+void TraceGLApi::glMultiDrawElementsInstancedANGLEFn(
+    GLenum mode,
+    const GLsizei* counts,
+    GLenum type,
+    const GLvoid* const* indices,
+    const GLsizei* instanceCounts,
+    GLsizei drawcount) {
+  TRACE_EVENT_BINARY_EFFICIENT0("gpu",
+                                "TraceGLAPI::glMultiDrawElementsInstancedANGLE")
+  gl_api_->glMultiDrawElementsInstancedANGLEFn(mode, counts, type, indices,
+                                               instanceCounts, drawcount);
 }
 
 void TraceGLApi::glObjectLabelFn(GLenum identifier,
@@ -9638,13 +9737,6 @@ void DebugGLApi::glCompileShaderFn(GLuint shader) {
   gl_api_->glCompileShaderFn(shader);
 }
 
-void DebugGLApi::glCompressedCopyTextureCHROMIUMFn(GLuint sourceId,
-                                                   GLuint destId) {
-  GL_SERVICE_LOG("glCompressedCopyTextureCHROMIUM"
-                 << "(" << sourceId << ", " << destId << ")");
-  gl_api_->glCompressedCopyTextureCHROMIUMFn(sourceId, destId);
-}
-
 void DebugGLApi::glCompressedTexImage2DFn(GLenum target,
                                           GLint level,
                                           GLenum internalformat,
@@ -11200,14 +11292,17 @@ void DebugGLApi::glGetProgramPipelineivFn(GLuint pipeline,
   gl_api_->glGetProgramPipelineivFn(pipeline, pname, params);
 }
 
-void DebugGLApi::glGetProgramResourceIndexFn(GLuint program,
-                                             GLenum programInterface,
-                                             const GLchar* name) {
+GLuint DebugGLApi::glGetProgramResourceIndexFn(GLuint program,
+                                               GLenum programInterface,
+                                               const GLchar* name) {
   GL_SERVICE_LOG("glGetProgramResourceIndex"
                  << "(" << program << ", "
                  << GLEnums::GetStringEnum(programInterface) << ", "
                  << static_cast<const void*>(name) << ")");
-  gl_api_->glGetProgramResourceIndexFn(program, programInterface, name);
+  GLuint result =
+      gl_api_->glGetProgramResourceIndexFn(program, programInterface, name);
+  GL_SERVICE_LOG("GL_RESULT: " << result);
+  return result;
 }
 
 void DebugGLApi::glGetProgramResourceivFn(GLuint program,
@@ -12094,6 +12189,12 @@ void DebugGLApi::glMatrixLoadIdentityEXTFn(GLenum matrixMode) {
   gl_api_->glMatrixLoadIdentityEXTFn(matrixMode);
 }
 
+void DebugGLApi::glMaxShaderCompilerThreadsKHRFn(GLuint count) {
+  GL_SERVICE_LOG("glMaxShaderCompilerThreadsKHR"
+                 << "(" << count << ")");
+  gl_api_->glMaxShaderCompilerThreadsKHRFn(count);
+}
+
 void DebugGLApi::glMemoryBarrierByRegionFn(GLbitfield barriers) {
   GL_SERVICE_LOG("glMemoryBarrierByRegion"
                  << "(" << barriers << ")");
@@ -12110,6 +12211,64 @@ void DebugGLApi::glMinSampleShadingFn(GLfloat value) {
   GL_SERVICE_LOG("glMinSampleShading"
                  << "(" << value << ")");
   gl_api_->glMinSampleShadingFn(value);
+}
+
+void DebugGLApi::glMultiDrawArraysANGLEFn(GLenum mode,
+                                          const GLint* firsts,
+                                          const GLsizei* counts,
+                                          GLsizei drawcount) {
+  GL_SERVICE_LOG("glMultiDrawArraysANGLE"
+                 << "(" << GLEnums::GetStringEnum(mode) << ", "
+                 << static_cast<const void*>(firsts) << ", "
+                 << static_cast<const void*>(counts) << ", " << drawcount
+                 << ")");
+  gl_api_->glMultiDrawArraysANGLEFn(mode, firsts, counts, drawcount);
+}
+
+void DebugGLApi::glMultiDrawArraysInstancedANGLEFn(
+    GLenum mode,
+    const GLint* firsts,
+    const GLsizei* counts,
+    const GLsizei* instanceCounts,
+    GLsizei drawcount) {
+  GL_SERVICE_LOG("glMultiDrawArraysInstancedANGLE"
+                 << "(" << GLEnums::GetStringEnum(mode) << ", "
+                 << static_cast<const void*>(firsts) << ", "
+                 << static_cast<const void*>(counts) << ", "
+                 << static_cast<const void*>(instanceCounts) << ", "
+                 << drawcount << ")");
+  gl_api_->glMultiDrawArraysInstancedANGLEFn(mode, firsts, counts,
+                                             instanceCounts, drawcount);
+}
+
+void DebugGLApi::glMultiDrawElementsANGLEFn(GLenum mode,
+                                            const GLsizei* counts,
+                                            GLenum type,
+                                            const GLvoid* const* indices,
+                                            GLsizei drawcount) {
+  GL_SERVICE_LOG("glMultiDrawElementsANGLE"
+                 << "(" << GLEnums::GetStringEnum(mode) << ", "
+                 << static_cast<const void*>(counts) << ", "
+                 << GLEnums::GetStringEnum(type) << ", " << indices << ", "
+                 << drawcount << ")");
+  gl_api_->glMultiDrawElementsANGLEFn(mode, counts, type, indices, drawcount);
+}
+
+void DebugGLApi::glMultiDrawElementsInstancedANGLEFn(
+    GLenum mode,
+    const GLsizei* counts,
+    GLenum type,
+    const GLvoid* const* indices,
+    const GLsizei* instanceCounts,
+    GLsizei drawcount) {
+  GL_SERVICE_LOG("glMultiDrawElementsInstancedANGLE"
+                 << "(" << GLEnums::GetStringEnum(mode) << ", "
+                 << static_cast<const void*>(counts) << ", "
+                 << GLEnums::GetStringEnum(type) << ", " << indices << ", "
+                 << static_cast<const void*>(instanceCounts) << ", "
+                 << drawcount << ")");
+  gl_api_->glMultiDrawElementsInstancedANGLEFn(mode, counts, type, indices,
+                                               instanceCounts, drawcount);
 }
 
 void DebugGLApi::glObjectLabelFn(GLenum identifier,
@@ -14209,11 +14368,6 @@ void NoContextGLApi::glCompileShaderFn(GLuint shader) {
   NoContextHelper("glCompileShader");
 }
 
-void NoContextGLApi::glCompressedCopyTextureCHROMIUMFn(GLuint sourceId,
-                                                       GLuint destId) {
-  NoContextHelper("glCompressedCopyTextureCHROMIUM");
-}
-
 void NoContextGLApi::glCompressedTexImage2DFn(GLenum target,
                                               GLint level,
                                               GLenum internalformat,
@@ -15181,10 +15335,11 @@ void NoContextGLApi::glGetProgramPipelineivFn(GLuint pipeline,
   NoContextHelper("glGetProgramPipelineiv");
 }
 
-void NoContextGLApi::glGetProgramResourceIndexFn(GLuint program,
-                                                 GLenum programInterface,
-                                                 const GLchar* name) {
+GLuint NoContextGLApi::glGetProgramResourceIndexFn(GLuint program,
+                                                   GLenum programInterface,
+                                                   const GLchar* name) {
   NoContextHelper("glGetProgramResourceIndex");
+  return 0U;
 }
 
 void NoContextGLApi::glGetProgramResourceivFn(GLuint program,
@@ -15740,6 +15895,10 @@ void NoContextGLApi::glMatrixLoadIdentityEXTFn(GLenum matrixMode) {
   NoContextHelper("glMatrixLoadIdentityEXT");
 }
 
+void NoContextGLApi::glMaxShaderCompilerThreadsKHRFn(GLuint count) {
+  NoContextHelper("glMaxShaderCompilerThreadsKHR");
+}
+
 void NoContextGLApi::glMemoryBarrierByRegionFn(GLbitfield barriers) {
   NoContextHelper("glMemoryBarrierByRegion");
 }
@@ -15750,6 +15909,40 @@ void NoContextGLApi::glMemoryBarrierEXTFn(GLbitfield barriers) {
 
 void NoContextGLApi::glMinSampleShadingFn(GLfloat value) {
   NoContextHelper("glMinSampleShading");
+}
+
+void NoContextGLApi::glMultiDrawArraysANGLEFn(GLenum mode,
+                                              const GLint* firsts,
+                                              const GLsizei* counts,
+                                              GLsizei drawcount) {
+  NoContextHelper("glMultiDrawArraysANGLE");
+}
+
+void NoContextGLApi::glMultiDrawArraysInstancedANGLEFn(
+    GLenum mode,
+    const GLint* firsts,
+    const GLsizei* counts,
+    const GLsizei* instanceCounts,
+    GLsizei drawcount) {
+  NoContextHelper("glMultiDrawArraysInstancedANGLE");
+}
+
+void NoContextGLApi::glMultiDrawElementsANGLEFn(GLenum mode,
+                                                const GLsizei* counts,
+                                                GLenum type,
+                                                const GLvoid* const* indices,
+                                                GLsizei drawcount) {
+  NoContextHelper("glMultiDrawElementsANGLE");
+}
+
+void NoContextGLApi::glMultiDrawElementsInstancedANGLEFn(
+    GLenum mode,
+    const GLsizei* counts,
+    GLenum type,
+    const GLvoid* const* indices,
+    const GLsizei* instanceCounts,
+    GLsizei drawcount) {
+  NoContextHelper("glMultiDrawElementsInstancedANGLE");
 }
 
 void NoContextGLApi::glObjectLabelFn(GLenum identifier,

@@ -13,6 +13,7 @@
 #include "ash/app_list/pagination_model_observer.h"
 #include "ash/app_list/presenter/app_list_presenter_delegate.h"
 #include "ash/app_list/presenter/app_list_presenter_export.h"
+#include "ash/public/cpp/shelf_types.h"
 #include "base/callback.h"
 #include "base/compiler_specific.h"
 #include "base/macros.h"
@@ -43,7 +44,8 @@ class APP_LIST_PRESENTER_EXPORT AppListPresenterImpl
   // UpdateYPositionAndOpacityForHomeLauncher so different callers can do
   // similar animations with different settings.
   using UpdateHomeLauncherAnimationSettingsCallback =
-      base::RepeatingCallback<void(ui::ScopedLayerAnimationSettings* settings)>;
+      base::RepeatingCallback<void(ui::ScopedLayerAnimationSettings* settings,
+                                   bool observe)>;
 
   explicit AppListPresenterImpl(
       std::unique_ptr<AppListPresenterDelegate> delegate);
@@ -72,7 +74,8 @@ class APP_LIST_PRESENTER_EXPORT AppListPresenterImpl
   // Show the app list if it is visible, hide it if it is hidden. If
   // |event_time_stamp| is not 0, it means |ToggleAppList()| was triggered by
   // one of the AppListShowSources: kSearchKey or kShelfButton.
-  void ToggleAppList(int64_t display_id, base::TimeTicks event_time_stamp);
+  ash::ShelfAction ToggleAppList(int64_t display_id,
+                                 base::TimeTicks event_time_stamp);
 
   // Returns current visibility of the app list.
   bool IsVisible() const;
@@ -86,10 +89,10 @@ class APP_LIST_PRESENTER_EXPORT AppListPresenterImpl
                                  float background_opacity);
 
   // Ends the drag of app list from shelf.
-  void EndDragFromShelf(app_list::AppListViewState app_list_state);
+  void EndDragFromShelf(AppListViewState app_list_state);
 
   // Passes a MouseWheelEvent from the shelf to the AppListView.
-  void ProcessMouseWheelOffset(int y_scroll_offset);
+  void ProcessMouseWheelOffset(const gfx::Vector2d& scroll_offset_vector);
 
   // Updates the y position and opacity of the full screen app list. The changes
   // are slightly different than UpdateYPositionAndOpacity. If |callback| is non
@@ -118,6 +121,9 @@ class APP_LIST_PRESENTER_EXPORT AppListPresenterImpl
 
   void NotifyVisibilityChanged(bool visible, int64_t display_id);
   void NotifyTargetVisibilityChanged(bool visible);
+  void NotifyHomeLauncherTargetPositionChanged(bool showing,
+                                               int64_t display_id);
+  void NotifyHomeLauncherAnimationComplete(bool shown, int64_t display_id);
 
   // aura::client::FocusChangeObserver overrides:
   void OnWindowFocused(aura::Window* gained_focus,
@@ -128,6 +134,7 @@ class APP_LIST_PRESENTER_EXPORT AppListPresenterImpl
 
   // views::WidgetObserver overrides:
   void OnWidgetDestroying(views::Widget* widget) override;
+  void OnWidgetDestroyed(views::Widget* widget) override;
   void OnWidgetVisibilityChanged(views::Widget* widget, bool visible) override;
 
   // PaginationModelObserver overrides:

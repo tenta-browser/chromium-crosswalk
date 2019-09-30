@@ -12,6 +12,7 @@ import android.content.IntentFilter;
 import android.net.Uri;
 import android.os.Bundle;
 import android.os.SystemClock;
+import android.support.annotation.Nullable;
 import android.support.v7.media.MediaControlIntent;
 import android.support.v7.media.MediaItemMetadata;
 import android.support.v7.media.MediaItemStatus;
@@ -24,17 +25,15 @@ import com.google.android.gms.cast.CastMediaControlIntent;
 
 import org.chromium.base.ApplicationState;
 import org.chromium.base.ApplicationStatus;
-import org.chromium.base.AsyncTask;
 import org.chromium.base.Log;
 import org.chromium.base.annotations.RemovableInRelease;
 import org.chromium.base.annotations.UsedByReflection;
+import org.chromium.base.task.AsyncTask;
 import org.chromium.chrome.browser.UrlConstants;
 import org.chromium.chrome.browser.media.remote.RemoteVideoInfo.PlayerState;
 
 import java.net.URI;
 import java.net.URISyntaxException;
-
-import javax.annotation.Nullable;
 
 /**
  * Class that abstracts all communication to and from the Android MediaRoutes. This class is

@@ -20,13 +20,14 @@ import org.junit.Test;
 import org.junit.runner.RunWith;
 
 import org.chromium.base.test.util.CommandLineFlags;
+import org.chromium.base.test.util.DisabledTest;
 import org.chromium.base.test.util.Feature;
 import org.chromium.base.test.util.RetryOnFailure;
 import org.chromium.chrome.browser.ChromeSwitches;
 import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
-import org.chromium.content.browser.test.util.DOMUtils;
 import org.chromium.content_public.browser.WebContents;
+import org.chromium.content_public.browser.test.util.DOMUtils;
 import org.chromium.media.MediaSwitches;
 
 import java.util.concurrent.TimeoutException;
@@ -44,6 +45,7 @@ public class CastSwitchVideoTest {
     private static final String VIDEO_ELEMENT_2 = "video2";
 
     @Test
+    @DisabledTest // crbug.com/907307
     @Feature({"VideoFling"})
     @LargeTest
     @RetryOnFailure // crbug.com/623526
@@ -63,6 +65,7 @@ public class CastSwitchVideoTest {
     }
 
     @Test
+    @DisabledTest // crbug.com/907307
     @Feature({"VideoFling"})
     @LargeTest
     @RetryOnFailure // crbug.com/623526
@@ -81,6 +84,7 @@ public class CastSwitchVideoTest {
     }
 
     @Test
+    @DisabledTest // crbug.com/907307
     @Feature({"VideoFling"})
     @LargeTest
     @RetryOnFailure // crbug.com/623526
@@ -98,6 +102,7 @@ public class CastSwitchVideoTest {
     }
 
     @Test
+    @DisabledTest // crbug.com/907307
     @Feature({"VideoFling"})
     @LargeTest
     @RetryOnFailure // crbug.com/623526
@@ -117,6 +122,7 @@ public class CastSwitchVideoTest {
     }
 
     @Test
+    @DisabledTest // crbug.com/907307
     @Feature({"VideoFling"})
     @LargeTest
     @RetryOnFailure // crbug.com/623526
@@ -135,6 +141,7 @@ public class CastSwitchVideoTest {
     }
 
     @Test
+    @DisabledTest // crbug.com/907307
     @Feature({"VideoFling"})
     @LargeTest
     @RetryOnFailure // crbug.com/623526

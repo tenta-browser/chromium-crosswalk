@@ -99,17 +99,18 @@ public class AwContentsStatics {
         nativeSetSafeBrowsingWhitelist(urlArray, callback);
     }
 
+    @SuppressWarnings("NoContextGetApplicationContext")
     public static void initSafeBrowsing(Context context, final Callback<Boolean> callback) {
         // Wrap the callback to make sure we always invoke it on the UI thread, as guaranteed by the
         // API.
-        final Context appContext = context.getApplicationContext();
         Callback<Boolean> wrapperCallback = b -> {
             if (callback != null) {
                 ThreadUtils.runOnUiThread(() -> callback.onResult(b));
             }
         };
 
-        PlatformServiceBridge.getInstance().warmUpSafeBrowsing(appContext, wrapperCallback);
+        PlatformServiceBridge.getInstance().warmUpSafeBrowsing(
+                context.getApplicationContext(), wrapperCallback);
     }
 
     public static Uri getSafeBrowsingPrivacyPolicyUrl() {
@@ -118,14 +119,6 @@ public class AwContentsStatics {
 
     public static void setCheckClearTextPermitted(boolean permitted) {
         nativeSetCheckClearTextPermitted(permitted);
-    }
-
-    public static void setProxyOverride(String host, int port, String[] exclusionList) {
-        nativeSetProxyOverride(host, port, exclusionList);
-    }
-
-    public static void clearProxyOverride() {
-        nativeClearProxyOverride();
     }
 
     /**
@@ -154,7 +147,4 @@ public class AwContentsStatics {
     private static native void nativeSetSafeBrowsingWhitelist(
             String[] urls, Callback<Boolean> callback);
     private static native void nativeSetCheckClearTextPermitted(boolean permitted);
-    private static native void nativeSetProxyOverride(
-            String host, int port, String[] exclusionList);
-    private static native void nativeClearProxyOverride();
 }

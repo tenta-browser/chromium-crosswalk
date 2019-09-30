@@ -42,7 +42,8 @@ class ReSignInInfoBarDelegateTest : public PlatformTest {
     TestChromeBrowserState::Builder builder;
     builder.AddTestingFactory(
         AuthenticationServiceFactory::GetInstance(),
-        AuthenticationServiceFake::CreateAuthenticationService);
+        base::BindRepeating(
+            &AuthenticationServiceFake::CreateAuthenticationService));
     chrome_browser_state_ = builder.Build();
   }
 
@@ -156,7 +157,6 @@ TEST_F(ReSignInInfoBarDelegateTest, TestAccept) {
       CreateConfirmInfoBar(ReSignInInfoBarDelegate::CreateInfoBarDelegate(
           chrome_browser_state_.get(), presenter)));
   InfoBarIOS* infobarIOS = static_cast<InfoBarIOS*>(infobar.get());
-  infobarIOS->Layout(CGRectZero);
 
   ReSignInInfoBarDelegate* delegate =
       static_cast<ReSignInInfoBarDelegate*>(infobarIOS->delegate());
@@ -178,7 +178,6 @@ TEST_F(ReSignInInfoBarDelegateTest, TestInfoBarDismissed) {
       CreateConfirmInfoBar(ReSignInInfoBarDelegate::CreateInfoBarDelegate(
           chrome_browser_state_.get(), presenter)));
   InfoBarIOS* infobarIOS = static_cast<InfoBarIOS*>(infobar.get());
-  infobarIOS->Layout(CGRectZero);
 
   ReSignInInfoBarDelegate* delegate =
       static_cast<ReSignInInfoBarDelegate*>(infobarIOS->delegate());

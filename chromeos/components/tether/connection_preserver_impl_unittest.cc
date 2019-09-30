@@ -8,12 +8,10 @@
 
 #include "base/base64.h"
 #include "base/memory/ptr_util.h"
-#include "base/test/scoped_feature_list.h"
 #include "base/test/scoped_task_environment.h"
 #include "base/timer/mock_timer.h"
-#include "chromeos/chromeos_features.h"
+#include "chromeos/components/multidevice/remote_device_test_util.h"
 #include "chromeos/components/tether/fake_active_host.h"
-#include "chromeos/components/tether/fake_ble_connection_manager.h"
 #include "chromeos/components/tether/mock_tether_host_response_recorder.h"
 #include "chromeos/components/tether/timer_factory.h"
 #include "chromeos/dbus/dbus_thread_manager.h"
@@ -25,7 +23,6 @@
 #include "chromeos/services/secure_channel/public/cpp/client/fake_connection_attempt.h"
 #include "chromeos/services/secure_channel/public/cpp/client/fake_secure_channel_client.h"
 #include "chromeos/services/secure_channel/public/cpp/shared/connection_priority.h"
-#include "components/cryptauth/remote_device_test_util.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/cros_system_api/dbus/service_constants.h"
@@ -59,10 +56,10 @@ std::string CreateConfigurationJsonString(const std::string& guid,
 class ConnectionPreserverImplTest : public NetworkStateTest {
  protected:
   ConnectionPreserverImplTest()
-      : test_local_device_(cryptauth::RemoteDeviceRefBuilder()
+      : test_local_device_(multidevice::RemoteDeviceRefBuilder()
                                .SetPublicKey("local device")
                                .Build()),
-        test_remote_devices_(cryptauth::CreateRemoteDeviceRefListForTest(3)) {
+        test_remote_devices_(multidevice::CreateRemoteDeviceRefListForTest(3)) {
     std::transform(
         test_remote_devices_.begin(), test_remote_devices_.end(),
         std::back_inserter(test_remote_device_ids_),
@@ -80,8 +77,6 @@ class ConnectionPreserverImplTest : public NetworkStateTest {
     fake_secure_channel_client_ =
         std::make_unique<secure_channel::FakeSecureChannelClient>();
 
-    fake_ble_connection_manager_ = std::make_unique<FakeBleConnectionManager>();
-
     fake_active_host_ = std::make_unique<FakeActiveHost>();
 
     previously_connected_host_ids_.clear();
@@ -94,8 +89,8 @@ class ConnectionPreserverImplTest : public NetworkStateTest {
 
     connection_preserver_ = std::make_unique<ConnectionPreserverImpl>(
         fake_device_sync_client_.get(), fake_secure_channel_client_.get(),
-        fake_ble_connection_manager_.get(), network_state_handler(),
-        fake_active_host_.get(), mock_tether_host_response_recorder_.get());
+        network_state_handler(), fake_active_host_.get(),
+        mock_tether_host_response_recorder_.get());
 
     mock_timer_ = new base::MockOneShotTimer();
     connection_preserver_->SetTimerForTesting(base::WrapUnique(mock_timer_));
@@ -109,34 +104,8 @@ class ConnectionPreserverImplTest : public NetworkStateTest {
     DBusThreadManager::Shutdown();
   }
 
-  void SetMultiDeviceApiEnabled() {
-    scoped_feature_list_.InitAndEnableFeature(features::kMultiDeviceApi);
-  }
-
-  void SimulateSuccessfulHostScan_MultiDeviceApiDisabled(
-      const std::string& device_id,
-      bool should_remain_registered) {
-    DCHECK(!base::FeatureList::IsEnabled(chromeos::features::kMultiDeviceApi));
-
-    base::UnguessableToken request_id = base::UnguessableToken::Create();
-    fake_ble_connection_manager_->RegisterRemoteDevice(
-        device_id, request_id, secure_channel::ConnectionPriority::kLow);
-    EXPECT_TRUE(fake_ble_connection_manager_->IsRegistered(device_id));
-
-    connection_preserver_->HandleSuccessfulTetherAvailabilityResponse(
-        device_id);
-    EXPECT_TRUE(fake_ble_connection_manager_->IsRegistered(device_id));
-
-    fake_ble_connection_manager_->UnregisterRemoteDevice(device_id, request_id);
-    EXPECT_EQ(should_remain_registered,
-              fake_ble_connection_manager_->IsRegistered(device_id));
-  }
-
-  void SimulateSuccessfulHostScan_MultiDeviceApiEnabled(
-      cryptauth::RemoteDeviceRef remote_device,
-      bool should_remain_registered) {
-    DCHECK(base::FeatureList::IsEnabled(chromeos::features::kMultiDeviceApi));
-
+  void SimulateSuccessfulHostScan(multidevice::RemoteDeviceRef remote_device,
+                                  bool should_remain_registered) {
     // |connection_preserver_| should only grab |fake_connection_attempt| if
     // it is intended to keep the connection open.
     auto fake_connection_attempt =
@@ -183,7 +152,7 @@ class ConnectionPreserverImplTest : public NetworkStateTest {
   }
 
   void VerifyChannelForRemoteDeviceDestroyed(
-      cryptauth::RemoteDeviceRef remote_device,
+      multidevice::RemoteDeviceRef remote_device,
       bool expect_destroyed) {
     if (expect_destroyed) {
       EXPECT_TRUE(remote_device_to_client_channel_destruction_count_map_
@@ -203,25 +172,25 @@ class ConnectionPreserverImplTest : public NetworkStateTest {
     return previously_connected_host_ids_;
   }
 
-  void OnClientChannelDestroyed(cryptauth::RemoteDeviceRef remote_device) {
+  void OnClientChannelDestroyed(multidevice::RemoteDeviceRef remote_device) {
     remote_device_to_client_channel_destruction_count_map_[remote_device]++;
   }
 
-  const base::test::ScopedTaskEnvironment scoped_task_environment_;
+  base::test::ScopedTaskEnvironment scoped_task_environment_;
 
-  const cryptauth::RemoteDeviceRef test_local_device_;
-  const cryptauth::RemoteDeviceRefList test_remote_devices_;
+  const multidevice::RemoteDeviceRef test_local_device_;
+  const multidevice::RemoteDeviceRefList test_remote_devices_;
   std::vector<std::string> test_remote_device_ids_;
 
-  base::flat_map<cryptauth::RemoteDeviceRef, secure_channel::FakeClientChannel*>
+  base::flat_map<multidevice::RemoteDeviceRef,
+                 secure_channel::FakeClientChannel*>
       remote_device_to_fake_client_channel_map_;
-  base::flat_map<cryptauth::RemoteDeviceRef, int>
+  base::flat_map<multidevice::RemoteDeviceRef, int>
       remote_device_to_client_channel_destruction_count_map_;
 
   std::unique_ptr<device_sync::FakeDeviceSyncClient> fake_device_sync_client_;
   std::unique_ptr<secure_channel::FakeSecureChannelClient>
       fake_secure_channel_client_;
-  std::unique_ptr<FakeBleConnectionManager> fake_ble_connection_manager_;
   std::unique_ptr<FakeActiveHost> fake_active_host_;
   std::unique_ptr<NiceMock<MockTetherHostResponseRecorder>>
       mock_tether_host_response_recorder_;
@@ -232,68 +201,33 @@ class ConnectionPreserverImplTest : public NetworkStateTest {
   std::vector<std::string> previously_connected_host_ids_;
 
  private:
-  base::test::ScopedFeatureList scoped_feature_list_;
-
   DISALLOW_COPY_AND_ASSIGN(ConnectionPreserverImplTest);
 };
 
 TEST_F(ConnectionPreserverImplTest,
        TestHandleSuccessfulTetherAvailabilityResponse_NoPreservedConnection) {
-  SimulateSuccessfulHostScan_MultiDeviceApiDisabled(
-      test_remote_device_ids_[0], true /* should_remain_registered */);
-}
-
-TEST_F(
-    ConnectionPreserverImplTest,
-    TestHandleSuccessfulTetherAvailabilityResponse_NoPreservedConnection_MultiDeviceApiEnabled) {
-  SetMultiDeviceApiEnabled();
-
-  SimulateSuccessfulHostScan_MultiDeviceApiEnabled(
-      test_remote_devices_[0], true /* should_remain_registered */);
+  SimulateSuccessfulHostScan(test_remote_devices_[0],
+                             true /* should_remain_registered */);
 }
 
 TEST_F(ConnectionPreserverImplTest,
        TestHandleSuccessfulTetherAvailabilityResponse_HasInternet) {
   ConnectToWifi();
 
-  SimulateSuccessfulHostScan_MultiDeviceApiDisabled(
-      test_remote_device_ids_[0], false /* should_remain_registered */);
-}
-
-TEST_F(
-    ConnectionPreserverImplTest,
-    TestHandleSuccessfulTetherAvailabilityResponse_HasInternet_MultiDeviceApiEnabled) {
-  SetMultiDeviceApiEnabled();
-
-  ConnectToWifi();
-
-  SimulateSuccessfulHostScan_MultiDeviceApiEnabled(
-      test_remote_devices_[0], false /* should_remain_registered */);
+  SimulateSuccessfulHostScan(test_remote_devices_[0],
+                             false /* should_remain_registered */);
 }
 
 TEST_F(
     ConnectionPreserverImplTest,
     TestHandleSuccessfulTetherAvailabilityResponse_PreservedConnectionExists_NoPreviouslyConnectedHosts) {
-  SimulateSuccessfulHostScan_MultiDeviceApiDisabled(
-      test_remote_device_ids_[0], true /* should_remain_registered */);
-  SimulateSuccessfulHostScan_MultiDeviceApiDisabled(
-      test_remote_device_ids_[1], true /* should_remain_registered */);
-  EXPECT_FALSE(
-      fake_ble_connection_manager_->IsRegistered(test_remote_device_ids_[0]));
-}
-
-TEST_F(
-    ConnectionPreserverImplTest,
-    TestHandleSuccessfulTetherAvailabilityResponse_PreservedConnectionExists_NoPreviouslyConnectedHosts_MultiDeviceApiEnabled) {
-  SetMultiDeviceApiEnabled();
-
-  SimulateSuccessfulHostScan_MultiDeviceApiEnabled(
-      test_remote_devices_[0], true /* should_remain_registered */);
+  SimulateSuccessfulHostScan(test_remote_devices_[0],
+                             true /* should_remain_registered */);
   VerifyChannelForRemoteDeviceDestroyed(test_remote_devices_[0],
                                         false /* expect_destroyed */);
 
-  SimulateSuccessfulHostScan_MultiDeviceApiEnabled(
-      test_remote_devices_[1], true /* should_remain_registered */);
+  SimulateSuccessfulHostScan(test_remote_devices_[1],
+                             true /* should_remain_registered */);
   VerifyChannelForRemoteDeviceDestroyed(test_remote_devices_[0],
                                         true /* expect_destroyed */);
   VerifyChannelForRemoteDeviceDestroyed(test_remote_devices_[1],
@@ -302,21 +236,8 @@ TEST_F(
 
 TEST_F(ConnectionPreserverImplTest,
        TestHandleSuccessfulTetherAvailabilityResponse_TimesOut) {
-  SimulateSuccessfulHostScan_MultiDeviceApiDisabled(
-      test_remote_device_ids_[0], true /* should_remain_registered */);
-
-  mock_timer_->Fire();
-  EXPECT_FALSE(
-      fake_ble_connection_manager_->IsRegistered(test_remote_device_ids_[0]));
-}
-
-TEST_F(
-    ConnectionPreserverImplTest,
-    TestHandleSuccessfulTetherAvailabilityResponse_TimesOut_MultiDeviceApiEnabled) {
-  SetMultiDeviceApiEnabled();
-
-  SimulateSuccessfulHostScan_MultiDeviceApiEnabled(
-      test_remote_devices_[0], true /* should_remain_registered */);
+  SimulateSuccessfulHostScan(test_remote_devices_[0],
+                             true /* should_remain_registered */);
 
   mock_timer_->Fire();
   VerifyChannelForRemoteDeviceDestroyed(test_remote_devices_[0],
@@ -325,21 +246,8 @@ TEST_F(
 
 TEST_F(ConnectionPreserverImplTest,
        TestHandleSuccessfulTetherAvailabilityResponse_PreserverDestroyed) {
-  SimulateSuccessfulHostScan_MultiDeviceApiDisabled(
-      test_remote_device_ids_[0], true /* should_remain_registered */);
-
-  connection_preserver_.reset();
-  EXPECT_FALSE(
-      fake_ble_connection_manager_->IsRegistered(test_remote_device_ids_[0]));
-}
-
-TEST_F(
-    ConnectionPreserverImplTest,
-    TestHandleSuccessfulTetherAvailabilityResponse_PreserverDestroyed_MultiDeviceApiEnabled) {
-  SetMultiDeviceApiEnabled();
-
-  SimulateSuccessfulHostScan_MultiDeviceApiEnabled(
-      test_remote_devices_[0], true /* should_remain_registered */);
+  SimulateSuccessfulHostScan(test_remote_devices_[0],
+                             true /* should_remain_registered */);
 
   connection_preserver_.reset();
   VerifyChannelForRemoteDeviceDestroyed(test_remote_devices_[0],
@@ -349,24 +257,8 @@ TEST_F(
 TEST_F(
     ConnectionPreserverImplTest,
     TestHandleSuccessfulTetherAvailabilityResponse_ActiveHostBecomesConnected) {
-  SimulateSuccessfulHostScan_MultiDeviceApiDisabled(
-      test_remote_device_ids_[0], true /* should_remain_registered */);
-
-  fake_active_host_->SetActiveHostConnecting(test_remote_device_ids_[0],
-                                             kTetherNetworkGuid);
-  fake_active_host_->SetActiveHostConnected(
-      test_remote_device_ids_[0], kTetherNetworkGuid, kWifiNetworkGuid);
-  EXPECT_FALSE(
-      fake_ble_connection_manager_->IsRegistered(test_remote_device_ids_[0]));
-}
-
-TEST_F(
-    ConnectionPreserverImplTest,
-    TestHandleSuccessfulTetherAvailabilityResponse_ActiveHostBecomesConnected_MultiDeviceApiEnabled) {
-  SetMultiDeviceApiEnabled();
-
-  SimulateSuccessfulHostScan_MultiDeviceApiEnabled(
-      test_remote_devices_[0], true /* should_remain_registered */);
+  SimulateSuccessfulHostScan(test_remote_devices_[0],
+                             true /* should_remain_registered */);
 
   fake_active_host_->SetActiveHostConnecting(test_remote_device_ids_[0],
                                              kTetherNetworkGuid);
@@ -385,66 +277,32 @@ TEST_F(
   previously_connected_host_ids_.push_back(test_remote_device_ids_[0]);
   previously_connected_host_ids_.push_back(test_remote_device_ids_[1]);
 
-  SimulateSuccessfulHostScan_MultiDeviceApiDisabled(
-      test_remote_device_ids_[2], true /* should_remain_registered */);
-
-  SimulateSuccessfulHostScan_MultiDeviceApiDisabled(
-      test_remote_device_ids_[1], true /* should_remain_registered */);
-  EXPECT_FALSE(
-      fake_ble_connection_manager_->IsRegistered(test_remote_device_ids_[2]));
-
-  SimulateSuccessfulHostScan_MultiDeviceApiDisabled(
-      test_remote_device_ids_[0], true /* should_remain_registered */);
-  EXPECT_FALSE(
-      fake_ble_connection_manager_->IsRegistered(test_remote_device_ids_[1]));
-
-  SimulateSuccessfulHostScan_MultiDeviceApiDisabled(
-      test_remote_device_ids_[1], false /* should_remain_registered */);
-  EXPECT_TRUE(
-      fake_ble_connection_manager_->IsRegistered(test_remote_device_ids_[0]));
-
-  SimulateSuccessfulHostScan_MultiDeviceApiDisabled(
-      test_remote_device_ids_[2], false /* should_remain_registered */);
-  EXPECT_TRUE(
-      fake_ble_connection_manager_->IsRegistered(test_remote_device_ids_[0]));
-}
-
-TEST_F(
-    ConnectionPreserverImplTest,
-    TestHandleSuccessfulTetherAvailabilityResponse_PreviouslyConnectedHostsExist_MultiDeviceApiEnabled) {
-  SetMultiDeviceApiEnabled();
-
-  // |test_remote_device_ids_[0]| is the most recently connected device, and
-  // should be preferred over any other device.
-  previously_connected_host_ids_.push_back(test_remote_device_ids_[0]);
-  previously_connected_host_ids_.push_back(test_remote_device_ids_[1]);
-
-  SimulateSuccessfulHostScan_MultiDeviceApiEnabled(
-      test_remote_devices_[2], true /* should_remain_registered */);
+  SimulateSuccessfulHostScan(test_remote_devices_[2],
+                             true /* should_remain_registered */);
   VerifyChannelForRemoteDeviceDestroyed(test_remote_devices_[2],
                                         false /* expect_destroyed */);
 
-  SimulateSuccessfulHostScan_MultiDeviceApiEnabled(
-      test_remote_devices_[1], true /* should_remain_registered */);
+  SimulateSuccessfulHostScan(test_remote_devices_[1],
+                             true /* should_remain_registered */);
   VerifyChannelForRemoteDeviceDestroyed(test_remote_devices_[2],
                                         true /* expect_destroyed */);
   VerifyChannelForRemoteDeviceDestroyed(test_remote_devices_[1],
                                         false /* expect_destroyed */);
 
-  SimulateSuccessfulHostScan_MultiDeviceApiEnabled(
-      test_remote_devices_[0], true /* should_remain_registered */);
+  SimulateSuccessfulHostScan(test_remote_devices_[0],
+                             true /* should_remain_registered */);
   VerifyChannelForRemoteDeviceDestroyed(test_remote_devices_[1],
                                         true /* expect_destroyed */);
   VerifyChannelForRemoteDeviceDestroyed(test_remote_devices_[0],
                                         false /* expect_destroyed */);
 
-  SimulateSuccessfulHostScan_MultiDeviceApiEnabled(
-      test_remote_devices_[1], false /* should_remain_registered */);
+  SimulateSuccessfulHostScan(test_remote_devices_[1],
+                             false /* should_remain_registered */);
   VerifyChannelForRemoteDeviceDestroyed(test_remote_devices_[0],
                                         false /* expect_destroyed */);
 
-  SimulateSuccessfulHostScan_MultiDeviceApiEnabled(
-      test_remote_devices_[2], false /* should_remain_registered */);
+  SimulateSuccessfulHostScan(test_remote_devices_[2],
+                             false /* should_remain_registered */);
   VerifyChannelForRemoteDeviceDestroyed(test_remote_devices_[0],
                                         false /* expect_destroyed */);
 }

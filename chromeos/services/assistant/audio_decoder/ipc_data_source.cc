@@ -4,7 +4,11 @@
 
 #include "chromeos/services/assistant/audio_decoder/ipc_data_source.h"
 
-#include "base/threading/thread_task_runner_handle.h"
+#include <algorithm>
+#include <utility>
+#include <vector>
+
+#include "base/threading/sequenced_task_runner_handle.h"
 #include "mojo/public/cpp/bindings/message.h"
 
 namespace chromeos {
@@ -13,7 +17,7 @@ namespace assistant {
 IPCDataSource::IPCDataSource(
     mojom::AssistantMediaDataSourcePtr media_data_source)
     : media_data_source_(std::move(media_data_source)),
-      utility_task_runner_(base::ThreadTaskRunnerHandle::Get()) {
+      utility_task_runner_(base::SequencedTaskRunnerHandle::Get()) {
   DETACH_FROM_THREAD(data_source_thread_checker_);
 }
 
@@ -69,7 +73,7 @@ void IPCDataSource::ReadMediaData(uint8_t* destination,
 
 void IPCDataSource::ReadDone(uint8_t* destination,
                              const DataSource::ReadCB& callback,
-                             int requested_size,
+                             uint32_t requested_size,
                              const std::vector<uint8_t>& data) {
   DCHECK_CALLED_ON_VALID_THREAD(utility_thread_checker_);
   if (static_cast<int>(data.size()) > requested_size) {

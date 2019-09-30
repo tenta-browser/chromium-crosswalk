@@ -23,8 +23,8 @@ import org.chromium.android_webview.test.util.CookieUtils.TestCallback;
 import org.chromium.android_webview.test.util.JSUtils;
 import org.chromium.base.Callback;
 import org.chromium.base.test.util.Feature;
-import org.chromium.content.browser.test.util.JavaScriptUtils;
 import org.chromium.content_public.browser.WebContents;
+import org.chromium.content_public.browser.test.util.JavaScriptUtils;
 import org.chromium.net.test.util.TestWebServer;
 
 import java.util.ArrayList;
@@ -118,6 +118,32 @@ public class CookieManagerTest {
             cookie = mCookieManager.getCookie(url);
             Assert.assertNotNull(cookie);
             validateCookies(cookie, "test2", "header-test2");
+        } finally {
+            webServer.shutdown();
+        }
+    }
+
+    @Test
+    @MediumTest
+    @Feature({"AndroidWebView"})
+    public void testEmbedderCanSeeRestrictedCookies() throws Throwable {
+        TestWebServer webServer = TestWebServer.start();
+        try {
+            // Set a cookie with the httponly flag, one with samesite=Strict, and one with
+            // samesite=Lax, to ensure that they are all visible to CookieManager in the app.
+            String cookies[] = {"httponly=foo1; HttpOnly", "strictsamesite=foo2; SameSite=Strict",
+                    "laxsamesite=foo3; SameSite=Lax"};
+            List<Pair<String, String>> responseHeaders = new ArrayList<Pair<String, String>>();
+            for (String cookie : cookies) {
+                responseHeaders.add(Pair.create("Set-Cookie", cookie));
+            }
+            String url = webServer.setResponse("/", "test", responseHeaders);
+            mActivityTestRule.loadUrlSync(
+                    mAwContents, mContentsClient.getOnPageFinishedHelper(), url);
+            waitForCookie(url);
+            String cookie = mCookieManager.getCookie(url);
+            Assert.assertNotNull(cookie);
+            validateCookies(cookie, "httponly", "strictsamesite", "laxsamesite");
         } finally {
             webServer.shutdown();
         }
@@ -817,7 +843,7 @@ public class CookieManagerTest {
             foundCookieNames.add(cookie.substring(0, cookie.indexOf("=")).trim());
         }
         List<String> expectedCookieNamesList = Arrays.asList(expectedCookieNames);
-        Assert.assertEquals(foundCookieNames.size(), expectedCookieNamesList.size());
+        Assert.assertEquals(expectedCookieNamesList.size(), foundCookieNames.size());
         Assert.assertTrue(foundCookieNames.containsAll(expectedCookieNamesList));
     }
 

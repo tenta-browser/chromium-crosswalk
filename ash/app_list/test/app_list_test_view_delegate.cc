@@ -88,8 +88,19 @@ void AppListTestViewDelegate::ShowWallpaperContextMenu(
   ++show_wallpaper_context_menu_count_;
 }
 
-ws::WindowService* AppListTestViewDelegate::GetWindowService() {
-  return nullptr;
+bool AppListTestViewDelegate::ProcessHomeLauncherGesture(
+    ui::GestureEvent* event,
+    const gfx::Point& screen_location) {
+  return false;
+}
+
+bool AppListTestViewDelegate::CanProcessEventsOnApplistViews() {
+  return true;
+}
+
+void AppListTestViewDelegate::GetNavigableContentsFactory(
+    content::mojom::NavigableContentsFactoryRequest request) {
+  fake_navigable_contents_factory_.BindRequest(std::move(request));
 }
 
 void AppListTestViewDelegate::GetSearchResultContextMenuModel(

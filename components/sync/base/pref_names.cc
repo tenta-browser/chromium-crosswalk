@@ -57,6 +57,7 @@ const char kSyncPrinters[] = "sync.printers";
 const char kSyncPriorityPreferences[] = "sync.priority_preferences";
 const char kSyncReadingList[] = "sync.reading_list";
 const char kSyncSearchEngines[] = "sync.search_engines";
+const char kSyncSendTabToSelf[] = "sync.send_tab_to_self";
 const char kSyncSessions[] = "sync.sessions";
 const char kSyncSupervisedUserSettings[] = "sync.managed_user_settings";
 const char kSyncSupervisedUserSharedSettings[] =
@@ -90,15 +91,15 @@ const char kSyncEncryptionBootstrapToken[] = "sync.encryption_bootstrap_token";
 const char kSyncKeystoreEncryptionBootstrapToken[] =
     "sync.keystore_encryption_bootstrap_token";
 
-// The GUID session sync will use to identify this client, even across sync
-// disable/enable events.
-const char kSyncSessionsGUID[] = "sync.session_sync_guid";
-
 #if defined(OS_CHROMEOS)
 // A string that is used to store first-time sync startup after once sync is
 // disabled. This will be refreshed every sign-in.
 const char kSyncSpareBootstrapToken[] = "sync.spare_bootstrap_token";
 #endif  // defined(OS_CHROMEOS)
+
+const char kSyncCacheGuid[] = "sync.cache_guid";
+const char kSyncBirthday[] = "sync.birthday";
+const char kSyncBagOfChips[] = "sync.bag_of_chips";
 
 // Stores the timestamp of first sync.
 const char kSyncFirstSyncTime[] = "sync.first_sync_time";

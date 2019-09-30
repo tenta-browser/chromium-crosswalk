@@ -41,7 +41,6 @@
 #include "third_party/blink/renderer/platform/graphics/paint/paint_image.h"
 #include "third_party/blink/renderer/platform/graphics/skia/skia_utils.h"
 #include "third_party/blink/renderer/platform/graphics/static_bitmap_image.h"
-#include "third_party/blink/renderer/platform/instrumentation/platform_instrumentation.h"
 #include "third_party/blink/renderer/platform/instrumentation/tracing/trace_event.h"
 #include "third_party/blink/renderer/platform/runtime_enabled_features.h"
 #include "third_party/blink/renderer/platform/scheduler/public/thread_scheduler.h"
@@ -53,19 +52,16 @@ namespace blink {
 
 int GetRepetitionCountWithPolicyOverride(int actual_count,
                                          ImageAnimationPolicy policy) {
-  switch (policy) {
-    case kImageAnimationPolicyAllowed:
-      // Default policy, no count override.
-      return actual_count;
-    case kImageAnimationPolicyAnimateOnce:
-      // Only a single loop allowed.
-      return kAnimationLoopOnce;
-    case kImageAnimationPolicyNoAnimation:
-      // Dont animate.
-      return kAnimationNone;
+  if (actual_count == kAnimationNone ||
+      policy == kImageAnimationPolicyNoAnimation) {
+    return kAnimationNone;
   }
 
-  NOTREACHED();
+  if (actual_count == kAnimationLoopOnce ||
+      policy == kImageAnimationPolicyAnimateOnce) {
+    return kAnimationLoopOnce;
+  }
+
   return actual_count;
 }
 
@@ -89,8 +85,6 @@ bool BitmapImage::CurrentFrameHasSingleSecurityOrigin() const {
 
 void BitmapImage::DestroyDecodedData() {
   cached_frame_ = PaintImage();
-  if (decoder_)
-    decoder_->ClearCacheExceptFrame(kNotFound);
   NotifyMemoryChanged();
 }
 
@@ -105,7 +99,7 @@ void BitmapImage::NotifyMemoryChanged() {
 
 size_t BitmapImage::TotalFrameBytes() {
   if (cached_frame_)
-    return Size().Area() * sizeof(ImageFrame::PixelData);
+    return static_cast<size_t>(Size().Area()) * sizeof(ImageFrame::PixelData);
   return 0u;
 }
 
@@ -128,6 +122,7 @@ PaintImage BitmapImage::CreatePaintImage() {
           .set_paint_image_generator(std::move(generator))
           .set_repetition_count(GetRepetitionCountWithPolicyOverride(
               RepetitionCount(), animation_policy_))
+          .set_is_high_bit_depth(decoder_->ImageIsHighBitDepth())
           .set_completion_state(completion_state)
           .set_reset_animation_sequence_id(reset_animation_sequence_id_);
 
@@ -187,8 +182,8 @@ Image::SizeAvailability BitmapImage::SetData(scoped_refptr<SharedBuffer> data,
 
 // Return the image density in 0.01 "bits per pixel" rounded to the nearest
 // integer.
-static inline int ImageDensityInCentiBpp(IntSize size,
-                                         size_t image_size_bytes) {
+static inline uint64_t ImageDensityInCentiBpp(IntSize size,
+                                              size_t image_size_bytes) {
   uint64_t image_area = static_cast<uint64_t>(size.Width()) * size.Height();
   return (static_cast<uint64_t>(image_size_bytes) * 100 * 8 + image_area / 2) /
          image_area;
@@ -208,8 +203,9 @@ Image::SizeAvailability BitmapImage::DataChanged(bool all_data_received) {
   // here as a sanity check.
   if (!all_data_received_ && all_data_received && decoder_ &&
       decoder_->Data() && decoder_->FilenameExtension() == "jpg" &&
-      IsSizeAvailable() && Size().Width() >= 100 && Size().Height() >= 100) {
+      IsSizeAvailable()) {
     BitmapImageMetrics::CountImageJpegDensity(
+        std::min(Size().Width(), Size().Height()),
         ImageDensityInCentiBpp(Size(), decoder_->Data()->size()));
   }
 
@@ -287,8 +283,11 @@ void BitmapImage::Draw(
                         &flags,
                         WebCoreClampingModeToSkiaRectConstraint(clamp_mode));
 
-  if (is_lazy_generated)
-    PlatformInstrumentation::DidDrawLazyPixelRef(unique_id);
+  if (is_lazy_generated) {
+    TRACE_EVENT_INSTANT1(TRACE_DISABLED_BY_DEFAULT("devtools.timeline"),
+                         "Draw LazyPixelRef", TRACE_EVENT_SCOPE_THREAD,
+                         "LazyPixelRef", unique_id);
+  }
 
   StartAnimation();
 }

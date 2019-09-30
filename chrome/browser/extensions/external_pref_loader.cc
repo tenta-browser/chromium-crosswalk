@@ -19,7 +19,9 @@
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/task/lazy_task_runner.h"
+#include "base/task/post_task.h"
 #include "build/build_config.h"
+#include "chrome/browser/apps/user_type_filter.h"
 #include "chrome/browser/defaults.h"
 #include "chrome/browser/prefs/pref_service_syncable_util.h"
 #include "chrome/browser/profiles/profile.h"
@@ -29,6 +31,7 @@
 #include "components/sync/driver/sync_service_observer.h"
 #include "components/sync_preferences/pref_service_syncable.h"
 #include "components/sync_preferences/pref_service_syncable_observer.h"
+#include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
 #include "extensions/browser/extension_file_task_runner.h"
 
@@ -41,8 +44,6 @@ constexpr base::FilePath::CharType kExternalExtensionJson[] =
 
 std::set<base::FilePath> GetPrefsCandidateFilesFromFolder(
       const base::FilePath& external_extension_search_path) {
-  base::AssertBlockingAllowed();
-
   std::set<base::FilePath> external_extension_paths;
 
   if (!base::PathExists(external_extension_search_path)) {
@@ -103,8 +104,9 @@ class ExternalPrefLoader::PrioritySyncReadyWaiter
     browser_sync::ProfileSyncService* service =
         ProfileSyncServiceFactory::GetForProfile(profile_);
     DCHECK(service);
-    if (service->CanSyncStart() && (service->IsFirstSetupComplete() ||
-                                    browser_defaults::kSyncAutoStarts)) {
+    if (service->CanSyncFeatureStart() &&
+        (service->GetUserSettings()->IsFirstSetupComplete() ||
+         browser_defaults::kSyncAutoStarts)) {
       done_closure_ = std::move(done_closure);
       AddObservers();
     } else {
@@ -125,7 +127,7 @@ class ExternalPrefLoader::PrioritySyncReadyWaiter
 
   // syncer::SyncServiceObserver
   void OnStateChanged(syncer::SyncService* sync) override {
-    if (!sync->CanSyncStart())
+    if (!sync->CanSyncFeatureStart())
       Finish();
   }
 
@@ -166,9 +168,12 @@ class ExternalPrefLoader::PrioritySyncReadyWaiter
 };
 
 ExternalPrefLoader::ExternalPrefLoader(int base_path_id,
-                                       Options options,
+                                       int options,
                                        Profile* profile)
-    : base_path_id_(base_path_id), options_(options), profile_(profile) {
+    : base_path_id_(base_path_id),
+      options_(options),
+      profile_(profile),
+      user_type_(profile ? apps::DetermineUserType(profile) : std::string()) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
 }
 
@@ -233,8 +238,6 @@ ExternalPrefLoader::ExtractExtensionPrefs(base::ValueDeserializer* deserializer,
 }
 
 void ExternalPrefLoader::LoadOnFileThread() {
-  base::AssertBlockingAllowed();
-
   auto prefs = std::make_unique<base::DictionaryValue>();
 
   // TODO(skerner): Some values of base_path_id_ will cause
@@ -264,14 +267,13 @@ void ExternalPrefLoader::LoadOnFileThread() {
   if (!prefs->empty())
     CHECK(!base_path_.empty());
 
-  BrowserThread::PostTask(BrowserThread::UI, FROM_HERE,
-                          base::BindOnce(&ExternalPrefLoader::LoadFinished,
-                                         this, std::move(prefs)));
+  base::PostTaskWithTraits(FROM_HERE, {BrowserThread::UI},
+                           base::BindOnce(&ExternalPrefLoader::LoadFinished,
+                                          this, std::move(prefs)));
 }
 
 void ExternalPrefLoader::ReadExternalExtensionPrefFile(
     base::DictionaryValue* prefs) {
-  base::AssertBlockingAllowed();
   CHECK(NULL != prefs);
 
   base::FilePath json_file = base_path_.Append(kExternalExtensionJson);
@@ -309,7 +311,6 @@ void ExternalPrefLoader::ReadExternalExtensionPrefFile(
 
 void ExternalPrefLoader::ReadStandaloneExtensionPrefFiles(
     base::DictionaryValue* prefs) {
-  base::AssertBlockingAllowed();
   CHECK(NULL != prefs);
 
   // First list the potential .json candidates.
@@ -320,14 +321,20 @@ void ExternalPrefLoader::ReadStandaloneExtensionPrefFiles(
     return;
   }
 
+  // TODO(crbug.com/1407498): Remove this once migration is completed.
+  std::unique_ptr<base::ListValue> default_user_types;
+  if (options_ & USE_USER_TYPE_PROFILE_FILTER) {
+    default_user_types = std::make_unique<base::ListValue>();
+    default_user_types->GetList().push_back(
+        base::Value(apps::kUserTypeUnmanaged));
+  }
+
   // For each file read the json description & build the proper
   // associated prefs.
-  for (std::set<base::FilePath>::const_iterator it = candidates.begin();
-       it != candidates.end();
-       ++it) {
+  for (auto it = candidates.begin(); it != candidates.end(); ++it) {
     base::FilePath extension_candidate_path = base_path_.Append(*it);
 
-    std::string id =
+    const std::string id =
 #if defined(OS_WIN)
         base::UTF16ToASCII(
             extension_candidate_path.RemoveExtension().BaseName().value());
@@ -341,10 +348,19 @@ void ExternalPrefLoader::ReadStandaloneExtensionPrefFiles(
     JSONFileValueDeserializer deserializer(extension_candidate_path);
     std::unique_ptr<base::DictionaryValue> ext_prefs =
         ExtractExtensionPrefs(&deserializer, extension_candidate_path);
-    if (ext_prefs) {
-      DVLOG(1) << "Adding extension with id: " << id;
-      prefs->Set(id, std::move(ext_prefs));
+    if (!ext_prefs)
+      continue;
+
+    if (options_ & USE_USER_TYPE_PROFILE_FILTER &&
+        !apps::UserTypeMatchesJsonUserType(user_type_, id /* app_id */,
+                                           ext_prefs.get(),
+                                           default_user_types.get())) {
+      // Already logged.
+      continue;
     }
+
+    DVLOG(1) << "Adding extension with id: " << id;
+    prefs->Set(id, std::move(ext_prefs));
   }
 }
 

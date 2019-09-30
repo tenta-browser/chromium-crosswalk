@@ -46,7 +46,7 @@
 #include "services/network/public/cpp/shared_url_loader_factory.h"
 #include "third_party/blink/public/common/associated_interfaces/associated_interface_provider.h"
 #include "third_party/blink/public/common/associated_interfaces/associated_interface_registry.h"
-#include "third_party/blink/public/platform/modules/fetch/fetch_api_request.mojom-shared.h"
+#include "third_party/blink/public/mojom/fetch/fetch_api_request.mojom-shared.h"
 #include "third_party/blink/public/platform/web_data.h"
 #include "third_party/blink/public/platform/web_security_origin.h"
 #include "third_party/blink/public/platform/web_url.h"
@@ -55,10 +55,15 @@
 #include "third_party/blink/public/web/web_document.h"
 #include "third_party/blink/public/web/web_document_loader.h"
 #include "third_party/blink/public/web/web_frame.h"
+#include "third_party/blink/public/web/web_history_item.h"
 #include "third_party/blink/public/web/web_local_frame.h"
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/base/webui/jstemplate_builder.h"
 #include "url/gurl.h"
+
+#if defined(OS_ANDROID)
+#include "chrome/common/offline_page_auto_fetcher.mojom.h"
+#endif
 
 using base::JSONWriter;
 using content::DocumentState;
@@ -81,7 +86,7 @@ const int kNavigationCorrectionFetchTimeoutSec = 3;
 
 NetErrorHelperCore::PageType GetLoadingPageType(
     blink::WebDocumentLoader* document_loader) {
-  GURL url = document_loader->GetRequest().Url();
+  GURL url = document_loader->GetUrl();
   if (!url.is_valid() || url.spec() != kUnreachableWebDataURL)
     return NetErrorHelperCore::NON_ERROR_PAGE;
   return NetErrorHelperCore::ERROR_PAGE;
@@ -108,6 +113,20 @@ OfflineContentOnNetErrorFeatureState GetOfflineContentOnNetErrorFeatureState() {
 #else   // OS_ANDROID
 OfflineContentOnNetErrorFeatureState GetOfflineContentOnNetErrorFeatureState() {
   return OfflineContentOnNetErrorFeatureState::kDisabled;
+}
+#endif  // OS_ANDROID
+
+#if defined(OS_ANDROID)
+bool IsAutoFetchFeatureEnabled() {
+  // This feature is incompatible with OfflineContentOnNetError, so don't allow
+  // both.
+  return GetOfflineContentOnNetErrorFeatureState() ==
+             OfflineContentOnNetErrorFeatureState::kDisabled &&
+         base::FeatureList::IsEnabled(features::kAutoFetchOnNetErrorPage);
+}
+#else   // OS_ANDROID
+bool IsAutoFetchFeatureEnabled() {
+  return false;
 }
 #endif  // OS_ANDROID
 
@@ -188,6 +207,22 @@ void NetErrorHelper::LaunchOfflineItem(const std::string& id,
 
 void NetErrorHelper::LaunchDownloadsPage() {
   core_->LaunchDownloadsPage();
+}
+
+void NetErrorHelper::SavePageForLater() {
+  core_->SavePageForLater();
+}
+
+void NetErrorHelper::CancelSavePage() {
+  core_->CancelSavePage();
+}
+
+void NetErrorHelper::ListVisibilityChanged(bool is_visible) {
+  core_->ListVisibilityChanged(is_visible);
+}
+
+content::RenderFrame* NetErrorHelper::GetRenderFrame() {
+  return render_frame();
 }
 
 void NetErrorHelper::SendCommand(
@@ -272,14 +307,14 @@ void NetErrorHelper::Feedback() {
 }
 
 void NetErrorHelper::DidStartProvisionalLoad(
-    blink::WebDocumentLoader* document_loader) {
+    blink::WebDocumentLoader* document_loader,
+    bool is_content_initiated) {
   core_->OnStartLoad(GetFrameType(render_frame()),
                      GetLoadingPageType(document_loader));
 }
 
-void NetErrorHelper::DidCommitProvisionalLoad(
-    bool is_new_navigation,
-    bool is_same_document_navigation) {
+void NetErrorHelper::DidCommitProvisionalLoad(bool is_same_document_navigation,
+                                              ui::PageTransition transition) {
   // If this is a "same-document" navigation, it's not a real navigation.  There
   // wasn't a start event for it, either, so just ignore it.
   if (is_same_document_navigation)
@@ -341,6 +376,14 @@ NetErrorHelper::GetRemoteNetworkDiagnostics() {
   return remote_network_diagnostics_.get();
 }
 
+chrome::mojom::NetworkEasterEgg* NetErrorHelper::GetRemoteNetworkEasterEgg() {
+  if (!remote_network_easter_egg_) {
+    render_frame()->GetRemoteAssociatedInterfaces()->GetInterface(
+        &remote_network_easter_egg_);
+  }
+  return remote_network_easter_egg_.get();
+}
+
 void NetErrorHelper::GenerateLocalizedErrorPage(
     const error_page::Error& error,
     bool is_failed_post,
@@ -351,6 +394,7 @@ void NetErrorHelper::GenerateLocalizedErrorPage(
     bool* show_cached_copy_button_shown,
     bool* download_button_shown,
     OfflineContentOnNetErrorFeatureState* offline_content_feature_state,
+    bool* auto_fetch_allowed,
     std::string* error_html) const {
   error_html->clear();
 
@@ -366,8 +410,8 @@ void NetErrorHelper::GenerateLocalizedErrorPage(
         error.reason(), error.domain(), error.url(), is_failed_post,
         error.stale_copy_in_cache(), can_show_network_diagnostics_dialog,
         ChromeRenderThreadObserver::is_incognito_process(),
-        *offline_content_feature_state, RenderThread::Get()->GetLocale(),
-        std::move(params), &error_strings);
+        *offline_content_feature_state, IsAutoFetchFeatureEnabled(),
+        RenderThread::Get()->GetLocale(), std::move(params), &error_strings);
     *reload_button_shown = error_strings.Get("reloadButton", nullptr);
     *show_saved_copy_button_shown =
         error_strings.Get("showSavedCopyButton", nullptr);
@@ -380,7 +424,7 @@ void NetErrorHelper::GenerateLocalizedErrorPage(
       *offline_content_feature_state =
           OfflineContentOnNetErrorFeatureState::kDisabled;
     }
-
+    *auto_fetch_allowed = error_strings.FindKey("attemptAutoFetch") != nullptr;
     // "t" is the id of the template's root node.
     *error_html = webui::GetTemplatesHtml(template_html, &error_strings, "t");
   }
@@ -388,8 +432,8 @@ void NetErrorHelper::GenerateLocalizedErrorPage(
 
 void NetErrorHelper::LoadErrorPage(const std::string& html,
                                    const GURL& failed_url) {
-  render_frame()->GetWebFrame()->LoadHTMLString(
-      html, GURL(kUnreachableWebDataURL), failed_url, true);
+  render_frame()->LoadHTMLString(html, GURL(kUnreachableWebDataURL), "UTF-8",
+                                 failed_url, true /* replace_current_item */);
 }
 
 void NetErrorHelper::EnablePageHelperFunctions(net::Error net_error) {
@@ -417,7 +461,7 @@ void NetErrorHelper::UpdateErrorPage(const error_page::Error& error,
       error.reason(), error.domain(), error.url(), is_failed_post,
       error.stale_copy_in_cache(), can_show_network_diagnostics_dialog,
       ChromeRenderThreadObserver::is_incognito_process(),
-      GetOfflineContentOnNetErrorFeatureState(),
+      GetOfflineContentOnNetErrorFeatureState(), IsAutoFetchFeatureEnabled(),
       RenderThread::Get()->GetLocale(), std::unique_ptr<ErrorPageParams>(),
       &error_strings);
 
@@ -435,6 +479,36 @@ void NetErrorHelper::UpdateErrorPage(const error_page::Error& error,
   render_frame()->ExecuteJavaScript(js16);
 }
 
+void NetErrorHelper::InitializeErrorPageEasterEggHighScore(int high_score) {
+  std::string js = base::StringPrintf(
+      "if (window.initializeEasterEggHighScore) "
+      "initializeEasterEggHighScore(%i);",
+      high_score);
+  base::string16 js16;
+  if (!base::UTF8ToUTF16(js.c_str(), js.length(), &js16)) {
+    NOTREACHED();
+    return;
+  }
+
+  render_frame()->ExecuteJavaScript(js16);
+}
+
+void NetErrorHelper::RequestEasterEggHighScore() {
+  GetRemoteNetworkEasterEgg()->GetHighScore(base::BindOnce(
+      [](NetErrorHelper* helper, uint32_t high_score) {
+        helper->core_->OnEasterEggHighScoreReceived(high_score);
+      },
+      base::Unretained(this)));
+}
+
+void NetErrorHelper::UpdateEasterEggHighScore(int high_score) {
+  GetRemoteNetworkEasterEgg()->UpdateHighScore(high_score);
+}
+
+void NetErrorHelper::ResetEasterEggHighScore() {
+  GetRemoteNetworkEasterEgg()->ResetHighScore();
+}
+
 void NetErrorHelper::FetchNavigationCorrections(
     const GURL& navigation_correction_url,
     const std::string& navigation_correction_request_body) {
@@ -450,8 +524,7 @@ void NetErrorHelper::FetchNavigationCorrections(
   correction_fetcher_->SetHeader("Origin", "null");
 
   correction_fetcher_->Start(
-      render_frame()->GetWebFrame(),
-      blink::WebURLRequest::kRequestContextInternal,
+      render_frame()->GetWebFrame(), blink::mojom::RequestContextType::INTERNAL,
       render_frame()->GetURLLoaderFactory(), GetNetworkTrafficAnnotationTag(),
       base::BindOnce(&NetErrorHelper::OnNavigationCorrectionsFetched,
                      base::Unretained(this)));
@@ -474,8 +547,7 @@ void NetErrorHelper::SendTrackingRequest(
   tracking_fetcher_->SetHeader("Content-Type", "application/json");
 
   tracking_fetcher_->Start(
-      render_frame()->GetWebFrame(),
-      blink::WebURLRequest::kRequestContextInternal,
+      render_frame()->GetWebFrame(), blink::mojom::RequestContextType::INTERNAL,
       render_frame()->GetURLLoaderFactory(), GetNetworkTrafficAnnotationTag(),
       base::BindOnce(&NetErrorHelper::OnTrackingRequestComplete,
                      base::Unretained(this)));
@@ -518,10 +590,15 @@ void NetErrorHelper::SetIsShowingDownloadButton(bool show) {
 }
 
 void NetErrorHelper::OfflineContentAvailable(
+    bool list_visible_by_prefs,
     const std::string& offline_content_json) {
 #if defined(OS_ANDROID)
-  render_frame()->ExecuteJavaScript(base::UTF8ToUTF16(
-      base::StrCat({"offlineContentAvailable(", offline_content_json, ");"})));
+  if (!offline_content_json.empty()) {
+    std::string isShownParam(list_visible_by_prefs ? "true" : "false");
+    render_frame()->ExecuteJavaScript(base::UTF8ToUTF16(
+        base::StrCat({"offlineContentAvailable(", isShownParam, ", ",
+                      offline_content_json, ");"})));
+  }
 #endif
 }
 
@@ -533,8 +610,30 @@ void NetErrorHelper::OfflineContentSummaryAvailable(
         base::UTF8ToUTF16(base::StrCat({"offlineContentSummaryAvailable(",
                                         offline_content_summary_json, ");"})));
   }
-#endif
+#endif  // defined(OS_ANDROID)
 }
+
+#if defined(OS_ANDROID)
+void NetErrorHelper::SetAutoFetchState(
+    chrome::mojom::OfflinePageAutoFetcherScheduleResult result) {
+  const char* scheduled = "false";
+  const char* can_schedule = "false";
+  switch (result) {
+    case chrome::mojom::OfflinePageAutoFetcherScheduleResult::kAlreadyScheduled:
+    case chrome::mojom::OfflinePageAutoFetcherScheduleResult::kScheduled:
+      scheduled = "true";
+      can_schedule = "true";
+      break;
+    case chrome::mojom::OfflinePageAutoFetcherScheduleResult::kOtherError:
+      break;
+    case chrome::mojom::OfflinePageAutoFetcherScheduleResult::kNotEnoughQuota:
+      can_schedule = "true";
+      break;
+  }
+  render_frame()->ExecuteJavaScript(base::UTF8ToUTF16(base::StrCat(
+      {"setAutoFetchState(", scheduled, ", ", can_schedule, ");"})));
+}
+#endif  // defined(OS_ANDROID)
 
 void NetErrorHelper::DNSProbeStatus(int32_t status_num) {
   DCHECK(status_num >= 0 && status_num < error_page::DNS_PROBE_MAX);

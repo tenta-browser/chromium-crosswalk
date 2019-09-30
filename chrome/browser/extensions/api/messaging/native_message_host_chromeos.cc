@@ -13,12 +13,14 @@
 #include "base/json/json_reader.h"
 #include "base/json/json_writer.h"
 #include "base/location.h"
-#include "base/macros.h"
 #include "base/single_thread_task_runner.h"
+#include "base/stl_util.h"
+#include "base/task/post_task.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "base/values.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/chromeos/arc/extensions/arc_support_message_host.h"
+#include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
 #include "extensions/common/constants.h"
 #include "extensions/common/url_pattern.h"
@@ -94,10 +96,10 @@ struct BuiltInHost {
 std::unique_ptr<NativeMessageHost> CreateIt2MeHost() {
   return remoting::CreateIt2MeNativeMessagingHostForChromeOS(
       g_browser_process->system_request_context(),
-      content::BrowserThread::GetTaskRunnerForThread(
-          content::BrowserThread::IO),
-      content::BrowserThread::GetTaskRunnerForThread(
-          content::BrowserThread::UI),
+      base::CreateSingleThreadTaskRunnerWithTraits(
+          {content::BrowserThread::IO}),
+      base::CreateSingleThreadTaskRunnerWithTraits(
+          {content::BrowserThread::UI}),
       g_browser_process->policy_service());
 }
 
@@ -120,9 +122,9 @@ const char* const kRemotingIt2MeOrigins[] = {
 
 static const BuiltInHost kBuiltInHost[] = {
     {"com.google.chrome.test.echo",  // ScopedTestNativeMessagingHost::kHostName
-     kEchoHostOrigins, arraysize(kEchoHostOrigins), &EchoHost::Create},
+     kEchoHostOrigins, base::size(kEchoHostOrigins), &EchoHost::Create},
     {"com.google.chrome.remote_assistance", kRemotingIt2MeOrigins,
-     arraysize(kRemotingIt2MeOrigins), &CreateIt2MeHost},
+     base::size(kRemotingIt2MeOrigins), &CreateIt2MeHost},
     {arc::ArcSupportMessageHost::kHostName,
      arc::ArcSupportMessageHost::kHostOrigin, 1,
      &arc::ArcSupportMessageHost::Create},
@@ -148,7 +150,7 @@ std::unique_ptr<NativeMessageHost> NativeMessageHost::Create(
     const std::string& native_host_name,
     bool allow_user_level,
     std::string* error) {
-  for (unsigned int i = 0; i < arraysize(kBuiltInHost); i++) {
+  for (unsigned int i = 0; i < base::size(kBuiltInHost); i++) {
     const BuiltInHost& host = kBuiltInHost[i];
     std::string name(host.name);
     if (name == native_host_name) {

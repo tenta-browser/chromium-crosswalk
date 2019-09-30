@@ -76,10 +76,10 @@ MojoCdm::MojoCdm(mojom::ContentDecryptionModulePtr remote_cdm,
       session_expiration_update_cb_(session_expiration_update_cb),
       weak_factory_(this) {
   DVLOG(1) << __func__;
-  DCHECK(!session_message_cb_.is_null());
-  DCHECK(!session_closed_cb_.is_null());
-  DCHECK(!session_keys_change_cb_.is_null());
-  DCHECK(!session_expiration_update_cb_.is_null());
+  DCHECK(session_message_cb_);
+  DCHECK(session_closed_cb_);
+  DCHECK(session_keys_change_cb_);
+  DCHECK(session_expiration_update_cb_);
 
   mojom::ContentDecryptionModuleClientAssociatedPtrInfo client_ptr_info;
   client_binding_.Bind(mojo::MakeRequest(&client_ptr_info));
@@ -352,7 +352,7 @@ void MojoCdm::OnSessionClosed(const std::string& session_id) {
 void MojoCdm::OnSessionKeysChange(
     const std::string& session_id,
     bool has_additional_usable_key,
-    std::vector<mojom::CdmKeyInformationPtr> keys_info) {
+    std::vector<std::unique_ptr<CdmKeyInformation>> keys_info) {
   DVLOG(2) << __func__;
   DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
 
@@ -368,13 +368,8 @@ void MojoCdm::OnSessionKeysChange(
     }
   }
 
-  CdmKeysInfo key_data;
-  key_data.reserve(keys_info.size());
-  for (size_t i = 0; i < keys_info.size(); ++i) {
-    key_data.push_back(keys_info[i].To<std::unique_ptr<CdmKeyInformation>>());
-  }
   session_keys_change_cb_.Run(session_id, has_additional_usable_key,
-                              std::move(key_data));
+                              std::move(keys_info));
 }
 
 void MojoCdm::OnSessionExpirationUpdate(const std::string& session_id,

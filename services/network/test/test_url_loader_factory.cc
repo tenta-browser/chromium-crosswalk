@@ -87,6 +87,15 @@ int TestURLLoaderFactory::NumPending() {
   return pending;
 }
 
+TestURLLoaderFactory::PendingRequest* TestURLLoaderFactory::GetPendingRequest(
+    size_t index) {
+  if (index >= pending_requests_.size())
+    return nullptr;
+  auto* request = &(pending_requests_[index]);
+  DCHECK(request);
+  return request;
+}
+
 void TestURLLoaderFactory::ClearResponses() {
   responses_.clear();
 }
@@ -228,8 +237,12 @@ void TestURLLoaderFactory::SimulateResponse(
   if (response_flags & kResponseOnlyRedirectsNoDestination)
     return;
 
-  if (status.error_code == net::OK) {
+  if ((response_flags & kSendHeadersOnNetworkError) ||
+      status.error_code == net::OK) {
     client->OnReceiveResponse(head);
+  }
+
+  if (status.error_code == net::OK) {
     mojo::DataPipe data_pipe(content.size());
     uint32_t bytes_written = content.size();
     CHECK_EQ(MOJO_RESULT_OK, data_pipe.producer_handle->WriteData(

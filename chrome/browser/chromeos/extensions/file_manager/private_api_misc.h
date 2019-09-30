@@ -27,7 +27,8 @@ class RecentFile;
 }  // namespace chromeos
 
 namespace crostini {
-enum class ConciergeClientResult;
+enum class CrostiniResult;
+struct LinuxPackageInfo;
 }
 
 namespace file_manager {
@@ -272,31 +273,116 @@ class FileManagerPrivateIsCrostiniEnabledFunction
  public:
   DECLARE_EXTENSION_FUNCTION("fileManagerPrivate.isCrostiniEnabled",
                              FILEMANAGERPRIVATE_ISCROSTINIENABLED)
+  FileManagerPrivateIsCrostiniEnabledFunction() = default;
 
  protected:
   ~FileManagerPrivateIsCrostiniEnabledFunction() override = default;
 
   ResponseAction Run() override;
+  DISALLOW_COPY_AND_ASSIGN(FileManagerPrivateIsCrostiniEnabledFunction);
 };
 
-// Implements the chrome.fileManagerPrivate.mountCrostiniContainer method.
+// Implements the chrome.fileManagerPrivate.mountCrostini method.
 // Starts and mounts crostini container.
-class FileManagerPrivateMountCrostiniContainerFunction
+class FileManagerPrivateMountCrostiniFunction
     : public LoggedAsyncExtensionFunction {
  public:
-  DECLARE_EXTENSION_FUNCTION("fileManagerPrivate.mountCrostiniContainer",
-                             FILEMANAGERPRIVATE_MOUNTCROSTINICONTAINER)
-  FileManagerPrivateMountCrostiniContainerFunction();
+  DECLARE_EXTENSION_FUNCTION("fileManagerPrivate.mountCrostini",
+                             FILEMANAGERPRIVATE_MOUNTCROSTINI)
+  FileManagerPrivateMountCrostiniFunction();
 
  protected:
-  ~FileManagerPrivateMountCrostiniContainerFunction() override;
+  ~FileManagerPrivateMountCrostiniFunction() override;
 
   bool RunAsync() override;
-  void RestartCallback(crostini::ConciergeClientResult);
+  void RestartCallback(crostini::CrostiniResult);
 
  private:
   std::string source_path_;
   std::string mount_label_;
+  DISALLOW_COPY_AND_ASSIGN(FileManagerPrivateMountCrostiniFunction);
+};
+
+// Implements the chrome.fileManagerPrivate.sharePathsWithCrostini
+// method.  Shares specified paths.
+class FileManagerPrivateInternalSharePathsWithCrostiniFunction
+    : public UIThreadExtensionFunction {
+ public:
+  DECLARE_EXTENSION_FUNCTION(
+      "fileManagerPrivateInternal.sharePathsWithCrostini",
+      FILEMANAGERPRIVATEINTERNAL_SHAREPATHSWITHCROSTINI)
+  FileManagerPrivateInternalSharePathsWithCrostiniFunction() = default;
+
+ protected:
+  ~FileManagerPrivateInternalSharePathsWithCrostiniFunction() override =
+      default;
+
+ private:
+  ResponseAction Run() override;
+  void SharePathsCallback(bool success, std::string failure_reason);
+  DISALLOW_COPY_AND_ASSIGN(
+      FileManagerPrivateInternalSharePathsWithCrostiniFunction);
+};
+
+// Implements the chrome.fileManagerPrivate.unsharePathWithCrostini
+// method.  Unshares specified path.
+class FileManagerPrivateInternalUnsharePathWithCrostiniFunction
+    : public UIThreadExtensionFunction {
+ public:
+  DECLARE_EXTENSION_FUNCTION(
+      "fileManagerPrivateInternal.unsharePathWithCrostini",
+      FILEMANAGERPRIVATEINTERNAL_UNSHAREPATHWITHCROSTINI)
+  FileManagerPrivateInternalUnsharePathWithCrostiniFunction() = default;
+
+ protected:
+  ~FileManagerPrivateInternalUnsharePathWithCrostiniFunction() override =
+      default;
+
+ private:
+  ResponseAction Run() override;
+  void UnsharePathCallback(bool success, std::string failure_reason);
+  DISALLOW_COPY_AND_ASSIGN(
+      FileManagerPrivateInternalUnsharePathWithCrostiniFunction);
+};
+
+// Implements the chrome.fileManagerPrivate.getCrostiniSharedPaths
+// method.  Returns list of file entries.
+class FileManagerPrivateInternalGetCrostiniSharedPathsFunction
+    : public UIThreadExtensionFunction {
+ public:
+  DECLARE_EXTENSION_FUNCTION(
+      "fileManagerPrivateInternal.getCrostiniSharedPaths",
+      FILEMANAGERPRIVATEINTERNAL_GETCROSTINISHAREDPATHS)
+  FileManagerPrivateInternalGetCrostiniSharedPathsFunction() = default;
+
+ protected:
+  ~FileManagerPrivateInternalGetCrostiniSharedPathsFunction() override =
+      default;
+
+ private:
+  ResponseAction Run() override;
+  DISALLOW_COPY_AND_ASSIGN(
+      FileManagerPrivateInternalGetCrostiniSharedPathsFunction);
+};
+
+// Implements the chrome.fileManagerPrivate.getLinuxPackageInfo method.
+// Retrieves information about a Linux package.
+class FileManagerPrivateInternalGetLinuxPackageInfoFunction
+    : public UIThreadExtensionFunction {
+ public:
+  DECLARE_EXTENSION_FUNCTION("fileManagerPrivateInternal.getLinuxPackageInfo",
+                             FILEMANAGERPRIVATEINTERNAL_GETLINUXPACKAGEINFO)
+  FileManagerPrivateInternalGetLinuxPackageInfoFunction() = default;
+
+ protected:
+  ~FileManagerPrivateInternalGetLinuxPackageInfoFunction() override = default;
+
+ private:
+  ResponseAction Run() override;
+  void OnGetLinuxPackageInfo(
+      const crostini::LinuxPackageInfo& linux_package_info);
+  DISALLOW_COPY_AND_ASSIGN(
+      FileManagerPrivateInternalGetLinuxPackageInfoFunction);
 };
 
 // Implements the chrome.fileManagerPrivate.installLinuxPackage method.
@@ -306,14 +392,16 @@ class FileManagerPrivateInternalInstallLinuxPackageFunction
  public:
   DECLARE_EXTENSION_FUNCTION("fileManagerPrivateInternal.installLinuxPackage",
                              FILEMANAGERPRIVATEINTERNAL_INSTALLLINUXPACKAGE)
+  FileManagerPrivateInternalInstallLinuxPackageFunction() = default;
 
  protected:
   ~FileManagerPrivateInternalInstallLinuxPackageFunction() override = default;
 
  private:
   ResponseAction Run() override;
-  void OnInstallLinuxPackage(crostini::ConciergeClientResult result,
-                             const std::string& failure_reason);
+  void OnInstallLinuxPackage(crostini::CrostiniResult result);
+  DISALLOW_COPY_AND_ASSIGN(
+      FileManagerPrivateInternalInstallLinuxPackageFunction);
 };
 
 // Implements the chrome.fileManagerPrivate.getCustomActions method.
@@ -375,6 +463,19 @@ class FileManagerPrivateInternalGetRecentFilesFunction
 
   const ChromeExtensionFunctionDetails chrome_details_;
   DISALLOW_COPY_AND_ASSIGN(FileManagerPrivateInternalGetRecentFilesFunction);
+};
+
+// Implements the chrome.fileManagerPrivate.detectCharacterEncoding method.
+class FileManagerPrivateDetectCharacterEncodingFunction
+    : public UIThreadExtensionFunction {
+ public:
+  DECLARE_EXTENSION_FUNCTION("fileManagerPrivate.detectCharacterEncoding",
+                             FILEMANAGERPRIVATE_DETECTCHARACTERENCODING);
+
+ protected:
+  ~FileManagerPrivateDetectCharacterEncodingFunction() override = default;
+
+  ResponseAction Run() override;
 };
 
 }  // namespace extensions

@@ -8,6 +8,9 @@
 
 #include "base/logging.h"
 #include "base/memory/singleton.h"
+#include "base/system/sys_info.h"
+#include "base/task/post_task.h"
+#include "chrome/browser/chromeos/arc/fileapi/arc_select_files_handler.h"
 #include "chrome/browser/chromeos/arc/fileapi/chrome_content_provider_url_util.h"
 #include "chrome/browser/chromeos/arc/fileapi/file_stream_forwarder.h"
 #include "chrome/browser/chromeos/file_manager/fileapi_util.h"
@@ -17,6 +20,7 @@
 #include "chromeos/dbus/virtual_file_provider_client.h"
 #include "components/arc/arc_bridge_service.h"
 #include "components/arc/arc_browser_context_keyed_service_factory_base.h"
+#include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/storage_partition.h"
 #include "content/public/common/url_constants.h"
@@ -26,6 +30,11 @@
 #include "net/base/escape.h"
 #include "storage/browser/fileapi/file_system_context.h"
 
+namespace {
+constexpr char kChromeOSReleaseTrack[] = "CHROMEOS_RELEASE_TRACK";
+constexpr char kTestImageRelease[] = "testimage-channel";
+}  // namespace
+
 namespace arc {
 
 namespace {
@@ -34,6 +43,13 @@ namespace {
 bool IsUrlAllowed(const GURL& url) {
   // Currently, only externalfile URLs are allowed.
   return url.SchemeIs(content::kExternalFileScheme);
+}
+
+// Returns true if this is a testimage build.
+bool IsTestImageBuild() {
+  std::string track;
+  return base::SysInfo::GetLsbReleaseValue(kChromeOSReleaseTrack, &track) &&
+         track.find(kTestImageRelease) != std::string::npos;
 }
 
 // Returns FileSystemContext.
@@ -74,9 +90,8 @@ void GetFileSizeOnIOThread(scoped_refptr<storage::FileSystemContext> context,
                 file_info.size >= 0) {
               size = file_info.size;
             }
-            content::BrowserThread::PostTask(
-                content::BrowserThread::UI, FROM_HERE,
-                base::BindOnce(std::move(callback), size));
+            base::PostTaskWithTraits(FROM_HERE, {content::BrowserThread::UI},
+                                     base::BindOnce(std::move(callback), size));
           },
           base::Passed(&callback)));
 }
@@ -105,6 +120,7 @@ ArcFileSystemBridge::ArcFileSystemBridge(content::BrowserContext* context,
                                          ArcBridgeService* bridge_service)
     : profile_(Profile::FromBrowserContext(context)),
       bridge_service_(bridge_service),
+      select_files_handler_(std::make_unique<ArcSelectFilesHandler>(context)),
       weak_ptr_factory_(this) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
   bridge_service_->file_system()->SetHost(this);
@@ -170,8 +186,8 @@ void ArcFileSystemBridge::GetFileSize(const std::string& url,
   }
   scoped_refptr<storage::FileSystemContext> context =
       GetFileSystemContext(profile_, url_decoded);
-  content::BrowserThread::PostTask(
-      content::BrowserThread::IO, FROM_HERE,
+  base::PostTaskWithTraits(
+      FROM_HERE, {content::BrowserThread::IO},
       base::BindOnce(&GetFileSizeOnIOThread, context,
                      GetFileSystemURL(context, url_decoded),
                      std::move(callback)));
@@ -209,6 +225,12 @@ void ArcFileSystemBridge::OnDocumentChanged(
     observer.OnDocumentChanged(watcher_id, type);
 }
 
+void ArcFileSystemBridge::OnRootsChanged() {
+  DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
+  for (auto& observer : observer_list_)
+    observer.OnRootsChanged();
+}
+
 void ArcFileSystemBridge::OpenFileToRead(const std::string& url,
                                          OpenFileToReadCallback callback) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
@@ -222,6 +244,35 @@ void ArcFileSystemBridge::OpenFileToRead(const std::string& url,
       url, base::BindOnce(&ArcFileSystemBridge::OpenFileToReadAfterGetFileSize,
                           weak_ptr_factory_.GetWeakPtr(), url_decoded,
                           std::move(callback)));
+}
+
+void ArcFileSystemBridge::SelectFiles(mojom::SelectFilesRequestPtr request,
+                                      SelectFilesCallback callback) {
+  select_files_handler_->SelectFiles(std::move(request), std::move(callback));
+}
+
+void ArcFileSystemBridge::OnFileSelectorEvent(
+    mojom::FileSelectorEventPtr event,
+    ArcFileSystemBridge::OnFileSelectorEventCallback callback) {
+  std::string track;
+  if (!IsTestImageBuild()) {
+    LOG(ERROR) << "OnFileSelectorEvent is only allowed under test conditions";
+    std::move(callback).Run();
+    return;
+  }
+  select_files_handler_->OnFileSelectorEvent(std::move(event),
+                                             std::move(callback));
+}
+
+void ArcFileSystemBridge::GetFileSelectorElements(
+    GetFileSelectorElementsCallback callback) {
+  if (!IsTestImageBuild()) {
+    LOG(ERROR)
+        << "GetFileSelectorElements is only allowed under test conditions";
+    std::move(callback).Run(mojom::FileSelectorElements::New());
+    return;
+  }
+  select_files_handler_->GetFileSelectorElements(std::move(callback));
 }
 
 void ArcFileSystemBridge::OpenFileToReadAfterGetFileSize(

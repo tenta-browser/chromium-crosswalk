@@ -9,7 +9,7 @@
 #include "base/memory/shared_memory.h"
 #include "base/memory/unsafe_shared_memory_region.h"
 #include "base/memory/writable_shared_memory_region.h"
-#include "base/sys_info.h"
+#include "base/system/sys_info.h"
 #include "base/test/test_shared_memory_util.h"
 #include "build/build_config.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -192,6 +192,11 @@ TYPED_TEST(SharedMemoryRegionTest, MapAtNotAlignedOffsetFails) {
   off_t offset = kDataSize / 2;
   typename TypeParam::MappingType mapping =
       region.MapAt(offset, kDataSize - offset);
+  EXPECT_FALSE(mapping.IsValid());
+}
+
+TYPED_TEST(SharedMemoryRegionTest, MapZeroBytesFails) {
+  typename TypeParam::MappingType mapping = this->region_.MapAt(0, 0);
   EXPECT_FALSE(mapping.IsValid());
 }
 

@@ -23,11 +23,11 @@ class Label;
 
 namespace ash {
 
-class AssistantController;
 class AssistantFooterView;
 class AssistantHeaderView;
 class AssistantProgressIndicator;
 class AssistantQueryView;
+class AssistantViewDelegate;
 class UiElementContainerView;
 
 // AssistantMainStage is the child of AssistantMainView responsible for
@@ -38,12 +38,12 @@ class AssistantMainStage : public views::View,
                            public AssistantInteractionModelObserver,
                            public AssistantUiModelObserver {
  public:
-  explicit AssistantMainStage(AssistantController* assistant_controller);
+  explicit AssistantMainStage(AssistantViewDelegate* delegate);
   ~AssistantMainStage() override;
 
   // views::View:
+  const char* GetClassName() const override;
   void ChildPreferredSizeChanged(views::View* child) override;
-  void ChildVisibilityChanged(views::View* child) override;
 
   // views::ViewObserver:
   void OnViewBoundsChanged(views::View* view) override;
@@ -54,12 +54,15 @@ class AssistantMainStage : public views::View,
   void OnCommittedQueryChanged(const AssistantQuery& query) override;
   void OnPendingQueryChanged(const AssistantQuery& query) override;
   void OnPendingQueryCleared() override;
-  void OnResponseChanged(const AssistantResponse& response) override;
+  void OnResponseChanged(
+      const std::shared_ptr<AssistantResponse>& response) override;
 
   // AssistantUiModelObserver:
-  void OnUiVisibilityChanged(AssistantVisibility new_visibility,
-                             AssistantVisibility old_visibility,
-                             AssistantSource source) override;
+  void OnUiVisibilityChanged(
+      AssistantVisibility new_visibility,
+      AssistantVisibility old_visibility,
+      base::Optional<AssistantEntryPoint> entry_point,
+      base::Optional<AssistantExitPoint> exit_point) override;
 
  private:
   void InitLayout();
@@ -81,7 +84,7 @@ class AssistantMainStage : public views::View,
   bool OnFooterAnimationEnded(
       const ui::CallbackLayerAnimationObserver& observer);
 
-  AssistantController* const assistant_controller_;  // Owned by Shell.
+  AssistantViewDelegate* const delegate_;  // Owned by Shell.
 
   // Content layout container and children. Owned by view hierarchy.
   AssistantHeaderView* header_;

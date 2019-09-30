@@ -6,14 +6,12 @@
 
 #include <utility>
 
-#include "ash/assistant/assistant_controller.h"
 #include "ash/assistant/assistant_setup_controller.h"
 #include "ash/assistant/ui/assistant_ui_constants.h"
+#include "ash/assistant/ui/assistant_view_delegate.h"
 #include "ash/assistant/ui/main_stage/assistant_opt_in_view.h"
 #include "ash/assistant/ui/main_stage/suggestion_container_view.h"
 #include "ash/assistant/util/animation_util.h"
-#include "ash/shell.h"
-#include "ash/voice_interaction/voice_interaction_controller.h"
 #include "base/bind.h"
 #include "base/time/time.h"
 #include "ui/compositor/callback_layer_animation_observer.h"
@@ -38,26 +36,26 @@ constexpr base::TimeDelta kAnimationFadeOutDuration =
 
 }  // namespace
 
-AssistantFooterView::AssistantFooterView(
-    AssistantController* assistant_controller)
-    : assistant_controller_(assistant_controller),
+AssistantFooterView::AssistantFooterView(AssistantViewDelegate* delegate)
+    : delegate_(delegate),
       animation_observer_(std::make_unique<ui::CallbackLayerAnimationObserver>(
           /*animation_started_callback=*/base::BindRepeating(
               &AssistantFooterView::OnAnimationStarted,
               base::Unretained(this)),
           /*animation_ended_callback=*/base::BindRepeating(
               &AssistantFooterView::OnAnimationEnded,
-              base::Unretained(this)))),
-      voice_interaction_observer_binding_(this) {
+              base::Unretained(this)))) {
   InitLayout();
-
-  // Observe voice interaction for changes to consent state.
-  mojom::VoiceInteractionObserverPtr ptr;
-  voice_interaction_observer_binding_.Bind(mojo::MakeRequest(&ptr));
-  Shell::Get()->voice_interaction_controller()->AddObserver(std::move(ptr));
+  delegate_->AddVoiceInteractionControllerObserver(this);
 }
 
-AssistantFooterView::~AssistantFooterView() = default;
+AssistantFooterView::~AssistantFooterView() {
+  delegate_->RemoveVoiceInteractionControllerObserver(this);
+}
+
+const char* AssistantFooterView::GetClassName() const {
+  return "AssistantFooterView";
+}
 
 gfx::Size AssistantFooterView::CalculatePreferredSize() const {
   return gfx::Size(INT_MAX, GetHeightForWidth(INT_MAX));
@@ -67,23 +65,14 @@ int AssistantFooterView::GetHeightForWidth(int width) const {
   return kPreferredHeightDip;
 }
 
-void AssistantFooterView::ChildPreferredSizeChanged(views::View* child) {
-  PreferredSizeChanged();
-}
-
-void AssistantFooterView::ChildVisibilityChanged(views::View* child) {
-  PreferredSizeChanged();
-}
-
 void AssistantFooterView::InitLayout() {
   SetLayoutManager(std::make_unique<views::FillLayout>());
 
   // Initial view state is based on user consent state.
   const bool setup_completed =
-      Shell::Get()->voice_interaction_controller()->setup_completed();
-
+      delegate_->VoiceInteractionControllerSetupCompleted();
   // Suggestion container.
-  suggestion_container_ = new SuggestionContainerView(assistant_controller_);
+  suggestion_container_ = new SuggestionContainerView(delegate_);
   suggestion_container_->set_can_process_events_within_subtree(setup_completed);
 
   // Suggestion container will be animated on its own layer.
@@ -97,7 +86,7 @@ void AssistantFooterView::InitLayout() {
   // Opt in view.
   opt_in_view_ = new AssistantOptInView();
   opt_in_view_->set_can_process_events_within_subtree(!setup_completed);
-  opt_in_view_->set_delegate(assistant_controller_->setup_controller());
+  opt_in_view_->set_delegate(delegate_->GetOptInDelegate());
 
   // Opt in view will be animated on its own layer.
   opt_in_view_->SetPaintToLayer();
@@ -130,6 +119,7 @@ void AssistantFooterView::OnVoiceInteractionSetupCompleted(bool completed) {
   StartLayerAnimationSequence(hide_view->layer()->GetAnimator(),
                               CreateLayerAnimationSequence(CreateOpacityElement(
                                   0.f, kAnimationFadeOutDuration)),
+                              // Observe the animation.
                               animation_observer_.get());
 
   // Show the view for the next consent state by fading to 100% opacity with
@@ -158,7 +148,7 @@ void AssistantFooterView::OnAnimationStarted(
 bool AssistantFooterView::OnAnimationEnded(
     const ui::CallbackLayerAnimationObserver& observer) {
   const bool setup_completed =
-      Shell::Get()->voice_interaction_controller()->setup_completed();
+      delegate_->VoiceInteractionControllerSetupCompleted();
 
   // Only the view relevant to our consent state should process events.
   suggestion_container_->set_can_process_events_within_subtree(setup_completed);

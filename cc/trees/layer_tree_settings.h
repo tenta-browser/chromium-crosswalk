@@ -145,10 +145,6 @@ class CC_EXPORT LayerTreeSettings {
   // Whether to use edge anti-aliasing for all layer types that supports it.
   bool enable_edge_anti_aliasing = true;
 
-  // Whether to request presentation time regardless if existence of
-  // presentation time callbacks.
-  bool always_request_presentation_time = false;
-
   // Whether SetViewportSizeAndScale should update the painted scale factor or
   // the device scale factor.
   bool use_painted_device_scale_factor = false;
@@ -160,6 +156,17 @@ class CC_EXPORT LayerTreeSettings {
   // When false, sync tokens are expected to be present, and are verified,
   // before transfering gpu resources to the display compositor.
   bool delegated_sync_points_required = true;
+
+  // When true, LayerTreeHostImplClient will be posting a task to call
+  // DidReceiveCompositorFrameAck, used by the Compositor but not the
+  // LayerTreeView.
+  bool send_compositor_frame_ack = true;
+
+  // When false, scroll deltas accumulated on the impl thread are rounded to
+  // integer values when sent to Blink on commit. This flag should eventually
+  // go away and CC should send Blink fractional values:
+  // https://crbug.com/414283.
+  bool commit_fractional_scroll_deltas = false;
 };
 
 }  // namespace cc

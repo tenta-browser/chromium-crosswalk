@@ -13,12 +13,12 @@ import android.text.TextUtils;
 
 import org.chromium.base.ActivityState;
 import org.chromium.base.ApplicationStatus;
-import org.chromium.base.AsyncTask;
 import org.chromium.base.Callback;
 import org.chromium.base.Log;
 import org.chromium.base.VisibleForTesting;
 import org.chromium.base.metrics.RecordHistogram;
 import org.chromium.base.metrics.RecordUserAction;
+import org.chromium.base.task.AsyncTask;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.ChromeActivity;
 import org.chromium.chrome.browser.ChromeFeatureList;
@@ -30,8 +30,9 @@ import org.chromium.chrome.browser.snackbar.Snackbar;
 import org.chromium.chrome.browser.snackbar.SnackbarManager;
 import org.chromium.chrome.browser.snackbar.SnackbarManager.SnackbarController;
 import org.chromium.chrome.browser.tab.EmptyTabObserver;
+import org.chromium.chrome.browser.tab.SadTab;
 import org.chromium.chrome.browser.tab.Tab;
-import org.chromium.chrome.browser.tabmodel.TabModel;
+import org.chromium.chrome.browser.tabmodel.TabLaunchType;
 import org.chromium.chrome.browser.tabmodel.TabModelSelector;
 import org.chromium.chrome.browser.tabmodel.TabModelSelectorTabModelObserver;
 import org.chromium.chrome.browser.util.ChromeFileProvider;
@@ -282,25 +283,8 @@ public class OfflinePageUtils {
      */
     private static boolean shouldSkipSavingTabOffline(Tab tab) {
         WebContents webContents = tab.getWebContents();
-        return tab.isShowingErrorPage() || tab.isShowingSadTab() || webContents == null
+        return tab.isShowingErrorPage() || SadTab.isShowing(tab) || webContents == null
                 || webContents.isDestroyed() || webContents.isIncognito();
-    }
-
-    /**
-     * Strips scheme from the original URL of the offline page. This is meant to be used by UI.
-     * @param onlineUrl an online URL to from which the scheme is removed
-     * @return onlineUrl without the scheme
-     */
-    public static String stripSchemeFromOnlineUrl(String onlineUrl) {
-        onlineUrl = onlineUrl.trim();
-        // Offline pages are only saved for https:// and http:// schemes.
-        if (onlineUrl.startsWith(UrlConstants.HTTPS_URL_PREFIX)) {
-            return onlineUrl.substring(8);
-        } else if (onlineUrl.startsWith(UrlConstants.HTTP_URL_PREFIX)) {
-            return onlineUrl.substring(7);
-        } else {
-            return onlineUrl;
-        }
     }
 
     /**
@@ -370,8 +354,10 @@ public class OfflinePageUtils {
      * @param result The result for publishing file.
      */
     public static void recordPublishPageResult(int result) {
+        // TODO(https://crbug.com/894714): Find a safer way to define the boundary value when
+        // using MAX_VALUE.
         RecordHistogram.recordEnumeratedHistogram("OfflinePages.Sharing.PublishInternalPageResult",
-                result, SavePageResult.RESULT_COUNT);
+                result, SavePageResult.MAX_VALUE + 1);
     }
 
     /**
@@ -757,7 +743,7 @@ public class OfflinePageUtils {
         }
 
         @Override
-        public void didAddTab(Tab tab, @TabModel.TabLaunchType int type) {
+        public void didAddTab(Tab tab, @TabLaunchType int type) {
             tab.addObserver(sTabRestoreTracker);
         }
 
@@ -826,7 +812,7 @@ public class OfflinePageUtils {
          * contents.
          */
         @Override
-        public void onPageLoadFinished(Tab tab) {
+        public void onPageLoadFinished(Tab tab, String url) {
             if (!tab.isBeingRestored()) return;
 
             // We first compute the bitwise tab restore context.
@@ -888,7 +874,7 @@ public class OfflinePageUtils {
          * If the tab was being restored, reports that it crashed while doing so.
          */
         @Override
-        public void onCrash(Tab tab, boolean sadTabShown) {
+        public void onCrash(Tab tab) {
             if (tab.isBeingRestored()) recordTabRestoreHistogram(TabRestoreType.CRASHED, null);
         }
     }

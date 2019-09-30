@@ -6,8 +6,10 @@
 
 #include <memory>
 
+#include "base/test/scoped_feature_list.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "third_party/blink/public/common/features.h"
 #include "third_party/blink/public/platform/web_insecure_request_policy.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_binding_for_core.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_binding_for_testing.h"
@@ -42,7 +44,7 @@ typedef testing::StrictMock<testing::MockFunction<void(int)>>
 class MockWebSocketChannel : public WebSocketChannel {
  public:
   static MockWebSocketChannel* Create() {
-    return new testing::StrictMock<MockWebSocketChannel>();
+    return MakeGarbageCollected<testing::StrictMock<MockWebSocketChannel>>();
   }
 
   ~MockWebSocketChannel() override = default;
@@ -79,10 +81,15 @@ class DOMWebSocketWithMockChannel final : public DOMWebSocket {
  public:
   static DOMWebSocketWithMockChannel* Create(ExecutionContext* context) {
     DOMWebSocketWithMockChannel* websocket =
-        new DOMWebSocketWithMockChannel(context);
+        MakeGarbageCollected<DOMWebSocketWithMockChannel>(context);
     websocket->PauseIfNeeded();
     return websocket;
   }
+
+  explicit DOMWebSocketWithMockChannel(ExecutionContext* context)
+      : DOMWebSocket(context),
+        channel_(MockWebSocketChannel::Create()),
+        has_created_channel_(false) {}
 
   MockWebSocketChannel* Channel() { return channel_.Get(); }
 
@@ -99,11 +106,6 @@ class DOMWebSocketWithMockChannel final : public DOMWebSocket {
   }
 
  private:
-  explicit DOMWebSocketWithMockChannel(ExecutionContext* context)
-      : DOMWebSocket(context),
-        channel_(MockWebSocketChannel::Create()),
-        has_created_channel_(false) {}
-
   Member<MockWebSocketChannel> channel_;
   bool has_created_channel_;
 };
@@ -265,6 +267,28 @@ TEST(DOMWebSocketTest, insecureRequestsDoNotUpgrade) {
   EXPECT_FALSE(scope.GetExceptionState().HadException());
   EXPECT_EQ(DOMWebSocket::kConnecting, websocket_scope.Socket().readyState());
   EXPECT_EQ(KURL("ws://example.com/endpoint"), websocket_scope.Socket().url());
+}
+
+TEST(DOMWebSocketTest, mixedContentAutoUpgrade) {
+  base::test::ScopedFeatureList scoped_feature_list;
+  scoped_feature_list.InitAndEnableFeature(features::kMixedContentAutoupgrade);
+  V8TestingScope scope;
+  DOMWebSocketTestScope websocket_scope(scope.GetExecutionContext());
+  {
+    InSequence s;
+    EXPECT_CALL(websocket_scope.Channel(),
+                Connect(KURL("wss://example.com/endpoint"), String()))
+        .WillOnce(Return(true));
+  }
+  scope.GetDocument().SetSecurityOrigin(
+      SecurityOrigin::Create(KURL("https://example.com")));
+  scope.GetDocument().SetInsecureRequestPolicy(kLeaveInsecureRequestsAlone);
+  websocket_scope.Socket().Connect("ws://example.com/endpoint",
+                                   Vector<String>(), scope.GetExceptionState());
+
+  EXPECT_FALSE(scope.GetExceptionState().HadException());
+  EXPECT_EQ(DOMWebSocket::kConnecting, websocket_scope.Socket().readyState());
+  EXPECT_EQ(KURL("wss://example.com/endpoint"), websocket_scope.Socket().url());
 }
 
 TEST(DOMWebSocketTest, channelConnectSuccess) {

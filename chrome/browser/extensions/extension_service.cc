@@ -46,6 +46,7 @@
 #include "chrome/browser/extensions/extension_util.h"
 #include "chrome/browser/extensions/external_install_manager.h"
 #include "chrome/browser/extensions/external_provider_impl.h"
+#include "chrome/browser/extensions/forced_extensions/installation_failures.h"
 #include "chrome/browser/extensions/install_verifier.h"
 #include "chrome/browser/extensions/installed_loader.h"
 #include "chrome/browser/extensions/pending_extension_manager.h"
@@ -56,7 +57,6 @@
 #include "chrome/browser/extensions/updater/extension_updater.h"
 #include "chrome/browser/google/google_brand.h"
 #include "chrome/browser/profiles/profile.h"
-#include "chrome/browser/search/thumbnail_source.h"
 #include "chrome/browser/ui/webui/extensions/extension_icon_source.h"
 #include "chrome/browser/ui/webui/favicon_source.h"
 #include "chrome/browser/ui/webui/theme_source.h"
@@ -69,6 +69,7 @@
 #include "chrome/common/url_constants.h"
 #include "components/content_settings/core/browser/host_content_settings_map.h"
 #include "components/crx_file/id_util.h"
+#include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/notification_service.h"
 #include "content/public/browser/render_process_host.h"
@@ -217,6 +218,9 @@ bool ExtensionService::OnExternalExtensionUpdateUrlFound(
             info.extension_id) &&
         current == Manifest::GetHigherPriorityLocation(
                        current, info.download_location)) {
+      InstallationFailures::ReportFailure(
+          profile_, info.extension_id,
+          InstallationFailures::Reason::ALREADY_INSTALLED);
       return false;
     }
     // Otherwise, overwrite the current installation.
@@ -293,7 +297,7 @@ ExtensionService::ExtensionService(Profile* profile,
       shared_module_service_(new SharedModuleService(profile_)),
       app_data_migrator_(new AppDataMigrator(profile_, registry_)),
       extension_registrar_(profile_, this),
-      forced_extensions_tracker_(registry_, profile_->GetPrefs()) {
+      forced_extensions_tracker_(registry_, profile_) {
   CHECK(BrowserThread::CurrentlyOn(BrowserThread::UI));
   TRACE_EVENT0("browser,startup", "ExtensionService::ExtensionService::ctor");
 
@@ -408,7 +412,6 @@ void ExtensionService::Init() {
   LoadExtensionsFromCommandLineFlag(::switches::kDisableExtensionsExcept);
   if (load_command_line_extensions)
     LoadExtensionsFromCommandLineFlag(switches::kLoadExtension);
-  EnableZipUnpackerExtension();
   EnabledReloadableExtensions();
   MaybeFinishShutdownDelayed();
   SetReadyAndNotifyListeners();
@@ -420,28 +423,6 @@ void ExtensionService::Init() {
   CheckForExternalUpdates();
 
   LoadGreylistFromPrefs();
-}
-
-void ExtensionService::EnableZipUnpackerExtensionForTest() {
-  EnableZipUnpackerExtension();
-}
-
-void ExtensionService::EnableZipUnpackerExtension() {
-  TRACE_EVENT0("browser,startup",
-               "ExtensionService::EnableZipUnpackerExtension");
-
-#if defined(OS_CHROMEOS)
-  // There were some cases where the Zip Unpacker was disabled in the profile,
-  // by some reason, and cannot re-enable it in any UI. crbug.com/643060
-  const std::string& id = extension_misc::kZIPUnpackerExtensionId;
-  const Extension* extension = registry_->disabled_extensions().GetByID(id);
-  if (extension && CanEnableExtension(extension)) {
-    base::UmaHistogramSparse(
-        "ExtensionService.ZipUnpackerDisabledReason",
-        extension_prefs_->GetDisableReasons(extension->id()));
-    EnableExtension(id);
-  }
-#endif
 }
 
 void ExtensionService::EnabledReloadableExtensions() {
@@ -922,13 +903,6 @@ void ExtensionService::PostActivateExtension(
   if (permissions_data->HasHostPermission(GURL(chrome::kChromeUIThemeURL))) {
     content::URLDataSource::Add(profile_,
                                 std::make_unique<ThemeSource>(profile_));
-  }
-
-  // Same for chrome://thumb/ resources.
-  if (permissions_data->HasHostPermission(
-          GURL(chrome::kChromeUIThumbnailURL))) {
-    content::URLDataSource::Add(
-        profile_, std::make_unique<ThumbnailSource>(profile_, false));
   }
 }
 
@@ -1803,9 +1777,7 @@ void ExtensionService::Observe(int type,
         // extensions could be referencing a shared module which is waiting for
         // idle to update.  Check all imports of these extensions, too.
         std::set<std::string> import_ids;
-        for (std::set<std::string>::const_iterator it = extension_ids.begin();
-             it != extension_ids.end();
-             ++it) {
+        for (auto it = extension_ids.begin(); it != extension_ids.end(); ++it) {
           const Extension* extension = GetExtensionById(*it, true);
           if (!extension)
             continue;
@@ -1819,8 +1791,7 @@ void ExtensionService::Observe(int type,
         }
         extension_ids.insert(import_ids.begin(), import_ids.end());
 
-        for (std::set<std::string>::const_iterator it = extension_ids.begin();
-             it != extension_ids.end(); ++it) {
+        for (auto it = extension_ids.begin(); it != extension_ids.end(); ++it) {
           if (delayed_installs_.Contains(*it)) {
             base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
                 FROM_HERE,
@@ -1834,8 +1805,8 @@ void ExtensionService::Observe(int type,
       }
 
       process_map->RemoveAllFromProcess(process->GetID());
-      BrowserThread::PostTask(
-          BrowserThread::IO, FROM_HERE,
+      base::PostTaskWithTraits(
+          FROM_HERE, {BrowserThread::IO},
           base::BindOnce(&InfoMap::UnregisterAllExtensionsInProcess,
                          system_->info_map(), process->GetID()));
       break;
@@ -2050,8 +2021,8 @@ void ExtensionService::UpdateBlacklistedExtensions(
   Partition(registry_->blacklisted_extensions().GetIDs(), blacklisted,
             unchanged, &no_longer_blocked, &not_yet_blocked);
 
-  for (ExtensionIdSet::iterator it = no_longer_blocked.begin();
-       it != no_longer_blocked.end(); ++it) {
+  for (auto it = no_longer_blocked.begin(); it != no_longer_blocked.end();
+       ++it) {
     scoped_refptr<const Extension> extension =
         registry_->blacklisted_extensions().GetByID(*it);
     if (!extension.get()) {
@@ -2068,8 +2039,7 @@ void ExtensionService::UpdateBlacklistedExtensions(
                               Manifest::NUM_LOCATIONS);
   }
 
-  for (ExtensionIdSet::iterator it = not_yet_blocked.begin();
-       it != not_yet_blocked.end(); ++it) {
+  for (auto it = not_yet_blocked.begin(); it != not_yet_blocked.end(); ++it) {
     scoped_refptr<const Extension> extension = GetInstalledExtension(*it);
     if (!extension.get()) {
       NOTREACHED() << "Extension " << *it << " needs to be "
@@ -2095,8 +2065,8 @@ void ExtensionService::UpdateGreylistedExtensions(
             greylist, unchanged,
             &no_longer_greylisted, &not_yet_greylisted);
 
-  for (ExtensionIdSet::iterator it = no_longer_greylisted.begin();
-       it != no_longer_greylisted.end(); ++it) {
+  for (auto it = no_longer_greylisted.begin(); it != no_longer_greylisted.end();
+       ++it) {
     scoped_refptr<const Extension> extension = greylist_.GetByID(*it);
     if (!extension.get()) {
       NOTREACHED() << "Extension " << *it << " no longer greylisted, "
@@ -2112,8 +2082,8 @@ void ExtensionService::UpdateGreylistedExtensions(
       EnableExtension(*it);
   }
 
-  for (ExtensionIdSet::iterator it = not_yet_greylisted.begin();
-       it != not_yet_greylisted.end(); ++it) {
+  for (auto it = not_yet_greylisted.begin(); it != not_yet_greylisted.end();
+       ++it) {
     scoped_refptr<const Extension> extension = GetInstalledExtension(*it);
     if (!extension.get()) {
       NOTREACHED() << "Extension " << *it << " needs to be "
@@ -2167,9 +2137,7 @@ void ExtensionService::UnloadAllExtensionsInternal() {
 
 void ExtensionService::OnProfileDestructionStarted() {
   ExtensionIdSet ids_to_unload = registry_->enabled_extensions().GetIDs();
-  for (ExtensionIdSet::iterator it = ids_to_unload.begin();
-       it != ids_to_unload.end();
-       ++it) {
+  for (auto it = ids_to_unload.begin(); it != ids_to_unload.end(); ++it) {
     UnloadExtension(*it, UnloadedExtensionReason::PROFILE_SHUTDOWN);
   }
 }

@@ -19,17 +19,12 @@ var SHORT_RESCAN_INTERVAL = 100;
  * @param {FileFilter} fileFilter Instance of FileFilter.
  * @param {!MetadataModel} metadataModel Metadata model.
  *     service.
- * @param {VolumeManagerWrapper} volumeManager The volume manager.
+ * @param {!VolumeManager} volumeManager The volume manager.
  * @param {!FileOperationManager} fileOperationManager File operation manager.
- * @param {!analytics.Tracker} tracker
  */
 function DirectoryModel(
-    singleSelection,
-    fileFilter,
-    metadataModel,
-    volumeManager,
-    fileOperationManager,
-    tracker) {
+    singleSelection, fileFilter, metadataModel, volumeManager,
+    fileOperationManager) {
   this.fileListSelection_ = singleSelection ?
       new FileListSingleSelectionModel() : new FileListSelectionModel();
 
@@ -53,7 +48,7 @@ function DirectoryModel(
                                     this.onFilterChanged_.bind(this));
 
   this.currentFileListContext_ =
-      new FileListContext(fileFilter, metadataModel);
+      new FileListContext(fileFilter, metadataModel, volumeManager);
   this.currentDirContents_ =
       DirectoryContents.createForDirectory(this.currentFileListContext_, null);
   /**
@@ -82,11 +77,11 @@ function DirectoryModel(
       'entries-changed',
       this.onEntriesChanged_.bind(this));
 
-  /** @private {!analytics.Tracker} */
-  this.tracker_ = tracker;
-
   /** @private {string} */
   this.lastSearchQuery_ = '';
+
+  /** @private {FilesAppDirEntry} */
+  this.myFilesEntry_ = null;
 }
 
 /**
@@ -129,8 +124,9 @@ DirectoryModel.prototype.getFileListSelection = function() {
  */
 DirectoryModel.prototype.getCurrentVolumeInfo = function() {
   var entry = this.getCurrentDirEntry();
-  if (!entry)
+  if (!entry) {
     return null;
+  }
   return this.volumeManager_.getVolumeInfo(entry);
 };
 
@@ -140,12 +136,14 @@ DirectoryModel.prototype.getCurrentVolumeInfo = function() {
  */
 DirectoryModel.prototype.getCurrentRootType = function() {
   var entry = this.currentDirContents_.getDirectoryEntry();
-  if (!entry)
+  if (!entry) {
     return null;
+  }
 
   var locationInfo = this.volumeManager_.getLocationInfo(entry);
-  if (!locationInfo)
+  if (!locationInfo) {
     return null;
+  }
 
   return locationInfo.rootType;
 };
@@ -166,8 +164,9 @@ DirectoryModel.prototype.isReadOnly = function() {
   var currentDirEntry = this.getCurrentDirEntry();
   if (currentDirEntry) {
     var locationInfo = this.volumeManager_.getLocationInfo(currentDirEntry);
-    if (locationInfo)
+    if (locationInfo) {
       return locationInfo.isReadOnly;
+    }
   }
   return true;
 };
@@ -233,7 +232,9 @@ DirectoryModel.prototype.updateSelectionAndPublishEvent_ =
 
   // Check if the change event is dispatched in the endChange function
   // or not.
-  var eventDispatched = function() { dispatchNeeded = false; };
+  var eventDispatched = function() {
+    dispatchNeeded = false;
+  };
   selection.addEventListener('change', eventDispatched);
   selection.endChange();
   selection.removeEventListener('change', eventDispatched);
@@ -285,10 +286,11 @@ DirectoryModel.prototype.onWatcherDirectoryChanged_ = function(event) {
     var addedOrUpdatedFileUrls = [];
     var deletedFileUrls = [];
     event.changedFiles.forEach(function(change) {
-      if (change.changes.length === 1 && change.changes[0] === 'delete')
+      if (change.changes.length === 1 && change.changes[0] === 'delete') {
         deletedFileUrls.push(change.url);
-      else
+      } else {
         addedOrUpdatedFileUrls.push(change.url);
+      }
     });
 
     util.URLsToEntries(addedOrUpdatedFileUrls).then(function(result) {
@@ -315,7 +317,21 @@ DirectoryModel.prototype.onWatcherDirectoryChanged_ = function(event) {
  * @private
  */
 DirectoryModel.prototype.onFilterChanged_ = function() {
-  this.rescanSoon(false);
+  const currentDirectory = this.getCurrentDirEntry();
+  if (currentDirectory && util.isNativeEntry(currentDirectory) &&
+      !this.fileFilter_.filter(
+          /** @type {!DirectoryEntry} */ (currentDirectory))) {
+    // If the current directory should be hidden in the new filter setting,
+    // change the current directory to the current volume's root.
+    const volumeInfo = this.volumeManager_.getVolumeInfo(currentDirectory);
+    if (volumeInfo) {
+      volumeInfo.resolveDisplayRoot().then(displayRoot => {
+        this.changeDirectoryEntry(displayRoot);
+      });
+    }
+  } else {
+    this.rescanSoon(false);
+  }
 };
 
 /**
@@ -358,8 +374,9 @@ DirectoryModel.prototype.setSelectedEntries_ = function(value) {
   var urls = util.entriesToURLs(value);
 
   for (var i = 0; i < fileList.length; i++) {
-    if (urls.indexOf(fileList.item(i).toURL()) !== -1)
+    if (urls.indexOf(fileList.item(i).toURL()) !== -1) {
       indexes.push(i);
+    }
   }
   this.fileListSelection_.selectedIndexes = indexes;
 };
@@ -417,8 +434,9 @@ DirectoryModel.prototype.rescanLater = function(refresh) {
  */
 DirectoryModel.prototype.scheduleRescan = function(delay, refresh) {
   if (this.rescanTime_) {
-    if (this.rescanTime_ <= Date.now() + delay)
+    if (this.rescanTime_ <= Date.now() + delay) {
       return;
+    }
     clearTimeout(this.rescanTimeoutId_);
   }
 
@@ -427,8 +445,9 @@ DirectoryModel.prototype.scheduleRescan = function(delay, refresh) {
   this.rescanTime_ = Date.now() + delay;
   this.rescanTimeoutId_ = setTimeout(function() {
     this.rescanTimeoutId_ = null;
-    if (sequence === this.changeDirectorySequence_)
+    if (sequence === this.changeDirectorySequence_) {
       this.rescan(refresh);
+    }
   }.bind(this), delay);
 };
 
@@ -463,7 +482,7 @@ DirectoryModel.prototype.rescan = function(refresh) {
   }
 
   var dirContents = this.currentDirContents_.clone();
-  dirContents.setFileList([]);
+  dirContents.setFileList(new FileListModel(this.metadataModel_));
   dirContents.setMetadataSnapshot(
       this.currentDirContents_.createMetadataSnapshot());
 
@@ -493,19 +512,21 @@ DirectoryModel.prototype.rescan = function(refresh) {
  *     is completed successfully, false if the scan is failed.
  * @private
  */
-DirectoryModel.prototype.clearAndScan_ = function(newDirContents,
-                                                  callback) {
-  if (this.currentDirContents_.isScanning())
+DirectoryModel.prototype.clearAndScan_ = function(newDirContents, callback) {
+  if (this.currentDirContents_.isScanning()) {
     this.currentDirContents_.cancelScan();
+  }
   this.currentDirContents_ = newDirContents;
   this.clearRescanTimeout_();
 
-  if (this.pendingScan_)
+  if (this.pendingScan_) {
     this.pendingScan_ = false;
+  }
 
   if (this.runningScan_) {
-    if (this.runningScan_.isScanning())
+    if (this.runningScan_.isScanning()) {
       this.runningScan_.cancelScan();
+    }
     this.runningScan_ = null;
   }
 
@@ -513,8 +534,9 @@ DirectoryModel.prototype.clearAndScan_ = function(newDirContents,
   var cancelled = false;
 
   var onDone = function() {
-    if (cancelled)
+    if (cancelled) {
       return;
+    }
 
     cr.dispatchSimpleEvent(this, 'scan-completed');
     callback(true);
@@ -522,8 +544,9 @@ DirectoryModel.prototype.clearAndScan_ = function(newDirContents,
 
   /** @param {DOMError} error error. */
   var onFailed = function(error) {
-    if (cancelled)
+    if (cancelled) {
       return;
+    }
 
     var event = new Event('scan-failed');
     event.error = error;
@@ -532,8 +555,9 @@ DirectoryModel.prototype.clearAndScan_ = function(newDirContents,
   }.bind(this);
 
   var onUpdated = function() {
-    if (cancelled)
+    if (cancelled) {
       return;
+    }
 
     if (this.changeDirectorySequence_ !== sequence) {
       cancelled = true;
@@ -546,8 +570,9 @@ DirectoryModel.prototype.clearAndScan_ = function(newDirContents,
   }.bind(this);
 
   var onCancelled = function() {
-    if (cancelled)
+    if (cancelled) {
       return;
+    }
 
     cancelled = true;
     cr.dispatchSimpleEvent(this, 'scan-cancelled');
@@ -587,8 +612,9 @@ DirectoryModel.prototype.clearAndScan_ = function(newDirContents,
 DirectoryModel.prototype.partialUpdate_ =
     function(changedEntries, removedUrls) {
   // This update should be included in the current running update.
-  if (this.pendingScan_)
+  if (this.pendingScan_) {
     return;
+  }
 
   if (this.runningScan_) {
     // Do update after the current scan is finished.
@@ -685,12 +711,12 @@ DirectoryModel.prototype.scan_ = function(
       var locationInfo =
           this.volumeManager_.getLocationInfo(
               assert(dirContents.getDirectoryEntry()));
-      var volumeInfo = locationInfo.volumeInfo;
+      var volumeInfo = locationInfo && locationInfo.volumeInfo;
       if (volumeInfo &&
           volumeInfo.volumeType === VolumeManagerCommon.VolumeType.DOWNLOADS &&
           locationInfo.isRootEntry) {
-        metrics.recordMediumCount('DownloadsCount',
-                                  dirContents.fileList_.length);
+        metrics.recordMediumCount(
+            'DownloadsCount', dirContents.getFileListLength());
       }
     }
 
@@ -707,15 +733,18 @@ DirectoryModel.prototype.scan_ = function(
     this.scanFailures_++;
     failureCallback(event.error);
 
-    if (maybeRunPendingRescan())
+    if (maybeRunPendingRescan()) {
       return;
+    }
 
     // Do not rescan for crostini errors.
-    if (event.error.name === DirectoryModel.CROSTINI_CONNECT_ERR)
+    if (event.error.name === DirectoryModel.CROSTINI_CONNECT_ERR) {
       return;
+    }
 
-    if (this.scanFailures_ <= 1)
+    if (this.scanFailures_ <= 1) {
       this.rescanLater(refresh);
+    }
   }.bind(this);
 
   var onCancelled = function() {
@@ -748,6 +777,7 @@ DirectoryModel.prototype.replaceDirectoryContents_ = function(dirContents) {
     // Restore leadIndex in case leadName no longer exists.
     var leadIndex = this.fileListSelection_.leadIndex;
     var leadEntry = this.getLeadEntry_();
+    const isCheckSelectMode = this.fileListSelection_.getCheckSelectMode();
 
     var previousDirContents = this.currentDirContents_;
     this.currentDirContents_ = dirContents;
@@ -766,6 +796,10 @@ DirectoryModel.prototype.replaceDirectoryContents_ = function(dirContents) {
       this.selectIndex(Math.min(maxIdx - selectedIndices.length + 2,
                                 this.getFileList().length) - 1);
       forceChangeEvent = true;
+    } else if (isCheckSelectMode) {
+      // Otherwise, ensure check select mode is retained if it was previously
+      // active.
+      this.fileListSelection_.setCheckSelectMode(true);
     }
     return forceChangeEvent;
   }.bind(this));
@@ -775,7 +809,7 @@ DirectoryModel.prototype.replaceDirectoryContents_ = function(dirContents) {
 
 /**
  * Callback when an entry is changed.
- * @param {Event} event Entry change event.
+ * @param {EntriesChangedEvent} event Entry change event.
  * @private
  */
 DirectoryModel.prototype.onEntriesChanged_ = function(event) {
@@ -788,8 +822,9 @@ DirectoryModel.prototype.onEntriesChanged_ = function(event) {
        rootType === VolumeManagerCommon.RootType.DRIVE_SHARED_WITH_ME ||
        rootType === VolumeManagerCommon.RootType.DRIVE_RECENT ||
        rootType === VolumeManagerCommon.RootType.DRIVE_OFFLINE) &&
-      this.isSearching())
+      this.isSearching()) {
     return;
+  }
 
   switch (kind) {
     case util.EntryChangedKind.CREATED:
@@ -802,8 +837,9 @@ DirectoryModel.prototype.onEntriesChanged_ = function(event) {
       Promise.all(parentPromises).then(function(parents) {
         var entriesToAdd = [];
         for (var i = 0; i < parents.length; i++) {
-          if (!util.isSameEntry(parents[i], this.getCurrentDirEntry()))
+          if (!util.isSameEntry(parents[i], this.getCurrentDirEntry())) {
             continue;
+          }
           var index = this.findIndexByEntry_(entries[i]);
           if (index >= 0) {
             this.getFileList().replaceItem(
@@ -837,8 +873,9 @@ DirectoryModel.prototype.onEntriesChanged_ = function(event) {
 DirectoryModel.prototype.findIndexByEntry_ = function(entry) {
   var fileList = this.getFileList();
   for (var i = 0; i < fileList.length; i++) {
-    if (util.isSameEntry(/** @type {Entry} */ (fileList.item(i)), entry))
+    if (util.isSameEntry(/** @type {Entry} */ (fileList.item(i)), entry)) {
       return i;
+    }
   }
   return -1;
 };
@@ -891,12 +928,14 @@ DirectoryModel.prototype.onRenameEntry = function(
     // update process. In DirectoryContent.update deletion is executed at first
     // and insertion is executed as a async call. There is a chance that this
     // method is called in the middle of update process.
-    if (!oldEntryExist && !newEntryExist)
+    if (!oldEntryExist && !newEntryExist) {
       list.push(newEntry);
+    }
 
     // Run callback, finally.
-    if (opt_callback)
+    if (opt_callback) {
       opt_callback();
+    }
   }.bind(this));
 };
 
@@ -918,12 +957,14 @@ DirectoryModel.prototype.updateAndSelectNewDirectory = function(newDirectory) {
   }).then(function(sequence) {
     // If current directory has changed during the prefetch, do not try to
     // select new directory.
-    if (sequence !== this.changeDirectorySequence_)
+    if (sequence !== this.changeDirectorySequence_) {
       return Promise.reject();
+    }
 
     // If target directory is already in the list, just select it.
-    var existing = this.getFileList().slice().filter(
-        function(e) { return e.name === newDirectory.name; });
+    var existing = this.getFileList().slice().filter(function(e) {
+      return e.name === newDirectory.name;
+    });
     if (existing.length) {
       this.selectEntry(newDirectory);
     } else {
@@ -933,6 +974,14 @@ DirectoryModel.prototype.updateAndSelectNewDirectory = function(newDirectory) {
       this.fileListSelection_.endChange();
     }
   }.bind(this, this.changeDirectorySequence_));
+};
+
+/**
+ * Sets the current MyFilesEntry.
+ * @param {FilesAppDirEntry} myFilesEntry
+ */
+DirectoryModel.prototype.setMyFiles = function(myFilesEntry) {
+  this.myFilesEntry_ = myFilesEntry;
 };
 
 /**
@@ -962,9 +1011,20 @@ DirectoryModel.prototype.changeDirectoryEntry = function(
   this.changeDirectorySequence_++;
   this.clearSearch_();
 
+  // When switching to MyFiles volume, we should use a FilesAppEntry if
+  // available because it returns UI-only entries too, like Linux files and Play
+  // files.
+  const locationInfo = this.volumeManager_.getLocationInfo(dirEntry);
+  if (util.isMyFilesVolumeEnabled() && locationInfo && this.myFilesEntry_ &&
+      locationInfo.rootType === VolumeManagerCommon.RootType.DOWNLOADS &&
+      locationInfo.isRootEntry) {
+    dirEntry = this.myFilesEntry_;
+  }
+
   // If there is on-going scan, cancel it.
-  if (this.currentDirContents_.isScanning())
+  if (this.currentDirContents_.isScanning()) {
     this.currentDirContents_.cancelScan();
+  }
 
   this.directoryChangeQueue_.run(function(sequence, queueTaskCallback) {
     this.fileWatcher_.changeWatchedDirectory(dirEntry)
@@ -987,8 +1047,9 @@ DirectoryModel.prototype.changeDirectoryEntry = function(
                newDirectoryContents,
                function(result) {
                  // Calls the callback of the method when successful.
-                 if (result && opt_callback)
+                 if (result && opt_callback) {
                    opt_callback();
+                 }
 
                  // Notify that the current task of this.directoryChangeQueue_
                  // is completed.
@@ -1008,68 +1069,14 @@ DirectoryModel.prototype.changeDirectoryEntry = function(
           event.newDirEntry = dirEntry;
           event.volumeChanged = previousVolumeInfo !== currentVolumeInfo;
           this.dispatchEvent(event);
-
-          if (currentVolumeInfo && event.volumeChanged) {
-            this.onVolumeChanged_(assert(currentVolumeInfo));
-          }
         }.bind(this));
   }.bind(this, this.changeDirectorySequence_));
 };
 
 /**
- * Handles volume changed by sending an analytics appView event.
- *
- * @param {!VolumeInfo} volumeInfo The new volume info.
- * @return {!Promise} resolves once handling is done.
- * @private
- */
-DirectoryModel.prototype.onVolumeChanged_ = function(volumeInfo) {
-  // NOTE: That dynamic values, like volume name MUST NOT
-  // be sent to GA as that value can contain PII.
-  // VolumeType is an enum.
-  // ...
-  // But we can do stuff like figure out if this is a media device or vanilla
-  // removable device.
-  return Promise.resolve(undefined)
-      .then(
-          (/** @this {DirectoryModel} */
-          function() {
-            switch (volumeInfo.volumeType) {
-              case VolumeManagerCommon.VolumeType.REMOVABLE:
-                return importer.hasMediaDirectory(volumeInfo.fileSystem.root)
-                    .then(
-                        /**
-                         * @param {boolean} hasMedia
-                         * @return {string}
-                         */
-                        function(hasMedia) {
-                          return hasMedia ?
-                              volumeInfo.volumeType + ':with-media-dir' :
-                              volumeInfo.volumeType;
-                        });
-              case VolumeManagerCommon.VolumeType.PROVIDED:
-                var providerId = volumeInfo.providerId;
-                var name = metrics.getFileSystemProviderName(providerId);
-                // Make note of an unrecognized provider id. When we see
-                // high counts for a particular id, we should add it to the
-                // whitelist in metrics_events.js.
-                if (providerId && name == 'unknown') {
-                  this.tracker_.send(
-                      metrics.Internals.UNRECOGNIZED_FILE_SYSTEM_PROVIDER.label(
-                          providerId));
-                }
-                return volumeInfo.volumeType + ':' + name;
-              default:
-                return volumeInfo.volumeType;
-            }
-          }).bind(this))
-      .then(this.tracker_.sendAppView.bind(this.tracker_));
-};
-
-/**
  * Activates the given directory.
  * This method:
- *  - Changes the current directory, if the given directory is the current
+ *  - Changes the current directory, if the given directory is not the current
  *    directory.
  *  - Clears the selection, if the given directory is the current directory.
  *
@@ -1158,8 +1165,9 @@ DirectoryModel.prototype.selectEntries = function(entries) {
   this.fileListSelection_.beginChange();
   this.fileListSelection_.unselectAll();
   for (var i = 0; i < fileList.length; i++) {
-    if (urls.indexOf(fileList.item(i).toURL()) >= 0)
+    if (urls.indexOf(fileList.item(i).toURL()) >= 0) {
       this.fileListSelection_.setIndexSelected(i, true);
+    }
   }
   this.fileListSelection_.endChange();
 };
@@ -1169,8 +1177,9 @@ DirectoryModel.prototype.selectEntries = function(entries) {
  */
 DirectoryModel.prototype.selectIndex = function(index) {
   // this.focusCurrentList_();
-  if (index >= this.getFileList().length)
+  if (index >= this.getFileList().length) {
     return;
+  }
 
   // If a list bound with the model it will do scrollIndexIntoView(index).
   this.fileListSelection_.selectedIndex = index;
@@ -1182,39 +1191,91 @@ DirectoryModel.prototype.selectIndex = function(index) {
  * @private
  */
 DirectoryModel.prototype.onVolumeInfoListUpdated_ = function(event) {
-  // When the volume where we are is unmounted, fallback to the default volume's
-  // root. If current directory path is empty, stop the fallback
-  // since the current directory is initializing now.
-  var entry = this.getCurrentDirEntry();
-  if (entry && !this.volumeManager_.getVolumeInfo(entry)) {
-    this.volumeManager_.getDefaultDisplayRoot(function(displayRoot) {
-      this.changeDirectoryEntry(displayRoot);
-    }.bind(this));
+  // Fallback to the default volume's root if the current volume is unmounted.
+  if (this.hasCurrentDirEntryBeenUnmounted_(event.removed)) {
+    this.volumeManager_.getDefaultDisplayRoot((displayRoot) => {
+      if (displayRoot) {
+        this.changeDirectoryEntry(displayRoot);
+      }
+    });
   }
 
+  // If a volume within My files is mounted, rescan the contents.
+  // TODO(crbug.com/901690): Remove this special case.
+  if (this.getCurrentRootType() === VolumeManagerCommon.RootType.MY_FILES) {
+    for (let newVolume of event.added) {
+      if (newVolume.volumeType === VolumeManagerCommon.VolumeType.DOWNLOADS ||
+          newVolume.volumeType ===
+              VolumeManagerCommon.VolumeType.ANDROID_FILES ||
+          newVolume.volumeType === VolumeManagerCommon.VolumeType.CROSTINI) {
+        this.rescan(false);
+        break;
+      }
+    }
+  }
+
+  // If the current directory is the Drive placeholder and the real Drive is
+  // mounted, switch to it.
+  if (this.getCurrentRootType() ===
+      VolumeManagerCommon.RootType.DRIVE_FAKE_ROOT) {
+    for (let newVolume of event.added) {
+      if (newVolume.volumeType === VolumeManagerCommon.VolumeType.DRIVE) {
+        newVolume.resolveDisplayRoot().then((displayRoot) => {
+          this.changeDirectoryEntry(displayRoot);
+        });
+      }
+    }
+  }
   // If a new file backed provided volume is mounted,
   // then redirect to it in the focused window.
-  // If crostini is mounted, redirect even if window is not focussed.
+  // If crostini is mounted, redirect even if window is not focused.
   // Note, that this is a temporary solution for https://crbug.com/427776.
-  if (event.added.length !== 1)
+  if (event.added.length !== 1) {
     return;
+  }
   if ((window.isFocused() &&
        event.added[0].volumeType === VolumeManagerCommon.VolumeType.PROVIDED &&
        event.added[0].source === VolumeManagerCommon.Source.FILE) ||
       event.added[0].volumeType === VolumeManagerCommon.VolumeType.CROSTINI) {
-    event.added[0].resolveDisplayRoot().then(function(displayRoot) {
+    event.added[0].resolveDisplayRoot().then((displayRoot) => {
       // Resolving a display root on FSP volumes is instant, despite the
       // asynchronous call.
       this.changeDirectoryEntry(event.added[0].displayRoot);
-    }.bind(this));
+    });
   }
+};
+
+/**
+ * Returns whether the current directory entry has been unmounted.
+ *
+ * @param {!Array<!VolumeInfo>} removedVolumes The removed volumes.
+ * @private
+ */
+DirectoryModel.prototype.hasCurrentDirEntryBeenUnmounted_ = function(
+    removedVolumes) {
+  const entry = this.getCurrentDirEntry();
+  if (!entry) {
+    return false;
+  }
+
+  if (util.isNativeEntry(entry)) {
+    return !this.volumeManager_.getVolumeInfo(entry);
+  }
+
+  const rootType = this.getCurrentRootType();
+  for (let volume of removedVolumes) {
+    if (volume.fakeEntries[rootType]) {
+      return true;
+    }
+  }
+  return false;
 };
 
 /**
  * Creates directory contents for the entry and query.
  *
  * @param {FileListContext} context File list context.
- * @param {!DirectoryEntry|!FakeEntry|!FilesAppEntry} entry Current directory.
+ * @param {!DirectoryEntry|!FilesAppEntry} entry Current directory.
  * @param {string=} opt_query Search query string.
  * @return {DirectoryContents} Directory contents.
  * @private
@@ -1239,6 +1300,10 @@ DirectoryModel.prototype.createDirectoryContents_ =
     return DirectoryContents.createForDirectory(
         context, /** @type {!FilesAppDirEntry} */ (entry));
   }
+  if (entry.rootType == VolumeManagerCommon.RootType.DRIVE_FAKE_ROOT) {
+    return DirectoryContents.createForFakeDrive(
+        context, /** @type {!FakeEntry} */ (entry));
+  }
   if (query && canUseDriveSearch) {
     // Drive search.
     return DirectoryContents.createForDriveSearch(
@@ -1250,8 +1315,9 @@ DirectoryModel.prototype.createDirectoryContents_ =
         context, /** @type {!DirectoryEntry} */ (entry), query);
   }
 
-  if (!locationInfo)
+  if (!locationInfo) {
     return null;
+  }
 
   if (locationInfo.rootType == VolumeManagerCommon.RootType.MEDIA_VIEW) {
     return DirectoryContents.createForMediaView(
@@ -1368,8 +1434,9 @@ DirectoryModel.prototype.search = function(query,
  * @private
  */
 DirectoryModel.prototype.clearSearch_ = function() {
-  if (!this.isSearching())
+  if (!this.isSearching()) {
     return;
+  }
 
   if (this.onSearchCompleted_) {
     this.removeEventListener('scan-completed', this.onSearchCompleted_);

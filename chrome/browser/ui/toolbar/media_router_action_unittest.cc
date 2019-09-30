@@ -50,20 +50,18 @@ class TestMediaRouterAction : public MediaRouterAction {
  public:
   TestMediaRouterAction(Browser* browser,
                         ToolbarActionsBar* toolbar_actions_bar)
-      : MediaRouterAction(browser, toolbar_actions_bar),
-        controller_(nullptr),
-        platform_delegate_(nullptr) {}
+      : MediaRouterAction(browser, toolbar_actions_bar), controller_(nullptr) {}
   ~TestMediaRouterAction() override {}
 
   // MediaRouterAction:
-  void ActiveTabChanged(content::WebContents* old_contents,
-                        content::WebContents* new_contents,
-                        int index,
-                        int reason) override {
+  void OnTabStripModelChanged(
+      TabStripModel* tab_strip_model,
+      const TabStripModelChange& change,
+      const TabStripSelectionChange& selection) override {
     // This would be null if |controller_| hasn't been set.
     if (GetMediaRouterDialogController()) {
-      MediaRouterAction::ActiveTabChanged(old_contents, new_contents, index,
-                                          reason);
+      MediaRouterAction::OnTabStripModelChanged(tab_strip_model, change,
+                                                selection);
     }
   }
 
@@ -75,16 +73,16 @@ class TestMediaRouterAction : public MediaRouterAction {
 
  private:
   // MediaRouterAction:
-  MediaRouterDialogControllerWebUIImpl* GetMediaRouterDialogController()
-      override {
+  media_router::MediaRouterDialogControllerImplBase*
+  GetMediaRouterDialogController() override {
     return controller_;
   }
-  MediaRouterActionPlatformDelegate* GetPlatformDelegate() override {
-    return platform_delegate_;
+  const media_router::MediaRouterDialogControllerImplBase*
+  GetMediaRouterDialogController() const override {
+    return controller_;
   }
 
   MediaRouterDialogControllerWebUIImpl* controller_;
-  MediaRouterActionPlatformDelegate* platform_delegate_;
 };
 
 class MediaRouterActionUnitTest : public MediaRouterWebUITest {
@@ -329,6 +327,9 @@ TEST_F(MediaRouterActionUnitTest, IconPressedState) {
   EXPECT_CALL(*mock_delegate, GetCurrentWebContents())
       .WillOnce(testing::Return(initiator));
   action()->SetDelegate(mock_delegate.get());
+
+  // Skip closing the overflow menu in tests.
+  action()->set_skip_close_overflow_menu_for_testing(true);
 
   EXPECT_CALL(*mock_delegate, OnPopupShown(true)).Times(1);
   action()->ExecuteAction(true);

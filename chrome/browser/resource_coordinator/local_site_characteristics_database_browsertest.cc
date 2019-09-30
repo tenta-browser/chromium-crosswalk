@@ -38,7 +38,7 @@
 #include "url/origin.h"
 
 #if defined(OS_CHROMEOS)
-#include "chromeos/chromeos_switches.h"
+#include "chromeos/constants/chromeos_switches.h"
 #endif
 
 namespace resource_coordinator {
@@ -141,7 +141,7 @@ class LocalSiteCharacteristicsDatabaseTest : public InProcessBrowserTest {
     const internal::LocalSiteCharacteristicsDataImpl* impl =
         static_cast<LocalSiteCharacteristicsDataReader*>(reader.get())
             ->impl_for_testing();
-    while (!impl->site_characteristics_for_testing().IsInitialized())
+    while (!impl->fully_initialized_for_testing())
       base::RunLoop().RunUntilIdle();
     return reader;
   }

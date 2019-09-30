@@ -35,7 +35,8 @@ NavigableContentsImpl::NavigableContentsImpl(
       binding_(this, std::move(request)),
       client_(std::move(client)),
       delegate_(
-          service_->delegate()->CreateNavigableContentsDelegate(client_.get())),
+          service_->delegate()->CreateNavigableContentsDelegate(*params,
+                                                                client_.get())),
       native_content_view_(delegate_->GetNativeView()) {
   binding_.set_connection_error_handler(base::BindRepeating(
       &Service::RemoveNavigableContents, base::Unretained(service_), this));
@@ -43,12 +44,18 @@ NavigableContentsImpl::NavigableContentsImpl(
 
 NavigableContentsImpl::~NavigableContentsImpl() = default;
 
-void NavigableContentsImpl::Navigate(const GURL& url) {
-  // Ignore non-HTTP/HTTPS requests for now.
-  if (!url.SchemeIsHTTPOrHTTPS())
+void NavigableContentsImpl::Navigate(const GURL& url,
+                                     mojom::NavigateParamsPtr params) {
+  // Ignore non-HTTP/HTTPS/data requests for now.
+  if (!url.SchemeIsHTTPOrHTTPS() && !url.SchemeIs(url::kDataScheme))
     return;
 
-  delegate_->Navigate(url);
+  delegate_->Navigate(url, std::move(params));
+}
+
+void NavigableContentsImpl::GoBack(
+    mojom::NavigableContents::GoBackCallback callback) {
+  delegate_->GoBack(std::move(callback));
 }
 
 void NavigableContentsImpl::CreateView(bool in_service_process,
@@ -81,14 +88,22 @@ void NavigableContentsImpl::CreateView(bool in_service_process,
   std::move(callback).Run(token);
 }
 
+void NavigableContentsImpl::Focus() {
+  delegate_->Focus();
+}
+
+void NavigableContentsImpl::FocusThroughTabTraversal(bool reverse) {
+  delegate_->FocusThroughTabTraversal(reverse);
+}
+
 #if BUILDFLAG(ENABLE_REMOTE_NAVIGABLE_CONTENTS_VIEW)
 void NavigableContentsImpl::OnEmbedTokenReceived(
     CreateViewCallback callback,
     const base::UnguessableToken& token) {
-#if defined(TOOLKIT_VIEWS)
-  if (native_content_view_)
-    native_content_view_->Show();
-#endif  // defined(TOOLKIT_VIEWS)
+#if defined(TOOLKIT_VIEWS) && defined(USE_AURA)
+  DCHECK(native_content_view_);
+  native_content_view_->Show();
+#endif  // defined(TOOLKIT_VIEWS) && defined(USE_AURA)
   std::move(callback).Run(token);
 }
 #endif  // BUILDFLAG(ENABLE_REMOTE_NAVIGABLE_CONTENTS_VIEW)
@@ -96,13 +111,9 @@ void NavigableContentsImpl::OnEmbedTokenReceived(
 void NavigableContentsImpl::EmbedInProcessClientView(
     NavigableContentsView* view) {
   DCHECK(native_content_view_);
-#if defined(TOOLKIT_VIEWS)
-  DCHECK(!local_view_host_);
-  local_view_host_ = std::make_unique<views::NativeViewHost>();
-  local_view_host_->set_owned_by_client();
-  view->view()->AddChildView(local_view_host_.get());
-  view->view()->Layout();
-  local_view_host_->Attach(native_content_view_);
+#if defined(TOOLKIT_VIEWS) && defined(USE_AURA)
+  view->native_view()->AddChild(native_content_view_);
+  native_content_view_->Show();
 #else
   // TODO(https://crbug.com/855092): Support embedding of other native client
   // views without Views + Aura.

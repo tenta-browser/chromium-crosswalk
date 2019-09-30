@@ -28,7 +28,6 @@
 #include "ash/app_list/views/search_box_view.h"
 #include "ash/app_list/views/search_result_tile_item_view.h"
 #include "ash/app_list/views/suggestion_chip_container_view.h"
-#include "ash/app_list/views/suggestions_container_view.h"
 #include "ash/app_list/views/test/apps_grid_view_test_api.h"
 #include "ash/public/cpp/app_list/app_list_config.h"
 #include "ash/public/cpp/app_list/app_list_constants.h"
@@ -145,35 +144,23 @@ class TestSuggestedSearchResult : public TestSearchResult {
 struct TestParams {
   bool is_rtl_enabled;
   bool is_apps_grid_gap_enabled;
-  bool is_new_style_launcher_enabled;
 };
 
 const TestParams kAppsGridViewTestParams[] = {
-    {false /* is_rtl_enabled */, false /* is_apps_grid_gap_enabled */,
-     false /* is_new_style_launcher_enabled */},
-    {false, false, true},
-    {true, false, false},
-    {true, false, true},
+    {false /* is_rtl_enabled */, false /* is_apps_grid_gap_enabled */},
+    {true, false},
 };
 
 const TestParams kAppsGridViewDragTestParams[] = {
-    {false /* is_rtl_enabled */, false /* is_apps_grid_gap_enabled */,
-     false /* is_apps_grid_gap_enabled */},
-    {false, false, true},
-    {true, false, false},
-    {true, false, true},
-    {false, true, false},
-    {false, true, true},
-    {true, true, false},
-    {true, true, true},
+    {false /* is_rtl_enabled */, false /* is_apps_grid_gap_enabled */},
+    {true, false},
+    {false, true},
+    {true, true},
 };
 
 const TestParams kAppsGridGapTestParams[] = {
-    {false /* is_rtl_enabled */, true /* is_apps_grid_gap_enabled */,
-     false /* is_apps_grid_gap_enabled */},
-    {false, true, true},
-    {true, true, false},
-    {true, true, true},
+    {false /* is_rtl_enabled */, true /* is_apps_grid_gap_enabled */},
+    {true, true},
 };
 
 }  // namespace
@@ -195,17 +182,13 @@ class AppsGridViewTest : public views::ViewsTestBase,
         base::i18n::SetICUDefaultLocale("he");
 
       is_apps_grid_gap_enabled_ = GetParam().is_apps_grid_gap_enabled;
-      is_new_style_launcher_enabled_ = GetParam().is_new_style_launcher_enabled;
     }
     if (is_apps_grid_gap_enabled_) {
-      enabled_features.emplace_back(features::kEnableAppsGridGapFeature);
+      enabled_features.emplace_back(
+          app_list_features::kEnableAppsGridGapFeature);
     } else {
-      disabled_features.emplace_back(features::kEnableAppsGridGapFeature);
-    }
-    if (is_new_style_launcher_enabled_) {
-      enabled_features.emplace_back(features::kEnableNewStyleLauncher);
-    } else {
-      disabled_features.emplace_back(features::kEnableNewStyleLauncher);
+      disabled_features.emplace_back(
+          app_list_features::kEnableAppsGridGapFeature);
     }
     scoped_feature_list_.InitWithFeatures(enabled_features, disabled_features);
     views::ViewsTestBase::SetUp();
@@ -223,15 +206,9 @@ class AppsGridViewTest : public views::ViewsTestBase,
 
     model_ = delegate_->GetTestModel();
     search_model_ = delegate_->GetSearchModel();
-    if (is_new_style_launcher_enabled_) {
-      suggestions_container_ = contents_view_->GetAppsContainerView()
-                                   ->suggestion_chip_container_view_for_test();
-    } else {
-      suggestions_container_ =
-          apps_grid_view_->suggestions_container_for_test();
-    }
-
-    expand_arrow_view_ = apps_grid_view_->expand_arrow_view_for_test();
+    suggestions_container_ = contents_view_->GetAppsContainerView()
+                                 ->suggestion_chip_container_view_for_test();
+    expand_arrow_view_ = contents_view_->expand_arrow_view();
     for (size_t i = 0; i < kNumOfSuggestedApps; ++i) {
       search_model_->results()->Add(
           std::make_unique<TestSuggestedSearchResult>());
@@ -343,7 +320,6 @@ class AppsGridViewTest : public views::ViewsTestBase,
   bool is_rtl_ = false;
   bool test_with_fullscreen_ = true;
   bool is_apps_grid_gap_enabled_ = false;
-  bool is_new_style_launcher_enabled_ = false;
 
  private:
   // Restores the locale to default when destructor is called.
@@ -398,8 +374,7 @@ TEST_P(AppsGridViewTest, CreatePage) {
   EXPECT_EQ(kNumOfSuggestedApps, suggestions_container_->num_results());
   // For new style launcher, each page has the same number of rows.
   const int kExpectedTilesOnFirstPage =
-      apps_grid_view_->cols() * (apps_grid_view_->rows_per_page() -
-                                 (is_new_style_launcher_enabled_ ? 0 : 1));
+      apps_grid_view_->cols() * (apps_grid_view_->rows_per_page());
   EXPECT_EQ(kExpectedTilesOnFirstPage, GetTilesPerPage(kPages - 1));
 
   model_->PopulateApps(kPages * GetTilesPerPage(kPages - 1));
@@ -587,6 +562,29 @@ TEST_F(AppsGridViewTest, CloseFolderByClickingBackground) {
                        ui::EF_LEFT_MOUSE_BUTTON);
   apps_container_view->folder_background_view()->OnMouseEvent(&event);
   EXPECT_FALSE(apps_container_view->IsInFolderView());
+}
+
+TEST_F(AppsGridViewTest, TapsBetweenAppsWontCloseAppList) {
+  model_->PopulateApps(2);
+  gfx::Point between_apps = GetItemRectOnCurrentPageAt(0, 0).right_center();
+  gfx::Point empty_space = GetItemRectOnCurrentPageAt(0, 2).CenterPoint();
+
+  ui::GestureEvent tap_between(between_apps.x(), between_apps.y(), 0,
+                               base::TimeTicks(),
+                               ui::GestureEventDetails(ui::ET_GESTURE_TAP));
+  ui::GestureEvent tap_outside(empty_space.x(), empty_space.y(), 0,
+                               base::TimeTicks(),
+                               ui::GestureEventDetails(ui::ET_GESTURE_TAP));
+
+  // Taps between apps should be handled to prevent them from going into
+  // app_list
+  apps_grid_view_->OnGestureEvent(&tap_between);
+  EXPECT_TRUE(tap_between.handled());
+
+  // Taps outside of occupied tiles should not be handled, that they may close
+  // the app_list
+  apps_grid_view_->OnGestureEvent(&tap_outside);
+  EXPECT_FALSE(tap_outside.handled());
 }
 
 TEST_F(AppsGridViewTest, PageResetAfterOpenFolder) {
@@ -1017,7 +1015,7 @@ TEST_P(AppsGridViewDragTest, MouseDragFlipPage) {
   gfx::Point from = GetItemRectOnCurrentPageAt(0, 0).CenterPoint();
   gfx::Point to;
   const gfx::Rect apps_grid_bounds = apps_grid_view_->GetLocalBounds();
-  to = gfx::Point(apps_grid_bounds.width() / 2, apps_grid_bounds.bottom());
+  to = gfx::Point(apps_grid_bounds.width() / 2, apps_grid_bounds.bottom() + 1);
 
   // For fullscreen/bubble launcher, drag to the bottom/right of bounds.
   page_flip_waiter.Reset();
@@ -1087,7 +1085,7 @@ class AppsGridGapTest : public AppsGridViewTest {
   // testing::Test overrides:
   void SetUp() override {
     scoped_feature_list_.InitWithFeatures(
-        {app_list::features::kEnableAppsGridGapFeature}, {});
+        {app_list_features::kEnableAppsGridGapFeature}, {});
     AppsGridViewTest::SetUp();
     apps_grid_view_->set_page_flip_delay_in_ms_for_testing(10);
     GetPaginationModel()->SetTransitionDurations(10, 10);
@@ -1114,7 +1112,7 @@ class AppsGridGapTest : public AppsGridViewTest {
     const gfx::Rect apps_grid_bounds = apps_grid_view_->GetLocalBounds();
     gfx::Point point_in_page_flip_buffer =
         gfx::Point(apps_grid_bounds.width() / 2,
-                   next_page ? apps_grid_bounds.bottom() : 0);
+                   next_page ? apps_grid_bounds.bottom() + 1 : 0);
 
     // Build the drag event which will be triggered after page flip.
     gfx::Point root_to(to);
@@ -1320,8 +1318,8 @@ TEST_P(AppsGridGapTest, MoveLastItemToNewEmptyPage) {
   EXPECT_EQ(std::string("Item 0"), model_->GetModelContent());
 }
 
-TEST_P(AppsGridGapTest, MoveItemToPreviousFullPageNotAllowed) {
-  const int kApps = 1 + GetTilesPerPage(0);
+TEST_P(AppsGridGapTest, MoveItemToPreviousFullPage) {
+  const int kApps = 2 + GetTilesPerPage(0);
   model_->PopulateApps(kApps);
 
   // There are two pages and last item is on second page.
@@ -1331,56 +1329,78 @@ TEST_P(AppsGridGapTest, MoveItemToPreviousFullPageNotAllowed) {
   const views::ViewModelT<AppListItemView>* view_model =
       apps_grid_view_->view_model();
   EXPECT_EQ(kApps, view_model->view_size());
-  for (int i = 0; i < kApps - 1; ++i) {
-    EXPECT_EQ(view_model->view_at(i),
-              test_api_->GetViewAtVisualIndex(0 /* page */, i /* slot */));
-    EXPECT_EQ("Item " + std::to_string(i),
+  for (int i = 0; i < kApps; ++i) {
+    EXPECT_EQ(view_model->view_at(i), test_api_->GetViewAtVisualIndex(
+                                          i / GetTilesPerPage(0) /* page */,
+                                          i % GetTilesPerPage(0) /* slot */));
+    EXPECT_EQ("Item " + base::IntToString(i),
               view_model->view_at(i)->item()->id());
   }
-  EXPECT_EQ(view_model->view_at(kApps - 1),
-            test_api_->GetViewAtVisualIndex(1 /* page */, 0 /* slot */));
-  EXPECT_EQ("Item " + std::to_string(kApps - 1),
-            view_model->view_at(kApps - 1)->item()->id());
 
-  // There's no "page break" item between Item 19 and 20, although there are two
-  // pages. It will only be added after user operations.
-  EXPECT_EQ(std::string("Item 0,Item 1,Item 2,Item 3,Item 4,Item 5,Item 6,Item "
-                        "7,Item 8,Item 9,Item 10,Item 11,Item 12,Item 13,Item "
-                        "14,Item 15,Item 16,Item 17,Item 18,Item 19,Item 20"),
-            model_->GetModelContent());
+  // There's no "page break" item at the end of first page, although there are
+  // two pages. It will only be added after user operations.
+  std::string model_content = "Item 0";
+  for (int i = 1; i < kApps; ++i)
+    model_content.append(",Item " + base::IntToString(i));
+  EXPECT_EQ(model_content, model_->GetModelContent());
 
   // Drag the last item to the first item's left position in previous page.
-  gfx::Point from = test_api_->GetItemTileRectAtVisualIndex(1, 0).CenterPoint();
+  gfx::Point from = test_api_->GetItemTileRectAtVisualIndex(1, 1).CenterPoint();
   gfx::Rect tile_rect = test_api_->GetItemTileRectAtVisualIndex(0, 0);
   gfx::Point to_in_previous_page = tile_rect.CenterPoint();
   to_in_previous_page.set_x(tile_rect.x());
   GetPaginationModel()->SelectPage(1, false);
   SimulateDragToNeighborPage(false /* next_page */, from, to_in_previous_page);
 
-  // The dragging is not successfull, so nothing changes visually.
+  // The dragging is successful, the last item becomes the first item.
   EXPECT_EQ("0", page_flip_waiter_->selected_pages());
   EXPECT_EQ(0, GetPaginationModel()->selected_page());
   TestAppListItemViewIndice();
   EXPECT_EQ(kApps, view_model->view_size());
-  EXPECT_EQ(view_model->view_at(0),
-            test_api_->GetViewAtVisualIndex(0 /* page */, 0 /* slot */));
-  for (int i = 0; i < kApps - 1; ++i) {
-    EXPECT_EQ(view_model->view_at(i),
-              test_api_->GetViewAtVisualIndex(0 /* page */, i /* slot */));
-    EXPECT_EQ("Item " + std::to_string(i),
+  for (int i = 0; i < kApps; ++i) {
+    EXPECT_EQ(view_model->view_at(i), test_api_->GetViewAtVisualIndex(
+                                          i / GetTilesPerPage(0) /* page */,
+                                          i % GetTilesPerPage(0) /* slot */));
+    EXPECT_EQ("Item " + base::IntToString((i + kApps - 1) % kApps),
               view_model->view_at(i)->item()->id());
   }
-  EXPECT_EQ(view_model->view_at(kApps - 1),
-            test_api_->GetViewAtVisualIndex(1 /* page */, 0 /* slot */));
-  EXPECT_EQ("Item " + std::to_string(kApps - 1),
-            view_model->view_at(kApps - 1)->item()->id());
 
   // A "page break" item is added to split the pages.
-  EXPECT_EQ(std::string("Item 0,Item 1,Item 2,Item 3,Item 4,Item 5,Item 6,Item "
-                        "7,Item 8,Item 9,Item 10,Item 11,Item 12,Item 13,Item "
-                        "14,Item 15,Item 16,Item 17,Item 18,Item "
-                        "19,PageBreakItem,Item 20"),
-            model_->GetModelContent());
+  model_content = "Item " + base::IntToString(kApps - 1);
+  for (int i = 1; i < kApps; ++i) {
+    model_content.append(",Item " + base::IntToString(i - 1));
+    if (i == GetTilesPerPage(0) - 1)
+      model_content.append(",PageBreakItem");
+  }
+  EXPECT_EQ(model_content, model_->GetModelContent());
+
+  // Again drag the last item to the first item's left position in previous
+  // page.
+  GetPaginationModel()->SelectPage(1, false);
+  SimulateDragToNeighborPage(false /* next_page */, from, to_in_previous_page);
+
+  // The dragging is successful, the last item becomes the first item again.
+  EXPECT_EQ("0", page_flip_waiter_->selected_pages());
+  EXPECT_EQ(0, GetPaginationModel()->selected_page());
+  TestAppListItemViewIndice();
+  EXPECT_EQ(kApps, view_model->view_size());
+  for (int i = 0; i < kApps; ++i) {
+    EXPECT_EQ(view_model->view_at(i), test_api_->GetViewAtVisualIndex(
+                                          i / GetTilesPerPage(0) /* page */,
+                                          i % GetTilesPerPage(0) /* slot */));
+    EXPECT_EQ("Item " + base::IntToString((i + kApps - 2) % kApps),
+              view_model->view_at(i)->item()->id());
+  }
+
+  // A "page break" item still exists.
+  model_content = "Item " + base::IntToString(kApps - 2) + ",Item " +
+                  base::IntToString(kApps - 1);
+  for (int i = 2; i < kApps; ++i) {
+    model_content.append(",Item " + base::IntToString(i - 2));
+    if (i == GetTilesPerPage(0) - 1)
+      model_content.append(",PageBreakItem");
+  }
+  EXPECT_EQ(model_content, model_->GetModelContent());
 }
 
 }  // namespace test

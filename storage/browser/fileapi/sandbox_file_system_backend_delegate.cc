@@ -182,11 +182,11 @@ SandboxFileSystemBackendDelegate::SandboxFileSystemBackendDelegate(
     leveldb::Env* env_override)
     : file_task_runner_(file_task_runner),
       quota_manager_proxy_(quota_manager_proxy),
-      sandbox_file_util_(new AsyncFileUtilAdapter(
+      sandbox_file_util_(std::make_unique<AsyncFileUtilAdapter>(
           new ObfuscatedFileUtil(special_storage_policy,
                                  profile_path.Append(kFileSystemDirectory),
                                  env_override,
-                                 base::Bind(&GetTypeStringForURL),
+                                 base::BindRepeating(&GetTypeStringForURL),
                                  GetKnownTypeStrings(),
                                  this))),
       file_system_usage_cache_(std::make_unique<FileSystemUsageCache>()),
@@ -211,7 +211,7 @@ SandboxFileSystemBackendDelegate::SandboxFileSystemBackendDelegate(
       !file_task_runner_->RunsTasksInCurrentSequence()) {
     std::vector<std::string> types_to_prepopulate(
         &kPrepopulateTypes[0],
-        &kPrepopulateTypes[arraysize(kPrepopulateTypes)]);
+        &kPrepopulateTypes[base::size(kPrepopulateTypes)]);
     file_task_runner_->PostTask(
         FROM_HERE, base::BindOnce(&ObfuscatedFileUtil::MaybePrepopulateDatabase,
                                   base::Unretained(obfuscated_file_util()),
@@ -360,6 +360,14 @@ SandboxFileSystemBackendDelegate::DeleteOriginDataOnFileTaskRunner(
   return base::File::FILE_ERROR_FAILED;
 }
 
+void SandboxFileSystemBackendDelegate::PerformStorageCleanupOnFileTaskRunner(
+    FileSystemContext* context,
+    storage::QuotaManagerProxy* proxy,
+    FileSystemType type) {
+  DCHECK(file_task_runner_->RunsTasksInCurrentSequence());
+  obfuscated_file_util()->RewriteDatabases();
+}
+
 void SandboxFileSystemBackendDelegate::GetOriginsForTypeOnFileTaskRunner(
     FileSystemType type, std::set<GURL>* origins) {
   DCHECK(file_task_runner_->RunsTasksInCurrentSequence());
@@ -476,8 +484,7 @@ void SandboxFileSystemBackendDelegate::AddFileAccessObserver(
 
 const UpdateObserverList* SandboxFileSystemBackendDelegate::GetUpdateObservers(
     FileSystemType type) const {
-  std::map<FileSystemType, UpdateObserverList>::const_iterator iter =
-      update_observers_.find(type);
+  auto iter = update_observers_.find(type);
   if (iter == update_observers_.end())
     return nullptr;
   return &iter->second;
@@ -485,8 +492,7 @@ const UpdateObserverList* SandboxFileSystemBackendDelegate::GetUpdateObservers(
 
 const ChangeObserverList* SandboxFileSystemBackendDelegate::GetChangeObservers(
     FileSystemType type) const {
-  std::map<FileSystemType, ChangeObserverList>::const_iterator iter =
-      change_observers_.find(type);
+  auto iter = change_observers_.find(type);
   if (iter == change_observers_.end())
     return nullptr;
   return &iter->second;
@@ -494,8 +500,7 @@ const ChangeObserverList* SandboxFileSystemBackendDelegate::GetChangeObservers(
 
 const AccessObserverList* SandboxFileSystemBackendDelegate::GetAccessObservers(
     FileSystemType type) const {
-  std::map<FileSystemType, AccessObserverList>::const_iterator iter =
-      access_observers_.find(type);
+  auto iter = access_observers_.find(type);
   if (iter == access_observers_.end())
     return nullptr;
   return &iter->second;
@@ -548,12 +553,12 @@ bool SandboxFileSystemBackendDelegate::IsAccessValid(
   // http://dev.w3.org/2009/dap/file-system/file-dir-sys.html#naming-restrictions
   base::FilePath filename = VirtualPath::BaseName(url.path());
   // See if the name is allowed to create.
-  for (size_t i = 0; i < arraysize(kRestrictedNames); ++i) {
-    if (filename.value() == kRestrictedNames[i])
+  for (const auto* const restricted_name : kRestrictedNames) {
+    if (filename.value() == restricted_name)
       return false;
   }
-  for (size_t i = 0; i < arraysize(kRestrictedChars); ++i) {
-    if (filename.value().find(kRestrictedChars[i]) !=
+  for (const auto& restricted_char : kRestrictedChars) {
+    if (filename.value().find(restricted_char) !=
         base::FilePath::StringType::npos)
       return false;
   }
@@ -705,7 +710,8 @@ ObfuscatedFileUtil* ObfuscatedFileUtil::CreateForTesting(
     const base::FilePath& file_system_directory,
     leveldb::Env* env_override) {
   return new ObfuscatedFileUtil(special_storage_policy, file_system_directory,
-                                env_override, base::Bind(&GetTypeStringForURL),
+                                env_override,
+                                base::BindRepeating(&GetTypeStringForURL),
                                 GetKnownTypeStrings(), nullptr);
 }
 

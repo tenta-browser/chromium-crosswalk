@@ -28,6 +28,7 @@
 #include "chrome/browser/ui/toolbar/toolbar_action_view_controller.h"
 #include "chrome/browser/ui/toolbar/toolbar_actions_bar.h"
 #include "chrome/browser/ui/toolbar/toolbar_actions_model_factory.h"
+#include "chrome/common/extensions/extension_constants.h"
 #include "components/prefs/pref_service.h"
 #include "content/public/browser/notification_details.h"
 #include "content/public/browser/notification_source.h"
@@ -92,7 +93,7 @@ void ToolbarActionsModel::RemoveObserver(Observer* observer) {
 }
 
 void ToolbarActionsModel::MoveActionIcon(const std::string& id, size_t index) {
-  std::vector<ToolbarItem>::iterator pos = toolbar_items_.begin();
+  auto pos = toolbar_items_.begin();
   while (pos != toolbar_items_.end() && (*pos).id != id)
     ++pos;
   if (pos == toolbar_items_.end()) {
@@ -103,7 +104,7 @@ void ToolbarActionsModel::MoveActionIcon(const std::string& id, size_t index) {
   ToolbarItem action = *pos;
   toolbar_items_.erase(pos);
 
-  std::vector<std::string>::iterator pos_id =
+  auto pos_id =
       std::find(last_known_positions_.begin(), last_known_positions_.end(), id);
   if (pos_id != last_known_positions_.end())
     last_known_positions_.erase(pos_id);
@@ -112,7 +113,7 @@ void ToolbarActionsModel::MoveActionIcon(const std::string& id, size_t index) {
     // If the index is not at the end, find the item currently at |index|, and
     // insert |action| before it in |toolbar_items_| and |action|'s id in
     // |last_known_positions_|.
-    std::vector<ToolbarItem>::iterator iter = toolbar_items_.begin() + index;
+    auto iter = toolbar_items_.begin() + index;
     last_known_positions_.insert(
         std::find(last_known_positions_.begin(), last_known_positions_.end(),
                   iter->id),
@@ -245,8 +246,8 @@ void ToolbarActionsModel::OnLoadFailure(
 }
 
 void ToolbarActionsModel::RemovePref(const ToolbarItem& item) {
-  std::vector<std::string>::iterator pos = std::find(
-      last_known_positions_.begin(), last_known_positions_.end(), item.id);
+  auto pos = std::find(last_known_positions_.begin(),
+                       last_known_positions_.end(), item.id);
 
   if (pos != last_known_positions_.end()) {
     last_known_positions_.erase(pos);
@@ -387,8 +388,7 @@ void ToolbarActionsModel::AddItem(const ToolbarItem& item) {
 }
 
 void ToolbarActionsModel::RemoveItem(const ToolbarItem& item) {
-  std::vector<ToolbarItem>::iterator pos =
-      std::find(toolbar_items_.begin(), toolbar_items_.end(), item);
+  auto pos = std::find(toolbar_items_.begin(), toolbar_items_.end(), item);
 
   if (pos == toolbar_items_.end())
     return;
@@ -552,14 +552,11 @@ void ToolbarActionsModel::Populate() {
       "ExtensionToolbarModel.BrowserActionsPermanentlyHidden", hidden);
   UMA_HISTOGRAM_COUNTS_100("ExtensionToolbarModel.BrowserActionsCount",
                            browser_actions_count);
-  UMA_HISTOGRAM_COUNTS_100("Toolbar.ActionsModel.ComponentActionsCount",
-                           component_actions_count);
   UMA_HISTOGRAM_COUNTS_100("Toolbar.ActionsModel.OverallActionsCount",
                            toolbar_items_.size());
 
-  const char kDocsOfflineExtensionId[] = "ghbmnnjooekpmoecnnnilnnbdlolhkhi";
   if (extension_registry_->GetExtensionById(
-          kDocsOfflineExtensionId,
+          extension_misc::kDocsOfflineExtensionId,
           extensions::ExtensionRegistry::ENABLED |
               extensions::ExtensionRegistry::DISABLED) != nullptr) {
     // Note: This enum is used in UMA (directly below). Don't renumber.
@@ -570,12 +567,13 @@ void ToolbarActionsModel::Populate() {
       BOUNDARY   = 3,
     };
     ExtensionState doc_state = DISABLED;
-    if (extensions.GetByID(kDocsOfflineExtensionId)) {  // In the enabled set.
+    if (extensions.GetByID(
+            extension_misc::kDocsOfflineExtensionId)) {  // In the enabled set.
       auto current_pos = std::find_if(
           toolbar_items_.begin(), toolbar_items_.end(),
-          [&kDocsOfflineExtensionId](const ToolbarItem& item) {
-        return item.id == kDocsOfflineExtensionId;
-      });
+          [](const ToolbarItem& item) {
+            return item.id == extension_misc::kDocsOfflineExtensionId;
+          });
       doc_state =
           current_pos - toolbar_items_.begin() <
               static_cast<int>(visible_icon_count()) ||
@@ -654,8 +652,7 @@ void ToolbarActionsModel::IncognitoPopulate() {
 
   std::set<std::string> component_ids =
       component_actions_factory_->GetInitialComponentIds();
-  for (std::vector<ToolbarItem>::const_iterator iter =
-           original_model->toolbar_items_.begin();
+  for (auto iter = original_model->toolbar_items_.begin();
        iter != original_model->toolbar_items_.end(); ++iter) {
     // The extension might not be shown in incognito mode.
     // We may also disable certain component actions in incognito mode.

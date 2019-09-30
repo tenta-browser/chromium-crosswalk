@@ -27,28 +27,28 @@
 namespace ui {
 
 // Implements accessibility on Aura Linux using ATK.
-class AXPlatformNodeAuraLinux : public AXPlatformNodeBase {
+class AX_EXPORT AXPlatformNodeAuraLinux : public AXPlatformNodeBase {
  public:
   AXPlatformNodeAuraLinux();
   ~AXPlatformNodeAuraLinux() override;
 
   // Set or get the root-level Application object that's the parent of all
   // top-level windows.
-  AX_EXPORT static void SetApplication(AXPlatformNode* application);
-  static AXPlatformNode* application() { return application_; }
+  static void SetApplication(AXPlatformNode* application);
+  static AXPlatformNode* application();
 
   static void EnsureGTypeInit();
 
   // Do asynchronous static initialization.
-  AX_EXPORT static void StaticInitialize();
+  static void StaticInitialize();
 
-  AX_EXPORT void DataChanged();
+  void DataChanged();
   void Destroy() override;
-  AX_EXPORT void AddAccessibilityTreeProperties(base::DictionaryValue* dict);
+  void AddAccessibilityTreeProperties(base::DictionaryValue* dict);
 
   AtkRole GetAtkRole();
   void GetAtkState(AtkStateSet* state_set);
-  void GetAtkRelations(AtkRelationSet* atk_relation_set);
+  AtkRelationSet* GetAtkRelations();
   void GetExtents(gint* x, gint* y, gint* width, gint* height,
                   AtkCoordType coord_type);
   void GetPosition(gint* x, gint* y, AtkCoordType coord_type);
@@ -76,7 +76,19 @@ class AXPlatformNodeAuraLinux : public AXPlatformNodeBase {
   void GetFloatAttributeInGValue(ax::mojom::FloatAttribute attr, GValue* value);
 
   // Event helpers
+  void OnCheckedStateChanged();
+  void OnExpandedStateChanged(bool is_expanded);
   void OnFocused();
+  void OnWindowActivated();
+  void OnWindowDeactivated();
+  void OnMenuPopupStart();
+  void OnMenuPopupHide();
+  void OnMenuPopupEnd();
+  void OnSelected();
+  void OnValueChanged();
+
+  bool SupportsSelectionWithAtkSelection();
+  bool SelectionAndFocusAreTheSame();
 
   // AXPlatformNode overrides.
   gfx::NativeViewAccessible GetNativeViewAccessible() override;
@@ -88,7 +100,8 @@ class AXPlatformNodeAuraLinux : public AXPlatformNodeBase {
 
   std::string GetTextForATK();
 
-  AX_EXPORT void UpdateHypertext();
+  void UpdateHypertext();
+  const AXHypertext& GetHypertext();
 
  protected:
   AXHypertext hypertext_;
@@ -110,28 +123,25 @@ class AXPlatformNodeAuraLinux : public AXPlatformNodeBase {
     ATK_TABLE_INTERFACE,
     ATK_TEXT_INTERFACE,
     ATK_VALUE_INTERFACE,
+    ATK_WINDOW_INTERFACE,
   };
-  static const char* GetUniqueAccessibilityGTypeName(int interface_mask);
+
   int GetGTypeInterfaceMask();
   GType GetAccessibilityGType();
   AtkObject* CreateAtkObject();
   void DestroyAtkObjects();
+  void AddRelationToSet(AtkRelationSet*, AtkRelationType, int target_id);
+
+  // The AtkStateType for a checkable node can vary depending on the role.
+  AtkStateType GetAtkStateTypeForCheckableNode();
 
   // Keep information of latest AtkInterfaces mask to refresh atk object
   // interfaces accordingly if needed.
-  int interface_mask_;
+  int interface_mask_ = 0;
 
   // We own a reference to these ref-counted objects.
-  AtkObject* atk_object_;
-  AtkHyperlink* atk_hyperlink_;
-
-  // The root-level Application object that's the parent of all
-  // top-level windows.
-  static AXPlatformNode* application_;
-
-  // The last AtkObject with keyboard focus. Tracking this is required
-  // to emit the ATK_STATE_FOCUSED change to false.
-  static AtkObject* current_focused_;
+  AtkObject* atk_object_ = nullptr;
+  AtkHyperlink* atk_hyperlink_ = nullptr;
 
   DISALLOW_COPY_AND_ASSIGN(AXPlatformNodeAuraLinux);
 };

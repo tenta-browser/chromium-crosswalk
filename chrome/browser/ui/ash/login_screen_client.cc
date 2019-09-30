@@ -7,6 +7,7 @@
 #include <utility>
 
 #include "ash/public/interfaces/constants.mojom.h"
+#include "chrome/browser/chromeos/login/existing_user_controller.h"
 #include "chrome/browser/chromeos/login/help_app_launcher.h"
 #include "chrome/browser/chromeos/login/lock/screen_locker.h"
 #include "chrome/browser/chromeos/login/login_auth_recorder.h"
@@ -17,6 +18,7 @@
 #include "chrome/browser/ui/ash/wallpaper_controller_client.h"
 #include "chrome/browser/ui/webui/chromeos/login/l10n_util.h"
 #include "components/user_manager/remove_user_delegate.h"
+#include "components/user_manager/user_names.h"
 #include "content/public/common/service_manager_connection.h"
 #include "services/service_manager/public/cpp/connector.h"
 
@@ -63,6 +65,16 @@ void LoginScreenClient::SetDelegate(Delegate* delegate) {
   delegate_ = delegate;
 }
 
+void LoginScreenClient::AddSystemTrayFocusObserver(
+    ash::SystemTrayFocusObserver* observer) {
+  system_tray_focus_observers_.AddObserver(observer);
+}
+
+void LoginScreenClient::RemoveSystemTrayFocusObserver(
+    ash::SystemTrayFocusObserver* observer) {
+  system_tray_focus_observers_.RemoveObserver(observer);
+}
+
 ash::mojom::LoginScreenPtr& LoginScreenClient::login_screen() {
   return login_screen_;
 }
@@ -71,26 +83,50 @@ chromeos::LoginAuthRecorder* LoginScreenClient::auth_recorder() {
   return auth_recorder_.get();
 }
 
-void LoginScreenClient::AuthenticateUser(const AccountId& account_id,
-                                         const std::string& password,
-                                         bool authenticated_by_pin,
-                                         AuthenticateUserCallback callback) {
+void LoginScreenClient::AuthenticateUserWithPasswordOrPin(
+    const AccountId& account_id,
+    const std::string& password,
+    bool authenticated_by_pin,
+    AuthenticateUserWithPasswordOrPinCallback callback) {
   if (delegate_) {
-    delegate_->HandleAuthenticateUser(
+    delegate_->HandleAuthenticateUserWithPasswordOrPin(
         account_id, password, authenticated_by_pin, std::move(callback));
     auth_recorder_->RecordAuthMethod(
         authenticated_by_pin
             ? chromeos::LoginAuthRecorder::AuthMethod::kPin
             : chromeos::LoginAuthRecorder::AuthMethod::kPassword);
   } else {
-    LOG(ERROR) << "Returning failed authentication attempt; no delegate";
+    LOG(ERROR) << "Failed AuthenticateUserWithPasswordOrPin; no delegate";
     std::move(callback).Run(false);
   }
 }
+void LoginScreenClient::AuthenticateUserWithExternalBinary(
+    const AccountId& account_id,
+    AuthenticateUserWithExternalBinaryCallback callback) {
+  if (!delegate_)
+    LOG(FATAL) << "Failed AuthenticateUserWithExternalBinary; no delegate";
 
-void LoginScreenClient::AttemptUnlock(const AccountId& account_id) {
+  delegate_->HandleAuthenticateUserWithExternalBinary(account_id,
+                                                      std::move(callback));
+  // TODO: Record auth method attempt here
+  NOTIMPLEMENTED() << "Missing UMA recording for external binary auth";
+}
+
+void LoginScreenClient::EnrollUserWithExternalBinary(
+    EnrollUserWithExternalBinaryCallback callback) {
+  if (!delegate_)
+    LOG(FATAL) << "Failed EnrollUserWithExternalBinary; no delegate";
+
+  delegate_->HandleEnrollUserWithExternalBinary(std::move(callback));
+
+  // TODO: Record enrollment attempt here
+  NOTIMPLEMENTED() << "Missing UMA recording for external binary enrollment";
+}
+
+void LoginScreenClient::AuthenticateUserWithEasyUnlock(
+    const AccountId& account_id) {
   if (delegate_) {
-    delegate_->HandleAttemptUnlock(account_id);
+    delegate_->HandleAuthenticateUserWithEasyUnlock(account_id);
     auth_recorder_->RecordAuthMethod(
         chromeos::LoginAuthRecorder::AuthMethod::kSmartlock);
   }
@@ -99,11 +135,6 @@ void LoginScreenClient::AttemptUnlock(const AccountId& account_id) {
 void LoginScreenClient::HardlockPod(const AccountId& account_id) {
   if (delegate_)
     delegate_->HandleHardlockPod(account_id);
-}
-
-void LoginScreenClient::RecordClickOnLockIcon(const AccountId& account_id) {
-  if (delegate_)
-    delegate_->HandleRecordClickOnLockIcon(account_id);
 }
 
 void LoginScreenClient::OnFocusPod(const AccountId& account_id) {
@@ -122,6 +153,11 @@ void LoginScreenClient::FocusLockScreenApps(bool reverse) {
   // give focus to the next window in the tab order.
   if (!delegate_ || !delegate_->HandleFocusLockScreenApps(reverse))
     login_screen_->HandleFocusLeavingLockScreenApps(reverse);
+}
+
+void LoginScreenClient::FocusOobeDialog() {
+  if (delegate_)
+    delegate_->HandleFocusOobeDialog();
 }
 
 void LoginScreenClient::ShowGaiaSignin(
@@ -187,6 +223,11 @@ void LoginScreenClient::ShowAccountAccessHelpApp() {
       ->ShowHelpTopic(chromeos::HelpAppLauncher::HELP_CANT_ACCESS_ACCOUNT);
 }
 
+void LoginScreenClient::OnFocusLeavingSystemTray(bool reverse) {
+  for (ash::SystemTrayFocusObserver& observer : system_tray_focus_observers_)
+    observer.OnFocusLeavingSystemTray(reverse);
+}
+
 void LoginScreenClient::LoadWallpaper(const AccountId& account_id) {
   WallpaperControllerClient::Get()->ShowUserWallpaper(account_id);
 }
@@ -200,8 +241,14 @@ void LoginScreenClient::CancelAddUser() {
 }
 
 void LoginScreenClient::LoginAsGuest() {
-  if (delegate_)
-    delegate_->HandleLoginAsGuest();
+  DCHECK(!chromeos::ScreenLocker::default_screen_locker());
+  if (chromeos::LoginDisplayHost::default_host()) {
+    chromeos::LoginDisplayHost::default_host()
+        ->GetExistingUserController()
+        ->Login(chromeos::UserContext(user_manager::USER_TYPE_GUEST,
+                                      user_manager::GuestAccountId()),
+                chromeos::SigninSpecifics());
+  }
 }
 
 void LoginScreenClient::OnMaxIncorrectPasswordAttempted(

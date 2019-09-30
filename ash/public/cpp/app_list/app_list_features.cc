@@ -8,37 +8,30 @@
 #include "base/feature_list.h"
 #include "base/metrics/field_trial_params.h"
 
-namespace app_list {
-namespace features {
+namespace app_list_features {
 
 const base::Feature kEnableAnswerCard{"EnableAnswerCard",
                                       base::FEATURE_ENABLED_BY_DEFAULT};
 const base::Feature kEnableAppShortcutSearch{"EnableAppShortcutSearch",
-                                             base::FEATURE_DISABLED_BY_DEFAULT};
+                                             base::FEATURE_ENABLED_BY_DEFAULT};
 const base::Feature kEnableBackgroundBlur{"EnableBackgroundBlur",
                                           base::FEATURE_DISABLED_BY_DEFAULT};
 const base::Feature kEnablePlayStoreAppSearch{
     "EnablePlayStoreAppSearch", base::FEATURE_DISABLED_BY_DEFAULT};
-const base::Feature kEnableHomeLauncher{"EnableHomeLauncher",
-                                        base::FEATURE_ENABLED_BY_DEFAULT};
+const base::Feature kEnableAppDataSearch{"EnableAppDataSearch",
+                                         base::FEATURE_DISABLED_BY_DEFAULT};
 const base::Feature kEnableHomeLauncherGestures{
     "HomeLauncherGestures", base::FEATURE_DISABLED_BY_DEFAULT};
 const base::Feature kEnableSettingsShortcutSearch{
     "EnableSettingsShortcutSearch", base::FEATURE_DISABLED_BY_DEFAULT};
 const base::Feature kEnableAppsGridGapFeature{"EnableAppsGridGapFeature",
                                               base::FEATURE_ENABLED_BY_DEFAULT};
-const base::Feature kEnableNewStyleLauncher{"EnableNewStyleLauncher",
-                                            base::FEATURE_ENABLED_BY_DEFAULT};
-const base::Feature kEnableContinueReading{"EnableContinueReading",
-                                           base::FEATURE_ENABLED_BY_DEFAULT};
 const base::Feature kEnableZeroStateSuggestions{
     "EnableZeroStateSuggestions", base::FEATURE_DISABLED_BY_DEFAULT};
 const base::Feature kEnableAppListSearchAutocomplete{
-    "EnableAppListSearchAutocomplete", base::FEATURE_DISABLED_BY_DEFAULT};
-const base::Feature kEnableSearchResultRankerTrain{
-    "EnableSearchResultRankerTrain", base::FEATURE_DISABLED_BY_DEFAULT};
-const base::Feature kEnableSearchResultRankerInfer{
-    "EnableSearchResultRankerInfer", base::FEATURE_DISABLED_BY_DEFAULT};
+    "EnableAppListSearchAutocomplete", base::FEATURE_ENABLED_BY_DEFAULT};
+const base::Feature kEnableAppSearchResultRanker{
+    "EnableAppSearchResultRanker", base::FEATURE_ENABLED_BY_DEFAULT};
 
 bool IsAnswerCardEnabled() {
   // Not using local static variable to allow tests to change this value.
@@ -58,8 +51,8 @@ bool IsPlayStoreAppSearchEnabled() {
   return base::FeatureList::IsEnabled(kEnablePlayStoreAppSearch);
 }
 
-bool IsHomeLauncherEnabled() {
-  return base::FeatureList::IsEnabled(kEnableHomeLauncher);
+bool IsAppDataSearchEnabled() {
+  return base::FeatureList::IsEnabled(kEnableAppDataSearch);
 }
 
 bool IsHomeLauncherGesturesEnabled() {
@@ -74,14 +67,6 @@ bool IsAppsGridGapFeatureEnabled() {
   return base::FeatureList::IsEnabled(kEnableAppsGridGapFeature);
 }
 
-bool IsNewStyleLauncherEnabled() {
-  return base::FeatureList::IsEnabled(kEnableNewStyleLauncher);
-}
-
-bool IsContinueReadingEnabled() {
-  return base::FeatureList::IsEnabled(kEnableContinueReading);
-}
-
 bool IsZeroStateSuggestionsEnabled() {
   return base::FeatureList::IsEnabled(kEnableZeroStateSuggestions);
 }
@@ -90,12 +75,8 @@ bool IsAppListSearchAutocompleteEnabled() {
   return base::FeatureList::IsEnabled(kEnableAppListSearchAutocomplete);
 }
 
-bool IsSearchResultRankerTrainEnabled() {
-  return base::FeatureList::IsEnabled(kEnableSearchResultRankerTrain);
-}
-
-bool IsSearchResultRankerInferEnabled() {
-  return base::FeatureList::IsEnabled(kEnableSearchResultRankerInfer);
+bool IsAppSearchResultRankerEnabled() {
+  return base::FeatureList::IsEnabled(kEnableAppSearchResultRanker);
 }
 
 std::string AnswerServerUrl() {
@@ -111,14 +92,12 @@ std::string AnswerServerQuerySuffix() {
                                                 "QuerySuffix");
 }
 
-std::string SearchResultRankerPredictorName() {
+std::string AppSearchResultRankerPredictorName() {
   const std::string predictor_name = base::GetFieldTrialParamValueByFeature(
-      kEnableSearchResultRankerTrain,
-      "app_search_result_ranker_predictor_name");
+      kEnableAppSearchResultRanker, "app_search_result_ranker_predictor_name");
   if (!predictor_name.empty())
     return predictor_name;
   return std::string("MrfuAppLaunchPredictor");
 }
 
-}  // namespace features
-}  // namespace app_list
+}  // namespace app_list_features

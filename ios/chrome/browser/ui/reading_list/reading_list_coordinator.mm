@@ -107,7 +107,7 @@
       ReadingListModelFactory::GetInstance()->GetForBrowserState(
           self.browserState);
   ReadingListListItemFactory* itemFactory =
-      [ReadingListListItemFactory tableViewItemFactory];
+      [[ReadingListListItemFactory alloc] init];
   FaviconLoader* faviconLoader =
       IOSChromeFaviconLoaderFactory::GetForBrowserState(self.browserState);
   self.mediator = [[ReadingListMediator alloc] initWithModel:model
@@ -381,7 +381,8 @@ animationControllerForDismissedController:(UIViewController*)dismissed {
     params.transition_type = ui::PAGE_TRANSITION_AUTO_BOOKMARK;
     params.referrer = web::Referrer(GURL(kReadingListReferrerURL),
                                     web::ReferrerPolicyDefault);
-    [self.loader loadURLWithParams:params];
+    ChromeLoadParams chromeParams(params);
+    [self.loader loadURLWithParams:chromeParams];
   }
 
   [self stop];

@@ -22,38 +22,86 @@
 #include "components/sync/driver/sync_service_utils.h"
 #include "components/variations/variations_associated_data.h"
 #include "google_apis/gaia/gaia_auth_util.h"
+#include "google_apis/gaia/google_service_auth_error.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/ui_base_features.h"
 
 namespace autofill {
 
 #if defined(OS_LINUX) || defined(OS_MACOSX) || defined(OS_WIN)
-namespace {
-// Returns the font weight corresponding to the value of param
-// kAutofillForcedFontWeightParameterName, or kDefault if the param is not
-// valid.
-ForcedFontWeight GetFontWeightFromParam() {
-  std::string param = base::GetFieldTrialParamValueByFeature(
-      kAutofillPrimaryInfoStyleExperiment,
-      kAutofillForcedFontWeightParameterName);
-
-  if (param == kAutofillForcedFontWeightParameterMedium)
-    return ForcedFontWeight::kMedium;
-  if (param == kAutofillForcedFontWeightParameterBold)
-    return ForcedFontWeight::kBold;
-
-  return ForcedFontWeight::kDefault;
-}
-}  // namespace
-#endif  // defined(OS_LINUX) || defined(OS_MACOSX) || defined(OS_WIN)
-
-#if !defined(OS_ANDROID)
 const base::Feature kAutofillDropdownLayoutExperiment{
     "AutofillDropdownLayout", base::FEATURE_DISABLED_BY_DEFAULT};
 const char kAutofillDropdownLayoutParameterName[] = "variant";
 const char kAutofillDropdownLayoutParameterLeadingIcon[] = "leading-icon";
 const char kAutofillDropdownLayoutParameterTrailingIcon[] = "trailing-icon";
-#endif  // !defined(OS_ANDROID)
+const char kAutofillDropdownLayoutParameterTwoLinesLeadingIcon[] =
+    "two-lines-leading-icon";
+#endif  // defined(OS_LINUX) || defined(OS_MACOSX) || defined(OS_WIN)
+
+bool IsCreditCardUploadEnabled(const PrefService* pref_service,
+                               const syncer::SyncService* sync_service,
+                               const std::string& user_email) {
+  if (!sync_service || sync_service->GetAuthError().IsPersistentError() ||
+      !sync_service->GetActiveDataTypes().Has(syncer::AUTOFILL_WALLET_DATA)) {
+    // If credit card sync is not active, we're not offering to upload cards.
+    return false;
+  }
+
+  if (sync_service->IsSyncFeatureActive()) {
+    if (!sync_service->GetActiveDataTypes().Has(syncer::AUTOFILL_PROFILE)) {
+      // In full sync mode, we only allow card upload when addresses are also
+      // active, because we upload potential billing addresses with the card.
+      return false;
+    }
+  } else {
+    // If Wallet sync is running even when sync the feature is off, the account
+    // Wallet feature must be on.
+    DCHECK(base::FeatureList::IsEnabled(
+        features::kAutofillEnableAccountWalletStorage));
+    if (!base::FeatureList::IsEnabled(
+            features::kAutofillEnableAccountWalletStorageUpload)) {
+      // We're not enabling uploads in the account wallet mode, so suppress
+      // the upload prompt.
+      return false;
+    }
+  }
+
+  // Also don't offer upload for users that have a secondary sync passphrase.
+  // Users who have enabled a passphrase have chosen to not make their sync
+  // information accessible to Google. Since upload makes credit card data
+  // available to other Google systems, disable it for passphrase users.
+  if (sync_service->IsUsingSecondaryPassphrase())
+    return false;
+
+  // Don't offer upload for users that are only syncing locally, since they
+  // won't receive the cards back from Google Payments.
+  if (sync_service->IsLocalSyncEnabled())
+    return false;
+
+  // Check Payments integration user setting.
+  if (!prefs::IsPaymentsIntegrationEnabled(pref_service))
+    return false;
+
+  // Check that the user is logged into a supported domain.
+  if (user_email.empty())
+    return false;
+
+  std::string domain = gaia::ExtractDomainName(user_email);
+  // If the "allow all email domains" flag is off, restrict credit card upload
+  // only to Google Accounts with @googlemail, @gmail, @google, or @chromium
+  // domains.
+  // example.com is on the list because ChromeOS tests rely on using this. That
+  // should be fine, since example.com is an IANA reserved domain.
+  if (!base::FeatureList::IsEnabled(
+          features::kAutofillUpstreamAllowAllEmailDomains) &&
+      !(domain == "googlemail.com" || domain == "gmail.com" ||
+        domain == "google.com" || domain == "chromium.org" ||
+        domain == "example.com")) {
+    return false;
+  }
+
+  return base::FeatureList::IsEnabled(features::kAutofillUpstream);
+}
 
 #if defined(OS_LINUX) || defined(OS_MACOSX) || defined(OS_WIN)
 const base::Feature kAutofillPrimaryInfoStyleExperiment{
@@ -149,13 +197,18 @@ bool IsAutofillNoLocalSaveOnUploadSuccessExperimentEnabled() {
       features::kAutofillNoLocalSaveOnUploadSuccess);
 }
 
-bool OfferStoreUnmaskedCards() {
+bool OfferStoreUnmaskedCards(bool is_off_the_record) {
 #if defined(OS_LINUX) && !defined(OS_CHROMEOS)
   // The checkbox can be forced on with a flag, but by default we don't store
   // on Linux due to lack of system keychain integration. See crbug.com/162735
   return base::CommandLine::ForCurrentProcess()->HasSwitch(
       switches::kEnableOfferStoreUnmaskedWalletCards);
 #else
+  // Never offer to store unmasked cards when off the record.
+  if (is_off_the_record) {
+    return false;
+  }
+
   // Query the field trial before checking command line flags to ensure UMA
   // reports the correct group.
   std::string group_name =
@@ -182,19 +235,9 @@ bool ShouldUseActiveSignedInAccount() {
          base::FeatureList::IsEnabled(
              features::kAutofillGetPaymentsIdentityFromSync);
 }
-
-#if defined(OS_LINUX) || defined(OS_MACOSX) || defined(OS_WIN)
-ForcedFontWeight GetForcedFontWeight() {
-  if (!base::FeatureList::IsEnabled(kAutofillPrimaryInfoStyleExperiment))
-    return ForcedFontWeight::kDefault;
-
-  // Only read the feature param's value the first time it's needed.
-  static ForcedFontWeight font_weight_from_param = GetFontWeightFromParam();
-  return font_weight_from_param;
-}
 #endif  // defined(OS_LINUX) || defined(OS_MACOSX) || defined(OS_WIN)
 
-#if !defined(OS_ANDROID)
+#if defined(OS_LINUX) || defined(OS_MACOSX) || defined(OS_WIN)
 ForcedPopupLayoutState GetForcedPopupLayoutState() {
   if (!base::FeatureList::IsEnabled(kAutofillDropdownLayoutExperiment))
     return ForcedPopupLayoutState::kDefault;
@@ -206,12 +249,17 @@ ForcedPopupLayoutState GetForcedPopupLayoutState() {
     return ForcedPopupLayoutState::kLeadingIcon;
   } else if (param == kAutofillDropdownLayoutParameterTrailingIcon) {
     return ForcedPopupLayoutState::kTrailingIcon;
+  } else if (param ==
+             autofill::kAutofillDropdownLayoutParameterTwoLinesLeadingIcon) {
+    return ForcedPopupLayoutState::kTwoLinesLeadingIcon;
+  } else if (param.empty()) {
+    return ForcedPopupLayoutState::kDefault;
   }
 
   // Unknown parameter value.
   NOTREACHED();
   return ForcedPopupLayoutState::kDefault;
 }
-#endif  // !defined(OS_ANDROID)
+#endif  // defined(OS_LINUX) || defined(OS_MACOSX) || defined(OS_WIN)
 
 }  // namespace autofill

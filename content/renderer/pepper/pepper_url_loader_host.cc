@@ -151,7 +151,7 @@ void PepperURLLoaderHost::DidReceiveResponse(const WebURLResponse& response) {
   SaveResponse(response);
 }
 
-void PepperURLLoaderHost::DidDownloadData(int data_length) {
+void PepperURLLoaderHost::DidDownloadData(unsigned long long data_length) {
   bytes_received_ += data_length;
   UpdateProgress();
 }
@@ -252,7 +252,7 @@ int32_t PepperURLLoaderHost::InternalOnHostMsgOpen(
     return PP_ERROR_FAILED;
   }
 
-  web_request.SetRequestContext(WebURLRequest::kRequestContextPlugin);
+  web_request.SetRequestContext(blink::mojom::RequestContextType::PLUGIN);
   web_request.SetPluginChildID(renderer_ppapi_host_->GetPluginChildId());
 
   // Requests from plug-ins must skip service workers, see the comment in
@@ -268,7 +268,7 @@ int32_t PepperURLLoaderHost::InternalOnHostMsgOpen(
     if (filled_in_request_data.allow_cross_origin_requests) {
       // Allow cross-origin requests with access control. The request specifies
       // if credentials are to be sent.
-      web_request.SetFetchRequestMode(network::mojom::FetchRequestMode::kCORS);
+      web_request.SetFetchRequestMode(network::mojom::FetchRequestMode::kCors);
       web_request.SetFetchCredentialsMode(
           filled_in_request_data.allow_credentials
               ? network::mojom::FetchCredentialsMode::kInclude

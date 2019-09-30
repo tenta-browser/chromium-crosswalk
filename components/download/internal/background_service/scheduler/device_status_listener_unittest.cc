@@ -6,11 +6,11 @@
 
 #include <memory>
 
-#include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "base/test/power_monitor_test_base.h"
+#include "base/test/scoped_task_environment.h"
 #include "components/download/internal/background_service/scheduler/battery_status_listener_impl.h"
-#include "components/download/internal/background_service/scheduler/network_status_listener_impl.h"
+#include "components/download/network/network_status_listener_impl.h"
 #include "services/network/test/test_network_connection_tracker.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -70,8 +70,7 @@ class TestDeviceStatusListener : public DeviceStatusListener {
 
 class DeviceStatusListenerTest : public testing::Test {
  public:
-  DeviceStatusListenerTest()
-      : network_connection_tracker_(true, ConnectionType::CONNECTION_UNKNOWN) {}
+  DeviceStatusListenerTest() {}
 
   void SetUp() override {
     auto power_source = std::make_unique<base::PowerMonitorTestSource>();
@@ -83,7 +82,7 @@ class DeviceStatusListenerTest : public testing::Test {
     test_battery_listener_ = battery_listener.get();
 
     auto network_listener = std::make_unique<NetworkStatusListenerImpl>(
-        &network_connection_tracker_);
+        network::TestNetworkConnectionTracker::GetInstance());
 
     listener_ = std::make_unique<TestDeviceStatusListener>(
         std::move(battery_listener), std::move(network_listener));
@@ -108,7 +107,8 @@ class DeviceStatusListenerTest : public testing::Test {
   // Simulates a network change call, the event will be broadcasted
   // asynchronously.
   void ChangeNetworkType(ConnectionType type) {
-    network_connection_tracker_.SetConnectionType(type);
+    network::TestNetworkConnectionTracker::GetInstance()->SetConnectionType(
+        type);
   }
 
   // Simulates a network change call, the event will be sent to client
@@ -132,8 +132,7 @@ class DeviceStatusListenerTest : public testing::Test {
   MockObserver mock_observer_;
 
   // Needed for network change notifier and power monitor.
-  base::MessageLoop message_loop_;
-  network::TestNetworkConnectionTracker network_connection_tracker_;
+  base::test::ScopedTaskEnvironment task_environment_;
   std::unique_ptr<base::PowerMonitor> power_monitor_;
   base::PowerMonitorTestSource* power_source_;
   TestBatteryStatusListener* test_battery_listener_;

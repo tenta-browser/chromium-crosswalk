@@ -60,6 +60,10 @@ const char kArcLocationServiceEnabled[] = "arc.location_service.enabled";
 const char kArcPackages[] = "arc.packages";
 // A preference that indicates that Play Auto Install flow was already started.
 const char kArcPaiStarted[] = "arc.pai.started";
+// A preference that indicates that provisioning was initiated from OOBE. This
+// is preserved across Chrome restart.
+const char kArcProvisioningInitiatedFromOobe[] =
+    "arc.provisioning.initiated.from.oobe";
 // A preference that indicates that Play Fast App Reinstall flow was already
 // started.
 const char kArcFastAppReinstallStarted[] = "arc.fast.app.reinstall.started";
@@ -89,21 +93,48 @@ const char kArcVoiceInteractionValuePropAccepted[] =
 // Integer pref indicating the ecryptfs to ext4 migration strategy. One of
 // options: forbidden = 0, migrate = 1, wipe = 2 or ask the user = 3.
 const char kEcryptfsMigrationStrategy[] = "ecryptfs_migration_strategy";
+// A preference that persists total engagement time across sessions, which is
+// accumulated and sent to UMA once a day.
+const char kEngagementTimeTotal[] = "arc.metrics.engagement_time.total";
+// A preference that persists foreground engagement time across sessions, which
+// is accumulated and sent to UMA once a day.
+const char kEngagementTimeForeground[] =
+    "arc.metrics.engagement_time.foreground";
+// A preference that persists background engagement time across sessions, which
+// is accumulated and sent to UMA once a day.
+const char kEngagementTimeBackground[] =
+    "arc.metrics.engagement_time.background";
+// A preference that saves the OS version when engagement time was last
+// recorded. Old results will be discarded if a version change is detected.
+const char kEngagementTimeOsVersion[] =
+    "arc.metrics.engagement_time.os_version";
+// A preference that saves the day ID (number of days since origin of Time) when
+// engagement time was last recorded. Accumulated results are sent to UMA if day
+// ID has changed.
+const char kEngagementTimeDayId[] = "arc.metrics.engagement_time.day_id";
 // A preference that indicates the user has accepted voice interaction activity
 // control settings.
 const char kVoiceInteractionActivityControlAccepted[] =
     "settings.voice_interaction.activity_control.accepted";
-// A preference that indicates the user has enabled voice interaction services.
-const char kVoiceInteractionEnabled[] = "settings.voice_interaction.enabled";
 // A preference that indicates the user has allowed voice interaction services
 // to access the "context" (text and graphic content that is currently on
 // screen).
 const char kVoiceInteractionContextEnabled[] =
     "settings.voice_interaction.context.enabled";
+// A preference that indicates the user has enabled voice interaction services.
+const char kVoiceInteractionEnabled[] = "settings.voice_interaction.enabled";
+// A preference that indicates the user has chosen to always keep hotword
+// listening on even withough DSP support.
+const char kVoiceInteractionHotwordAlwaysOn[] =
+    "settings.voice_interaction.hotword.always_on";
 // A preference that indicates the user has allowed voice interaction services
 // to use hotword listening.
 const char kVoiceInteractionHotwordEnabled[] =
     "settings.voice_interaction.hotword.enabled";
+// A preference that indicates whether microphone should be open when the voice
+// interaction launches.
+const char kVoiceInteractionLaunchWithMicOpen[] =
+    "settings.voice_interaction.launch_with_mic_open";
 // A preference that indicates the user has allowed voice interaction services
 // to send notification.
 const char kVoiceInteractionNotificationEnabled[] =
@@ -143,15 +174,23 @@ void RegisterProfilePrefs(PrefRegistrySimple* registry) {
   registry->RegisterBooleanPref(kArcFastAppReinstallStarted, false);
   registry->RegisterListPref(kArcFastAppReinstallPackages);
   registry->RegisterBooleanPref(kArcPolicyComplianceReported, false);
+  registry->RegisterBooleanPref(kArcProvisioningInitiatedFromOobe, false);
   registry->RegisterBooleanPref(kArcSignedIn, false);
   registry->RegisterBooleanPref(kArcSkippedReportingNotice, false);
   registry->RegisterBooleanPref(kArcTermsAccepted, false);
   registry->RegisterBooleanPref(kArcTermsShownInOobe, false);
   registry->RegisterBooleanPref(kArcVoiceInteractionValuePropAccepted, false);
+  registry->RegisterTimeDeltaPref(kEngagementTimeBackground, base::TimeDelta());
+  registry->RegisterIntegerPref(kEngagementTimeDayId, 0);
+  registry->RegisterTimeDeltaPref(kEngagementTimeForeground, base::TimeDelta());
+  registry->RegisterStringPref(kEngagementTimeOsVersion, "");
+  registry->RegisterTimeDeltaPref(kEngagementTimeTotal, base::TimeDelta());
   registry->RegisterBooleanPref(kVoiceInteractionContextEnabled, false);
   registry->RegisterBooleanPref(kVoiceInteractionEnabled, false);
+  registry->RegisterBooleanPref(kVoiceInteractionHotwordAlwaysOn, true);
   registry->RegisterBooleanPref(kVoiceInteractionHotwordEnabled, false);
   registry->RegisterBooleanPref(kVoiceInteractionNotificationEnabled, true);
+  registry->RegisterBooleanPref(kVoiceInteractionLaunchWithMicOpen, false);
 }
 
 }  // namespace prefs

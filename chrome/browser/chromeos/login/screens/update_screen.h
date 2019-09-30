@@ -18,7 +18,6 @@
 #include "chrome/browser/chromeos/login/screens/error_screen.h"
 #include "chromeos/dbus/update_engine_client.h"
 #include "chromeos/network/portal_detector/network_portal_detector.h"
-#include "components/pairing/host_pairing_controller.h"
 
 namespace chromeos {
 
@@ -39,9 +38,7 @@ class UpdateScreen : public BaseScreen,
   // Returns true if this instance is still active (i.e. has not been deleted).
   static bool HasInstance(UpdateScreen* inst);
 
-  UpdateScreen(BaseScreenDelegate* base_screen_delegate,
-               UpdateView* view,
-               pairing_chromeos::HostPairingController* remora_controller);
+  UpdateScreen(BaseScreenDelegate* base_screen_delegate, UpdateView* view);
   ~UpdateScreen() override;
 
   // Called when the being destroyed. This should call Unbind() on the
@@ -56,6 +53,7 @@ class UpdateScreen : public BaseScreen,
   enum ExitReason {
     REASON_UPDATE_CANCELED = 0,
     REASON_UPDATE_INIT_FAILED,
+    REASON_UPDATE_OVER_CELLULAR_REJECTED,
     REASON_UPDATE_NON_CRITICAL,
     REASON_UPDATE_ENDED
   };
@@ -84,6 +82,7 @@ class UpdateScreen : public BaseScreen,
   enum class State {
     STATE_IDLE = 0,
     STATE_FIRST_PORTAL_CHECK,
+    STATE_REQUESTING_USER_PERMISSION,
     STATE_UPDATE,
     STATE_ERROR
   };
@@ -92,6 +91,12 @@ class UpdateScreen : public BaseScreen,
   void Show() override;
   void Hide() override;
   void OnUserAction(const std::string& action_id) override;
+
+  // Callback to UpdateEngineClient::SetUpdateOverCellularOneTimePermission
+  // called in response to user confirming that the OS update can proceed
+  // despite being over cellular charges.
+  // |success|: whether the update engine accepted the user permission.
+  void RetryUpdateWithUpdateOverCellularPermissionSet(bool success);
 
   // Updates downloading stats (remaining time and downloading
   // progress) on the AU screen.
@@ -106,10 +111,6 @@ class UpdateScreen : public BaseScreen,
 
   // Checks that screen is shown, shows if not.
   void MakeSureScreenIsShown();
-
-  // Send update status to host pairing controller.
-  void SetHostPairingControllerStatus(
-      pairing_chromeos::HostPairingController::UpdateStatus update_status);
 
   // Returns an instance of the error screen.
   ErrorScreen* GetErrorScreen();
@@ -158,9 +159,6 @@ class UpdateScreen : public BaseScreen,
 
   UpdateView* view_ = nullptr;
 
-  // Used to track updates over Bluetooth.
-  pairing_chromeos::HostPairingController* remora_controller_;
-
   // Time of the first notification from the downloading stage.
   base::Time download_start_time_;
   double download_start_progress_ = 0;
@@ -179,6 +177,13 @@ class UpdateScreen : public BaseScreen,
   // True if there was no notification about captive portal state for
   // the default network.
   bool is_first_portal_notification_ = true;
+
+  // Information about a pending update. Set if a user permission is required to
+  // proceed with the update. The values have to be passed to the update engine
+  // in SetUpdateOverCellularOneTimePermission method in order to enable update
+  // over cellular network.
+  std::string pending_update_version_;
+  int64_t pending_update_size_ = 0;
 
   std::unique_ptr<ErrorScreensHistogramHelper> histogram_helper_;
 

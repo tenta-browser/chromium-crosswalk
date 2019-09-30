@@ -19,6 +19,7 @@
 #include "base/path_service.h"
 #include "base/sequence_checker.h"
 #include "base/sequenced_task_runner.h"
+#include "base/stl_util.h"
 #include "base/strings/sys_string_conversions.h"
 #include "base/task/post_task.h"
 #include "base/task_runner_util.h"
@@ -27,8 +28,8 @@
 #import "ios/chrome/browser/snapshots/lru_cache.h"
 #import "ios/chrome/browser/snapshots/snapshot_cache_internal.h"
 #import "ios/chrome/browser/snapshots/snapshot_cache_observer.h"
-#include "ios/chrome/browser/ui/ui_util.h"
-#import "ios/chrome/browser/ui/uikit_ui_util.h"
+#include "ios/chrome/browser/ui/util/ui_util.h"
+#import "ios/chrome/browser/ui/util/uikit_ui_util.h"
 
 #if !defined(__has_feature) || !__has_feature(objc_arc)
 #error "This file requires ARC support."
@@ -370,7 +371,7 @@ void ConvertAndSaveGreyImage(NSString* session_id,
 
   [lruCache_ setObject:image forKey:sessionID];
 
-  [self.observers snapshotCache:self didUpdateSnapshotForTab:sessionID];
+  [self.observers snapshotCache:self didUpdateSnapshotForIdentifier:sessionID];
 
   // Copy ivars used by the block so that it does not reference |self|.
   const base::FilePath cacheDirectory = cacheDirectory_;
@@ -392,6 +393,8 @@ void ConvertAndSaveGreyImage(NSString* session_id,
 
   [lruCache_ removeObjectForKey:sessionID];
 
+  [self.observers snapshotCache:self didUpdateSnapshotForIdentifier:sessionID];
+
   if (!taskRunner_)
     return;
 
@@ -401,7 +404,7 @@ void ConvertAndSaveGreyImage(NSString* session_id,
 
   taskRunner_->PostTask(
       FROM_HERE, base::BindOnce(^{
-        for (size_t index = 0; index < arraysize(kImageTypes); ++index) {
+        for (size_t index = 0; index < base::size(kImageTypes); ++index) {
           base::DeleteFile(ImagePath(sessionID, kImageTypes[index],
                                      snapshotsScale, cacheDirectory),
                            false /* recursive */);
@@ -456,7 +459,7 @@ void ConvertAndSaveGreyImage(NSString* session_id,
 
         std::set<base::FilePath> filesToKeep;
         for (NSString* sessionID : liveSessionIds) {
-          for (size_t index = 0; index < arraysize(kImageTypes); ++index) {
+          for (size_t index = 0; index < base::size(kImageTypes); ++index) {
             filesToKeep.insert(ImagePath(sessionID, kImageTypes[index],
                                          snapshotsScale, cacheDirectory));
           }

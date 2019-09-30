@@ -218,6 +218,7 @@ suite('<history-list>', function() {
     app.historyResult(createHistoryInfo(), ADDITIONAL_RESULTS);
 
     return PolymerTest.flushTasks().then(function() {
+      Polymer.dom.flush();
       const items = polymerSelectAll(element, 'history-item');
       assertTrue(items[3].isCardStart);
       assertTrue(items[5].isCardEnd);
@@ -241,6 +242,7 @@ suite('<history-list>', function() {
           return PolymerTest.flushTasks();
         })
         .then(function() {
+          Polymer.dom.flush();
           const items = polymerSelectAll(element, 'history-item');
 
           assertEquals(element.historyData_.length, 5);
@@ -267,14 +269,14 @@ suite('<history-list>', function() {
       const item = element.$$('history-item');
       assertTrue(item.isCardStart);
       const heading = item.$$('#date-accessed').textContent;
-      const title = item.$.title;
+      const title = item.$.link;
 
       // Check that the card title displays the search term somewhere.
       const index = heading.indexOf('Google');
       assertTrue(index != -1);
 
       // Check that the search term is bolded correctly in the history-item.
-      assertGT(title.children[0].innerHTML.indexOf('<b>google</b>'), -1);
+      assertGT(title.children[1].innerHTML.indexOf('<b>google</b>'), -1);
     });
   });
 
@@ -336,8 +338,9 @@ suite('<history-list>', function() {
   // TODO(calamity): Reenable this test after fixing flakiness.
   // See http://crbug.com/640862.
   test.skip('scrolling history list causes toolbar shadow to appear', () => {
-    for (let i = 0; i < 10; i++)
+    for (let i = 0; i < 10; i++) {
       app.historyResult(createHistoryInfo(), TEST_HISTORY_RESULTS);
+    }
     return PolymerTest.flushTasks()
         .then(function() {
           assertFalse(app.toolbarShadow_);
@@ -377,11 +380,6 @@ suite('<history-list>', function() {
     const dialog = element.$.dialog.get();
     app.historyResult(createHistoryInfo(), TEST_HISTORY_RESULTS);
     app.historyResult(createHistoryInfo(), ADDITIONAL_RESULTS);
-    app.historyResult(createHistoryInfo(), [
-      createHistoryEntry('2015-01-01', 'http://example.com'),
-      createHistoryEntry('2015-01-01', 'http://example.com'),
-      createHistoryEntry('2015-01-01', 'http://example.com')
-    ]);
     return PolymerTest.flushTasks()
         .then(function() {
           Polymer.dom.flush();
@@ -390,9 +388,6 @@ suite('<history-list>', function() {
           items[2].$.checkbox.click();
           items[5].$.checkbox.click();
           items[7].$.checkbox.click();
-          items[8].$.checkbox.click();
-          items[9].$.checkbox.click();
-          items[10].$.checkbox.click();
 
           return PolymerTest.flushTasks();
         })
@@ -567,7 +562,7 @@ suite('<history-list>', function() {
 
           return new Promise(resolve => {
             registerMessageCallback('navigateToUrl', this, resolve);
-            items[0].$.title.click();
+            items[0].$.link.click();
           });
         })
         .then(function(info) {

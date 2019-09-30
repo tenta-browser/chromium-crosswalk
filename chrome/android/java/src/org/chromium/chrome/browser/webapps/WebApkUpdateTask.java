@@ -15,7 +15,6 @@ import org.chromium.components.background_task_scheduler.BackgroundTask.TaskFini
 import org.chromium.components.background_task_scheduler.TaskIds;
 import org.chromium.components.background_task_scheduler.TaskParameters;
 
-import java.lang.ref.WeakReference;
 import java.util.List;
 
 /**
@@ -24,7 +23,7 @@ import java.util.List;
  */
 public class WebApkUpdateTask extends NativeBackgroundTask {
     /** The WebappDataStorage for the WebAPK to update. */
-    private WebappDataStorage mStorageToUpdate = null;
+    private WebappDataStorage mStorageToUpdate;
 
     /** Whether there are more WebAPKs to update than just {@link mStorageToUpdate}. */
     private boolean mMoreToUpdate;
@@ -83,14 +82,13 @@ public class WebApkUpdateTask extends NativeBackgroundTask {
 
     /** Returns whether a WebApkActivity with {@link webApkPackageName} is running. */
     private static boolean isWebApkActivityRunning(String webApkPackageName) {
-        for (WeakReference<Activity> activity : ApplicationStatus.getRunningActivities()) {
-            if (!(activity.get() instanceof WebApkActivity)) {
+        for (Activity activity : ApplicationStatus.getRunningActivities()) {
+            if (!(activity instanceof WebApkActivity)) {
                 continue;
             }
-            WebApkActivity webApkActivity = (WebApkActivity) activity.get();
+            WebApkActivity webApkActivity = (WebApkActivity) activity;
             if (webApkActivity != null
-                    && TextUtils.equals(
-                               webApkPackageName, webApkActivity.getNativeClientPackageName())) {
+                    && TextUtils.equals(webApkPackageName, webApkActivity.getWebApkPackageName())) {
                 return true;
             }
         }

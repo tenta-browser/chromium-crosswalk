@@ -6,6 +6,7 @@
 
 #include "base/bind.h"
 #include "base/logging.h"
+#include "base/task/post_task.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/io_thread.h"
 #include "chrome/browser/net/dns_probe_service.h"
@@ -15,7 +16,9 @@
 #include "chrome/common/pref_names.h"
 #include "chrome/common/render_messages.h"
 #include "components/error_page/common/net_error_info.h"
+#include "components/pref_registry/pref_registry_syncable.h"
 #include "components/prefs/pref_service.h"
+#include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/navigation_entry.h"
 #include "content/public/browser/navigation_handle.h"
@@ -50,8 +53,8 @@ void OnDnsProbeFinishedOnIOThread(
     DnsProbeStatus result) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
 
-  BrowserThread::PostTask(BrowserThread::UI, FROM_HERE,
-                          base::BindOnce(callback, result));
+  base::PostTaskWithTraits(FROM_HERE, {BrowserThread::UI},
+                           base::BindOnce(callback, result));
 }
 
 // Can only access g_browser_process->io_thread() from the browser thread,
@@ -154,6 +157,7 @@ bool NetErrorTabHelper::OnMessageReceived(
 NetErrorTabHelper::NetErrorTabHelper(WebContents* contents)
     : WebContentsObserver(contents),
       network_diagnostics_bindings_(contents, this),
+      network_easter_egg_bindings_(contents, this),
       is_error_page_(false),
       dns_error_active_(false),
       dns_error_page_committed_(false),
@@ -188,8 +192,8 @@ void NetErrorTabHelper::StartDnsProbe() {
 
   DVLOG(1) << "Starting DNS probe.";
 
-  BrowserThread::PostTask(
-      BrowserThread::IO, FROM_HERE,
+  base::PostTaskWithTraits(
+      FROM_HERE, {BrowserThread::IO},
       base::BindOnce(&StartDnsProbeOnIOThread,
                      base::Bind(&NetErrorTabHelper::OnDnsProbeFinished,
                                 weak_factory_.GetWeakPtr()),
@@ -232,6 +236,16 @@ void NetErrorTabHelper::OnSetIsShowingDownloadButtonInErrorPage(
 }
 #endif  // BUILDFLAG(ENABLE_OFFLINE_PAGES)
 
+// static
+void NetErrorTabHelper::RegisterProfilePrefs(
+    user_prefs::PrefRegistrySyncable* prefs) {
+  // prefs::kAlternateErrorPagesEnabled is registered by
+  // NavigationCorrectionTabObserver.
+
+  prefs->RegisterIntegerPref(prefs::kNetworkEasterEggHighScore, 0,
+                             user_prefs::PrefRegistrySyncable::SYNCABLE_PREF);
+}
+
 void NetErrorTabHelper::InitializePref(WebContents* contents) {
   DCHECK(contents);
 
@@ -240,6 +254,8 @@ void NetErrorTabHelper::InitializePref(WebContents* contents) {
   resolve_errors_with_web_service_.Init(
       prefs::kAlternateErrorPagesEnabled,
       profile->GetPrefs());
+  easter_egg_high_score_.Init(prefs::kNetworkEasterEggHighScore,
+                              profile->GetPrefs());
 }
 
 bool NetErrorTabHelper::ProbesAllowed() const {
@@ -292,5 +308,22 @@ void NetErrorTabHelper::DownloadPageLaterHelper(const GURL& page_url) {
       offline_pages::OfflinePageUtils::DownloadUIActionFlags::PROMPT_DUPLICATE);
 }
 #endif  // BUILDFLAG(ENABLE_OFFLINE_PAGES)
+
+void NetErrorTabHelper::GetHighScore(GetHighScoreCallback callback) {
+  std::move(callback).Run(
+      static_cast<uint32_t>(easter_egg_high_score_.GetValue()));
+}
+
+void NetErrorTabHelper::UpdateHighScore(uint32_t high_score) {
+  if (high_score <= static_cast<uint32_t>(easter_egg_high_score_.GetValue()))
+    return;
+  easter_egg_high_score_.SetValue(static_cast<int>(high_score));
+}
+
+void NetErrorTabHelper::ResetHighScore() {
+  easter_egg_high_score_.SetValue(0);
+}
+
+WEB_CONTENTS_USER_DATA_KEY_IMPL(NetErrorTabHelper)
 
 }  // namespace chrome_browser_net

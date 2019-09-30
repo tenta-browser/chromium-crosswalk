@@ -35,13 +35,15 @@ class AppBannerManagerDesktop
  protected:
   explicit AppBannerManagerDesktop(content::WebContents* web_contents);
 
- private:
-  friend class content::WebContentsUserData<AppBannerManagerDesktop>;
-
   // AppBannerManager overrides.
   void DidFinishCreatingBookmarkApp(
       const extensions::Extension* extension,
       const WebApplicationInfo& web_app_info) override;
+
+ private:
+  friend class content::WebContentsUserData<AppBannerManagerDesktop>;
+
+  // AppBannerManager overrides.
   bool IsWebAppConsideredInstalled(content::WebContents* web_contents,
                                    const GURL& validated_url,
                                    const GURL& start_url,
@@ -59,6 +61,8 @@ class AppBannerManagerDesktop
                          SiteEngagementService::EngagementType type) override;
 
   std::unique_ptr<extensions::BookmarkAppHelper> bookmark_app_helper_;
+
+  WEB_CONTENTS_USER_DATA_KEY_DECL();
 
   DISALLOW_COPY_AND_ASSIGN(AppBannerManagerDesktop);
 };

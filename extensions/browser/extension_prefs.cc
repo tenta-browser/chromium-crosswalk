@@ -65,7 +65,7 @@ constexpr const char kPrefPath[] = "path";
 constexpr const char kPrefManifest[] = "manifest";
 
 // The version number.
-constexpr const char kPrefVersion[] = "manifest.version";
+constexpr const char kPrefManifestVersion[] = "manifest.version";
 
 // Indicates whether an extension is blacklisted.
 constexpr const char kPrefBlacklist[] = "blacklist";
@@ -392,8 +392,7 @@ void ExtensionPrefs::MakePathsRelative() {
   // Fix these paths.
   prefs::ScopedDictionaryPrefUpdate update(prefs_, pref_names::kExtensions);
   auto update_dict = update.Get();
-  for (std::set<std::string>::iterator i = absolute_keys.begin();
-       i != absolute_keys.end(); ++i) {
+  for (auto i = absolute_keys.begin(); i != absolute_keys.end(); ++i) {
     std::unique_ptr<prefs::DictionaryValueUpdate> extension_dict;
     if (!update_dict->GetDictionaryWithoutPathExpansion(*i, &extension_dict)) {
       NOTREACHED() << "Control should never reach here for extension " << *i;
@@ -581,7 +580,8 @@ std::unique_ptr<const PermissionSet> ExtensionPrefs::ReadPrefAsPermissionSet(
       extension_id, JoinPrefs(pref_key, kPrefScriptableHosts),
       &scriptable_hosts, UserScript::ValidUserScriptSchemes());
 
-  return std::make_unique<PermissionSet>(apis, manifest_permissions,
+  return std::make_unique<PermissionSet>(std::move(apis),
+                                         std::move(manifest_permissions),
                                          explicit_hosts, scriptable_hosts);
 }
 
@@ -861,6 +861,10 @@ void ExtensionPrefs::SetExtensionBlacklisted(const std::string& extension_id,
 bool ExtensionPrefs::IsExtensionBlacklisted(const std::string& id) const {
   const base::DictionaryValue* ext_prefs = GetExtensionPref(id);
   return ext_prefs && IsBlacklistBitSet(ext_prefs);
+}
+
+bool ExtensionPrefs::InsecureExtensionUpdatesEnabled() const {
+  return prefs_->GetBoolean(pref_names::kInsecureExtensionUpdatesEnabled);
 }
 
 namespace {
@@ -1192,7 +1196,7 @@ std::string ExtensionPrefs::GetVersionString(
     return std::string();
 
   std::string version;
-  extension->GetString(kPrefVersion, &version);
+  extension->GetString(kPrefManifestVersion, &version);
 
   return version;
 }
@@ -1789,9 +1793,7 @@ ExtensionPrefs::ExtensionPrefs(
   MakePathsRelative();
 
   // Ensure that any early observers are watching before prefs are initialized.
-  for (std::vector<ExtensionPrefsObserver*>::const_iterator iter =
-           early_observers.begin();
-       iter != early_observers.end();
+  for (auto iter = early_observers.cbegin(); iter != early_observers.cend();
        ++iter) {
     AddObserver(*iter);
   }
@@ -1825,8 +1827,6 @@ void ExtensionPrefs::RegisterProfilePrefs(
   registry->RegisterDictionaryPref(pref_names::kInstallLoginScreenAppList);
   registry->RegisterListPref(pref_names::kAllowedTypes);
   registry->RegisterBooleanPref(pref_names::kStorageGarbageCollect, false);
-  registry->RegisterInt64Pref(pref_names::kLastUpdateCheck, 0);
-  registry->RegisterInt64Pref(pref_names::kNextUpdateCheck, 0);
   registry->RegisterListPref(pref_names::kAllowedInstallSites);
   registry->RegisterStringPref(pref_names::kLastChromeVersion, std::string());
   registry->RegisterDictionaryPref(kInstallSignature);
@@ -1836,6 +1836,8 @@ void ExtensionPrefs::RegisterProfilePrefs(
   registry->RegisterBooleanPref(pref_names::kNativeMessagingUserLevelHosts,
                                 true);
   registry->RegisterIntegerPref(kCorruptedDisableCount, 0);
+  registry->RegisterBooleanPref(pref_names::kInsecureExtensionUpdatesEnabled,
+                                true);
 
 #if !defined(OS_MACOSX)
   registry->RegisterBooleanPref(pref_names::kAppFullscreenAllowed, true);
@@ -1856,7 +1858,7 @@ bool ExtensionPrefs::GetUserExtensionPrefIntoContainer(
   std::insert_iterator<ExtensionIdContainer> insert_iterator(
       *id_container_out, id_container_out->end());
   std::string extension_id;
-  for (base::ListValue::const_iterator value_it = user_pref_as_list->begin();
+  for (auto value_it = user_pref_as_list->begin();
        value_it != user_pref_as_list->end(); ++value_it) {
     if (!value_it->GetAsString(&extension_id)) {
       NOTREACHED();
@@ -1874,8 +1876,7 @@ void ExtensionPrefs::SetExtensionPrefFromContainer(
   ListPrefUpdate update(prefs_, pref);
   base::ListValue* list_of_values = update.Get();
   list_of_values->Clear();
-  for (typename ExtensionIdContainer::const_iterator iter = strings.begin();
-       iter != strings.end(); ++iter) {
+  for (auto iter = strings.cbegin(); iter != strings.cend(); ++iter) {
     list_of_values->AppendString(*iter);
   }
 }

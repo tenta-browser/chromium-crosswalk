@@ -5,9 +5,11 @@
 #ifndef IOS_CHROME_TEST_EARL_GREY_CHROME_MATCHERS_H_
 #define IOS_CHROME_TEST_EARL_GREY_CHROME_MATCHERS_H_
 
+#import <Foundation/Foundation.h>
+
 #include <string>
 
-#import <EarlGrey/EarlGrey.h>
+@protocol GREYMatcher;
 
 namespace chrome_test_util {
 
@@ -36,6 +38,14 @@ id<GREYMatcher> StaticTextWithAccessibilityLabelId(int message_id);
 // Matcher for element with accessibility label corresponding to |label| and
 // accessibility trait UIAccessibilityTraitStaticText.
 id<GREYMatcher> StaticTextWithAccessibilityLabel(NSString* label);
+
+// Matcher for element with accessibility label corresponding to |message_id|
+// and accessibility trait UIAccessibilityTraitHeader.
+id<GREYMatcher> HeaderWithAccessibilityLabelId(int message_id);
+
+// Matcher for element with accessibility label corresponding to |label| and
+// accessibility trait UIAccessibilityTraitHeader.
+id<GREYMatcher> HeaderWithAccessibilityLabel(NSString* label);
 
 // Returns matcher for a cancel button.
 id<GREYMatcher> CancelButton();
@@ -83,20 +93,24 @@ id<GREYMatcher> ToolsMenuButton();
 // Matcher for the Share menu button.
 id<GREYMatcher> ShareButton();
 
+// Returns the GREYMatcher for the button that opens the tab switcher.
+id<GREYMatcher> TabletTabSwitcherOpenButton();
+
 // Matcher for show tabs button.
 id<GREYMatcher> ShowTabsButton();
 
 // Matcher for SettingsSwitchCell.
-id<GREYMatcher> SettingsSwitchCell(NSString* accessibilityIdentifier,
-                                   BOOL isToggledOn);
+id<GREYMatcher> SettingsSwitchCell(NSString* accessibility_identifier,
+                                   BOOL is_toggled_on);
 
 // Matcher for SettingsSwitchCell.
-id<GREYMatcher> SettingsSwitchCell(NSString* accessibilityIdentifier,
-                                   BOOL isToggledOn,
-                                   BOOL isEnabled);
+id<GREYMatcher> SettingsSwitchCell(NSString* accessibility_identifier,
+                                   BOOL is_toggled_on,
+                                   BOOL is_enabled);
 
-// Matcher for SyncSwitchCell.
-id<GREYMatcher> SyncSwitchCell(NSString* accessibilityLabel, BOOL isToggledOn);
+// Matcher for LegacySyncSwitchCell.
+id<GREYMatcher> LegacySyncSwitchCell(NSString* accessibilityLabel,
+                                     BOOL isToggledOn);
 
 // Matcher for the Open in New Tab option in the context menu when long pressing
 // a link.
@@ -119,6 +133,13 @@ id<GREYMatcher> AddAccountButton();
 
 // Returns matcher for the sign out accounts button.
 id<GREYMatcher> SignOutAccountsButton();
+
+// Returns matcher for the Clear Browsing Data cell on the Privacy screen.
+id<GREYMatcher> ClearBrowsingDataCell();
+
+// Returns matcher for the clear browsing data button on the clear browsing data
+// panel.
+id<GREYMatcher> ClearBrowsingDataButton();
 
 // Returns matcher for the clear browsing data collection view.
 id<GREYMatcher> ClearBrowsingDataCollectionView();
@@ -234,6 +255,12 @@ id<GREYMatcher> SystemSelectionCalloutCopyButton();
 
 // Returns matcher for the Copy item on the context menu.
 id<GREYMatcher> ContextMenuCopyButton();
+
+// Returns matcher for defoucesed omnibox on a new tab.
+id<GREYMatcher> NewTabPageOmnibox();
+
+// Returns a matcher for the current WebView.
+id<GREYMatcher> WebViewMatcher();
 
 }  // namespace chrome_test_util
 

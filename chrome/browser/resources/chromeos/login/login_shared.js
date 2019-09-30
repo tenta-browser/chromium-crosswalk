@@ -183,13 +183,6 @@ cr.define('cr.ui', function() {
   };
 
   /**
-   * Shows dialog to create a supervised user.
-   */
-  Oobe.showSupervisedUserCreationScreen = function() {
-    DisplayManager.showSupervisedUserCreationScreen();
-  };
-
-  /**
    * Shows TPM error screen.
    */
   Oobe.showTpmError = function() {
@@ -221,16 +214,6 @@ cr.define('cr.ui', function() {
     if (accessibilityMenu)
       accessibilityMenu.hide();
     DisplayManager.clearErrors();
-  };
-
-  /**
-   * Displays animations on successful authentication, that have to happen
-   * before login UI is dismissed.
-   */
-  Oobe.animateAuthenticationSuccess = function() {
-    login.HeaderBar.animateOut(function() {
-      chrome.send('unlockOnLoginSuccess');
-    });
   };
 
   /**
@@ -358,7 +341,7 @@ cr.define('cr.ui', function() {
       });
 
       waitForOobeScreen('oauth-enrollment', function() {
-        chrome.send('oauthEnrollCompleteLogin', [username, 'authcode']);
+        chrome.send('oauthEnrollCompleteLogin', [username]);
       });
     }
   };

@@ -86,18 +86,16 @@ class ChromeTranslateClient
   PrefService* GetPrefs() override;
   std::unique_ptr<translate::TranslatePrefs> GetTranslatePrefs() override;
   translate::TranslateAcceptLanguages* GetTranslateAcceptLanguages() override;
-  int GetInfobarIconID() const override;
   void RecordTranslateEvent(const metrics::TranslateEventProto&) override;
-#if !defined(USE_AURA)
+#if defined(OS_ANDROID)
   std::unique_ptr<infobars::InfoBar> CreateInfoBar(
       std::unique_ptr<translate::TranslateInfoBarDelegate> delegate)
       const override;
-#endif
-#if defined(OS_MACOSX)
-  // Temporary shim for Polychrome. See bottom of first comment in
-  // https://crbug.com/804950 for details
-  std::unique_ptr<infobars::InfoBar> CreateInfoBarCocoa(
-      std::unique_ptr<translate::TranslateInfoBarDelegate> delegate) const;
+  int GetInfobarIconID() const override;
+
+  // Trigger a manual translation when the necessary state (e.g. source
+  // language) is ready.
+  void ManualTranslateWhenReady();
 #endif
 
   void RecordLanguageDetectionEvent(
@@ -139,6 +137,14 @@ class ChromeTranslateClient
 
   translate::ContentTranslateDriver translate_driver_;
   std::unique_ptr<translate::TranslateManager> translate_manager_;
+
+#if defined(OS_ANDROID)
+  // Whether to trigger a manual translation when ready.
+  // See ChromeTranslateClient::ManualTranslateOnReady
+  bool manual_translate_on_ready_ = false;
+#endif
+
+  WEB_CONTENTS_USER_DATA_KEY_DECL();
 
   DISALLOW_COPY_AND_ASSIGN(ChromeTranslateClient);
 };

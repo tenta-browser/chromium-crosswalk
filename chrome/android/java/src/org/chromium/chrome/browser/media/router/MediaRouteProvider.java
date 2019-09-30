@@ -4,7 +4,7 @@
 
 package org.chromium.chrome.browser.media.router;
 
-import javax.annotation.Nullable;
+import android.support.annotation.Nullable;
 
 /**
  * An interface components providing media sinks and routes need to implement to hooks up into
@@ -82,9 +82,8 @@ public interface MediaRouteProvider {
      * Sends a message to the route with the given id. The route must be created by this provider.
      * @param routeId The id of the route to send the message to.
      * @param message The message to send.
-     * @param nativeCallbackId The id of the result callback tracked by the native side.
      */
-    void sendStringMessage(String routeId, String message, int nativeCallbackId);
+    void sendStringMessage(String routeId, String message);
 
     /**
      * Returns a FlingingController for the given route ID.

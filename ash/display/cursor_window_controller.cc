@@ -80,7 +80,7 @@ class CursorWindowDelegate : public aura::WindowDelegate {
   void OnWindowDestroyed(aura::Window* window) override {}
   void OnWindowTargetVisibilityChanged(bool visible) override {}
   bool HasHitTestMask() const override { return false; }
-  void GetHitTestMask(gfx::Path* mask) const override {}
+  void GetHitTestMask(SkPath* mask) const override {}
 
   // Sets the cursor image for the |display|'s scale factor.
   void SetCursorImage(const gfx::Size& size, const gfx::ImageSkia& image) {
@@ -340,7 +340,7 @@ void CursorWindowController::UpdateCursorImage() {
   const gfx::ImageSkiaRep& image_rep = resized.GetRepresentation(cursor_scale);
   delegate_->SetCursorImage(
       resized.size(),
-      gfx::ImageSkia(gfx::ImageSkiaRep(image_rep.sk_bitmap(), cursor_scale)));
+      gfx::ImageSkia(gfx::ImageSkiaRep(image_rep.GetBitmap(), cursor_scale)));
   hot_point_ = gfx::ConvertPointToDIP(cursor_scale, hot_point_);
 
   if (cursor_view_) {

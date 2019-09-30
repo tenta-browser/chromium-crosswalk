@@ -141,6 +141,7 @@ struct StructTraits<gpu::mojom::VideoEncodeAcceleratorSupportedProfileDataView,
   }
 };
 
+#if defined(OS_WIN)
 template <>
 struct EnumTraits<gpu::mojom::OverlayFormat, gpu::OverlayFormat> {
   static gpu::mojom::OverlayFormat ToMojom(gpu::OverlayFormat format);
@@ -162,6 +163,30 @@ struct StructTraits<gpu::mojom::OverlayCapabilityDataView,
     return input.is_scaling_supported;
   }
 };
+
+template <>
+struct StructTraits<gpu::mojom::Dx12VulkanVersionInfoDataView,
+                    gpu::Dx12VulkanVersionInfo> {
+  static bool Read(gpu::mojom::Dx12VulkanVersionInfoDataView data,
+                   gpu::Dx12VulkanVersionInfo* out);
+
+  static bool supports_dx12(const gpu::Dx12VulkanVersionInfo& input) {
+    return input.supports_dx12;
+  }
+
+  static bool supports_vulkan(const gpu::Dx12VulkanVersionInfo& input) {
+    return input.supports_vulkan;
+  }
+
+  static uint32_t d3d12_feature_level(const gpu::Dx12VulkanVersionInfo& input) {
+    return input.d3d12_feature_level;
+  }
+
+  static uint32_t vulkan_version(const gpu::Dx12VulkanVersionInfo& input) {
+    return input.vulkan_version;
+  }
+};
+#endif
 
 template <>
 struct StructTraits<gpu::mojom::GpuInfoDataView, gpu::GPUInfo> {
@@ -278,20 +303,9 @@ struct StructTraits<gpu::mojom::GpuInfoDataView, gpu::GPUInfo> {
     return input.dx_diagnostics;
   }
 
-  static bool supports_dx12(const gpu::GPUInfo& input) {
-    return input.supports_dx12;
-  }
-
-  static bool supports_vulkan(const gpu::GPUInfo& input) {
-    return input.supports_vulkan;
-  }
-
-  static uint32_t d3d12_feature_level(const gpu::GPUInfo& input) {
-    return input.d3d12_feature_level;
-  }
-
-  static uint32_t vulkan_version(const gpu::GPUInfo& input) {
-    return input.vulkan_version;
+  static const gpu::Dx12VulkanVersionInfo& dx12_vulkan_version_info(
+      const gpu::GPUInfo& input) {
+    return input.dx12_vulkan_version_info;
   }
 #endif
 

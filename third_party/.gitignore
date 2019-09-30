@@ -8,6 +8,9 @@
 /amd/
 /android_build_tools/aapt2/aapt2
 /android_build_tools/aapt2/lib64/*.so
+/android_build_tools/art/dexlayout
+/android_build_tools/art/lib/*.so
+/android_build_tools/art/profman
 /android_build_tools/bundletool/*.jar
 /android_ndk/
 /android_sdk/public/
@@ -41,6 +44,7 @@
 /cacheinvalidation/cacheinvalidation_unittests_run.xml
 /cardboard-java/src
 /catapult
+/cct_dynamic_module/src
 /ced/src
 /checkstyle/*.jar
 /chromeos_login_manager
@@ -54,11 +58,11 @@
 /cros_system_api
 /custom_tabs_client/src
 /cygwin
+/dawn
 /depot_tools
 /devtools-node-modules
 /directxsdk
 /dom_distiller_js/dist
-/dynamicmodule
 /elfutils/src
 /errorprone/lib
 /espresso/lib/
@@ -73,10 +77,11 @@
 /gestures/gestures
 /gles1_conform
 /gles2_conform
+/glfw/src
 /glslang/src
-/glslang-angle/src
 /gn/
 /gnu_binutils/
+/google_android_play_core/core-*.aar
 /google_appengine_cloudstorage
 /google_toolbox_for_mac/src
 /googlemac
@@ -85,10 +90,7 @@
 /gson/lib/
 /gvr-android-sdk/common_library.aar
 /gvr-android-sdk/test-libraries/controller_test_api.aar
-/gvr-android-sdk/libgvr_shim_static_arm.a
-/gvr-android-sdk/libgvr_shim_static_arm64.a
-/gvr-android-sdk/libgvr_shim_static_custom_libcxx_arm.a
-/gvr-android-sdk/libgvr_shim_static_custom_libcxx_arm64.a
+/gvr-android-sdk/libgvr_shim_static_*.a
 /gvr-android-sdk/src
 /gvr-android-sdk/test-apks/daydream_home/*.apk
 /gvr-android-sdk/test-apks/vr_services/*.apk
@@ -102,7 +104,6 @@
 /icu
 /icu4j/lib/
 /intellij/lib/
-/inspector_protocol
 /instrumented_libraries/scripts/*.tgz
 /instrumented_libraries/scripts/out/*
 /javax_inject/lib/
@@ -110,7 +111,6 @@
 /jsr-305/src
 /junit/src
 /khronos_glcts
-/leakcanary/src
 /leveldatabase/src
 /leveldb
 /libaom/source/libaom
@@ -148,6 +148,7 @@
 /mocha
 /mockito/src
 /nacl_sdk_binaries/
+/nasm
 /netty-tcnative/src
 /netty4/src
 /node/linux
@@ -168,6 +169,7 @@
 /perl
 /ppapi
 /proguard/lib/
+/protoc_javalite/protoc-gen-javalite
 /psyco_win32
 /pthreads-win32
 /py_trace_event/src
@@ -195,9 +197,9 @@
 /smhasher/src
 /snappy/src
 /speex
+/spirv-cross/spirv-cross
 /spirv-headers/src
 /SPIRV-Tools/src
-/spirv-tools-angle/src
 /sqlite4java/lib/
 /swiftshader/
 /syzygy
@@ -208,7 +210,6 @@
 /usrsctp/usrsctplib
 /v8-i18n
 /valgrind
-/vulkan-validation-layers/src
 /visualmetrics
 /wayland/src
 /wayland-protocols/src

@@ -14,6 +14,7 @@
 #include "base/path_service.h"
 #include "base/sequenced_task_runner.h"
 #include "base/single_thread_task_runner.h"
+#include "base/stl_util.h"
 #include "base/strings/string_piece.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
@@ -99,9 +100,8 @@ void AppendCommonSwitches(ShellLinkItem* shell_link) {
   const char* kSwitchNames[] = { switches::kUserDataDir };
   const base::CommandLine& command_line =
       *base::CommandLine::ForCurrentProcess();
-  shell_link->GetCommandLine()->CopySwitchesFrom(command_line,
-                                                 kSwitchNames,
-                                                 arraysize(kSwitchNames));
+  shell_link->GetCommandLine()->CopySwitchesFrom(command_line, kSwitchNames,
+                                                 base::size(kSwitchNames));
 }
 
 // Creates a ShellLinkItem preloaded with common switches.
@@ -131,7 +131,7 @@ bool CreateIconFile(const gfx::ImageSkia& image_skia,
       gfx::ImageSkiaRep image_skia_rep = image_skia.GetRepresentation(scale);
       if (!image_skia_rep.is_null()) {
         image_family.Add(
-            gfx::Image::CreateFrom1xBitmap(image_skia_rep.sk_bitmap()));
+            gfx::Image::CreateFrom1xBitmap(image_skia_rep.GetBitmap()));
       }
     }
   }
@@ -387,10 +387,8 @@ void JumpList::ProcessTopSitesNotification() {
   scoped_refptr<history::TopSites> top_sites =
       TopSitesFactory::GetForProfile(profile_);
   if (top_sites) {
-    top_sites->GetMostVisitedURLs(
-        base::Bind(&JumpList::OnMostVisitedURLsAvailable,
-                   weak_ptr_factory_.GetWeakPtr()),
-        false);
+    top_sites->GetMostVisitedURLs(base::Bind(
+        &JumpList::OnMostVisitedURLsAvailable, weak_ptr_factory_.GetWeakPtr()));
   }
 }
 
@@ -862,8 +860,8 @@ int JumpList::CreateIconFiles(const base::FilePath& icon_dir,
   int icons_created = 0;
 
   // Reuse icons for urls that already present in the current JumpList.
-  for (ShellLinkItemList::const_iterator iter = item_list.begin();
-       iter != item_list.end() && max_items > 0; ++iter, --max_items) {
+  for (auto iter = item_list.begin(); iter != item_list.end() && max_items > 0;
+       ++iter, --max_items) {
     ShellLinkItem* item = iter->get();
     auto cache_iter = icon_cur.find(item->url());
     if (cache_iter != icon_cur.end()) {

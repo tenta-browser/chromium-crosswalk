@@ -32,22 +32,29 @@ public class SingleTabModel implements TabModel {
 
     /**
      * Sets the Tab that is managed by the SingleTabModel.
-     * Should only be called once.
      * @param tab Tab to manage.
      */
     void setTab(Tab tab) {
+        Tab oldTab = mTab;
         mTab = tab;
         assert mTab.isIncognito() == mIsIncognito;
         if (mBlockNewWindows) nativePermanentlyBlockAllNewWindows(mTab);
 
         for (TabModelObserver observer : mObservers) {
             observer.didAddTab(tab, TabLaunchType.FROM_LINK);
+            observer.didSelectTab(tab, TabSelectionType.FROM_USER, Tab.INVALID_TAB_ID);
         }
 
         int state = ApplicationStatus.getStateForActivity(mActivity);
         if (state == ActivityState.CREATED || state == ActivityState.STARTED
                 || state == ActivityState.RESUMED) {
             mTab.show(TabSelectionType.FROM_USER);
+        }
+        if (oldTab != null && oldTab.isInitialized()) {
+            for (TabModelObserver observer : mObservers) {
+                observer.didCloseTab(oldTab.getId(), oldTab.isIncognito());
+            }
+            oldTab.destroy();
         }
     }
 

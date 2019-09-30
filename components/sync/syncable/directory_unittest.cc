@@ -8,9 +8,9 @@
 
 #include <cstdlib>
 
-#include "base/macros.h"
 #include "base/rand_util.h"
 #include "base/run_loop.h"
+#include "base/stl_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/test/values_test_util.h"
 #include "components/sync/base/mock_unrecoverable_error_handler.h"
@@ -147,8 +147,7 @@ void SyncableDirectoryTest::CheckPurgeEntriesWithTypeInSucceeded(
     EXPECT_EQ(4U, all_set.size());
     if (before_reload)
       EXPECT_EQ(6U, dir_->kernel()->metahandles_to_purge.size());
-    for (MetahandleSet::iterator iter = all_set.begin(); iter != all_set.end();
-         ++iter) {
+    for (auto iter = all_set.begin(); iter != all_set.end(); ++iter) {
       Entry e(&trans, GET_BY_HANDLE, *iter);
       const ModelType local_type = e.GetModelType();
       const ModelType server_type = e.GetServerModelType();
@@ -1329,7 +1328,7 @@ TEST_F(SyncableDirectoryTest, PositionWithNullSurvivesSaveAndReload) {
   TestIdFactory id_factory;
   Id null_child_id;
   const char null_cstr[] = "\0null\0test";
-  std::string null_str(null_cstr, arraysize(null_cstr) - 1);
+  std::string null_str(null_cstr, base::size(null_cstr) - 1);
   // Pad up to the minimum length with 0x7f characters, then add a string that
   // contains a few nulls to the end.  This is slightly wrong, since the suffix
   // part of a UniquePosition shouldn't contain nulls, but it's good enough for
@@ -1433,8 +1432,7 @@ TEST_F(SyncableDirectoryTest, General) {
     dir()->GetChildHandlesById(&rtrans, rtrans.root_id(), &child_handles);
     EXPECT_EQ(1u, child_handles.size());
 
-    for (Directory::Metahandles::iterator i = child_handles.begin();
-         i != child_handles.end(); ++i) {
+    for (auto i = child_handles.begin(); i != child_handles.end(); ++i) {
       EXPECT_EQ(*i, written_metahandle);
     }
   }

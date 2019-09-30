@@ -35,8 +35,10 @@ void NetErrorPageController::Install(content::RenderFrame* render_frame,
     return;
 
   v8::Local<v8::Object> global = context->Global();
-  global->Set(gin::StringToV8(isolate, "errorPageController"),
-              controller.ToV8());
+  global
+      ->Set(context, gin::StringToV8(isolate, "errorPageController"),
+            controller.ToV8())
+      .ToChecked();
 }
 
 bool NetErrorPageController::ShowSavedCopyButtonClick() {
@@ -57,6 +59,18 @@ bool NetErrorPageController::DetailsButtonClick() {
 
 bool NetErrorPageController::TrackEasterEgg() {
   return ButtonClick(NetErrorHelperCore::EASTER_EGG);
+}
+
+bool NetErrorPageController::UpdateEasterEggHighScore(int high_score) {
+  if (delegate_)
+    delegate_->UpdateEasterEggHighScore(high_score);
+  return true;
+}
+
+bool NetErrorPageController::ResetEasterEggHighScore() {
+  if (delegate_)
+    delegate_->ResetEasterEggHighScore();
+  return true;
 }
 
 bool NetErrorPageController::DiagnoseErrorsButtonClick() {
@@ -100,6 +114,21 @@ void NetErrorPageController::LaunchDownloadsPage() {
     delegate_->LaunchDownloadsPage();
 }
 
+void NetErrorPageController::SavePageForLater() {
+  if (delegate_)
+    delegate_->SavePageForLater();
+}
+
+void NetErrorPageController::CancelSavePage() {
+  if (delegate_)
+    delegate_->CancelSavePage();
+}
+
+void NetErrorPageController::ListVisibilityChanged(bool is_visible) {
+  if (delegate_)
+    delegate_->ListVisibilityChanged(is_visible);
+}
+
 NetErrorPageController::NetErrorPageController(base::WeakPtr<Delegate> delegate)
     : delegate_(delegate) {
 }
@@ -122,10 +151,18 @@ gin::ObjectTemplateBuilder NetErrorPageController::GetObjectTemplateBuilder(
                  &NetErrorPageController::DiagnoseErrorsButtonClick)
       .SetMethod("trackClick", &NetErrorPageController::TrackClick)
       .SetMethod("trackEasterEgg", &NetErrorPageController::TrackEasterEgg)
+      .SetMethod("updateEasterEggHighScore",
+                 &NetErrorPageController::UpdateEasterEggHighScore)
+      .SetMethod("resetEasterEggHighScore",
+                 &NetErrorPageController::ResetEasterEggHighScore)
       .SetMethod("trackCachedCopyButtonClick",
                  &NetErrorPageController::TrackCachedCopyButtonClick)
       .SetMethod("launchOfflineItem",
                  &NetErrorPageController::LaunchOfflineItem)
       .SetMethod("launchDownloadsPage",
-                 &NetErrorPageController::LaunchDownloadsPage);
+                 &NetErrorPageController::LaunchDownloadsPage)
+      .SetMethod("savePageForLater", &NetErrorPageController::SavePageForLater)
+      .SetMethod("cancelSavePage", &NetErrorPageController::CancelSavePage)
+      .SetMethod("listVisibilityChanged",
+                 &NetErrorPageController::ListVisibilityChanged);
 }

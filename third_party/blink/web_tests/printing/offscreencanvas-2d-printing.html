@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<canvas id='canvas'></canvas>
+<script>
+  var canvas = document.getElementById('canvas');
+  canvas.width = canvas.height = 100;
+  var offscreenContext = canvas.transferControlToOffscreen().getContext("2d");
+  offscreenContext.fillStyle = "green";
+  offscreenContext.fillRect(0, 0, 100, 100);
+
+  // Make sure that the canvas has been drawn to before capturing
+  function waitForCanvasToDraw() {
+    return new Promise(resolve => {
+      var testPixel = function() {
+        var pixel = offscreenContext.getImageData(0, 0, 1, 1).data;
+        var greenChannel = pixel[1];
+        if (greenChannel != 128) {
+          requestAnimationFrame(testPixel);
+          return;
+        } else {
+          resolve();
+        }
+      }
+      testPixel();
+    });
+  }
+
+  if (window.testRunner) {
+    testRunner.setPrinting();
+    testRunner.waitUntilDone();
+    waitForCanvasToDraw().then(() => {
+      // Wait for all testRunner javascript to complete
+      window.setTimeout(() => {
+        testRunner.notifyDone()
+      }, 0);
+    });
+  }
+</script>

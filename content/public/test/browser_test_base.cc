@@ -19,19 +19,24 @@
 #include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/string_number_conversions.h"
-#include "base/sys_info.h"
+#include "base/system/sys_info.h"
+#include "base/task/post_task.h"
 #include "base/test/test_timeouts.h"
 #include "base/threading/thread_restrictions.h"
 #include "build/build_config.h"
 #include "content/browser/browser_thread_impl.h"
 #include "content/browser/renderer_host/render_process_host_impl.h"
+#include "content/browser/scheduler/browser_task_executor.h"
+#include "content/browser/startup_helper.h"
 #include "content/browser/tracing/tracing_controller_impl.h"
 #include "content/public/app/content_main.h"
+#include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/network_service_instance.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/content_switches.h"
 #include "content/public/common/main_function_params.h"
+#include "content/public/common/network_service_util.h"
 #include "content/public/common/service_manager_connection.h"
 #include "content/public/common/service_names.mojom.h"
 #include "content/public/test/browser_test_utils.h"
@@ -47,14 +52,24 @@
 #include "services/service_manager/embedder/switches.h"
 #include "services/service_manager/public/cpp/connector.h"
 #include "ui/base/platform_window_defaults.h"
-#include "ui/base/test/material_design_controller_test_api.h"
 #include "ui/compositor/compositor_switches.h"
 #include "ui/display/display_switches.h"
 #include "ui/gl/gl_implementation.h"
 #include "ui/gl/gl_switches.h"
 
+#if defined(OS_MACOSX)
+#include "ui/events/test/event_generator.h"
+#include "ui/views/test/event_generator_delegate_mac.h"
+#endif
+
 #if defined(OS_POSIX)
 #include "base/process/process_handle.h"
+#endif
+
+#if defined(OS_CHROMEOS)
+#include "content/public/browser/network_service_instance.h"
+#include "net/base/network_change_notifier.h"
+#include "net/base/network_change_notifier_posix.h"
 #endif
 
 #if defined(USE_AURA)
@@ -91,7 +106,7 @@ void DumpStackTraceSignalHandler(int signal) {
 void RunTaskOnRendererThread(const base::Closure& task,
                              const base::Closure& quit_task) {
   task.Run();
-  BrowserThread::PostTask(BrowserThread::UI, FROM_HERE, quit_task);
+  base::PostTaskWithTraits(FROM_HERE, {BrowserThread::UI}, quit_task);
 }
 
 void TraceStopTracingComplete(const base::Closure& quit,
@@ -127,8 +142,7 @@ BrowserTestBase::BrowserTestBase()
       expected_exit_code_(0),
       enable_pixel_output_(false),
       use_software_compositing_(false),
-      set_up_called_(false),
-      disable_io_checks_(false) {
+      set_up_called_(false) {
   ui::test::EnableTestConfigForPlatformWindows();
 
 #if defined(OS_POSIX)
@@ -145,13 +159,16 @@ BrowserTestBase::BrowserTestBase()
 #if defined(USE_AURA)
   ui::test::EventGeneratorDelegate::SetFactoryFunction(base::BindRepeating(
       &aura::test::EventGeneratorDelegateAura::Create, nullptr));
+#elif defined(OS_MACOSX)
+  ui::test::EventGeneratorDelegate::SetFactoryFunction(
+      base::BindRepeating(&views::test::CreateEventGeneratorDelegateMac));
 #endif
 }
 
 BrowserTestBase::~BrowserTestBase() {
 #if defined(OS_ANDROID)
   // RemoteTestServer can cause wait on the UI thread.
-  base::ThreadRestrictions::ScopedAllowWait allow_wait;
+  base::ScopedAllowBaseSyncPrimitivesForTesting allow_wait;
   spawned_test_server_.reset();
 #endif
 
@@ -163,12 +180,14 @@ BrowserTestBase::~BrowserTestBase() {
 
 void BrowserTestBase::SetUp() {
   set_up_called_ = true;
-  // ContentTestSuiteBase might have already initialized
-  // MaterialDesignController in browser_tests suite.
-  // Uninitialize here to let the browser process do it.
-  ui::test::MaterialDesignControllerTestAPI::Uninitialize();
 
   base::CommandLine* command_line = base::CommandLine::ForCurrentProcess();
+
+  // Features that depend on external factors (e.g. memory pressure monitor) can
+  // disable themselves based on the switch below (to ensure that browser tests
+  // behave deterministically / do not flakily change behavior based on external
+  // factors).
+  command_line->AppendSwitch(switches::kBrowserTest);
 
   // Override the child process connection timeout since tests can exceed that
   // when sharded.
@@ -245,7 +264,7 @@ void BrowserTestBase::SetUp() {
 
   // Use an sRGB color profile to ensure that the machine's color profile does
   // not affect the results.
-  command_line->AppendSwitchASCII(switches::kForceColorProfile, "srgb");
+  command_line->AppendSwitchASCII(switches::kForceDisplayColorProfile, "srgb");
 
   // Disable compositor Ukm in browser tests until crbug.com/761524 is resolved.
   command_line->AppendSwitch(switches::kDisableCompositorUkmForTests);
@@ -317,7 +336,10 @@ void BrowserTestBase::SetUp() {
   params.ui_task = ui_task.release();
   params.created_main_parts_closure = created_main_parts_closure.release();
   base::TaskScheduler::Create("Browser");
-  BrowserThreadImpl::CreateTaskExecutor();
+  DCHECK(!field_trial_list_);
+  field_trial_list_ = SetUpFieldTrialsAndFeatureList();
+  StartBrowserTaskScheduler();
+  BrowserTaskExecutor::Create();
   // TODO(phajdan.jr): Check return code, http://crbug.com/374738 .
   BrowserMain(params);
 #else
@@ -330,7 +352,7 @@ void BrowserTestBase::SetUp() {
 }
 
 void BrowserTestBase::TearDown() {
-#if defined(USE_AURA)
+#if defined(USE_AURA) || defined(OS_MACOSX)
   ui::test::EventGeneratorDelegate::SetFactoryFunction(
       ui::test::EventGeneratorDelegate::FactoryFunction());
 #endif
@@ -371,6 +393,32 @@ void BrowserTestBase::ProxyRunTestOnMainThreadLoop() {
     signal(SIGTERM, DumpStackTraceSignalHandler);
 #endif  // defined(OS_POSIX)
 
+#if defined(OS_CHROMEOS)
+  // Manually set the connection type since ChromeOS's NetworkChangeNotifier
+  // implementation relies on some other class controlling it (normally
+  // NetworkChangeManagerClient), which may not be set up in all browser tests.
+  net::NetworkChangeNotifierPosix* network_change_notifier =
+      static_cast<net::NetworkChangeNotifierPosix*>(
+          content::GetNetworkChangeNotifier());
+  network_change_notifier->OnConnectionChanged(
+      net::NetworkChangeNotifier::CONNECTION_ETHERNET);
+  // If the network service is enabled, set the connection type for its
+  // NetworkChangeNotifier instance as well.
+  if (base::FeatureList::IsEnabled(network::features::kNetworkService) &&
+      !IsNetworkServiceRunningInProcess()) {
+    network::mojom::NetworkChangeManagerPtr manager_ptr;
+    network::mojom::NetworkChangeManagerRequest request(
+        mojo::MakeRequest(&manager_ptr));
+    GetNetworkService()->GetNetworkChangeManager(std::move(request));
+    manager_ptr->OnNetworkChanged(
+        /*dns_changed=*/false, /*ip_address_changed=*/false,
+        /*connection_type_changed=*/true,
+        network::mojom::ConnectionType::CONNECTION_ETHERNET,
+        /*connection_subtype_changed=*/false,
+        network::mojom::ConnectionSubtype::SUBTYPE_UNKNOWN);
+  }
+#endif
+
   if (base::CommandLine::ForCurrentProcess()->HasSwitch(
           switches::kEnableTracing)) {
     base::trace_event::TraceConfig trace_config(
@@ -410,11 +458,9 @@ void BrowserTestBase::ProxyRunTestOnMainThreadLoop() {
     InitializeNetworkProcess();
 
     bool old_io_allowed_value = false;
-    if (!disable_io_checks_)
-      old_io_allowed_value = base::ThreadRestrictions::SetIOAllowed(false);
+    old_io_allowed_value = base::ThreadRestrictions::SetIOAllowed(false);
     RunTestOnMainThread();
-    if (!disable_io_checks_)
-      base::ThreadRestrictions::SetIOAllowed(old_io_allowed_value);
+    base::ThreadRestrictions::SetIOAllowed(old_io_allowed_value);
     TearDownOnMainThread();
   }
 
@@ -452,16 +498,15 @@ void BrowserTestBase::PostTaskToInProcessRendererAndWait(
   CHECK(base::CommandLine::ForCurrentProcess()->HasSwitch(
       switches::kSingleProcess));
 
-  scoped_refptr<MessageLoopRunner> runner = new MessageLoopRunner;
+  scoped_refptr<base::SingleThreadTaskRunner> renderer_task_runner =
+      RenderProcessHostImpl::GetInProcessRendererThreadTaskRunnerForTesting();
+  CHECK(renderer_task_runner);
 
-  base::MessageLoop* renderer_loop =
-      RenderProcessHostImpl::GetInProcessRendererThreadForTesting();
-  CHECK(renderer_loop);
-
-  renderer_loop->task_runner()->PostTask(
+  base::RunLoop run_loop;
+  renderer_task_runner->PostTask(
       FROM_HERE,
-      base::BindOnce(&RunTaskOnRendererThread, task, runner->QuitClosure()));
-  runner->Run();
+      base::BindOnce(&RunTaskOnRendererThread, task, run_loop.QuitClosure()));
+  run_loop.Run();
 }
 
 void BrowserTestBase::EnablePixelOutput() { enable_pixel_output_ = true; }
@@ -490,10 +535,8 @@ void BrowserTestBase::InitializeNetworkProcess() {
 
   // Send the host resolver rules to the network service if it's in use. No need
   // to do this if it's running in the browser process though.
-  if (!base::FeatureList::IsEnabled(network::features::kNetworkService) ||
-      IsNetworkServiceRunningInProcess()) {
+  if (!IsOutOfProcessNetworkService())
     return;
-  }
 
   net::RuleBasedHostResolverProc::RuleList rules = host_resolver()->GetRules();
   std::vector<network::mojom::RulePtr> mojo_rules;

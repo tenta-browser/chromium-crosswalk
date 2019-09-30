@@ -4,6 +4,7 @@
 
 package org.chromium.chrome.browser.media.router.cast;
 
+import android.support.annotation.Nullable;
 import android.support.v7.media.MediaRouter;
 
 import org.json.JSONException;
@@ -22,8 +23,6 @@ import org.chromium.chrome.browser.media.router.MediaSource;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Set;
-
-import javax.annotation.Nullable;
 
 /**
  * A {@link MediaRouteProvider} implementation for Cast devices and applications.
@@ -65,12 +64,12 @@ public class CastMediaRouteProvider extends BaseMediaRouteProvider {
         if (mSession == null) return;
 
         if (mClientRecords.isEmpty()) {
-            for (String routeId : mRoutes.keySet()) mManager.onRouteClosed(routeId);
+            for (String routeId : mRoutes.keySet()) mManager.onRouteTerminated(routeId);
             mRoutes.clear();
         } else {
             mLastRemovedRouteRecord = mClientRecords.values().iterator().next();
             for (ClientRecord client : mClientRecords.values()) {
-                mManager.onRouteClosed(client.routeId);
+                mManager.onRouteTerminated(client.routeId);
 
                 mRoutes.remove(client.routeId);
             }
@@ -82,10 +81,6 @@ public class CastMediaRouteProvider extends BaseMediaRouteProvider {
         if (mAndroidMediaRouter != null) {
             mAndroidMediaRouter.selectRoute(mAndroidMediaRouter.getDefaultRoute());
         }
-    }
-
-    public void onMessageSentResult(boolean success, int callbackId) {
-        mManager.onMessageSentResult(success, callbackId);
     }
 
     public void onMessage(String clientId, String message) {
@@ -186,7 +181,7 @@ public class CastMediaRouteProvider extends BaseMediaRouteProvider {
 
         if (mSession == null) {
             mRoutes.remove(routeId);
-            mManager.onRouteClosed(routeId);
+            mManager.onRouteTerminated(routeId);
             return;
         }
 
@@ -209,15 +204,13 @@ public class CastMediaRouteProvider extends BaseMediaRouteProvider {
 
     // Migrated to CafMessageHandler. See https://crbug.com/711860.
     @Override
-    public void sendStringMessage(String routeId, String message, int nativeCallbackId) {
+    public void sendStringMessage(String routeId, String message) {
         Log.d(TAG, "Received message from client: %s", message);
 
         if (!mRoutes.containsKey(routeId)) {
-            mManager.onMessageSentResult(false, nativeCallbackId);
             return;
         }
 
-        boolean success = false;
         try {
             JSONObject jsonMessage = new JSONObject(message);
 
@@ -226,20 +219,17 @@ public class CastMediaRouteProvider extends BaseMediaRouteProvider {
             // "leave_session" from CastMRP to CastMessageHandler. Also, need to have a
             // ClientManager for client managing.
             if ("client_connect".equals(messageType)) {
-                success = handleClientConnectMessage(jsonMessage);
+                handleClientConnectMessage(jsonMessage);
             } else if ("client_disconnect".equals(messageType)) {
-                success = handleClientDisconnectMessage(jsonMessage);
+                handleClientDisconnectMessage(jsonMessage);
             } else if ("leave_session".equals(messageType)) {
-                success = handleLeaveSessionMessage(jsonMessage);
+                handleLeaveSessionMessage(jsonMessage);
             } else if (mSession != null) {
-                success = mMessageHandler.handleSessionMessage(jsonMessage);
+                mMessageHandler.handleSessionMessage(jsonMessage);
             }
         } catch (JSONException e) {
             Log.e(TAG, "JSONException while handling internal message: " + e);
-            success = false;
         }
-
-        mManager.onMessageSentResult(success, nativeCallbackId);
     }
 
     // Migrated to CafMessageHandler. See https://crbug.com/711860.
@@ -274,7 +264,7 @@ public class CastMediaRouteProvider extends BaseMediaRouteProvider {
         mRoutes.remove(client.routeId);
         removeClient(client);
 
-        mManager.onRouteClosed(client.routeId);
+        mManager.onRouteTerminated(client.routeId);
 
         return true;
     }

@@ -19,10 +19,12 @@
 #include "ash/shell.h"
 #include "ash/shell/example_factory.h"
 #include "ash/shell/toplevel_window.h"
+#include "base/bind_helpers.h"
 #include "base/callback.h"
 #include "base/files/file_path.h"
 #include "base/i18n/case_conversion.h"
 #include "base/i18n/string_search.h"
+#include "base/stl_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
@@ -62,7 +64,7 @@ class WindowTypeShelfItem : public app_list::AppListItem {
     const int kIconSize = 128;
     SkBitmap icon;
     icon.allocN32Pixels(kIconSize, kIconSize);
-    icon.eraseColor(kColors[static_cast<int>(type) % arraysize(kColors)]);
+    icon.eraseColor(kColors[static_cast<int>(type) % base::size(kColors)]);
     return gfx::ImageSkia::CreateFrom1xBitmap(icon);
   }
 
@@ -119,7 +121,7 @@ class WindowTypeShelfItem : public app_list::AppListItem {
         break;
       }
       case EXAMPLES_WINDOW: {
-        views::examples::ShowExamplesWindow(views::examples::QUIT_ON_CLOSE);
+        views::examples::ShowExamplesWindow(base::DoNothing());
         break;
       }
       default:
@@ -272,6 +274,10 @@ class ExampleAppListViewDelegate : public app_list::AppListViewDelegate {
     // Nothing needs to be done.
   }
 
+  void ViewClosed() override {
+    // Nothing needs to be done.
+  }
+
   void GetWallpaperProminentColors(
       GetWallpaperProminentColorsCallback callback) override {
     NOTIMPLEMENTED();
@@ -313,9 +319,20 @@ class ExampleAppListViewDelegate : public app_list::AppListViewDelegate {
     NOTIMPLEMENTED();
   }
 
-  ws::WindowService* GetWindowService() override {
+  bool ProcessHomeLauncherGesture(ui::GestureEvent* event,
+                                  const gfx::Point& screen_location) override {
     NOTIMPLEMENTED();
-    return nullptr;
+    return false;
+  }
+
+  bool CanProcessEventsOnApplistViews() override {
+    NOTIMPLEMENTED();
+    return true;
+  }
+
+  void GetNavigableContentsFactory(
+      content::mojom::NavigableContentsFactoryRequest request) override {
+    NOTIMPLEMENTED();
   }
 
   std::unique_ptr<app_list::AppListModel> model_;

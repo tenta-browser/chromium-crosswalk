@@ -4,22 +4,26 @@
 
 #include "ash/assistant/ui/assistant_main_view.h"
 
+#include <algorithm>
 #include <memory>
 
-#include "ash/assistant/assistant_controller.h"
-#include "ash/assistant/assistant_interaction_controller.h"
-#include "ash/assistant/assistant_ui_controller.h"
 #include "ash/assistant/model/assistant_interaction_model.h"
+#include "ash/assistant/model/assistant_ui_model.h"
 #include "ash/assistant/ui/assistant_ui_constants.h"
+#include "ash/assistant/ui/assistant_view_delegate.h"
 #include "ash/assistant/ui/caption_bar.h"
 #include "ash/assistant/ui/dialog_plate/dialog_plate.h"
 #include "ash/assistant/ui/main_stage/assistant_main_stage.h"
 #include "ash/assistant/util/animation_util.h"
 #include "ash/assistant/util/assistant_util.h"
 #include "base/time/time.h"
+#include "ui/aura/window.h"
 #include "ui/compositor/layer_animation_element.h"
 #include "ui/compositor/layer_animator.h"
+#include "ui/display/display.h"
+#include "ui/display/screen.h"
 #include "ui/views/layout/box_layout.h"
+#include "ui/views/widget/widget.h"
 
 namespace ash {
 
@@ -42,27 +46,29 @@ constexpr base::TimeDelta kDialogPlateAnimationFadeInDuration =
 
 }  // namespace
 
-AssistantMainView::AssistantMainView(AssistantController* assistant_controller)
-    : assistant_controller_(assistant_controller),
-      min_height_dip_(kMinHeightDip) {
+AssistantMainView::AssistantMainView(AssistantViewDelegate* delegate)
+    : delegate_(delegate), min_height_dip_(kMinHeightDip) {
   InitLayout();
 
   // Set delegate/observers.
-  caption_bar_->set_delegate(assistant_controller_->ui_controller());
-  dialog_plate_->AddObserver(assistant_controller_->interaction_controller());
-  dialog_plate_->AddObserver(assistant_controller_->ui_controller());
+  caption_bar_->set_delegate(delegate_->GetCaptionBarDelegate());
 
-  // The AssistantController indirectly owns the view hierarchy to which
-  // AssistantMainView belongs so is guaranteed to outlive it.
-  assistant_controller_->ui_controller()->AddModelObserver(this);
+  for (DialogPlateObserver* observer : delegate_->GetDialogPlateObservers())
+    dialog_plate_->AddObserver(observer);
+
+  // The AssistantViewDelegate should outlive AssistantMainView.
+  delegate_->AddUiModelObserver(this);
 }
 
 AssistantMainView::~AssistantMainView() {
-  dialog_plate_->RemoveObserver(assistant_controller_->ui_controller());
-  dialog_plate_->RemoveObserver(
-      assistant_controller_->interaction_controller());
+  for (DialogPlateObserver* observer : delegate_->GetDialogPlateObservers())
+    dialog_plate_->RemoveObserver(observer);
 
-  assistant_controller_->ui_controller()->RemoveModelObserver(this);
+  delegate_->RemoveUiModelObserver(this);
+}
+
+const char* AssistantMainView::GetClassName() const {
+  return "AssistantMainView";
 }
 
 gfx::Size AssistantMainView::CalculatePreferredSize() const {
@@ -74,6 +80,13 @@ int AssistantMainView::GetHeightForWidth(int width) const {
   int height = views::View::GetHeightForWidth(width);
   height = std::min(height, kMaxHeightDip);
   height = std::max(height, min_height_dip_);
+
+  // |height| should not exceed the height of the usable work area.
+  // |height| >= |kMinHeightDip|.
+  gfx::Rect usable_work_area = delegate_->GetUiModel()->usable_work_area();
+  if (height > usable_work_area.height())
+    height = std::max(kMinHeightDip, usable_work_area.height());
+
   return height;
 }
 
@@ -99,6 +112,12 @@ void AssistantMainView::ChildVisibilityChanged(views::View* child) {
   PreferredSizeChanged();
 }
 
+views::View* AssistantMainView::FindFirstFocusableView() {
+  // In those instances in which we want to override views::FocusSearch
+  // behavior, DialogPlate will identify the first focusable view.
+  return dialog_plate_->FindFirstFocusableView();
+}
+
 void AssistantMainView::InitLayout() {
   views::BoxLayout* layout_manager =
       SetLayoutManager(std::make_unique<views::BoxLayout>(
@@ -106,7 +125,7 @@ void AssistantMainView::InitLayout() {
 
   // Caption bar.
   caption_bar_ = new CaptionBar();
-  caption_bar_->SetButtonVisible(CaptionButtonId::kBack, false);
+  caption_bar_->SetButtonVisible(AssistantButtonId::kBack, false);
 
   // The caption bar will be animated on its own layer.
   caption_bar_->SetPaintToLayer();
@@ -115,13 +134,13 @@ void AssistantMainView::InitLayout() {
   AddChildView(caption_bar_);
 
   // Main stage.
-  main_stage_ = new AssistantMainStage(assistant_controller_);
+  main_stage_ = new AssistantMainStage(delegate_);
   AddChildView(main_stage_);
 
   layout_manager->SetFlexForView(main_stage_, 1);
 
   // Dialog plate.
-  dialog_plate_ = new DialogPlate(assistant_controller_);
+  dialog_plate_ = new DialogPlate(delegate_);
 
   // The dialog plate will be animated on its own layer.
   dialog_plate_->SetPaintToLayer();
@@ -133,7 +152,8 @@ void AssistantMainView::InitLayout() {
 void AssistantMainView::OnUiVisibilityChanged(
     AssistantVisibility new_visibility,
     AssistantVisibility old_visibility,
-    AssistantSource source) {
+    base::Optional<AssistantEntryPoint> entry_point,
+    base::Optional<AssistantExitPoint> exit_point) {
   if (assistant::util::IsStartingSession(new_visibility, old_visibility)) {
     // When Assistant is starting a new session, we animate in the appearance of
     // the caption bar and dialog plate.

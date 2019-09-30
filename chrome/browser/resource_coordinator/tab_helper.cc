@@ -12,18 +12,16 @@
 #include "build/build_config.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/resource_coordinator/page_signal_receiver.h"
+#include "chrome/browser/resource_coordinator/resource_coordinator_parts.h"
 #include "chrome/browser/resource_coordinator/tab_load_tracker.h"
 #include "chrome/browser/resource_coordinator/tab_memory_metrics_reporter.h"
+#include "chrome/browser/resource_coordinator/utils.h"
 #include "content/public/browser/navigation_handle.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/render_process_host.h"
 #include "content/public/common/service_manager_connection.h"
-#include "content/public/common/service_names.mojom.h"
+#include "services/resource_coordinator/public/cpp/memory_instrumentation/memory_instrumentation.h"
 #include "services/resource_coordinator/public/cpp/page_resource_coordinator.h"
-#include "services/resource_coordinator/public/cpp/process_resource_coordinator.h"
-#include "services/resource_coordinator/public/cpp/resource_coordinator_features.h"
-#include "services/resource_coordinator/public/mojom/coordination_unit.mojom.h"
-#include "services/resource_coordinator/public/mojom/service_constants.mojom.h"
 #include "services/service_manager/public/cpp/connector.h"
 
 #if !defined(OS_ANDROID)
@@ -39,8 +37,7 @@ ResourceCoordinatorTabHelper::ResourceCoordinatorTabHelper(
   TabLoadTracker::Get()->StartTracking(web_contents);
 
   service_manager::Connector* connector = nullptr;
-  if (resource_coordinator::IsResourceCoordinatorEnabled() &&
-      content::ServiceManagerConnection::GetForProcess()) {
+  if (content::ServiceManagerConnection::GetForProcess()) {
     connector =
         content::ServiceManagerConnection::GetForProcess()->GetConnector();
     page_resource_coordinator_ =
@@ -53,19 +50,27 @@ ResourceCoordinatorTabHelper::ResourceCoordinatorTabHelper(
         web_contents->GetVisibility() != content::Visibility::HIDDEN;
     page_resource_coordinator_->SetVisibility(is_visible);
 
-    if (auto* page_signal_receiver =
-            resource_coordinator::PageSignalReceiver::GetInstance()) {
+    if (auto* page_signal_receiver = GetPageSignalReceiver()) {
       // Gets CoordinationUnitID for this WebContents and adds it to
       // PageSignalReceiver.
       page_signal_receiver->AssociateCoordinationUnitIDWithWebContents(
           page_resource_coordinator_->id(), web_contents);
     }
 
-    TabMemoryMetricsReporter::Get()->StartReporting(TabLoadTracker::Get());
+    if (memory_instrumentation::MemoryInstrumentation::GetInstance()) {
+      auto* rc_parts = g_browser_process->resource_coordinator_parts();
+      DCHECK(rc_parts);
+      rc_parts->tab_memory_metrics_reporter()->StartReporting(
+          TabLoadTracker::Get());
+    }
   }
 
 #if !defined(OS_ANDROID)
-  if (base::FeatureList::IsEnabled(features::kSiteCharacteristicsDatabase)) {
+  // Don't create the LocalSiteCharacteristicsWebContentsObserver for this tab
+  // we don't have a page signal receiver as the data that this observer
+  // records depend on it.
+  if (base::FeatureList::IsEnabled(features::kSiteCharacteristicsDatabase) &&
+      GetPageSignalReceiver()) {
     local_site_characteristics_wc_observer_ =
         std::make_unique<LocalSiteCharacteristicsWebContentsObserver>(
             web_contents);
@@ -115,8 +120,7 @@ void ResourceCoordinatorTabHelper::OnVisibilityChanged(
 
 void ResourceCoordinatorTabHelper::WebContentsDestroyed() {
   if (page_resource_coordinator_) {
-    if (auto* page_signal_receiver =
-            resource_coordinator::PageSignalReceiver::GetInstance()) {
+    if (auto* page_signal_receiver = GetPageSignalReceiver()) {
       // Gets CoordinationUnitID for this WebContents and removes it from
       // PageSignalReceiver.
       page_signal_receiver->RemoveCoordinationUnitID(
@@ -134,6 +138,10 @@ void ResourceCoordinatorTabHelper::DidFinishNavigation(
   }
 
   if (page_resource_coordinator_) {
+    // Grab the current time up front, as this is as close as we'll get to the
+    // original commit time.
+    base::TimeTicks navigation_committed_time = base::TimeTicks::Now();
+
     content::RenderFrameHost* render_frame_host =
         navigation_handle->GetRenderFrameHost();
     // Make sure the hierarchical structure is constructed before sending signal
@@ -142,13 +150,8 @@ void ResourceCoordinatorTabHelper::DidFinishNavigation(
         render_frame_host->GetFrameResourceCoordinator();
     page_resource_coordinator_->AddFrame(*frame_resource_coordinator);
 
-    auto* process_resource_coordinator =
-        render_frame_host->GetProcess()->GetProcessResourceCoordinator();
-    process_resource_coordinator->AddFrame(*frame_resource_coordinator);
-
     if (navigation_handle->IsInMainFrame()) {
-      if (auto* page_signal_receiver =
-              resource_coordinator::PageSignalReceiver::GetInstance()) {
+      if (auto* page_signal_receiver = GetPageSignalReceiver()) {
         // Update the last observed navigation ID for this WebContents.
         page_signal_receiver->SetNavigationID(
             web_contents(), navigation_handle->GetNavigationId());
@@ -157,7 +160,7 @@ void ResourceCoordinatorTabHelper::DidFinishNavigation(
       UpdateUkmRecorder(navigation_handle->GetNavigationId());
       ResetFlag();
       page_resource_coordinator_->OnMainFrameNavigationCommitted(
-          navigation_handle->GetNavigationId(),
+          navigation_committed_time, navigation_handle->GetNavigationId(),
           navigation_handle->GetURL().spec());
     }
   }
@@ -194,5 +197,7 @@ void ResourceCoordinatorTabHelper::ResetFlag() {
   first_time_title_set_ = false;
   first_time_favicon_set_ = false;
 }
+
+WEB_CONTENTS_USER_DATA_KEY_IMPL(ResourceCoordinatorTabHelper)
 
 }  // namespace resource_coordinator

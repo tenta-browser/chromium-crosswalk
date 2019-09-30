@@ -21,6 +21,7 @@
 // <include src="../../../../../ui/login/display_manager.js">
 // <include src="md_header_bar.js">
 // <include src="md_top_header_bar.js">
+// <include src="demo_mode_test_helper.js">
 
 // <include
 // src="../../../../../ui/login/account_picker/md_screen_account_picker.js">
@@ -184,13 +185,6 @@ cr.define('cr.ui', function() {
   };
 
   /**
-   * Shows dialog to create a supervised user.
-   */
-  Oobe.showSupervisedUserCreationScreen = function() {
-    DisplayManager.showSupervisedUserCreationScreen();
-  };
-
-  /**
    * Shows TPM error screen.
    */
   Oobe.showTpmError = function() {
@@ -222,16 +216,6 @@ cr.define('cr.ui', function() {
     if (accessibilityMenu)
       accessibilityMenu.hide();
     DisplayManager.clearErrors();
-  };
-
-  /**
-   * Displays animations on successful authentication, that have to happen
-   * before login UI is dismissed.
-   */
-  Oobe.animateAuthenticationSuccess = function() {
-    login.HeaderBar.animateOut(function() {
-      chrome.send('unlockOnLoginSuccess');
-    });
   };
 
   /**
@@ -359,7 +343,7 @@ cr.define('cr.ui', function() {
       });
 
       waitForOobeScreen('oauth-enrollment', function() {
-        chrome.send('oauthEnrollCompleteLogin', [username, 'authcode']);
+        chrome.send('oauthEnrollCompleteLogin', [username]);
       });
     }
   };
@@ -428,6 +412,13 @@ cr.define('cr.ui', function() {
 
     return $('oauth-enrollment')
         .classList.contains('oauth-enroll-state-success');
+  };
+
+  /**
+   * Starts online demo mode setup for telemetry.
+   */
+  Oobe.setUpOnlineDemoModeForTesting = function() {
+    DemoModeTestHelper.setUp('online');
   };
 
   /**

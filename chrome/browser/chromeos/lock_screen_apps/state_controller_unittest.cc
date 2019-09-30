@@ -85,7 +85,7 @@ std::unique_ptr<arc::ArcSession> ArcSessionFactory() {
   return nullptr;
 }
 
-scoped_refptr<extensions::Extension> CreateTestNoteTakingApp(
+scoped_refptr<const extensions::Extension> CreateTestNoteTakingApp(
     const std::string& app_id) {
   ListBuilder action_handlers;
   action_handlers.Append(DictionaryBuilder()
@@ -370,24 +370,6 @@ class TestAppWindow : public content::WebContentsObserver {
   DISALLOW_COPY_AND_ASSIGN(TestAppWindow);
 };
 
-class LockScreenAppStateNotSupportedTest : public testing::Test {
- public:
-  LockScreenAppStateNotSupportedTest() = default;
-
-  ~LockScreenAppStateNotSupportedTest() override = default;
-
-  void SetUp() override {
-    command_line_ = std::make_unique<base::test::ScopedCommandLine>();
-    command_line_->GetProcessCommandLine()->InitFromArgv(
-        {"", "--disable-lock-screen-apps"});
-  }
-
- private:
-  std::unique_ptr<base::test::ScopedCommandLine> command_line_;
-
-  DISALLOW_COPY_AND_ASSIGN(LockScreenAppStateNotSupportedTest);
-};
-
 class LockScreenAppStateTest : public BrowserWithTestWindowTest {
  public:
   LockScreenAppStateTest()
@@ -401,14 +383,14 @@ class LockScreenAppStateTest : public BrowserWithTestWindowTest {
     command_line_->GetProcessCommandLine()->InitFromArgv({""});
     SetUpCommandLine(command_line_->GetProcessCommandLine());
 
-    SetUpStylusAvailability();
-
     std::unique_ptr<chromeos::DBusThreadManagerSetter> dbus_setter =
         chromeos::DBusThreadManager::GetSetterForTesting();
     dbus_setter->SetPowerManagerClient(
         std::make_unique<chromeos::FakePowerManagerClient>());
 
     BrowserWithTestWindowTest::SetUp();
+
+    SetUpStylusAvailability();
 
     session_manager_ = std::make_unique<session_manager::SessionManager>();
     session_manager_->SessionStarted();
@@ -421,8 +403,6 @@ class LockScreenAppStateTest : public BrowserWithTestWindowTest {
             base::Bind(&ArcSessionFactory)));
 
     chromeos::NoteTakingHelper::Initialize();
-
-    ASSERT_TRUE(lock_screen_apps::StateController::IsEnabled());
 
     InitExtensionSystem(profile());
 
@@ -823,10 +803,6 @@ TEST_F(LockScreenAppStateNoStylusInputTest, StylusDetectedAfterInitialization) {
   EXPECT_EQ(TestAppManager::State::kStarted, app_manager()->state());
 }
 
-TEST_F(LockScreenAppStateNotSupportedTest, NoInstance) {
-  EXPECT_FALSE(lock_screen_apps::StateController::IsEnabled());
-}
-
 TEST_F(LockScreenAppStateTest, InitialState) {
   EXPECT_EQ(TrayActionState::kNotAvailable,
             state_controller()->GetLockScreenNoteState());
@@ -972,7 +948,7 @@ TEST_F(LockScreenAppStateTest, NoLockScreenProfile) {
   EXPECT_EQ(TrayActionState::kNotAvailable,
             state_controller()->GetLockScreenNoteState());
 
-  scoped_refptr<extensions::Extension> app =
+  scoped_refptr<const extensions::Extension> app =
       CreateTestNoteTakingApp(kTestAppId);
   extensions::ExtensionSystem::Get(profile())
       ->extension_service()
@@ -1337,7 +1313,7 @@ TEST_F(LockScreenAppStateTest, AppWindowClosedOnNoteTakingAppChange) {
   ASSERT_TRUE(InitializeNoteTakingApp(TrayActionState::kActive,
                                       true /* enable_app_launch */));
 
-  scoped_refptr<extensions::Extension> secondary_app =
+  scoped_refptr<const extensions::Extension> secondary_app =
       CreateTestNoteTakingApp(kSecondaryTestAppId);
   extensions::ExtensionSystem::Get(LockScreenProfile())
       ->extension_service()

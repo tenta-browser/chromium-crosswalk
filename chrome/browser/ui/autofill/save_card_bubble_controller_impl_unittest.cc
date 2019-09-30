@@ -22,10 +22,12 @@
 #include "components/autofill/core/browser/autofill_metrics.h"
 #include "components/autofill/core/browser/autofill_test_utils.h"
 #include "components/autofill/core/browser/credit_card.h"
+#include "components/autofill/core/browser/sync_utils.h"
+#include "components/autofill/core/browser/test_autofill_clock.h"
 #include "components/autofill/core/common/autofill_features.h"
 #include "components/autofill/core/common/autofill_prefs.h"
 #include "components/user_prefs/user_prefs.h"
-#include "content/public/browser/navigation_handle.h"
+#include "content/public/test/mock_navigation_handle.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -49,29 +51,26 @@ class TestSaveCardBubbleControllerImpl : public SaveCardBubbleControllerImpl {
   explicit TestSaveCardBubbleControllerImpl(content::WebContents* web_contents)
       : SaveCardBubbleControllerImpl(web_contents) {}
 
-  void set_elapsed(base::TimeDelta elapsed) { elapsed_ = elapsed; }
-
   void set_security_level(security_state::SecurityLevel security_level) {
     security_level_ = security_level;
   }
 
   void SimulateNavigation() {
-    content::RenderFrameHost* rfh = web_contents()->GetMainFrame();
-    std::unique_ptr<content::NavigationHandle> navigation_handle =
-        content::NavigationHandle::CreateNavigationHandleForTesting(
-            GURL(), rfh, true);
-    // Destructor calls DidFinishNavigation.
+    content::MockNavigationHandle handle;
+    handle.set_has_committed(true);
+    DidFinishNavigation(&handle);
   }
 
  protected:
-  base::TimeDelta Elapsed() const override { return elapsed_; }
-
   security_state::SecurityLevel GetSecurityLevel() const override {
     return security_level_;
   }
 
+  AutofillSyncSigninState GetSyncState() const override {
+    return AutofillSyncSigninState::kSignedInAndSyncFeature;
+  }
+
  private:
-  base::TimeDelta elapsed_;
   security_state::SecurityLevel security_level_ =
       security_state::SecurityLevel::NONE;
 };
@@ -97,34 +96,40 @@ class SaveCardBubbleControllerImplTest : public BrowserWithTestWindowTest {
   }
 
   void SetLegalMessage(const std::string& message_json,
-                       bool should_request_name_from_user = false) {
+                       bool should_request_name_from_user = false,
+                       bool should_request_expiration_date_from_user = false,
+                       bool show_bubble = true) {
     std::unique_ptr<base::Value> value(base::JSONReader::Read(message_json));
     ASSERT_TRUE(value);
     base::DictionaryValue* dictionary;
     ASSERT_TRUE(value->GetAsDictionary(&dictionary));
     std::unique_ptr<base::DictionaryValue> legal_message =
         dictionary->CreateDeepCopy();
-    controller()->ShowBubbleForUpload(CreditCard(), std::move(legal_message),
-                                      should_request_name_from_user,
-                                      base::BindOnce(&UploadSaveCardCallback));
+    controller()->OfferUploadSave(
+        CreditCard(), std::move(legal_message), should_request_name_from_user,
+        should_request_expiration_date_from_user, show_bubble,
+        base::BindOnce(&UploadSaveCardCallback));
   }
 
-  void ShowLocalBubble(CreditCard* card = nullptr) {
+  void ShowLocalBubble(CreditCard* card = nullptr, bool show_bubble = true) {
     // TODO(crbug.com/852562): Migrate this to BindOnce/OnceClosure.
-    controller()->ShowBubbleForLocalSave(
+    controller()->OfferLocalSave(
         card ? CreditCard(*card)
              : autofill::test::GetCreditCard(),  // Visa by default
-        base::Bind(&LocalSaveCardCallback));
+        show_bubble, base::BindOnce(&LocalSaveCardCallback));
   }
 
-  void ShowUploadBubble(bool should_request_name_from_user = false) {
+  void ShowUploadBubble(bool should_request_name_from_user = false,
+                        bool should_request_expiration_date_from_user = false,
+                        bool show_bubble = true) {
     SetLegalMessage(
         "{"
         "  \"line\" : [ {"
         "     \"template\": \"This is the entire message.\""
         "  } ]"
         "}",
-        should_request_name_from_user);
+        should_request_name_from_user, should_request_expiration_date_from_user,
+        show_bubble);
   }
 
   void CloseAndReshowBubble() {
@@ -133,7 +138,7 @@ class SaveCardBubbleControllerImplTest : public BrowserWithTestWindowTest {
   }
 
   void ClickSaveButton() {
-    controller()->OnSaveButton();
+    controller()->OnSaveButton({});
     if (controller()->CanAnimate())
       controller()->OnAnimationEnded();
   }
@@ -145,6 +150,7 @@ class SaveCardBubbleControllerImplTest : public BrowserWithTestWindowTest {
             browser()->tab_strip_model()->GetActiveWebContents()));
   }
 
+  TestAutofillClock test_clock_;
   base::test::ScopedFeatureList scoped_feature_list_;
 
  private:
@@ -167,8 +173,12 @@ class SaveCardBubbleControllerImplTest : public BrowserWithTestWindowTest {
     std::unique_ptr<TestSaveCardBubbleView> save_card_bubble_view_;
   };
 
-  static void UploadSaveCardCallback(const base::string16& cardholder_name) {}
-  static void LocalSaveCardCallback() {}
+  static void UploadSaveCardCallback(
+      AutofillClient::SaveCardOfferUserDecision user_decision,
+      const AutofillClient::UserProvidedCardDetails&
+          user_provided_card_details) {}
+  static void LocalSaveCardCallback(
+      AutofillClient::SaveCardOfferUserDecision user_decision) {}
 
   DISALLOW_COPY_AND_ASSIGN(SaveCardBubbleControllerImplTest);
 };
@@ -241,6 +251,19 @@ TEST_F(SaveCardBubbleControllerImplTest,
                   Bucket(AutofillMetrics::SAVE_CARD_PROMPT_SHOWN, 1)));
 }
 
+TEST_F(SaveCardBubbleControllerImplTest,
+       Metrics_Upload_FirstShow_RequestingExpirationDate_ShowBubble) {
+  base::HistogramTester histogram_tester;
+  ShowUploadBubble(/*should_request_name_from_user=*/false,
+                   /*should_request_expiration_date_from_user=*/true);
+
+  EXPECT_THAT(
+      histogram_tester.GetAllSamples("Autofill.SaveCreditCardPrompt.Upload."
+                                     "FirstShow.RequestingExpirationDate"),
+      ElementsAre(Bucket(AutofillMetrics::SAVE_CARD_PROMPT_SHOW_REQUESTED, 1),
+                  Bucket(AutofillMetrics::SAVE_CARD_PROMPT_SHOWN, 1)));
+}
+
 TEST_F(SaveCardBubbleControllerImplTest, Metrics_Upload_Reshows_ShowBubble) {
   ShowUploadBubble();
 
@@ -266,6 +289,40 @@ TEST_F(SaveCardBubbleControllerImplTest,
                                      "Reshows.RequestingCardholderName"),
       ElementsAre(Bucket(AutofillMetrics::SAVE_CARD_PROMPT_SHOW_REQUESTED, 1),
                   Bucket(AutofillMetrics::SAVE_CARD_PROMPT_SHOWN, 1)));
+}
+
+TEST_F(SaveCardBubbleControllerImplTest,
+       Metrics_Upload_Reshows_RequestingExpirationDate_ShowBubble) {
+  ShowUploadBubble(/*should_request_name_from_user=*/false,
+                   /*should_request_expiration_date_from_user=*/true);
+  base::HistogramTester histogram_tester;
+  CloseAndReshowBubble();
+
+  EXPECT_THAT(
+      histogram_tester.GetAllSamples("Autofill.SaveCreditCardPrompt.Upload."
+                                     "Reshows.RequestingExpirationDate"),
+      ElementsAre(Bucket(AutofillMetrics::SAVE_CARD_PROMPT_SHOW_REQUESTED, 1),
+                  Bucket(AutofillMetrics::SAVE_CARD_PROMPT_SHOWN, 1)));
+}
+
+TEST_F(SaveCardBubbleControllerImplTest, Metrics_Local_ShowBubbleFalse) {
+  base::HistogramTester histogram_tester;
+  ShowLocalBubble(/*card=*/nullptr, /*show_bubble=*/false);
+
+  histogram_tester.ExpectUniqueSample(
+      "Autofill.SaveCreditCardPrompt.Local.FirstShow",
+      AutofillMetrics::SAVE_CARD_ICON_SHOWN_WITHOUT_PROMPT, 1);
+}
+
+TEST_F(SaveCardBubbleControllerImplTest, Metrics_Upload_ShowBubbleFalse) {
+  base::HistogramTester histogram_tester;
+  ShowUploadBubble(/*should_request_name_from_user=*/false,
+                   /*should_request_expiration_date_from_user=*/false,
+                   /*show_bubble=*/false);
+
+  histogram_tester.ExpectUniqueSample(
+      "Autofill.SaveCreditCardPrompt.Upload.FirstShow",
+      AutofillMetrics::SAVE_CARD_ICON_SHOWN_WITHOUT_PROMPT, 1);
 }
 
 TEST_F(SaveCardBubbleControllerImplTest, Metrics_Local_FirstShow_SaveButton) {
@@ -307,6 +364,19 @@ TEST_F(SaveCardBubbleControllerImplTest,
 }
 
 TEST_F(SaveCardBubbleControllerImplTest,
+       Metrics_Upload_FirstShow_RequestingExpirationDate_SaveButton) {
+  ShowUploadBubble(/*should_request_name_from_user=*/false,
+                   /*should_request_expiration_date_from_user=*/true);
+  base::HistogramTester histogram_tester;
+  ClickSaveButton();
+  controller()->OnBubbleClosed();
+
+  histogram_tester.ExpectUniqueSample(
+      "Autofill.SaveCreditCardPrompt.Upload.FirstShow.RequestingExpirationDate",
+      AutofillMetrics::SAVE_CARD_PROMPT_END_ACCEPTED, 1);
+}
+
+TEST_F(SaveCardBubbleControllerImplTest,
        Metrics_Upload_Reshows_RequestingCardholderName_SaveButton) {
   ShowUploadBubble(/*should_request_name_from_user=*/true);
   CloseAndReshowBubble();
@@ -317,6 +387,21 @@ TEST_F(SaveCardBubbleControllerImplTest,
 
   histogram_tester.ExpectUniqueSample(
       "Autofill.SaveCreditCardPrompt.Upload.Reshows.RequestingCardholderName",
+      AutofillMetrics::SAVE_CARD_PROMPT_END_ACCEPTED, 1);
+}
+
+TEST_F(SaveCardBubbleControllerImplTest,
+       Metrics_Upload_Reshows_RequestingExpirationDate_SaveButton) {
+  ShowUploadBubble(/*should_request_name_from_user=*/false,
+                   /*should_request_expiration_date_from_user=*/true);
+  CloseAndReshowBubble();
+
+  base::HistogramTester histogram_tester;
+  ClickSaveButton();
+  controller()->OnBubbleClosed();
+
+  histogram_tester.ExpectUniqueSample(
+      "Autofill.SaveCreditCardPrompt.Upload.Reshows.RequestingExpirationDate",
       AutofillMetrics::SAVE_CARD_PROMPT_END_ACCEPTED, 1);
 }
 
@@ -494,7 +579,7 @@ TEST_F(SaveCardBubbleControllerImplTest,
   // The bubble should still stick around for up to
   // kCardBubbleSurviveNavigationTime (5 seconds) regardless of
   // navigation.
-  controller()->set_elapsed(base::TimeDelta::FromSeconds(3));
+  test_clock_.Advance(base::TimeDelta::FromSeconds(3));
 
   controller()->SimulateNavigation();
 
@@ -502,7 +587,7 @@ TEST_F(SaveCardBubbleControllerImplTest,
       "Autofill.SaveCreditCardPrompt.Local.FirstShow", 0);
 
   // Wait 3 more seconds (6 total); bubble should go away on next navigation.
-  controller()->set_elapsed(base::TimeDelta::FromSeconds(6));
+  test_clock_.Advance(base::TimeDelta::FromSeconds(3));
 
   controller()->SimulateNavigation();
 
@@ -520,7 +605,7 @@ TEST_F(SaveCardBubbleControllerImplTest,
   // The bubble should still stick around for up to
   // kCardBubbleSurviveNavigationTime (5 seconds) regardless of
   // navigation.
-  controller()->set_elapsed(base::TimeDelta::FromSeconds(3));
+  test_clock_.Advance(base::TimeDelta::FromSeconds(3));
 
   controller()->SimulateNavigation();
 
@@ -528,7 +613,7 @@ TEST_F(SaveCardBubbleControllerImplTest,
       "Autofill.SaveCreditCardPrompt.Local.Reshows", 0);
 
   // Wait 3 more seconds (6 total); bubble should go away on next navigation.
-  controller()->set_elapsed(base::TimeDelta::FromSeconds(6));
+  test_clock_.Advance(base::TimeDelta::FromSeconds(3));
 
   controller()->SimulateNavigation();
 
@@ -544,7 +629,7 @@ TEST_F(SaveCardBubbleControllerImplTest,
   base::HistogramTester histogram_tester;
   // The bubble should still stick around for up to
   // kCardBubbleSurviveNavigationTime (5 seconds) regardless of navigation.
-  controller()->set_elapsed(base::TimeDelta::FromSeconds(3));
+  test_clock_.Advance(base::TimeDelta::FromSeconds(3));
 
   controller()->SimulateNavigation();
 
@@ -552,7 +637,7 @@ TEST_F(SaveCardBubbleControllerImplTest,
       "Autofill.SaveCreditCardPrompt.Upload.FirstShow", 0);
 
   // Wait 3 more seconds (6 total); bubble should go away on next navigation.
-  controller()->set_elapsed(base::TimeDelta::FromSeconds(6));
+  test_clock_.Advance(base::TimeDelta::FromSeconds(3));
 
   controller()->SimulateNavigation();
 
@@ -569,7 +654,7 @@ TEST_F(SaveCardBubbleControllerImplTest,
   // The bubble should still stick around for up to
   // kCardBubbleSurviveNavigationTime (5 seconds) regardless of
   // navigation.
-  controller()->set_elapsed(base::TimeDelta::FromSeconds(3));
+  test_clock_.Advance(base::TimeDelta::FromSeconds(3));
 
   controller()->SimulateNavigation();
 
@@ -578,12 +663,38 @@ TEST_F(SaveCardBubbleControllerImplTest,
       0);
 
   // Wait 3 more seconds (6 total); bubble should go away on next navigation.
-  controller()->set_elapsed(base::TimeDelta::FromSeconds(6));
+  test_clock_.Advance(base::TimeDelta::FromSeconds(3));
 
   controller()->SimulateNavigation();
 
   histogram_tester.ExpectUniqueSample(
       "Autofill.SaveCreditCardPrompt.Upload.FirstShow.RequestingCardholderName",
+      AutofillMetrics::SAVE_CARD_PROMPT_END_NAVIGATION_SHOWING, 1);
+}
+
+TEST_F(SaveCardBubbleControllerImplTest,
+       Metrics_Upload_FirstShow_RequestingExpirationDate_NavigateWhileShowing) {
+  ShowUploadBubble(/*should_request_name_from_user=*/false,
+                   /*should_request_expiration_date_from_user=*/true);
+  base::HistogramTester histogram_tester;
+  // The bubble should still stick around for up to
+  // kCardBubbleSurviveNavigationTime (5 seconds) regardless of
+  // navigation.
+  test_clock_.Advance(base::TimeDelta::FromSeconds(3));
+
+  controller()->SimulateNavigation();
+
+  histogram_tester.ExpectTotalCount(
+      "Autofill.SaveCreditCardPrompt.Upload.FirstShow.RequestingExpirationDate",
+      0);
+
+  // Wait 3 more seconds (6 total); bubble should go away on next navigation.
+  test_clock_.Advance(base::TimeDelta::FromSeconds(3));
+
+  controller()->SimulateNavigation();
+
+  histogram_tester.ExpectUniqueSample(
+      "Autofill.SaveCreditCardPrompt.Upload.FirstShow.RequestingExpirationDate",
       AutofillMetrics::SAVE_CARD_PROMPT_END_NAVIGATION_SHOWING, 1);
 }
 
@@ -596,7 +707,7 @@ TEST_F(SaveCardBubbleControllerImplTest,
   // The bubble should still stick around for up to
   // kCardBubbleSurviveNavigationTime (5 seconds) regardless of
   // navigation.
-  controller()->set_elapsed(base::TimeDelta::FromSeconds(3));
+  test_clock_.Advance(base::TimeDelta::FromSeconds(3));
 
   controller()->SimulateNavigation();
 
@@ -604,7 +715,7 @@ TEST_F(SaveCardBubbleControllerImplTest,
       "Autofill.SaveCreditCardPrompt.Upload.Reshows", 0);
 
   // Wait 3 more seconds (6 total); bubble should go away on next navigation.
-  controller()->set_elapsed(base::TimeDelta::FromSeconds(6));
+  test_clock_.Advance(base::TimeDelta::FromSeconds(3));
 
   controller()->SimulateNavigation();
 
@@ -622,7 +733,7 @@ TEST_F(SaveCardBubbleControllerImplTest,
   // The bubble should still stick around for up to
   // kCardBubbleSurviveNavigationTime (5 seconds) regardless of
   // navigation.
-  controller()->set_elapsed(base::TimeDelta::FromSeconds(3));
+  test_clock_.Advance(base::TimeDelta::FromSeconds(3));
 
   controller()->SimulateNavigation();
 
@@ -631,12 +742,40 @@ TEST_F(SaveCardBubbleControllerImplTest,
       0);
 
   // Wait 3 more seconds (6 total); bubble should go away on next navigation.
-  controller()->set_elapsed(base::TimeDelta::FromSeconds(6));
+  test_clock_.Advance(base::TimeDelta::FromSeconds(3));
 
   controller()->SimulateNavigation();
 
   histogram_tester.ExpectUniqueSample(
       "Autofill.SaveCreditCardPrompt.Upload.Reshows.RequestingCardholderName",
+      AutofillMetrics::SAVE_CARD_PROMPT_END_NAVIGATION_SHOWING, 1);
+}
+
+TEST_F(SaveCardBubbleControllerImplTest,
+       Metrics_Upload_Reshows_RequestingExpirationDate_NavigateWhileShowing) {
+  ShowUploadBubble(/*should_request_name_from_user=*/false,
+                   /*should_request_expiration_date_from_user=*/true);
+  CloseAndReshowBubble();
+
+  base::HistogramTester histogram_tester;
+  // The bubble should still stick around for up to
+  // kCardBubbleSurviveNavigationTime (5 seconds) regardless of
+  // navigation.
+  test_clock_.Advance(base::TimeDelta::FromSeconds(3));
+
+  controller()->SimulateNavigation();
+
+  histogram_tester.ExpectTotalCount(
+      "Autofill.SaveCreditCardPrompt.Upload.Reshows.RequestingExpirationDate",
+      0);
+
+  // Wait 3 more seconds (6 total); bubble should go away on next navigation.
+  test_clock_.Advance(base::TimeDelta::FromSeconds(3));
+
+  controller()->SimulateNavigation();
+
+  histogram_tester.ExpectUniqueSample(
+      "Autofill.SaveCreditCardPrompt.Upload.Reshows.RequestingExpirationDate",
       AutofillMetrics::SAVE_CARD_PROMPT_END_NAVIGATION_SHOWING, 1);
 }
 
@@ -647,7 +786,7 @@ TEST_F(SaveCardBubbleControllerImplTest,
   base::HistogramTester histogram_tester;
   controller()->OnBubbleClosed();
   // Fake-navigate after bubble has been visible for a long time.
-  controller()->set_elapsed(base::TimeDelta::FromMinutes(1));
+  test_clock_.Advance(base::TimeDelta::FromMinutes(1));
   controller()->SimulateNavigation();
 
   histogram_tester.ExpectUniqueSample(
@@ -663,7 +802,7 @@ TEST_F(SaveCardBubbleControllerImplTest,
   base::HistogramTester histogram_tester;
   controller()->OnBubbleClosed();
   // Fake-navigate after bubble has been visible for a long time.
-  controller()->set_elapsed(base::TimeDelta::FromMinutes(1));
+  test_clock_.Advance(base::TimeDelta::FromMinutes(1));
   controller()->SimulateNavigation();
 
   histogram_tester.ExpectUniqueSample(
@@ -678,7 +817,7 @@ TEST_F(SaveCardBubbleControllerImplTest,
   base::HistogramTester histogram_tester;
   controller()->OnBubbleClosed();
   // Fake-navigate after bubble has been visible for a long time.
-  controller()->set_elapsed(base::TimeDelta::FromMinutes(1));
+  test_clock_.Advance(base::TimeDelta::FromMinutes(1));
   controller()->SimulateNavigation();
 
   histogram_tester.ExpectUniqueSample(
@@ -693,11 +832,26 @@ TEST_F(SaveCardBubbleControllerImplTest,
   base::HistogramTester histogram_tester;
   controller()->OnBubbleClosed();
   // Fake-navigate after bubble has been visible for a long time.
-  controller()->set_elapsed(base::TimeDelta::FromMinutes(1));
+  test_clock_.Advance(base::TimeDelta::FromMinutes(1));
   controller()->SimulateNavigation();
 
   histogram_tester.ExpectUniqueSample(
       "Autofill.SaveCreditCardPrompt.Upload.FirstShow.RequestingCardholderName",
+      AutofillMetrics::SAVE_CARD_PROMPT_END_NAVIGATION_HIDDEN, 1);
+}
+
+TEST_F(SaveCardBubbleControllerImplTest,
+       Metrics_Upload_FirstShow_RequestingExpirationDate_NavigateWhileHidden) {
+  ShowUploadBubble(/*should_request_name_from_user=*/false,
+                   /*should_request_expiration_date_from_user=*/true);
+  base::HistogramTester histogram_tester;
+  controller()->OnBubbleClosed();
+  // Fake-navigate after bubble has been visible for a long time.
+  test_clock_.Advance(base::TimeDelta::FromMinutes(1));
+  controller()->SimulateNavigation();
+
+  histogram_tester.ExpectUniqueSample(
+      "Autofill.SaveCreditCardPrompt.Upload.FirstShow.RequestingExpirationDate",
       AutofillMetrics::SAVE_CARD_PROMPT_END_NAVIGATION_HIDDEN, 1);
 }
 
@@ -709,7 +863,7 @@ TEST_F(SaveCardBubbleControllerImplTest,
   base::HistogramTester histogram_tester;
   controller()->OnBubbleClosed();
   // Fake-navigate after bubble has been visible for a long time.
-  controller()->set_elapsed(base::TimeDelta::FromMinutes(1));
+  test_clock_.Advance(base::TimeDelta::FromMinutes(1));
   controller()->SimulateNavigation();
 
   histogram_tester.ExpectUniqueSample(
@@ -725,11 +879,28 @@ TEST_F(SaveCardBubbleControllerImplTest,
   base::HistogramTester histogram_tester;
   controller()->OnBubbleClosed();
   // Fake-navigate after bubble has been visible for a long time.
-  controller()->set_elapsed(base::TimeDelta::FromMinutes(1));
+  test_clock_.Advance(base::TimeDelta::FromMinutes(1));
   controller()->SimulateNavigation();
 
   histogram_tester.ExpectUniqueSample(
       "Autofill.SaveCreditCardPrompt.Upload.Reshows.RequestingCardholderName",
+      AutofillMetrics::SAVE_CARD_PROMPT_END_NAVIGATION_HIDDEN, 1);
+}
+
+TEST_F(SaveCardBubbleControllerImplTest,
+       Metrics_Upload_Reshows_RequestingExpirationDate_NavigateWhileHidden) {
+  ShowUploadBubble(/*should_request_name_from_user=*/false,
+                   /*should_request_expiration_date_from_user=*/true);
+  CloseAndReshowBubble();
+
+  base::HistogramTester histogram_tester;
+  controller()->OnBubbleClosed();
+  // Fake-navigate after bubble has been visible for a long time.
+  test_clock_.Advance(base::TimeDelta::FromMinutes(1));
+  controller()->SimulateNavigation();
+
+  histogram_tester.ExpectUniqueSample(
+      "Autofill.SaveCreditCardPrompt.Upload.Reshows.RequestingExpirationDate",
       AutofillMetrics::SAVE_CARD_PROMPT_END_NAVIGATION_HIDDEN, 1);
 }
 
@@ -758,6 +929,18 @@ TEST_F(SaveCardBubbleControllerImplTest,
 }
 
 TEST_F(SaveCardBubbleControllerImplTest,
+       Metrics_Upload_FirstShow_RequestingExpirationDate_LegalMessageLink) {
+  ShowUploadBubble(/*should_request_name_from_user=*/false,
+                   /*should_request_expiration_date_from_user=*/true);
+  base::HistogramTester histogram_tester;
+  controller()->OnLegalMessageLinkClicked(GURL("http://www.example.com"));
+
+  histogram_tester.ExpectUniqueSample(
+      "Autofill.SaveCreditCardPrompt.Upload.FirstShow.RequestingExpirationDate",
+      AutofillMetrics::SAVE_CARD_PROMPT_DISMISS_CLICK_LEGAL_MESSAGE, 1);
+}
+
+TEST_F(SaveCardBubbleControllerImplTest,
        Metrics_Upload_Reshows_LegalMessageLink) {
   ShowUploadBubble();
   CloseAndReshowBubble();
@@ -780,6 +963,20 @@ TEST_F(SaveCardBubbleControllerImplTest,
 
   histogram_tester.ExpectUniqueSample(
       "Autofill.SaveCreditCardPrompt.Upload.Reshows.RequestingCardholderName",
+      AutofillMetrics::SAVE_CARD_PROMPT_DISMISS_CLICK_LEGAL_MESSAGE, 1);
+}
+
+TEST_F(SaveCardBubbleControllerImplTest,
+       Metrics_Upload_Reshows_RequestingExpirationDate_LegalMessageLink) {
+  ShowUploadBubble(/*should_request_name_from_user=*/false,
+                   /*should_request_expiration_date_from_user=*/true);
+  CloseAndReshowBubble();
+
+  base::HistogramTester histogram_tester;
+  controller()->OnLegalMessageLinkClicked(GURL("http://www.example.com"));
+
+  histogram_tester.ExpectUniqueSample(
+      "Autofill.SaveCreditCardPrompt.Upload.Reshows.RequestingExpirationDate",
       AutofillMetrics::SAVE_CARD_PROMPT_DISMISS_CLICK_LEGAL_MESSAGE, 1);
 }
 
@@ -830,6 +1027,34 @@ TEST_F(SaveCardBubbleControllerImplTest,
   EXPECT_THAT(
       histogram_tester.GetAllSamples("Autofill.SaveCreditCardPrompt.Upload."
                                      "FirstShow.RequestingCardholderName"),
+      ElementsAre(
+          Bucket(AutofillMetrics::SAVE_CARD_PROMPT_SHOW_REQUESTED, 1),
+          Bucket(AutofillMetrics::SAVE_CARD_PROMPT_END_INVALID_LEGAL_MESSAGE,
+                 1)));
+}
+
+// SAVE_CARD_PROMPT_END_INVALID_LEGAL_MESSAGE is only possible for
+// Upload.FirstShow.
+TEST_F(SaveCardBubbleControllerImplTest,
+       Metrics_Upload_FirstShow_RequestingExpirationDate_InvalidLegalMessage) {
+  base::HistogramTester histogram_tester;
+
+  // Legal message is invalid because it's missing the url.
+  SetLegalMessage(
+      "{"
+      "  \"line\" : [ {"
+      "     \"template\": \"Panda {0}.\","
+      "     \"template_parameter\": [ {"
+      "        \"display_text\": \"bear\""
+      "     } ]"
+      "  } ]"
+      "}",
+      /*should_request_name_from_user=*/false,
+      /*should_request_expiration_date_from_user=*/true);
+
+  EXPECT_THAT(
+      histogram_tester.GetAllSamples("Autofill.SaveCreditCardPrompt.Upload."
+                                     "FirstShow.RequestingExpirationDate"),
       ElementsAre(
           Bucket(AutofillMetrics::SAVE_CARD_PROMPT_SHOW_REQUESTED, 1),
           Bucket(AutofillMetrics::SAVE_CARD_PROMPT_END_INVALID_LEGAL_MESSAGE,
@@ -958,7 +1183,7 @@ TEST_F(SaveCardBubbleControllerImplTest,
   base::HistogramTester histogram_tester;
 
   ShowLocalBubble();
-  controller()->OnSaveButton();
+  controller()->OnSaveButton({});
 
   // No other bubbles should have popped up.
   histogram_tester.ExpectTotalCount("Autofill.SignInPromo", 0);
@@ -991,7 +1216,7 @@ TEST_F(
   base::HistogramTester histogram_tester;
 
   ShowLocalBubble();
-  controller()->OnSaveButton();
+  controller()->OnSaveButton({});
   CloseAndReshowBubble();
 
   // After closing the sign-in promo, clicking the icon should bring
@@ -1009,7 +1234,7 @@ TEST_F(
   base::HistogramTester histogram_tester;
 
   ShowLocalBubble();
-  controller()->OnSaveButton();
+  controller()->OnSaveButton({});
   CloseAndReshowBubble();
   CloseAndReshowBubble();
 
@@ -1030,7 +1255,7 @@ TEST_F(SaveCardBubbleControllerImplTest,
   CloseAndReshowBubble();
   controller()->OnBubbleClosed();
 
-  controller()->set_elapsed(base::TimeDelta::FromSeconds(6));
+  test_clock_.Advance(base::TimeDelta::FromSeconds(6));
   controller()->SimulateNavigation();
 
   // Icon should disappear after navigating away.
@@ -1045,10 +1270,10 @@ TEST_F(SaveCardBubbleControllerImplTest,
   base::HistogramTester histogram_tester;
 
   ShowLocalBubble();
-  controller()->OnSaveButton();
+  controller()->OnSaveButton({});
   CloseAndReshowBubble();
 
-  controller()->set_elapsed(base::TimeDelta::FromSeconds(6));
+  test_clock_.Advance(base::TimeDelta::FromSeconds(6));
   controller()->SimulateNavigation();
 
   EXPECT_THAT(
@@ -1064,11 +1289,11 @@ TEST_F(
   base::HistogramTester histogram_tester;
 
   ShowLocalBubble();
-  controller()->OnSaveButton();
+  controller()->OnSaveButton({});
   CloseAndReshowBubble();
   controller()->OnBubbleClosed();
 
-  controller()->set_elapsed(base::TimeDelta::FromSeconds(6));
+  test_clock_.Advance(base::TimeDelta::FromSeconds(6));
   controller()->SimulateNavigation();
 
   EXPECT_THAT(
@@ -1083,9 +1308,9 @@ TEST_F(SaveCardBubbleControllerImplTest,
   base::HistogramTester histogram_tester;
 
   ShowLocalBubble();
-  controller()->OnSaveButton();
+  controller()->OnSaveButton({});
   CloseAndReshowBubble();
-  controller()->OnSaveButton();
+  controller()->OnSaveButton({});
 
   EXPECT_THAT(
       histogram_tester.GetAllSamples("Autofill.ManageCardsPrompt.Local"),
@@ -1100,7 +1325,7 @@ TEST_F(SaveCardBubbleControllerImplTest,
   base::HistogramTester histogram_tester;
 
   ShowLocalBubble();
-  controller()->OnSaveButton();
+  controller()->OnSaveButton({});
   CloseAndReshowBubble();
   controller()->OnManageCardsClicked();
 
@@ -1131,7 +1356,7 @@ TEST_F(SaveCardBubbleControllerImplTest,
   base::HistogramTester histogram_tester;
 
   ShowUploadBubble();
-  controller()->OnSaveButton();
+  controller()->OnSaveButton({});
 
   // No other bubbles should have popped up.
   histogram_tester.ExpectTotalCount("Autofill.SignInPromo", 0);
@@ -1145,7 +1370,7 @@ TEST_F(SaveCardBubbleControllerImplTest, Metrics_Upload_FirstShow_ManageCards) {
   base::HistogramTester histogram_tester;
 
   ShowUploadBubble();
-  controller()->OnSaveButton();
+  controller()->OnSaveButton({});
   controller()->ShowBubbleForManageCardsForTesting(
       autofill::test::GetCreditCard());
 
@@ -1153,6 +1378,20 @@ TEST_F(SaveCardBubbleControllerImplTest, Metrics_Upload_FirstShow_ManageCards) {
   // even when this flag is enabled.
   histogram_tester.ExpectTotalCount("Autofill.ManageCardsPrompt.Local", 0);
   histogram_tester.ExpectTotalCount("Autofill.ManageCardsPrompt.Upload", 1);
+}
+
+TEST_F(SaveCardBubbleControllerImplTest,
+       PropagateShouldRequestExpirationDateFromUserWhenFalse) {
+  ShowUploadBubble(/*should_request_name_from_user=*/true,
+                   /*should_request_expiration_date_from_user=*/false);
+  EXPECT_FALSE(controller()->ShouldRequestExpirationDateFromUser());
+}
+
+TEST_F(SaveCardBubbleControllerImplTest,
+       PropagateShouldRequestExpirationDateFromUserWhenTrue) {
+  ShowUploadBubble(/*should_request_name_from_user=*/true,
+                   /*should_request_expiration_date_from_user=*/true);
+  EXPECT_TRUE(controller()->ShouldRequestExpirationDateFromUser());
 }
 
 }  // namespace autofill

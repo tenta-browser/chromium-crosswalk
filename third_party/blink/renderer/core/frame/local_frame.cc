@@ -30,7 +30,9 @@
 
 #include "third_party/blink/renderer/core/frame/local_frame.h"
 
+#include <limits>
 #include <memory>
+#include <utility>
 
 #include "services/network/public/cpp/features.h"
 #include "services/service_manager/public/cpp/connector.h"
@@ -38,12 +40,13 @@
 #include "third_party/blink/public/platform/interface_provider.h"
 #include "third_party/blink/public/platform/interface_registry.h"
 #include "third_party/blink/public/platform/scheduler/web_resource_loading_task_runner_handle.h"
+#include "third_party/blink/public/platform/web_content_settings_client.h"
 #include "third_party/blink/public/platform/web_url_request.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_controller.h"
 #include "third_party/blink/renderer/bindings/core/v8/source_location.h"
-#include "third_party/blink/renderer/core/CoreProbeSink.h"
 #include "third_party/blink/renderer/core/aom/computed_accessible_node.h"
 #include "third_party/blink/renderer/core/core_initializer.h"
+#include "third_party/blink/renderer/core/core_probe_sink.h"
 #include "third_party/blink/renderer/core/css/style_change_reason.h"
 #include "third_party/blink/renderer/core/dom/child_frame_disconnector.h"
 #include "third_party/blink/renderer/core/dom/document_init.h"
@@ -58,12 +61,12 @@
 #include "third_party/blink/renderer/core/editing/serializers/serialization.h"
 #include "third_party/blink/renderer/core/editing/spellcheck/spell_checker.h"
 #include "third_party/blink/renderer/core/editing/suggestion/text_suggestion_controller.h"
+#include "third_party/blink/renderer/core/events/current_input_event.h"
 #include "third_party/blink/renderer/core/exported/web_plugin_container_impl.h"
 #include "third_party/blink/renderer/core/frame/ad_tracker.h"
-#include "third_party/blink/renderer/core/frame/content_settings_client.h"
 #include "third_party/blink/renderer/core/frame/event_handler_registry.h"
-#include "third_party/blink/renderer/core/frame/feature_policy_violation_report_body.h"
 #include "third_party/blink/renderer/core/frame/frame_console.h"
+#include "third_party/blink/renderer/core/frame/frame_overlay.h"
 #include "third_party/blink/renderer/core/frame/local_dom_window.h"
 #include "third_party/blink/renderer/core/frame/local_frame_client.h"
 #include "third_party/blink/renderer/core/frame/local_frame_view.h"
@@ -98,14 +101,17 @@
 #include "third_party/blink/renderer/core/svg/svg_document_extensions.h"
 #include "third_party/blink/renderer/platform/bindings/script_forbidden_scope.h"
 #include "third_party/blink/renderer/platform/graphics/graphics_layer.h"
+#include "third_party/blink/renderer/platform/graphics/paint/drawing_recorder.h"
 #include "third_party/blink/renderer/platform/graphics/paint/paint_canvas.h"
 #include "third_party/blink/renderer/platform/graphics/paint/paint_controller.h"
+#include "third_party/blink/renderer/platform/graphics/paint/scoped_paint_chunk_properties.h"
+#include "third_party/blink/renderer/platform/heap/persistent.h"
 #include "third_party/blink/renderer/platform/histogram.h"
-#include "third_party/blink/renderer/platform/instrumentation/resource_coordinator/blink_resource_coordinator_base.h"
 #include "third_party/blink/renderer/platform/instrumentation/resource_coordinator/frame_resource_coordinator.h"
 #include "third_party/blink/renderer/platform/json/json_values.h"
 #include "third_party/blink/renderer/platform/loader/fetch/resource_fetcher.h"
 #include "third_party/blink/renderer/platform/loader/fetch/resource_request.h"
+#include "third_party/blink/renderer/platform/network/network_state_notifier.h"
 #include "third_party/blink/renderer/platform/network/network_utils.h"
 #include "third_party/blink/renderer/platform/plugins/plugin_data.h"
 #include "third_party/blink/renderer/platform/plugins/plugin_script_forbidden_scope.h"
@@ -114,8 +120,6 @@
 #include "third_party/blink/renderer/platform/wtf/std_lib_extras.h"
 
 namespace blink {
-
-using namespace HTMLNames;
 
 namespace {
 
@@ -151,6 +155,60 @@ bool ShouldUseClientLoFiForRequest(
   return true;
 }
 
+WeakPersistent<LocalFrame>& UserActivationNotifierFrame() {
+  DEFINE_STATIC_LOCAL(WeakPersistent<LocalFrame>,
+                      user_activation_notifier_frame, (nullptr));
+  return user_activation_notifier_frame;
+}
+
+enum class UserActivationFrameResultEnum : int {
+  kNullFailure = 0,
+  kNullSuccess = 1,
+  kSelfFailure = 2,
+  kSelfSuccess = 3,
+  kAncestorFailure = 4,
+  kAncestorSuccess = 5,
+  kDescendantFailure = 6,
+  kDescendantSuccess = 7,
+  kOtherFailure = 8,
+  kOtherSuccess = 9,
+  kNonMainThreadFailure = 10,
+  kNonMainThreadSuccess = 11,
+  kMaxValue = kNonMainThreadSuccess
+};
+
+UserActivationFrameResultEnum DetermineActivationResultEnum(
+    const LocalFrame* const caller_frame,
+    const bool call_succeeded,
+    const bool off_main_thread) {
+  if (off_main_thread) {
+    return call_succeeded
+               ? UserActivationFrameResultEnum::kNonMainThreadSuccess
+               : UserActivationFrameResultEnum::kNonMainThreadFailure;
+  }
+
+  LocalFrame* user_activation_notifier_frame = UserActivationNotifierFrame();
+
+  if (!caller_frame || !user_activation_notifier_frame) {
+    return call_succeeded ? UserActivationFrameResultEnum::kNullSuccess
+                          : UserActivationFrameResultEnum::kNullFailure;
+  }
+  if (caller_frame == user_activation_notifier_frame) {
+    return call_succeeded ? UserActivationFrameResultEnum::kSelfSuccess
+                          : UserActivationFrameResultEnum::kSelfFailure;
+  }
+  if (user_activation_notifier_frame->Tree().IsDescendantOf(caller_frame)) {
+    return call_succeeded ? UserActivationFrameResultEnum::kAncestorSuccess
+                          : UserActivationFrameResultEnum::kAncestorFailure;
+  }
+  if (caller_frame->Tree().IsDescendantOf(user_activation_notifier_frame)) {
+    return call_succeeded ? UserActivationFrameResultEnum::kDescendantSuccess
+                          : UserActivationFrameResultEnum::kDescendantFailure;
+  }
+  return call_succeeded ? UserActivationFrameResultEnum::kOtherSuccess
+                        : UserActivationFrameResultEnum::kOtherFailure;
+}
+
 }  // namespace
 
 template class CORE_TEMPLATE_EXPORT Supplement<LocalFrame>;
@@ -160,7 +218,7 @@ LocalFrame* LocalFrame::Create(LocalFrameClient* client,
                                Page& page,
                                FrameOwner* owner,
                                InterfaceRegistry* interface_registry) {
-  LocalFrame* frame = new LocalFrame(
+  LocalFrame* frame = MakeGarbageCollected<LocalFrame>(
       client, page, owner,
       interface_registry ? interface_registry
                          : InterfaceRegistry::GetEmptyInterfaceRegistry());
@@ -235,7 +293,7 @@ LocalFrame::~LocalFrame() {
   // Verify that the LocalFrameView has been cleared as part of detaching
   // the frame owner.
   DCHECK(!view_);
-  if (is_ad_subframe_)
+  if (IsAdSubframe())
     InstanceCounters::DecrementCounter(InstanceCounters::kAdSubframeCounter);
 }
 
@@ -273,26 +331,31 @@ bool LocalFrame::IsLocalRoot() const {
 
 void LocalFrame::ScheduleNavigation(Document& origin_document,
                                     const KURL& url,
-                                    bool replace_current_item,
+                                    WebFrameLoadType frame_load_type,
                                     UserGestureStatus user_gesture_status) {
+  if (!navigation_rate_limiter().CanProceed())
+    return;
   navigation_scheduler_->ScheduleFrameNavigation(&origin_document, url,
-                                                 replace_current_item);
+                                                 frame_load_type);
 }
 
-void LocalFrame::Navigate(const FrameLoadRequest& request) {
-  loader_.StartNavigation(request);
+void LocalFrame::Navigate(const FrameLoadRequest& request,
+                          WebFrameLoadType frame_load_type) {
+  if (!navigation_rate_limiter().CanProceed())
+    return;
+  loader_.StartNavigation(request, frame_load_type);
 }
 
-void LocalFrame::Detach(FrameDetachType type) {
+void LocalFrame::DetachImpl(FrameDetachType type) {
   // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
   // BEGIN RE-ENTRANCY SAFE BLOCK
   // Starting here, the code must be safe against re-entrancy. Dispatching
   // events, et cetera can run Javascript, which can reenter Detach().
   // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+  if (this == UserActivationNotifierFrame())
+    UserActivationNotifierFrame().Clear();
 
-  // Detach() can be re-entered, this can't simply DCHECK(IsAttached()).
-  DCHECK_NE(lifecycle_.GetState(), FrameLifecycle::kDetached);
-  lifecycle_.AdvanceTo(FrameLifecycle::kDetaching);
+  frame_color_overlay_.reset();
 
   if (IsLocalRoot()) {
     performance_monitor_->Shutdown();
@@ -353,7 +416,7 @@ void LocalFrame::Detach(FrameDetachType type) {
   // re-entered, then check for a non-null Client() above should have already
   // returned.
   // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-  DCHECK_NE(lifecycle_.GetState(), FrameLifecycle::kDetached);
+  DCHECK(!IsDetached());
 
   // TODO(crbug.com/729196): Trace why LocalFrameView::DetachFromLayout crashes.
   CHECK(!view_->IsAttached());
@@ -370,15 +433,11 @@ void LocalFrame::Detach(FrameDetachType type) {
 
   DomWindow()->FrameDestroyed();
 
-  if (GetPage() && GetPage()->GetFocusController().FocusedFrame() == this)
-    GetPage()->GetFocusController().SetFocusedFrame(nullptr);
-
   probe::frameDetachedFromParent(this);
 
   supplements_.clear();
   frame_scheduler_.reset();
   WeakIdentifierMap<LocalFrame>::NotifyObjectDestroyed(this);
-  Frame::Detach(type);
 }
 
 bool LocalFrame::PrepareForCommit() {
@@ -434,14 +493,19 @@ void LocalFrame::DetachChildren() {
     ChildFrameDisconnector(*document).Disconnect();
 }
 
-void LocalFrame::DocumentAttached() {
-  DCHECK(GetDocument());
+void LocalFrame::DidAttachDocument() {
+  Document* document = GetDocument();
+  DCHECK(document);
   GetEditor().Clear();
+  // Clearing the event handler clears many events, but notably can ensure that
+  // for a drag started on an element in a frame that was moved (likely via
+  // appendChild()), the drag source will detach and stop firing drag events
+  // even after the frame reattaches.
   GetEventHandler().Clear();
-  Selection().DocumentAttached(GetDocument());
-  GetInputMethodController().DocumentAttached(GetDocument());
-  GetSpellChecker().DocumentAttached(GetDocument());
-  GetTextSuggestionController().DocumentAttached(GetDocument());
+  Selection().DidAttachDocument(document);
+  GetInputMethodController().DidAttachDocument(document);
+  GetSpellChecker().DidAttachDocument(document);
+  GetTextSuggestionController().DidAttachDocument(document);
   previews_resource_loading_hints_receiver_.reset();
 }
 
@@ -457,18 +521,21 @@ Frame* LocalFrame::FindFrameForNavigation(const AtomicString& name,
 void LocalFrame::Reload(WebFrameLoadType load_type,
                         ClientRedirectPolicy client_redirect_policy) {
   DCHECK(IsReloadLoadType(load_type));
-  if (client_redirect_policy == ClientRedirectPolicy::kNotClientRedirect) {
-    if (!loader_.GetDocumentLoader()->GetHistoryItem())
-      return;
-    FrameLoadRequest request = FrameLoadRequest(
-        nullptr,
-        loader_.ResourceRequestForReload(load_type, client_redirect_policy));
-    request.SetClientRedirect(client_redirect_policy);
-    loader_.StartNavigation(request, load_type);
-  } else {
-    DCHECK_EQ(WebFrameLoadType::kReload, load_type);
-    navigation_scheduler_->ScheduleReload();
+  if (!loader_.GetDocumentLoader()->GetHistoryItem())
+    return;
+  FrameLoadRequest request = FrameLoadRequest(
+      nullptr,
+      loader_.ResourceRequestForReload(load_type, client_redirect_policy));
+  request.SetClientRedirect(client_redirect_policy);
+  if (const WebInputEvent* input_event = CurrentInputEvent::Get())
+    request.SetInputStartTime(input_event->TimeStamp());
+  if (client_redirect_policy == ClientRedirectPolicy::kClientRedirect) {
+    probe::frameScheduledNavigation(this, request.GetResourceRequest().Url(),
+                                    0.0, ClientNavigationReason::kReload);
+    probe::frameClearedScheduledNavigation(this);
   }
+
+  loader_.StartNavigation(request, load_type);
 }
 
 LocalWindowProxy* LocalFrame::WindowProxy(DOMWrapperWorld& world) {
@@ -510,10 +577,22 @@ void LocalFrame::DidChangeVisibilityState() {
 void LocalFrame::DidFreeze() {
   DCHECK(RuntimeEnabledFeatures::PageLifecycleEnabled());
   if (GetDocument()) {
+    auto* frame_resource_coordinator = GetFrameResourceCoordinator();
+    if (frame_resource_coordinator) {
+      // Determine if there is a beforeunload handler by dispatching a
+      // beforeunload that will *not* launch a user dialog. If
+      // |proceed| is false then there is a non-empty beforeunload
+      // handler indicating potentially unsaved user state.
+      bool unused_did_allow_navigation = false;
+      bool proceed = GetDocument()->DispatchBeforeUnloadEvent(
+          nullptr, false /* is_reload */, unused_did_allow_navigation);
+      frame_resource_coordinator->SetHasNonEmptyBeforeUnload(!proceed);
+    }
+
     GetDocument()->DispatchFreezeEvent();
     // TODO(fmeawad): Move the following logic to the page once we have a
     // PageResourceCoordinator in Blink. http://crbug.com/838415
-    if (auto* frame_resource_coordinator = GetFrameResourceCoordinator()) {
+    if (frame_resource_coordinator) {
       frame_resource_coordinator->SetLifecycleState(
           resource_coordinator::mojom::LifecycleState::kFrozen);
     }
@@ -524,7 +603,7 @@ void LocalFrame::DidResume() {
   DCHECK(RuntimeEnabledFeatures::PageLifecycleEnabled());
   if (GetDocument()) {
     const TimeTicks resume_event_start = CurrentTimeTicks();
-    GetDocument()->DispatchEvent(*Event::Create(EventTypeNames::resume));
+    GetDocument()->DispatchEvent(*Event::Create(event_type_names::kResume));
     const TimeTicks resume_event_end = CurrentTimeTicks();
     DEFINE_STATIC_LOCAL(
         CustomCountHistogram, resume_histogram,
@@ -563,7 +642,7 @@ void LocalFrame::SetInheritedEffectiveTouchAction(TouchAction touch_action) {
     GetDocument()->documentElement()->SetNeedsStyleRecalc(
         kSubtreeStyleChange,
         StyleChangeReasonForTracing::Create(
-            StyleChangeReason::kInheritedStyleChangeFromParentFrame));
+            style_change_reason::kInheritedStyleChangeFromParentFrame));
   }
 }
 
@@ -632,7 +711,7 @@ void LocalFrame::SetPrinting(bool printing,
   } else {
     if (LayoutView* layout_view = View()->GetLayoutView()) {
       layout_view->SetPreferredLogicalWidthsDirty();
-      layout_view->SetNeedsLayout(LayoutInvalidationReason::kPrintingChanged);
+      layout_view->SetNeedsLayout(layout_invalidation_reason::kPrintingChanged);
       layout_view->SetShouldDoFullPaintInvalidationForViewAndAllDescendants();
     }
     View()->UpdateLayout();
@@ -650,7 +729,10 @@ void LocalFrame::SetPrinting(bool printing,
     }
   }
 
-  View()->SetSubtreeNeedsPaintPropertyUpdate();
+  if (auto* layout_view = View()->GetLayoutView()) {
+    layout_view->AddSubtreePaintPropertyUpdateReason(
+        SubtreePaintPropertyUpdateReason::kPrinting);
+  }
 
   if (!printing)
     GetDocument()->SetPrinting(Document::kNotPrinting);
@@ -741,15 +823,16 @@ void LocalFrame::SetPageAndTextZoomFactors(float page_zoom_factor,
   document->MediaQueryAffectingValueChanged();
   document->SetNeedsStyleRecalc(
       kSubtreeStyleChange,
-      StyleChangeReasonForTracing::Create(StyleChangeReason::kZoom));
-  document->UpdateStyleAndLayoutIgnorePendingStylesheets();
+      StyleChangeReasonForTracing::Create(style_change_reason::kZoom));
+  if (View() && View()->DidFirstLayout())
+    document->UpdateStyleAndLayoutIgnorePendingStylesheets();
 }
 
 void LocalFrame::DeviceScaleFactorChanged() {
   GetDocument()->MediaQueryAffectingValueChanged();
   GetDocument()->SetNeedsStyleRecalc(
       kSubtreeStyleChange,
-      StyleChangeReasonForTracing::Create(StyleChangeReason::kZoom));
+      StyleChangeReasonForTracing::Create(style_change_reason::kZoom));
   for (Frame* child = Tree().FirstChild(); child;
        child = child->Tree().NextSibling()) {
     if (child->IsLocalFrame())
@@ -837,7 +920,7 @@ String LocalFrame::GetLayerTreeAsTextForTesting(unsigned flags) const {
     return String();
 
   std::unique_ptr<JSONObject> layers;
-  if (RuntimeEnabledFeatures::SlimmingPaintV2Enabled()) {
+  if (RuntimeEnabledFeatures::CompositeAfterPaintEnabled()) {
     layers = View()->CompositedLayersAsJSON(static_cast<LayerTreeFlags>(flags));
   } else {
     if (const auto* root_layer =
@@ -875,24 +958,28 @@ inline LocalFrame::LocalFrame(LocalFrameClient* client,
       editor_(Editor::Create(*this)),
       spell_checker_(SpellChecker::Create(*this)),
       selection_(FrameSelection::Create(*this)),
-      event_handler_(new EventHandler(*this)),
+      event_handler_(MakeGarbageCollected<EventHandler>(*this)),
       console_(FrameConsole::Create(*this)),
       input_method_controller_(InputMethodController::Create(*this)),
-      text_suggestion_controller_(new TextSuggestionController(*this)),
+      text_suggestion_controller_(
+          MakeGarbageCollected<TextSuggestionController>(*this)),
       navigation_disable_count_(0),
       page_zoom_factor_(ParentPageZoomFactor(this)),
       text_zoom_factor_(ParentTextZoomFactor(this)),
       in_view_source_mode_(false),
       inspector_task_runner_(InspectorTaskRunner::Create(
           GetTaskRunner(TaskType::kInternalInspector))),
-      interface_registry_(interface_registry) {
+      interface_registry_(interface_registry),
+      is_save_data_enabled_(
+          !(GetSettings() && GetSettings()->GetDataSaverHoldbackWebApi()) &&
+          GetNetworkStateNotifier().SaveDataEnabled()) {
   if (IsLocalRoot()) {
-    probe_sink_ = new CoreProbeSink();
-    performance_monitor_ = new PerformanceMonitor(this);
-    inspector_trace_events_ = new InspectorTraceEvents();
+    probe_sink_ = MakeGarbageCollected<CoreProbeSink>();
+    performance_monitor_ = MakeGarbageCollected<PerformanceMonitor>(this);
+    inspector_trace_events_ = MakeGarbageCollected<InspectorTraceEvents>();
     probe_sink_->addInspectorTraceEvents(inspector_trace_events_);
     if (RuntimeEnabledFeatures::AdTaggingEnabled()) {
-      ad_tracker_ = new AdTracker(this);
+      ad_tracker_ = MakeGarbageCollected<AdTracker>(this);
     }
   } else {
     // Inertness only needs to be updated if this frame might inherit the
@@ -904,7 +991,7 @@ inline LocalFrame::LocalFrame(LocalFrameClient* client,
     ad_tracker_ = LocalFrameRoot().ad_tracker_;
     performance_monitor_ = LocalFrameRoot().performance_monitor_;
   }
-  idleness_detector_ = new IdlenessDetector(this);
+  idleness_detector_ = MakeGarbageCollected<IdlenessDetector>(this);
   inspector_task_runner_->InitIsolate(V8PerIsolateData::MainThreadIsolate());
 
   if (ad_tracker_) {
@@ -956,13 +1043,17 @@ bool LocalFrame::CanNavigate(const Frame& target_frame,
       !GetSecurityContext()->IsSandboxed(kSandboxTopNavigation) &&
       target_frame == Tree().Top()) {
     DEFINE_STATIC_LOCAL(EnumerationHistogram, framebust_histogram,
-                        ("WebCore.Framebust", 4));
+                        ("WebCore.Framebust2", 8));
     const unsigned kUserGestureBit = 0x1;
     const unsigned kAllowedBit = 0x2;
+    const unsigned kAdBit = 0x4;
     unsigned framebust_params = 0;
 
     if (has_user_gesture)
       framebust_params |= kUserGestureBit;
+
+    if (IsAdSubframe())
+      framebust_params |= kAdBit;
 
     UseCounter::Count(this, WebFeature::kTopNavigationFromSubFrame);
     if (sandboxed) {  // Sandboxed with 'allow-top-navigation'.
@@ -976,17 +1067,18 @@ bool LocalFrame::CanNavigate(const Frame& target_frame,
     if (is_allowed_navigation)
       framebust_params |= kAllowedBit;
     framebust_histogram.Count(framebust_params);
+
     if (has_user_gesture || is_allowed_navigation ||
         target_frame.GetSecurityContext()->GetSecurityOrigin()->CanAccess(
             SecurityOrigin::Create(destination_url).get())) {
       return true;
     }
 
-    String target_domain = NetworkUtils::GetDomainAndRegistry(
+    String target_domain = network_utils::GetDomainAndRegistry(
         target_frame.GetSecurityContext()->GetSecurityOrigin()->Domain(),
-        NetworkUtils::kIncludePrivateRegistries);
-    String destination_domain = NetworkUtils::GetDomainAndRegistry(
-        destination_url.Host(), NetworkUtils::kIncludePrivateRegistries);
+        network_utils::kIncludePrivateRegistries);
+    String destination_domain = network_utils::GetDomainAndRegistry(
+        destination_url.Host(), network_utils::kIncludePrivateRegistries);
     if (!target_domain.IsEmpty() && !destination_domain.IsEmpty() &&
         target_domain == destination_domain) {
       return true;
@@ -998,10 +1090,14 @@ bool LocalFrame::CanNavigate(const Frame& target_frame,
     //
     // TODO(csharrison,japhet): Consider not logging an error message if the
     // user has allowed popups/redirects.
+    bool allow_popups_and_redirects = false;
+    if (auto* settings_client = Client()->GetContentSettingsClient()) {
+      allow_popups_and_redirects =
+          settings_client->AllowPopupsAndRedirects(allow_popups_and_redirects);
+    }
     if (!RuntimeEnabledFeatures::
             FramebustingNeedsSameOriginOrUserGestureEnabled() ||
-        Client()->GetContentSettingsClient().AllowPopupsAndRedirects(
-            false /* default_value */)) {
+        allow_popups_and_redirects) {
       String target_frame_description =
           target_frame.IsLocalFrame() ? "with URL '" +
                                             ToLocalFrame(target_frame)
@@ -1038,7 +1134,7 @@ bool LocalFrame::CanNavigate(const Frame& target_frame,
   // Navigating window.opener cross origin, without user activation. See
   // crbug.com/813643.
   if (Client()->Opener() == target_frame &&
-      !HasTransientUserActivation(this, false /* checkIfMainThread */) &&
+      !HasTransientUserActivation(this, false /* check_if_main_thread */) &&
       !target_frame.GetSecurityContext()->GetSecurityOrigin()->CanAccess(
           SecurityOrigin::Create(destination_url).get())) {
     UseCounter::Count(this, WebFeature::kOpenerNavigationWithoutGesture);
@@ -1119,7 +1215,7 @@ bool LocalFrame::CanNavigateWithoutFramebusting(const Frame& target_frame,
       if (GetSecurityContext()->IsSandboxed(kSandboxTopNavigation) &&
           !GetSecurityContext()->IsSandboxed(
               kSandboxTopNavigationByUserActivation) &&
-          !Frame::HasTransientUserActivation(this)) {
+          !LocalFrame::HasTransientUserActivation(this)) {
         // With only 'allow-top-navigation-by-user-activation' (but not
         // 'allow-top-navigation'), top navigation requires a user gesture.
         reason =
@@ -1182,13 +1278,21 @@ void LocalFrame::SetIsAdSubframeIfNecessary() {
   bool parent_is_ad =
       parent->IsLocalFrame() && ToLocalFrame(parent)->IsAdSubframe();
 
-  if (parent_is_ad || ad_tracker_->IsAdScriptInStack())
-    SetIsAdSubframe();
+  if (parent_is_ad || ad_tracker_->IsAdScriptInStack()) {
+    SetIsAdSubframe(parent_is_ad ? blink::mojom::AdFrameType::kChildAd
+                                 : blink::mojom::AdFrameType::kRootAd);
+  }
 }
 
 service_manager::InterfaceProvider& LocalFrame::GetInterfaceProvider() {
   DCHECK(Client());
   return *Client()->GetInterfaceProvider();
+}
+
+mojom::blink::DocumentInterfaceBroker&
+LocalFrame::GetDocumentInterfaceBroker() {
+  DCHECK(Client());
+  return *Client()->GetDocumentInterfaceBroker();
 }
 
 AssociatedInterfaceProvider*
@@ -1201,19 +1305,17 @@ LocalFrameClient* LocalFrame::Client() const {
   return static_cast<LocalFrameClient*>(Frame::Client());
 }
 
-ContentSettingsClient* LocalFrame::GetContentSettingsClient() {
-  return Client() ? &Client()->GetContentSettingsClient() : nullptr;
+WebContentSettingsClient* LocalFrame::GetContentSettingsClient() {
+  return Client() ? Client()->GetContentSettingsClient() : nullptr;
 }
 
 FrameResourceCoordinator* LocalFrame::GetFrameResourceCoordinator() {
-  if (!BlinkResourceCoordinatorBase::IsEnabled())
-    return nullptr;
   if (!frame_resource_coordinator_) {
     auto* local_frame_client = Client();
     if (!local_frame_client)
       return nullptr;
-    frame_resource_coordinator_.reset(FrameResourceCoordinator::Create(
-        local_frame_client->GetInterfaceProvider()));
+    frame_resource_coordinator_ = FrameResourceCoordinator::Create(
+        local_frame_client->GetInterfaceProvider());
   }
   return frame_resource_coordinator_.get();
 }
@@ -1282,6 +1384,10 @@ bool LocalFrame::IsLazyLoadingImageAllowed() const {
     return false;
   if (Owner() && !Owner()->ShouldLazyLoadChildren())
     return false;
+  if (RuntimeEnabledFeatures::RestrictLazyImageLoadingToDataSaverEnabled() &&
+      !is_save_data_enabled_) {
+    return false;
+  }
   return true;
 }
 
@@ -1314,7 +1420,7 @@ void LocalFrame::SetViewportIntersectionFromParent(
     remote_viewport_intersection_ = viewport_intersection;
     occluded_or_obscured_by_ancestor_ = occluded_or_obscured;
     if (View()) {
-      View()->SetNeedsIntersectionObservation(LocalFrameView::kRequired);
+      View()->SetIntersectionObservationState(LocalFrameView::kRequired);
       View()->ScheduleAnimation();
     }
   }
@@ -1353,7 +1459,7 @@ void LocalFrame::ForceSynchronousDocumentInstall(
 bool LocalFrame::IsProvisional() const {
   // Calling this after the frame is marked as completely detached is a bug, as
   // this state can no longer be accurately calculated.
-  CHECK_NE(FrameLifecycle::kDetached, lifecycle_.GetState());
+  CHECK(!IsDetached());
 
   if (IsMainFrame()) {
     return GetPage()->MainFrame() != this;
@@ -1386,6 +1492,41 @@ ComputedAccessibleNode* LocalFrame::GetOrCreateComputedAccessibleNode(
   return computed_node_mapping_.at(ax_id);
 }
 
+bool LocalFrame::IsAdSubframe() const {
+  return ad_frame_type_ != blink::mojom::AdFrameType::kNonAd;
+}
+
+bool LocalFrame::IsAdRoot() const {
+  return ad_frame_type_ == blink::mojom::AdFrameType::kRootAd;
+}
+
+void LocalFrame::SetIsAdSubframe(blink::mojom::AdFrameType ad_frame_type) {
+  DCHECK(!IsMainFrame());
+
+  // Once |ad_frame_type_| has been set to an ad type on this frame, it cannot
+  // be changed.
+  if (ad_frame_type == blink::mojom::AdFrameType::kNonAd)
+    return;
+  if (ad_frame_type_ != blink::mojom::AdFrameType::kNonAd)
+    return;
+  ad_frame_type_ = ad_frame_type;
+  UpdateAdHighlight();
+  frame_scheduler_->SetIsAdFrame();
+  InstanceCounters::IncrementCounter(InstanceCounters::kAdSubframeCounter);
+}
+
+void LocalFrame::UpdateAdHighlight() {
+  if (!IsAdRoot()) {
+    // Verify that non root ad subframes do not have an overlay.
+    DCHECK(IsMainFrame() || !frame_color_overlay_);
+    return;
+  }
+  if (GetPage()->GetSettings().GetHighlightAds())
+    SetSubframeColorOverlay(SkColorSetARGB(128, 255, 0, 0));
+  else
+    SetSubframeColorOverlay(Color::kTransparent);
+}
+
 void LocalFrame::PauseSubresourceLoading(
     blink::mojom::blink::PauseSubresourceLoadingHandleRequest request) {
   auto handle = GetFrameScheduler()->GetPauseSubresourceLoadingHandle();
@@ -1414,7 +1555,7 @@ SmoothScrollSequencer& LocalFrame::GetSmoothScrollSequencer() {
   if (!IsLocalRoot())
     return LocalFrameRoot().GetSmoothScrollSequencer();
   if (!smooth_scroll_sequencer_)
-    smooth_scroll_sequencer_ = new SmoothScrollSequencer();
+    smooth_scroll_sequencer_ = MakeGarbageCollected<SmoothScrollSequencer>();
   return *smooth_scroll_sequencer_;
 }
 
@@ -1441,27 +1582,176 @@ const mojom::blink::ReportingServiceProxyPtr& LocalFrame::GetReportingService()
   return reporting_service_;
 }
 
-void LocalFrame::ReportFeaturePolicyViolation(
-    mojom::FeaturePolicyFeature feature) const {
-  if (!RuntimeEnabledFeatures::FeaturePolicyReportingEnabled())
+// static
+std::unique_ptr<UserGestureIndicator> LocalFrame::NotifyUserActivation(
+    LocalFrame* frame,
+    UserGestureToken::Status status) {
+  if (frame) {
+    UserActivationNotifierFrame() = frame;
+    frame->NotifyUserActivation();
+  }
+  return std::make_unique<UserGestureIndicator>(status);
+}
+
+// static
+std::unique_ptr<UserGestureIndicator> LocalFrame::NotifyUserActivation(
+    LocalFrame* frame,
+    UserGestureToken* token) {
+  DCHECK(!RuntimeEnabledFeatures::UserActivationV2Enabled());
+  if (frame) {
+    UserActivationNotifierFrame() = frame;
+    frame->NotifyUserActivation();
+  }
+  return std::make_unique<UserGestureIndicator>(token);
+}
+
+// static
+bool LocalFrame::HasTransientUserActivation(LocalFrame* frame,
+                                            bool check_if_main_thread) {
+  bool available;
+
+  if (RuntimeEnabledFeatures::UserActivationV2Enabled()) {
+    available = frame ? frame->HasTransientUserActivation() : false;
+  } else {
+    available = check_if_main_thread
+                    ? UserGestureIndicator::ProcessingUserGestureThreadSafe()
+                    : UserGestureIndicator::ProcessingUserGesture();
+  }
+
+  const bool off_main_thread = check_if_main_thread && !IsMainThread();
+  UMA_HISTOGRAM_ENUMERATION(
+      "UserActivation.AvailabilityCheck.FrameResult",
+      DetermineActivationResultEnum(frame, available, off_main_thread));
+
+  return available;
+}
+
+// static
+bool LocalFrame::ConsumeTransientUserActivation(
+    LocalFrame* frame,
+    bool check_if_main_thread,
+    UserActivationUpdateSource update_source) {
+  bool consumed;
+
+  if (RuntimeEnabledFeatures::UserActivationV2Enabled()) {
+    consumed =
+        frame ? frame->ConsumeTransientUserActivation(update_source) : false;
+  } else {
+    consumed = check_if_main_thread
+                   ? UserGestureIndicator::ConsumeUserGestureThreadSafe()
+                   : UserGestureIndicator::ConsumeUserGesture();
+  }
+
+  const bool off_main_thread = check_if_main_thread && !IsMainThread();
+  UMA_HISTOGRAM_ENUMERATION(
+      "UserActivation.Consumption.FrameResult",
+      DetermineActivationResultEnum(frame, consumed, off_main_thread));
+  if (!off_main_thread)
+    UserActivationNotifierFrame().Clear();
+
+  return consumed;
+}
+
+void LocalFrame::NotifyUserActivation() {
+  Client()->NotifyUserActivation();
+  NotifyUserActivationInLocalTree();
+}
+
+bool LocalFrame::HasTransientUserActivation() {
+  return user_activation_state_.IsActive();
+}
+
+bool LocalFrame::ConsumeTransientUserActivation(
+    UserActivationUpdateSource update_source) {
+  if (update_source == UserActivationUpdateSource::kRenderer)
+    Client()->ConsumeUserActivation();
+  return ConsumeTransientUserActivationInLocalTree();
+}
+
+namespace {
+
+class FrameColorOverlay final : public FrameOverlay::Delegate {
+ public:
+  explicit FrameColorOverlay(LocalFrame* frame, SkColor color)
+      : color_(color), frame_(frame) {}
+
+ private:
+  void PaintFrameOverlay(const FrameOverlay& frame_overlay,
+                         GraphicsContext& graphics_context,
+                         const IntSize&) const override {
+    const auto* view = frame_->View();
+    DCHECK(view);
+    if (view->Width() == 0 || view->Height() == 0)
+      return;
+    ScopedPaintChunkProperties properties(
+        graphics_context.GetPaintController(),
+        view->GetLayoutView()->FirstFragment().LocalBorderBoxProperties(),
+        frame_overlay, DisplayItem::kFrameOverlay);
+    if (DrawingRecorder::UseCachedDrawingIfPossible(
+            graphics_context, frame_overlay, DisplayItem::kFrameOverlay))
+      return;
+    DrawingRecorder recorder(graphics_context, frame_overlay,
+                             DisplayItem::kFrameOverlay);
+    FloatRect rect(0, 0, view->Width(), view->Height());
+    graphics_context.FillRect(rect, color_);
+  }
+
+  SkColor color_;
+  Persistent<LocalFrame> frame_;
+};
+
+}  // namespace
+
+void LocalFrame::SetMainFrameColorOverlay(SkColor color) {
+  DCHECK(IsMainFrame());
+  SetFrameColorOverlay(color);
+}
+
+void LocalFrame::SetSubframeColorOverlay(SkColor color) {
+  DCHECK(!IsMainFrame());
+  SetFrameColorOverlay(color);
+}
+
+void LocalFrame::SetFrameColorOverlay(SkColor color) {
+  frame_color_overlay_.reset();
+
+  if (color == Color::kTransparent)
     return;
-  const String& feature_name = GetNameForFeature(feature);
-  FeaturePolicyViolationReportBody* body = new FeaturePolicyViolationReportBody(
-      feature_name, "Feature policy violation", SourceLocation::Capture());
-  Report* report =
-      new Report("feature-policy", GetDocument()->Url().GetString(), body);
-  ReportingContext::From(GetDocument())->QueueReport(report);
 
-  bool is_null;
-  int line_number = body->lineNumber(is_null);
-  line_number = is_null ? 0 : line_number;
-  int column_number = body->columnNumber(is_null);
-  column_number = is_null ? 0 : column_number;
+  frame_color_overlay_ = FrameOverlay::Create(
+      this, std::make_unique<FrameColorOverlay>(this, color));
 
-  // Send the feature policy violation report to the Reporting API.
-  GetReportingService()->QueueFeaturePolicyViolationReport(
-      GetDocument()->Url(), feature_name, "Feature policy violation",
-      body->sourceFile(), line_number, column_number);
+  // Update compositing which will create graphics layers so the page color
+  // update below will be able to attach to the root graphics layer.
+  if (View()) {
+    View()->UpdateLifecycleToCompositingCleanPlusScrolling();
+    frame_color_overlay_->Update();
+  }
+}
+
+void LocalFrame::PaintFrameColorOverlay() {
+  DCHECK(!RuntimeEnabledFeatures::CompositeAfterPaintEnabled());
+  if (!frame_color_overlay_)
+    return;
+  frame_color_overlay_->Update();
+  if (frame_color_overlay_->GetGraphicsLayer())
+    frame_color_overlay_->GetGraphicsLayer()->Paint();
+}
+
+void LocalFrame::PaintFrameColorOverlay(GraphicsContext& context) {
+  DCHECK(RuntimeEnabledFeatures::CompositeAfterPaintEnabled());
+  if (!frame_color_overlay_)
+    return;
+  frame_color_overlay_->Update();
+  frame_color_overlay_->Paint(context);
+}
+
+void LocalFrame::ForciblyPurgeV8Memory() {
+  GetDocument()->NotifyContextDestroyed();
+
+  WindowProxyManager* window_proxy_manager = GetWindowProxyManager();
+  window_proxy_manager->ClearForV8MemoryPurge();
+  Loader().StopAllLoaders();
 }
 
 }  // namespace blink

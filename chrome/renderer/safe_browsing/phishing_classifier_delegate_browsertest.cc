@@ -94,8 +94,6 @@ class PhishingClassifierDelegateTest : public ChromeRenderViewTest {
     delegate_ = PhishingClassifierDelegate::Create(render_frame, classifier_);
   }
 
-  void TearDown() override { ChromeRenderViewTest::TearDown(); }
-
   void RegisterMainFrameRemoteInterfaces() override {
     service_manager::InterfaceProvider* remote_interfaces =
         view_->GetMainRenderFrame()->GetRemoteInterfaces();
@@ -194,7 +192,7 @@ TEST_F(PhishingClassifierDelegateTest, Navigation) {
   // Same document navigation works similarly to a subframe navigation, but see
   // the TODO in PhishingClassifierDelegate::DidCommitProvisionalLoad.
   EXPECT_CALL(*classifier_, CancelPendingClassification());
-  OnSameDocumentNavigation(GetMainFrame(), true, true);
+  OnSameDocumentNavigation(GetMainFrame(), true);
   Mock::VerifyAndClearExpectations(classifier_);
 
   OnStartPhishingDetection(url);
@@ -259,7 +257,7 @@ TEST_F(PhishingClassifierDelegateTest, Navigation) {
 
   EXPECT_CALL(*classifier_, CancelPendingClassification());
   // Same document navigation.
-  OnSameDocumentNavigation(GetMainFrame(), true, true);
+  OnSameDocumentNavigation(GetMainFrame(), true);
   Mock::VerifyAndClearExpectations(classifier_);
 
   OnStartPhishingDetection(url);

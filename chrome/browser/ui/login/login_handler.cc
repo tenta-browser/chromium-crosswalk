@@ -13,6 +13,7 @@
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/synchronization/lock.h"
+#include "base/task/post_task.h"
 #include "build/build_config.h"
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/password_manager/chrome_password_manager_client.h"
@@ -24,6 +25,7 @@
 #include "components/password_manager/core/browser/password_manager.h"
 #include "components/strings/grit/components_strings.h"
 #include "components/url_formatter/elide_url.h"
+#include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/content_browser_client.h"
 #include "content/public/browser/notification_registrar.h"
@@ -99,7 +101,6 @@ LoginHandler::LoginHandler(
     : handled_auth_(false),
       auth_info_(auth_info),
       web_contents_getter_(web_contents_getter),
-      login_model_(NULL),
       auth_required_callback_(std::move(auth_required_callback)),
       has_shown_login_handler_(false),
       release_soon_has_been_called_(false) {
@@ -121,8 +122,8 @@ LoginHandler::LoginHandler(
   // semantics.
   AddRef();  // matched by LoginHandler::ReleaseSoon().
 
-  BrowserThread::PostTask(BrowserThread::UI, FROM_HERE,
-                          base::BindOnce(&LoginHandler::AddObservers, this));
+  base::PostTaskWithTraits(FROM_HERE, {BrowserThread::UI},
+                           base::BindOnce(&LoginHandler::AddObservers, this));
 }
 
 void LoginHandler::OnRequestCancelled() {
@@ -162,8 +163,11 @@ WebContents* LoginHandler::GetWebContentsForLogin() const {
 }
 
 password_manager::PasswordManager* LoginHandler::GetPasswordManagerForLogin() {
+  WebContents* contents = GetWebContentsForLogin();
+  if (!contents)
+    return nullptr;
   password_manager::PasswordManagerClient* client =
-      ChromePasswordManagerClient::FromWebContents(GetWebContentsForLogin());
+      ChromePasswordManagerClient::FromWebContents(contents);
   return client ? client->GetPasswordManager() : nullptr;
 }
 
@@ -211,11 +215,11 @@ void LoginHandler::SetAuth(const base::string16& username,
   // before they are removed.
   NotifyAuthSupplied(username, password);
 
-  BrowserThread::PostTask(
-      BrowserThread::UI, FROM_HERE,
+  base::PostTaskWithTraits(
+      FROM_HERE, {BrowserThread::UI},
       base::BindOnce(&LoginHandler::CloseContentsDeferred, this));
-  BrowserThread::PostTask(
-      BrowserThread::IO, FROM_HERE,
+  base::PostTaskWithTraits(
+      FROM_HERE, {BrowserThread::IO},
       base::BindOnce(&LoginHandler::SetAuthDeferred, this, username, password));
 }
 
@@ -277,21 +281,7 @@ bool LoginHandler::WasAuthHandled() const {
   return was_handled;
 }
 
-LoginHandler::~LoginHandler() {
-  ResetModel();
-}
-
-void LoginHandler::SetModel(LoginModelData model_data) {
-  ResetModel();
-  login_model_ = model_data.model;
-  login_model_->AddObserverAndDeliverCredentials(this, model_data.form);
-}
-
-void LoginHandler::ResetModel() {
-  if (login_model_)
-    login_model_->RemoveObserver(this);
-  login_model_ = nullptr;
-}
+LoginHandler::~LoginHandler() = default;
 
 void LoginHandler::NotifyAuthNeeded() {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
@@ -323,19 +313,21 @@ void LoginHandler::ReleaseSoon() {
   }
 
   if (!TestAndSetAuthHandled()) {
-    BrowserThread::PostTask(
-        BrowserThread::IO, FROM_HERE,
+    base::PostTaskWithTraits(
+        FROM_HERE, {BrowserThread::IO},
         base::BindOnce(&LoginHandler::CancelAuthDeferred, this));
-    BrowserThread::PostTask(
-        BrowserThread::UI, FROM_HERE,
+    base::PostTaskWithTraits(
+        FROM_HERE, {BrowserThread::UI},
         base::BindOnce(&LoginHandler::NotifyAuthCancelled, this, false));
   }
 
-  BrowserThread::PostTask(BrowserThread::UI, FROM_HERE,
-                          base::BindOnce(&LoginHandler::RemoveObservers, this));
+  base::PostTaskWithTraits(
+      FROM_HERE, {BrowserThread::UI},
+      base::BindOnce(&LoginHandler::RemoveObservers, this));
 
   // Delete this object once all InvokeLaters have been called.
-  BrowserThread::ReleaseSoon(BrowserThread::IO, FROM_HERE, this);
+  BrowserThread::ReleaseSoon(BrowserThread::IO, FROM_HERE,
+                             base::WrapRefCounted(this));
 }
 
 void LoginHandler::AddObservers() {
@@ -434,16 +426,16 @@ void LoginHandler::DoCancelAuth(bool dismiss_navigation) {
   if (BrowserThread::CurrentlyOn(BrowserThread::UI)) {
     NotifyAuthCancelled(dismiss_navigation);
   } else {
-    BrowserThread::PostTask(BrowserThread::UI, FROM_HERE,
-                            base::BindOnce(&LoginHandler::NotifyAuthCancelled,
-                                           this, dismiss_navigation));
+    base::PostTaskWithTraits(FROM_HERE, {BrowserThread::UI},
+                             base::BindOnce(&LoginHandler::NotifyAuthCancelled,
+                                            this, dismiss_navigation));
   }
 
-  BrowserThread::PostTask(
-      BrowserThread::UI, FROM_HERE,
+  base::PostTaskWithTraits(
+      FROM_HERE, {BrowserThread::UI},
       base::BindOnce(&LoginHandler::CloseContentsDeferred, this));
-  BrowserThread::PostTask(
-      BrowserThread::IO, FROM_HERE,
+  base::PostTaskWithTraits(
+      FROM_HERE, {BrowserThread::IO},
       base::BindOnce(&LoginHandler::CancelAuthDeferred, this));
 }
 
@@ -623,7 +615,8 @@ void LoginHandler::LoginDialogCallback(
   auto continuation = base::BindOnce(&LoginHandler::MaybeSetUpLoginPrompt,
                                      request_url, base::RetainedRef(auth_info),
                                      base::RetainedRef(handler), is_main_frame);
-  if (api->MaybeProxyAuthRequest(auth_info, std::move(response_headers),
+  if (api->MaybeProxyAuthRequest(parent_contents->GetBrowserContext(),
+                                 auth_info, std::move(response_headers),
                                  request_id, is_main_frame,
                                  std::move(continuation))) {
     return;
@@ -645,7 +638,8 @@ void LoginHandler::MaybeSetUpLoginPrompt(
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
 
   WebContents* parent_contents = handler->GetWebContentsForLogin();
-  if (!parent_contents || handler->WasAuthHandled()) {
+  if (!parent_contents || !parent_contents->GetDelegate() ||
+      handler->WasAuthHandled()) {
     // The request may have been canceled, or it may be for a renderer not
     // hosted by a tab (e.g. an extension). Cancel just in case (canceling twice
     // is a no-op).
@@ -736,8 +730,8 @@ scoped_refptr<LoginHandler> CreateLoginPrompt(
     LoginAuthRequiredCallback auth_required_callback) {
   scoped_refptr<LoginHandler> handler = LoginHandler::Create(
       auth_info, web_contents_getter, std::move(auth_required_callback));
-  BrowserThread::PostTask(
-      BrowserThread::UI, FROM_HERE,
+  base::PostTaskWithTraits(
+      FROM_HERE, {BrowserThread::UI},
       base::BindOnce(&LoginHandler::LoginDialogCallback, url, request_id,
                      base::RetainedRef(auth_info), std::move(response_headers),
                      base::RetainedRef(handler), is_request_for_main_frame));

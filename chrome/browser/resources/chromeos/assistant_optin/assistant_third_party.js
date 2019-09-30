@@ -59,7 +59,44 @@ Polymer({
    * @private
    */
   onNextTap_: function() {
-    chrome.send('assistant.ThirdPartyScreen.userActed', ['next-pressed']);
+    if (this.buttonsDisabled) {
+      return;
+    }
+    this.buttonsDisabled = true;
+    chrome.send(
+        'login.AssistantOptInFlowScreen.ThirdPartyScreen.userActed',
+        ['next-pressed']);
+  },
+
+  /**
+   * Click event handler for information links.
+   * @param {MouseEvent} e click event.
+   */
+  urlClickHandler: function(e) {
+    if (!e.target.localName == 'a') {
+      return;
+    }
+    e.preventDefault();
+    this.showThirdPartyOverlay(e.target.href);
+  },
+
+  /**
+   * Shows third party information links in overlay dialog.
+   * @param {string} url URL to show.
+   */
+  showThirdPartyOverlay: function(url) {
+    this.$['webview-container'].classList.add('overlay-loading');
+    this.$['overlay-webview'].src = url;
+
+    var overlay = this.$['third-party-overlay'];
+    overlay.hidden = false;
+  },
+
+  /**
+   * Hides overlay dialog.
+   */
+  hideOverlay: function() {
+    this.$['third-party-overlay'].hidden = true;
   },
 
   /**
@@ -78,6 +115,8 @@ Polymer({
     this.$['next-button-text'].textContent = data['thirdPartyContinueButton'];
     this.$['footer-text'].innerHTML =
         this.sanitizer_.sanitizeHtml(data['thirdPartyFooter']);
+
+    this.$['footer-text'].onclick = this.urlClickHandler.bind(this);
 
     this.consentStringLoaded_ = true;
     if (this.settingZippyLoaded_) {
@@ -114,6 +153,8 @@ Polymer({
           this.sanitizer_.sanitizeHtml(data['additionalInfo']);
       zippy.appendChild(additional);
 
+      additional.onclick = this.urlClickHandler.bind(this);
+
       this.$['insertion-point'].appendChild(zippy);
     }
 
@@ -131,7 +172,8 @@ Polymer({
     this.buttonsDisabled = false;
     this.$['next-button'].focus();
     if (!this.hidden && !this.screenShown_) {
-      chrome.send('assistant.ThirdPartyScreen.screenShown');
+      chrome.send(
+          'login.AssistantOptInFlowScreen.ThirdPartyScreen.screenShown');
       this.screenShown_ = true;
     }
   },
@@ -140,11 +182,19 @@ Polymer({
    * Signal from host to show the screen.
    */
   onShow: function() {
+    this.$['overlay-close-button'].addEventListener(
+        'click', this.hideOverlay.bind(this));
+    var webviewContainer = this.$['webview-container'];
+    this.$['overlay-webview'].addEventListener('contentload', function() {
+      webviewContainer.classList.remove('overlay-loading');
+    });
+
     if (!this.settingZippyLoaded_ || !this.consentStringLoaded_) {
       this.reloadPage();
     } else {
       this.$['next-button'].focus();
-      chrome.send('assistant.ThirdPartyScreen.screenShown');
+      chrome.send(
+          'login.AssistantOptInFlowScreen.ThirdPartyScreen.screenShown');
       this.screenShown_ = true;
     }
   },

@@ -652,7 +652,6 @@ class CastBenchmark {
       SearchVector v = ab.blend(ac, x == y ? 1.0 : static_cast<double>(y) / x);
       thread_num++;
       (*threads)[thread_num % threads->size()]
-          ->message_loop()
           ->task_runner()
           ->PostTask(FROM_HERE,
                      base::Bind(&CastBenchmark::BinarySearch,
@@ -682,9 +681,10 @@ class CastBenchmark {
       a.bitrate.grade = 1.0;
       a.latency.grade = 1.0;
       a.packet_drop.grade = 1.0;
-      threads[0]->message_loop()->task_runner()->PostTask(
-          FROM_HERE, base::Bind(base::IgnoreResult(&CastBenchmark::RunOnePoint),
-                                base::Unretained(this), a, 1.0));
+      threads[0]->task_runner()->PostTask(
+          FROM_HERE,
+          base::BindOnce(base::IgnoreResult(&CastBenchmark::RunOnePoint),
+                         base::Unretained(this), a, 1.0));
     } else {
       SearchVector a, b, c;
       a.bitrate.base = b.bitrate.base = c.bitrate.base = 100.0;

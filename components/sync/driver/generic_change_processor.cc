@@ -53,8 +53,7 @@ SyncData BuildRemoteSyncData(int64_t sync_id, const ReadNode& read_node) {
       password_holder.mutable_password()
           ->mutable_client_only_encrypted_data()
           ->CopyFrom(read_node.GetPasswordSpecifics());
-      return SyncData::CreateRemoteData(sync_id, password_holder,
-                                        read_node.GetModificationTime());
+      return SyncData::CreateRemoteData(sync_id, password_holder);
     }
     case SESSIONS:
       // Include tag hashes for sessions data type to allow discarding during
@@ -66,12 +65,11 @@ SyncData BuildRemoteSyncData(int64_t sync_id, const ReadNode& read_node) {
       // another copy of this string around.
       return SyncData::CreateRemoteData(
           sync_id, read_node.GetEntitySpecifics(),
-          read_node.GetModificationTime(),
           read_node.GetEntry()->GetUniqueClientTag());
     default:
       // Use the specifics directly, encryption has already been handled.
-      return SyncData::CreateRemoteData(sync_id, read_node.GetEntitySpecifics(),
-                                        read_node.GetModificationTime());
+      return SyncData::CreateRemoteData(sync_id,
+                                        read_node.GetEntitySpecifics());
   }
 }
 
@@ -104,21 +102,20 @@ void GenericChangeProcessor::ApplyChangesFromSyncModel(
     const ImmutableChangeRecordList& changes) {
   DCHECK(sequence_checker_.CalledOnValidSequence());
   DCHECK(syncer_changes_.empty());
-  for (ChangeRecordList::const_iterator it = changes.Get().begin();
-       it != changes.Get().end(); ++it) {
+  for (auto it = changes.Get().begin(); it != changes.Get().end(); ++it) {
     if (it->action == ChangeRecord::ACTION_DELETE) {
       std::unique_ptr<sync_pb::EntitySpecifics> specifics;
       if (it->specifics.has_password()) {
-        DCHECK(it->extra.get());
+        DCHECK(it->extra.has_value());
         specifics = std::make_unique<sync_pb::EntitySpecifics>(it->specifics);
         specifics->mutable_password()
             ->mutable_client_only_encrypted_data()
             ->CopyFrom(it->extra->unencrypted());
       }
-      syncer_changes_.push_back(SyncChange(
-          FROM_HERE, SyncChange::ACTION_DELETE,
-          SyncData::CreateRemoteData(
-              it->id, specifics ? *specifics : it->specifics, base::Time())));
+      syncer_changes_.push_back(
+          SyncChange(FROM_HERE, SyncChange::ACTION_DELETE,
+                     SyncData::CreateRemoteData(
+                         it->id, specifics ? *specifics : it->specifics)));
     } else {
       SyncChange::SyncChangeType action =
           (it->action == ChangeRecord::ACTION_ADD) ? SyncChange::ACTION_ADD
@@ -373,8 +370,8 @@ SyncError GenericChangeProcessor::ProcessSyncChanges(
 
   WriteTransaction trans(from_here, share_handle());
 
-  for (SyncChangeList::const_iterator iter = list_of_changes.begin();
-       iter != list_of_changes.end(); ++iter) {
+  for (auto iter = list_of_changes.begin(); iter != list_of_changes.end();
+       ++iter) {
     const SyncChange& change = *iter;
     DCHECK_EQ(change.sync_data().GetDataType(), type_);
     std::string type_str = ModelTypeToString(type_);

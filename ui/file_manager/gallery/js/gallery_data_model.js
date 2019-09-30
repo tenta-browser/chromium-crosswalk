@@ -29,7 +29,9 @@ function GalleryDataModel(metadataModel, opt_watcher) {
 
   // Start to watch file system entries.
   var watcher = opt_watcher ? opt_watcher : new EntryListWatcher(this);
-  watcher.getEntry = function(item) { return item.getEntry(); };
+  watcher.getEntry = function(item) {
+    return item.getEntry();
+  };
 
   this.addEventListener('splice', this.onSplice_.bind(this));
 }
@@ -49,7 +51,7 @@ GalleryDataModel.prototype = {
 /**
  * Saves new image.
  *
- * @param {!VolumeManagerWrapper} volumeManager Volume manager instance.
+ * @param {!VolumeManager} volumeManager Volume manager instance.
  * @param {!GalleryItem} item Original gallery item.
  * @param {!HTMLCanvasElement} canvas Canvas containing new image.
  * @param {boolean} overwrite Set true to overwrite original if it's possible.
@@ -142,8 +144,9 @@ GalleryDataModel.prototype.evictCache = function() {
  * @private
  */
 GalleryDataModel.prototype.onSplice_ = function(event) {
-  if (!event.removed || !event.removed.length)
+  if (!event.removed || !event.removed.length) {
     return;
+  }
   var removedURLs = event.removed.map(function(item) {
     return item.getEntry().toURL();
   });

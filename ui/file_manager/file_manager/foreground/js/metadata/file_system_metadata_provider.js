@@ -26,8 +26,9 @@ FileSystemMetadataProvider.prototype.__proto__ = MetadataProvider.prototype;
  * @override
  */
 FileSystemMetadataProvider.prototype.get = function(requests) {
-  if (!requests.length)
+  if (!requests.length) {
     return Promise.resolve([]);
+  }
   return Promise.all(requests.map(function(request) {
     return new Promise(function(fulfill, reject) {
       request.entry.getMetadata(fulfill, reject);
@@ -42,7 +43,7 @@ FileSystemMetadataProvider.prototype.get = function(requests) {
       // Can't use console.error because some tests hit this line and
       // console.error causes them to fail because of JSErrorCount. This error
       // is an acceptable condition.
-      console.warn('getMetadata failure for: ' + request.entry.fullPath, error);
+      console.warn('getMetadata failure for: ' + request.entry.toURL(), error);
       return new MetadataItem();
     });
   }));

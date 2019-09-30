@@ -28,7 +28,7 @@ suite('Multidevice', function() {
 
   /**
    * Observably sets mode. Everything else remains unchanged.
-   * @param{settings.MultiDeviceSettingsMode} newMode
+   * @param {settings.MultiDeviceSettingsMode} newMode
    */
   function setMode(newMode) {
     multideviceSubpage.pageContentData =
@@ -41,7 +41,7 @@ suite('Multidevice', function() {
   /**
    * Observably resets feature states so that each feature is supported if and
    * only if it is in the provided array. Everything else remains unchanged.
-   * @param{Array<settings.MultiDeviceFeature>} supportedFeatures
+   * @param {Array<settings.MultiDeviceFeature>} supportedFeatures
    */
   function setSupportedFeatures(supportedFeatures) {
     multideviceSubpage.pageContentData =
@@ -68,6 +68,20 @@ suite('Multidevice', function() {
     Polymer.dom.flush();
   }
 
+  /**
+   * @param {boolean} pairingComplete
+   */
+  function setAndroidSmsPairingComplete(pairingComplete) {
+    multideviceSubpage.pageContentData =
+        Object.assign({}, multideviceSubpage.pageContentData, {
+          messagesState: pairingComplete ?
+              settings.MultiDeviceFeatureState.ENABLED_BY_USER :
+              settings.MultiDeviceFeatureState.FURTHER_SETUP_REQUIRED,
+          isAndroidSmsPairingComplete: pairingComplete,
+        });
+    Polymer.dom.flush();
+  }
+
   suiteSetup(function() {
     HOST_SET_MODES = [
       settings.MultiDeviceSettingsMode.HOST_SET_WAITING_FOR_SERVER,
@@ -77,7 +91,7 @@ suite('Multidevice', function() {
   });
 
   setup(function() {
-    browserProxy = new TestMultideviceBrowserProxy();
+    browserProxy = new multidevice.TestMultideviceBrowserProxy();
     settings.MultiDeviceBrowserProxyImpl.instance_ = browserProxy;
 
     PolymerTest.clearBody();
@@ -135,13 +149,13 @@ suite('Multidevice', function() {
         assertFalse(!!multideviceSubpage.$$('#messagesItem'));
       });
 
-  test('clicking EasyUnlock item routes to screen lock page', function() {
+  test('clicking SmartLock item routes to SmartLock subpage', function() {
     multideviceSubpage.$$('#smartLockItem').$.card.click();
-    assertEquals(settings.getCurrentRoute(), settings.routes.LOCK_SCREEN);
+    assertEquals(settings.getCurrentRoute(), settings.routes.SMART_LOCK);
   });
 
   test('AndroidMessages item shows button when not set up', function() {
-    multideviceSubpage.androidMessagesRequiresSetup_ = true;
+    setAndroidSmsPairingComplete(false);
     Polymer.dom.flush();
 
     const controllerSelector = '#messagesItem > [slot=feature-controller]';
@@ -149,7 +163,7 @@ suite('Multidevice', function() {
     assertTrue(
         multideviceSubpage.$$(controllerSelector).tagName.includes('BUTTON'));
 
-    multideviceSubpage.androidMessagesRequiresSetup_ = false;
+    setAndroidSmsPairingComplete(true);
     Polymer.dom.flush();
 
     assertFalse(!!multideviceSubpage.$$(controllerSelector));
@@ -157,9 +171,7 @@ suite('Multidevice', function() {
 
   test(
       'AndroidMessages set up button calls browser proxy function', function() {
-        const messagesItem = multideviceSubpage.$$('#messagesItem');
-
-        multideviceSubpage.androidMessagesRequiresSetup_ = true;
+        setAndroidSmsPairingComplete(false);
         Polymer.dom.flush();
 
         const setUpButton =

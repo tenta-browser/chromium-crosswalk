@@ -274,7 +274,7 @@ void SerializeValue(const std::vector<std::unique_ptr<PasswordForm>>& forms,
     pickle->WriteString(form->icon_url.spec());
     // We serialize unique origins as "", in order to make other systems that
     // read from the login database happy. https://crbug.com/591310
-    pickle->WriteString(form->federation_origin.unique()
+    pickle->WriteString(form->federation_origin.opaque()
                             ? std::string()
                             : form->federation_origin.Serialize());
     pickle->WriteBool(form->skip_zero_click);
@@ -335,10 +335,10 @@ bool NativeBackendKWallet::InitWithBus(scoped_refptr<dbus::Bus> optional_bus) {
       base::BindOnce(&NativeBackendKWallet::InitOnBackgroundTaskRunner,
                      base::Unretained(this), optional_bus, &event, &success));
 
-  // This ScopedAllowWait should not be here. However, the whole backend is so
-  // close to deprecation that it does not make sense to refactor it. More info
-  // on https://crbug.com/739897.
-  base::ThreadRestrictions::ScopedAllowWait allow_wait;
+  // This ScopedAllowBaseSyncPrimitives should not be here. However, the whole
+  // backend is so close to deprecation that it does not make sense to refactor
+  // it. More info on https://crbug.com/739897.
+  base::ScopedAllowBaseSyncPrimitives allow_wait;
   event.Wait();
   return success;
 }

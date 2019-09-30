@@ -12,7 +12,7 @@
  *
  * @param {!DirectoryModel} directoryModel A directory model.
  * @param {!ThumbnailModel} thumbnailModel Thumbnail metadata model.
- * @param {!VolumeManagerWrapper} volumeManager Volume manager.
+ * @param {!VolumeManager} volumeManager Volume manager.
  * @param {Function=} opt_thumbnailLoaderConstructor A constructor of thumbnail
  *     loader. This argument is used for testing.
  * @struct
@@ -33,7 +33,7 @@ function ListThumbnailLoader(
   this.thumbnailModel_ = thumbnailModel;
 
   /**
-   * @private {!VolumeManagerWrapper}
+   * @private {!VolumeManager}
    */
   this.volumeManager_ = volumeManager;
 
@@ -194,8 +194,9 @@ ListThumbnailLoader.prototype.onChange_ = function(event) {
   // Mark the thumbnail in cache as invalid.
   var entry = this.dataModel_.item(event.index);
   var cachedThumbnail = this.cache_.peek(entry.toURL());
-  if (cachedThumbnail)
+  if (cachedThumbnail) {
     cachedThumbnail.outdated = true;
+  }
 
   this.cursor_ = this.beginIndex_;
   this.continue_();
@@ -209,8 +210,9 @@ ListThumbnailLoader.prototype.onChange_ = function(event) {
  */
 ListThumbnailLoader.prototype.setHighPriorityRange = function(
     beginIndex, endIndex) {
-  if (!(beginIndex < endIndex))
+  if (!(beginIndex < endIndex)) {
     return;
+  }
 
   this.beginIndex_ = beginIndex;
   this.endIndex_ = endIndex;
@@ -238,8 +240,9 @@ ListThumbnailLoader.prototype.getThumbnailFromCache = function(entry) {
 ListThumbnailLoader.prototype.continue_ = function() {
   // If directory scan is running or all items are scanned, do nothing.
   if (this.directoryModel_.isScanning() ||
-      !(this.cursor_ < this.dataModel_.length))
+      !(this.cursor_ < this.dataModel_.length)) {
     return;
+  }
 
   var entry = /** @type {Entry} */ (this.dataModel_.item(this.cursor_));
 
@@ -386,7 +389,7 @@ ListThumbnailLoader.ThumbnailData = function(fileUrl, dataUrl, width, height) {
  * A task to load thumbnail.
  *
  * @param {!Entry} entry An entry.
- * @param {!VolumeManagerWrapper} volumeManager Volume manager.
+ * @param {!VolumeManager} volumeManager Volume manager.
  * @param {!ThumbnailModel} thumbnailModel Metadata cache.
  * @param {!Function} thumbnailLoaderConstructor A constructor of thumbnail
  *     loader.

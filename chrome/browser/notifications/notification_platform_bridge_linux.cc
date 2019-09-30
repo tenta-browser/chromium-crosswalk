@@ -35,6 +35,7 @@
 #include "chrome/grit/chromium_strings.h"
 #include "chrome/grit/generated_resources.h"
 #include "components/url_formatter/elide_url.h"
+#include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/notification_service.h"
 #include "dbus/bus.h"
@@ -188,6 +189,14 @@ void ForwardNotificationOperationOnUiThread(
     const std::string& profile_id,
     bool is_incognito) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
+
+  // Profile ID can be empty for system notifications, which are not bound to a
+  // profile, but system notifications are transient and thus not handled by
+  // this NotificationPlatformBridge.
+  // When transient notifications are supported, this should route the
+  // notification response to the system NotificationDisplayService.
+  DCHECK(!profile_id.empty());
+
   g_browser_process->profile_manager()->LoadProfile(
       profile_id, is_incognito,
       base::Bind(&NotificationDisplayServiceImpl::ProfileLoadedCallback,
@@ -234,8 +243,9 @@ std::unique_ptr<ResourceFile> WriteDataToTmpFile(
 }  // namespace
 
 // static
-NotificationPlatformBridge* NotificationPlatformBridge::Create() {
-  return new NotificationPlatformBridgeLinux();
+std::unique_ptr<NotificationPlatformBridge>
+NotificationPlatformBridge::Create() {
+  return std::make_unique<NotificationPlatformBridgeLinux>();
 }
 
 // static
@@ -321,6 +331,8 @@ class NotificationPlatformBridgeLinuxImpl
       on_connected_callbacks_.push_back(std::move(callback));
     }
   }
+
+  void DisplayServiceShutDown(Profile* profile) override {}
 
   void CleanUp() {
     DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
@@ -432,8 +444,8 @@ class NotificationPlatformBridgeLinuxImpl
           ConnectionInitializationStatusCode::MISSING_REQUIRED_CAPABILITIES);
       return;
     }
-    content::BrowserThread::PostTask(
-        content::BrowserThread::UI, FROM_HERE,
+    base::PostTaskWithTraits(
+        FROM_HERE, {content::BrowserThread::UI},
         base::BindOnce(
             &NotificationPlatformBridgeLinuxImpl::SetBodyImagesSupported, this,
             base::ContainsKey(capabilities_, kCapabilityBodyImages)));
@@ -725,8 +737,8 @@ class NotificationPlatformBridgeLinuxImpl
       if (data->profile_id == profile_id && data->is_incognito == incognito)
         displayed->insert(data->notification_id);
     }
-    content::BrowserThread::PostTask(
-        content::BrowserThread::UI, FROM_HERE,
+    base::PostTaskWithTraits(
+        FROM_HERE, {content::BrowserThread::UI},
         base::BindOnce(std::move(callback), std::move(displayed), true));
   }
 
@@ -764,8 +776,8 @@ class NotificationPlatformBridgeLinuxImpl
                                     const base::Optional<int>& action_index,
                                     const base::Optional<bool>& by_user) {
     DCHECK(task_runner_->RunsTasksInCurrentSequence());
-    content::BrowserThread::PostTask(
-        content::BrowserThread::UI, location,
+    base::PostTaskWithTraits(
+        location, {content::BrowserThread::UI},
         base::BindOnce(ForwardNotificationOperationOnUiThread, operation,
                        data->notification_type, data->origin_url,
                        data->notification_id, action_index, by_user,
@@ -847,8 +859,8 @@ class NotificationPlatformBridgeLinuxImpl
         "Notifications.Linux.BridgeInitializationStatus",
         static_cast<int>(status),
         static_cast<int>(ConnectionInitializationStatusCode::NUM_ITEMS));
-    content::BrowserThread::PostTask(
-        content::BrowserThread::UI, FROM_HERE,
+    base::PostTaskWithTraits(
+        FROM_HERE, {content::BrowserThread::UI},
         base::BindOnce(&NotificationPlatformBridgeLinuxImpl::
                            OnConnectionInitializationFinishedOnUiThread,
                        this,
@@ -1007,6 +1019,9 @@ void NotificationPlatformBridgeLinux::GetDisplayed(
 void NotificationPlatformBridgeLinux::SetReadyCallback(
     NotificationBridgeReadyCallback callback) {
   impl_->SetReadyCallback(std::move(callback));
+}
+
+void NotificationPlatformBridgeLinux::DisplayServiceShutDown(Profile* profile) {
 }
 
 void NotificationPlatformBridgeLinux::CleanUp() {

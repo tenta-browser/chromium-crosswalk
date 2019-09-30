@@ -26,7 +26,7 @@ public class StandardNotificationBuilder extends NotificationBuilderBase {
         // TODO(crbug.com/697104) We should probably use a Compat builder.
         ChromeNotificationBuilder builder =
                 NotificationBuilderFactory.createChromeNotificationBuilder(
-                        false /* preferCompat */, mChannelId);
+                        false /* preferCompat */, mChannelId, mRemotePackageForBuilderContext);
 
         builder.setContentTitle(mTitle);
         builder.setContentText(mBody);
@@ -46,7 +46,7 @@ public class StandardNotificationBuilder extends NotificationBuilderBase {
             builder.setStyle(new Notification.BigTextStyle().bigText(mBody));
         }
         builder.setLargeIcon(getNormalizedLargeIcon());
-        setSmallIconOnBuilder(builder, mSmallIconId, mSmallIconBitmap);
+        setStatusBarIcon(builder, mSmallIconId, mSmallIconBitmapForStatusBar);
         builder.setContentIntent(mContentIntent);
         builder.setDeleteIntent(mDeleteIntent);
         for (Action action : mActions) {

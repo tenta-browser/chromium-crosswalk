@@ -39,11 +39,12 @@ const base::FilePath::CharType kAndroidTraceConfigFile[] =
     FILE_PATH_LITERAL("/data/local/chrome-trace-config.json");
 
 const char kDefaultStartupCategories[] =
-    "startup,browser,toplevel,EarlyJava,cc,Java,navigation,loading,gpu,-*";
+    "startup,browser,toplevel,EarlyJava,cc,Java,navigation,loading,gpu,"
+    "disabled-by-default-cpu_profiler,download_service,-*";
 #else
 const char kDefaultStartupCategories[] =
     "benchmark,toplevel,startup,disabled-by-default-file,disabled-by-default-"
-    "toplevel.flow,disabled-by-default-ipc.flow,-*";
+    "toplevel.flow,disabled-by-default-ipc.flow,download_service,-*";
 #endif
 
 // String parameters that can be used to parse the trace config file content.

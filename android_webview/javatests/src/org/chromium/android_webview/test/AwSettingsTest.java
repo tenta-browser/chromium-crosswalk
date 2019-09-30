@@ -46,9 +46,9 @@ import org.chromium.base.test.util.Feature;
 import org.chromium.base.test.util.RetryOnFailure;
 import org.chromium.base.test.util.TestFileUtil;
 import org.chromium.base.test.util.UrlUtils;
-import org.chromium.content.browser.test.util.DOMUtils;
-import org.chromium.content.browser.test.util.HistoryUtils;
 import org.chromium.content_public.browser.WebContents;
+import org.chromium.content_public.browser.test.util.DOMUtils;
+import org.chromium.content_public.browser.test.util.HistoryUtils;
 import org.chromium.content_public.common.ContentSwitches;
 import org.chromium.content_public.common.ContentUrlConstants;
 import org.chromium.net.test.EmbeddedTestServer;
@@ -3022,7 +3022,9 @@ public class AwSettingsTest {
                 + "  document.title = CSS.supports('color', '#AABBCCDD');"
                 + "};"
                 + "</script>";
-        mActivityTestRule.loadDataSync(awContents, onPageFinishedHelper, page, "text/html", false);
+        // Loading the html via a data URI requires us to encode '#' symbols as '%23'.
+        mActivityTestRule.loadDataSync(
+                awContents, onPageFinishedHelper, page.replace("#", "%23"), "text/html", false);
         String actualTitle = mActivityTestRule.getTitleOnUiThread(awContents);
         Assert.assertEquals(expectedTitle, actualTitle);
     }

@@ -6,12 +6,13 @@
 
 #include <stddef.h>
 
-#include <set>
 #include <string>
 #include <vector>
 
 #include "base/command_line.h"
+#include "base/containers/flat_set.h"
 #include "base/macros.h"
+#include "base/no_destructor.h"
 #include "base/stl_util.h"
 #include "base/strings/string16.h"
 #include "base/strings/string_number_conversions.h"
@@ -41,6 +42,8 @@ namespace google_util {
 namespace {
 
 bool gUseMockLinkDoctorBaseURLForTesting = false;
+
+bool g_ignore_port_numbers = false;
 
 bool IsPathHomePageBase(base::StringPiece path) {
   return (path == "/") || (path == "/webhp");
@@ -98,7 +101,8 @@ bool IsValidHostName(base::StringPiece host,
 // port for its scheme (80 for HTTP, 443 for HTTPS).
 bool IsValidURL(const GURL& url, PortPermission port_permission) {
   return url.is_valid() && url.SchemeIsHTTPOrHTTPS() &&
-         (url.port().empty() || (port_permission == ALLOW_NON_STANDARD_PORTS));
+         (url.port().empty() || g_ignore_port_numbers ||
+          (port_permission == ALLOW_NON_STANDARD_PORTS));
 }
 
 bool IsCanonicalHostGoogleHostname(base::StringPiece canonical_host,
@@ -115,9 +119,9 @@ bool IsCanonicalHostGoogleHostname(base::StringPiece canonical_host,
   // same page.
   StripTrailingDot(&tld);
 
-  CR_DEFINE_STATIC_LOCAL(std::set<std::string>, google_tlds,
-                         ({GOOGLE_TLD_LIST}));
-  return base::ContainsKey(google_tlds, tld.as_string());
+  static const base::NoDestructor<base::flat_set<base::StringPiece>>
+      google_tlds(std::initializer_list<base::StringPiece>({GOOGLE_TLD_LIST}));
+  return google_tlds->contains(tld);
 }
 
 // True if |url| is a valid URL with a host that is in the static list of
@@ -130,10 +134,11 @@ bool IsGoogleSearchSubdomainUrl(const GURL& url) {
   base::StringPiece host(url.host_piece());
   StripTrailingDot(&host);
 
-  CR_DEFINE_STATIC_LOCAL(std::set<std::string>, google_subdomains,
-                         ({"ipv4.google.com", "ipv6.google.com"}));
+  static const base::NoDestructor<base::flat_set<base::StringPiece>>
+      google_subdomains(std::initializer_list<base::StringPiece>(
+          {"ipv4.google.com", "ipv6.google.com"}));
 
-  return base::ContainsKey(google_subdomains, host.as_string());
+  return google_subdomains->contains(host);
 }
 
 }  // namespace
@@ -206,18 +211,18 @@ const GURL& CommandLineGoogleBaseURL() {
   // Unit tests may add command-line flags after the first call to this
   // function, so we don't simply initialize a static |base_url| directly and
   // then unconditionally return it.
-  CR_DEFINE_STATIC_LOCAL(std::string, switch_value, ());
-  CR_DEFINE_STATIC_LOCAL(GURL, base_url, ());
+  static base::NoDestructor<std::string> switch_value;
+  static base::NoDestructor<GURL> base_url;
   std::string current_switch_value(
       base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII(
           switches::kGoogleBaseURL));
-  if (current_switch_value != switch_value) {
-    switch_value = current_switch_value;
-    base_url = url_formatter::FixupURL(switch_value, std::string());
-    if (!base_url.is_valid() || base_url.has_query() || base_url.has_ref())
-      base_url = GURL();
+  if (current_switch_value != *switch_value) {
+    *switch_value = current_switch_value;
+    *base_url = url_formatter::FixupURL(*switch_value, std::string());
+    if (!base_url->is_valid() || base_url->has_query() || base_url->has_ref())
+      *base_url = GURL();
   }
-  return base_url;
+  return *base_url;
 }
 
 bool StartsWithCommandLineGoogleBaseURL(const GURL& url) {
@@ -284,29 +289,33 @@ bool IsYoutubeDomainUrl(const GURL& url,
 }
 
 const std::vector<std::string>& GetGoogleRegistrableDomains() {
-  CR_DEFINE_STATIC_LOCAL(std::vector<std::string>, kGoogleRegisterableDomains,
-                         ());
+  static base::NoDestructor<std::vector<std::string>>
+      kGoogleRegisterableDomains([]() {
+        std::vector<std::string> domains;
 
-  // Initialize the list.
-  if (kGoogleRegisterableDomains.empty()) {
-    std::vector<std::string> tlds{GOOGLE_TLD_LIST};
-    for (const std::string& tld : tlds) {
-      std::string domain = "google." + tld;
+        std::vector<std::string> tlds{GOOGLE_TLD_LIST};
+        for (const std::string& tld : tlds) {
+          std::string domain = "google." + tld;
 
-      // The Google TLD list might contain domains that are not considered
-      // to be registrable domains by net::registry_controlled_domains.
-      if (GetDomainAndRegistry(
-              domain,
-              net::registry_controlled_domains::INCLUDE_PRIVATE_REGISTRIES) !=
-          domain) {
-        continue;
-      }
+          // The Google TLD list might contain domains that are not considered
+          // to be registrable domains by net::registry_controlled_domains.
+          if (GetDomainAndRegistry(domain,
+                                   net::registry_controlled_domains::
+                                       INCLUDE_PRIVATE_REGISTRIES) != domain) {
+            continue;
+          }
 
-      kGoogleRegisterableDomains.push_back(domain);
-    }
-  }
+          domains.push_back(domain);
+        }
 
-  return kGoogleRegisterableDomains;
+        return domains;
+      }());
+
+  return *kGoogleRegisterableDomains;
+}
+
+void IgnorePortNumbersForGoogleURLChecksForTesting() {
+  g_ignore_port_numbers = true;
 }
 
 }  // namespace google_util

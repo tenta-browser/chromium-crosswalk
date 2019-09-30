@@ -9,9 +9,11 @@
 #include "ash/display/screen_orientation_controller.h"
 #include "ash/public/cpp/ash_constants.h"
 #include "ash/public/cpp/shell_window_ids.h"
+#include "ash/screen_util.h"
 #include "ash/shell.h"
 #include "ash/wm/overview/rounded_rect_view.h"
 #include "ash/wm/splitview/split_view_controller.h"
+#include "ash/wm/splitview/split_view_utils.h"
 #include "ash/wm/window_util.h"
 #include "base/sequenced_task_runner.h"
 #include "base/stl_util.h"
@@ -25,7 +27,10 @@
 #include "ui/views/view.h"
 #include "ui/views/view_targeter_delegate.h"
 #include "ui/views/widget/widget.h"
+#include "ui/views/widget/widget_delegate.h"
 #include "ui/wm/core/coordinate_conversion.h"
+#include "ui/wm/core/transient_window_manager.h"
+#include "ui/wm/core/window_util.h"
 #include "ui/wm/public/activation_client.h"
 
 namespace ash {
@@ -240,14 +245,12 @@ class DividerView : public views::View,
   void UpdateWhiteHandlerBounds() {
     // Calculate the width/height/radius for the rounded rectangle.
     int width, height, radius;
-    const int expected_width_unselected =
-        controller_->IsCurrentScreenOrientationLandscape()
-            ? kWhiteBarShortSideLength
-            : kWhiteBarLongSideLength;
-    const int expected_height_unselected =
-        controller_->IsCurrentScreenOrientationLandscape()
-            ? kWhiteBarLongSideLength
-            : kWhiteBarShortSideLength;
+    const int expected_width_unselected = IsCurrentScreenOrientationLandscape()
+                                              ? kWhiteBarShortSideLength
+                                              : kWhiteBarLongSideLength;
+    const int expected_height_unselected = IsCurrentScreenOrientationLandscape()
+                                               ? kWhiteBarLongSideLength
+                                               : kWhiteBarShortSideLength;
     if (white_bar_animation_.is_animating()) {
       width = white_bar_animation_.CurrentValueBetween(
           expected_width_unselected, kWhiteBarRadius * 2);
@@ -371,10 +374,10 @@ gfx::Rect SplitViewDivider::GetDividerBoundsInScreen(bool is_dragging) {
   aura::Window* root_window =
       divider_widget_->GetNativeWindow()->GetRootWindow();
   const gfx::Rect work_area_bounds_in_screen =
-      controller_->GetDisplayWorkAreaBoundsInScreen(root_window);
+      screen_util::GetDisplayWorkAreaBoundsInScreenForDefaultContainer(
+          root_window);
   const int divider_position = controller_->divider_position();
-  const OrientationLockType screen_orientation =
-      controller_->GetCurrentScreenOrientation();
+  const OrientationLockType screen_orientation = GetCurrentScreenOrientation();
   return GetDividerBoundsInScreen(work_area_bounds_in_screen,
                                   screen_orientation, divider_position,
                                   is_dragging);
@@ -383,6 +386,7 @@ gfx::Rect SplitViewDivider::GetDividerBoundsInScreen(bool is_dragging) {
 void SplitViewDivider::AddObservedWindow(aura::Window* window) {
   if (!base::ContainsValue(observed_windows_, window)) {
     window->AddObserver(this);
+    ::wm::TransientWindowManager::GetOrCreate(window)->AddObserver(this);
     observed_windows_.push_back(window);
   }
 }
@@ -392,6 +396,7 @@ void SplitViewDivider::RemoveObservedWindow(aura::Window* window) {
       std::find(observed_windows_.begin(), observed_windows_.end(), window);
   if (iter != observed_windows_.end()) {
     window->RemoveObserver(this);
+    ::wm::TransientWindowManager::GetOrCreate(window)->RemoveObserver(this);
     observed_windows_.erase(iter);
   }
 }
@@ -413,6 +418,33 @@ void SplitViewDivider::OnWindowDestroying(aura::Window* window) {
   RemoveObservedWindow(window);
 }
 
+void SplitViewDivider::OnWindowBoundsChanged(aura::Window* window,
+                                             const gfx::Rect& old_bounds,
+                                             const gfx::Rect& new_bounds,
+                                             ui::PropertyChangeReason reason) {
+  // We only care about the bounds change of windows in
+  // |transient_windows_observer_|.
+  if (!transient_windows_observer_.IsObserving(window))
+    return;
+
+  // |window|'s transient parent must be one of the windows in
+  // |observed_windows_|.
+  aura::Window* transient_parent = nullptr;
+  for (auto* observed_window : observed_windows_) {
+    if (::wm::HasTransientAncestor(window, observed_window)) {
+      transient_parent = observed_window;
+      break;
+    }
+  }
+  DCHECK(transient_parent);
+
+  gfx::Rect transient_bounds = window->GetBoundsInScreen();
+  transient_bounds.AdjustToFit(transient_parent->GetBoundsInScreen());
+  window->SetBoundsInScreen(
+      transient_bounds,
+      display::Screen::GetScreen()->GetDisplayNearestWindow(window));
+}
+
 void SplitViewDivider::OnWindowActivated(ActivationReason reason,
                                          aura::Window* gained_active,
                                          aura::Window* lost_active) {
@@ -426,6 +458,26 @@ void SplitViewDivider::OnWindowActivated(ActivationReason reason,
     // be placed on top.
     SetAlwaysOnTop(false);
   }
+}
+
+void SplitViewDivider::OnTransientChildAdded(aura::Window* window,
+                                             aura::Window* transient) {
+  // For now, we only care about dialog bubbles type transient child. We may
+  // observe other types transient child window as well if need arises in the
+  // future.
+  views::Widget* widget = views::Widget::GetWidgetForNativeWindow(transient);
+  if (!widget || !widget->widget_delegate()->AsBubbleDialogDelegate())
+    return;
+
+  // At this moment, the transient window may not have the valid bounds yet.
+  // Start observe the transient window.
+  transient_windows_observer_.Add(transient);
+}
+
+void SplitViewDivider::OnTransientChildRemoved(aura::Window* window,
+                                               aura::Window* transient) {
+  if (transient_windows_observer_.IsObserving(transient))
+    transient_windows_observer_.Remove(transient);
 }
 
 void SplitViewDivider::CreateDividerWidget(aura::Window* root_window) {

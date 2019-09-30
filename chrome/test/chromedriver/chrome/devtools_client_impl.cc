@@ -334,8 +334,8 @@ Status DevToolsClientImpl::SendCommandInternal(
   }
 
   if (expect_response) {
-    linked_ptr<ResponseInfo> response_info =
-        make_linked_ptr(new ResponseInfo(method));
+    scoped_refptr<ResponseInfo> response_info =
+        base::MakeRefCounted<ResponseInfo>(method);
     if (timeout)
       response_info->command_timeout = *timeout;
     response_info_map_[command_id] = response_info;
@@ -385,7 +385,7 @@ Status DevToolsClientImpl::ProcessNextMessage(
   // have been deleted from |response_info_map_|) or blocked while notifying
   // listeners.
   if (expected_id != -1) {
-    ResponseInfoMap::iterator iter = response_info_map_.find(expected_id);
+    auto iter = response_info_map_.find(expected_id);
     if (iter == response_info_map_.end() || iter->second->state != kWaiting)
       return Status(kOk);
   }
@@ -472,7 +472,7 @@ Status DevToolsClientImpl::ProcessEvent(const internal::InspectorEvent& event) {
     base::DictionaryValue enable_params;
     enable_params.SetString("purpose", "detect if alert blocked any cmds");
     Status enable_status = SendCommand("Inspector.enable", enable_params);
-    for (ResponseInfoMap::const_iterator iter = response_info_map_.begin();
+    for (auto iter = response_info_map_.begin();
          iter != response_info_map_.end(); ++iter) {
       if (iter->first > max_id)
         continue;
@@ -508,7 +508,7 @@ Status DevToolsClientImpl::ProcessEvent(const internal::InspectorEvent& event) {
 
 Status DevToolsClientImpl::ProcessCommandResponse(
     const internal::InspectorCommandResponse& response) {
-  ResponseInfoMap::iterator iter = response_info_map_.find(response.id);
+  auto iter = response_info_map_.find(response.id);
   if (IsVLogOn(1)) {
     std::string method, result;
     if (iter != response_info_map_.end())
@@ -526,7 +526,7 @@ Status DevToolsClientImpl::ProcessCommandResponse(
   if (iter == response_info_map_.end())
     return Status(kUnknownError, "unexpected command response");
 
-  linked_ptr<ResponseInfo> response_info = response_info_map_[response.id];
+  scoped_refptr<ResponseInfo> response_info = response_info_map_[response.id];
   response_info_map_.erase(response.id);
 
   if (response_info->state != kIgnored) {

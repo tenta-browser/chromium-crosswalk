@@ -4,16 +4,21 @@
 
 #include "content/public/test/content_browser_test_utils.h"
 
+#include <utility>
+
 #include "base/bind.h"
 #include "base/files/file_path.h"
 #include "base/path_service.h"
 #include "base/run_loop.h"
+#include "base/task/post_task.h"
 #include "base/threading/thread_restrictions.h"
 #include "content/browser/browser_main_loop.h"
 #include "content/browser/renderer_host/media/media_stream_manager.h"
 #include "content/browser/renderer_host/media/video_capture_manager.h"
+#include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/navigation_controller.h"
+#include "content/public/browser/navigation_entry.h"
 #include "content/public/browser/notification_source.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/web_contents.h"
@@ -44,12 +49,8 @@ GURL GetTestUrl(const char* dir, const char* file) {
 void NavigateToURLBlockUntilNavigationsComplete(Shell* window,
                                                 const GURL& url,
                                                 int number_of_navigations) {
-  WaitForLoadStop(window->web_contents());
-  TestNavigationObserver same_tab_observer(window->web_contents(),
-                                           number_of_navigations);
-
-  window->LoadURL(url);
-  same_tab_observer.Wait();
+  NavigateToURLBlockUntilNavigationsComplete(window->web_contents(), url,
+                                             number_of_navigations);
 }
 
 void ReloadBlockUntilNavigationsComplete(Shell* window,
@@ -73,31 +74,29 @@ void ReloadBypassingCacheBlockUntilNavigationsComplete(
   same_tab_observer.Wait();
 }
 
-void LoadDataWithBaseURL(Shell* window,
-                         const GURL& url,
-                         const std::string& data,
-                         const GURL& base_url) {
-  WaitForLoadStop(window->web_contents());
-  TestNavigationObserver same_tab_observer(window->web_contents(), 1);
-
-  window->LoadDataWithBaseURL(url, data, base_url);
-  same_tab_observer.Wait();
-}
-
 bool NavigateToURL(Shell* window, const GURL& url) {
-  NavigateToURLBlockUntilNavigationsComplete(window, url, 1);
-  if (!IsLastCommittedEntryOfPageType(window->web_contents(), PAGE_TYPE_NORMAL))
-    return false;
-
-  return window->web_contents()->GetLastCommittedURL() == url;
+  return NavigateToURL(window->web_contents(), url);
 }
 
 bool NavigateToURLFromRenderer(const ToRenderFrameHost& adapter,
                                const GURL& url) {
   RenderFrameHost* rfh = adapter.render_frame_host();
   TestFrameNavigationObserver nav_observer(rfh);
-  if (!ExecuteScript(rfh, "location = '" + url.spec() + "';"))
+  if (!ExecJs(rfh, JsReplace("location = $1", url)))
     return false;
+  nav_observer.Wait();
+  return nav_observer.last_committed_url() == url;
+}
+
+bool NavigateToURLFromRendererWithoutUserGesture(
+    const ToRenderFrameHost& adapter,
+    const GURL& url) {
+  RenderFrameHost* rfh = adapter.render_frame_host();
+  TestFrameNavigationObserver nav_observer(rfh);
+  if (!ExecJs(rfh, JsReplace("location = $1", url),
+              EXECUTE_SCRIPT_NO_USER_GESTURE)) {
+    return false;
+  }
   nav_observer.Wait();
   return nav_observer.last_committed_url() == url;
 }
@@ -130,13 +129,13 @@ void LookupAndLogNameAndIdOfFirstCamera() {
   MediaStreamManager* media_stream_manager =
       BrowserMainLoop::GetInstance()->media_stream_manager();
   base::RunLoop run_loop;
-  BrowserThread::PostTask(
-      content::BrowserThread::IO, FROM_HERE,
+  base::PostTaskWithTraits(
+      FROM_HERE, {content::BrowserThread::IO},
       base::BindOnce(
           [](MediaStreamManager* media_stream_manager,
              base::Closure quit_closure) {
             media_stream_manager->video_capture_manager()->EnumerateDevices(
-                base::Bind(
+                base::BindOnce(
                     [](base::Closure quit_closure,
                        const media::VideoCaptureDeviceDescriptors&
                            descriptors) {

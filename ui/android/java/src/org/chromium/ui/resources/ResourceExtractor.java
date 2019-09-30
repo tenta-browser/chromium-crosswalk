@@ -8,7 +8,6 @@ import android.content.res.AssetManager;
 import android.os.Handler;
 import android.os.Looper;
 
-import org.chromium.base.AsyncTask;
 import org.chromium.base.BuildConfig;
 import org.chromium.base.BuildInfo;
 import org.chromium.base.ContextUtils;
@@ -18,6 +17,7 @@ import org.chromium.base.Log;
 import org.chromium.base.PathUtils;
 import org.chromium.base.ThreadUtils;
 import org.chromium.base.TraceEvent;
+import org.chromium.base.task.AsyncTask;
 import org.chromium.ui.base.LocalizationUtils;
 
 import java.io.File;
@@ -39,14 +39,16 @@ public class ResourceExtractor {
     private static final String V8_SNAPSHOT_DATA_FILENAME = "snapshot_blob.bin";
     private static final String FALLBACK_LOCALE = "en-US";
     private static final String COMPRESSED_LOCALES_DIR = "locales";
+    private static final String COMPRESSED_LOCALES_FALLBACK_DIR = "fallback-locales";
     private static final int BUFFER_SIZE = 16 * 1024;
 
     private class ExtractTask extends AsyncTask<Void> {
         private final List<Runnable> mCompletionCallbacks = new ArrayList<Runnable>();
+        private final String mUiLanguage;
 
         private void doInBackgroundImpl() {
             final File outputDir = getOutputDir();
-            String[] assetPaths = detectFilesToExtract();
+            String[] assetPaths = detectFilesToExtract(mUiLanguage);
 
             // Use a suffix for extracted files in order to guarantee that the version of the file
             // on disk matches up with the version of the APK.
@@ -132,21 +134,8 @@ public class ResourceExtractor {
             }
         }
 
-        /** Returns a number that is different each time the apk changes. */
-        private long getApkVersion() {
-            PackageManager pm = ContextUtils.getApplicationContext().getPackageManager();
-            try {
-                // Use lastUpdateTime since versionCode does not change when developing locally,
-                // but also use versionCode since it is possible for Chrome to be updated without
-                // the lastUpdateTime being changed (http://crbug.org/673458).
-                PackageInfo pi =
-                        pm.getPackageInfo(ContextUtils.getApplicationContext().getPackageName(), 0);
-                // Xor'ing versionCode into upper half of the long to ensure it doesn't somehow
-                // exactly offset an increase in time.
-                return pi.lastUpdateTime ^ (((long) pi.versionCode) << 32);
-            } catch (PackageManager.NameNotFoundException e) {
-                throw new RuntimeException(e);
-            }
+        public ExtractTask(String uiLanguage) {
+            mUiLanguage = uiLanguage;
         }
     }
 
@@ -161,7 +150,7 @@ public class ResourceExtractor {
         return sInstance;
     }
 
-    private static String[] detectFilesToExtract() {
+    private static String[] detectFilesToExtract(String uiLanguage) {
         Locale defaultLocale = Locale.getDefault();
         String androidLanguage = defaultLocale.getLanguage();
         String chromiumLanguage = LocaleUtils.getUpdatedLanguageForChromium(androidLanguage);
@@ -169,7 +158,6 @@ public class ResourceExtractor {
         // NOTE: The UI language will differ from the application's language
         // when the system locale is not directly supported by Chrome's
         // resources.
-        String uiLanguage = LocalizationUtils.getUiLanguageStringForCompressedPak();
         Log.i(TAG, "Using UI locale %s, system locale: %s (Android name: %s)", uiLanguage,
                 chromiumLanguage, androidLanguage);
 
@@ -177,7 +165,7 @@ public class ResourceExtractor {
         // that allows a bit of growth, but is still in the right ballpark..
         ArrayList<String> activeLocales = new ArrayList<String>(6);
         for (String locale : BuildConfig.COMPRESSED_LOCALES) {
-            if (locale.startsWith(uiLanguage)) {
+            if (LocalizationUtils.chromiumLocaleMatchesLanguage(locale, uiLanguage)) {
                 activeLocales.add(locale);
             }
         }
@@ -198,6 +186,10 @@ public class ResourceExtractor {
         //
         //   Where <lang> is an Android-specific ISO-639-1 language identifier.
         //
+        // * With the exception of the fallback (English) pak files which are stored
+        //   in the base module under:
+        //       assets/locales-fallback/<locale>.pak
+        //
         //   Moreover, when the bundle uses APK splits, there is no guarantee that the split
         //   corresponding to the current device locale is installed yet, but the one matching
         //   uiLanguage should be there, since the value is determined by loading a resource string
@@ -205,7 +197,8 @@ public class ResourceExtractor {
         //
         AssetManager assetManager = ContextUtils.getApplicationAssets();
         String localesSrcDir;
-        String langSpecificPath = COMPRESSED_LOCALES_DIR + "#lang_" + uiLanguage;
+        String androidSplitLanguage = LocalizationUtils.getSplitLanguageForAndroid(uiLanguage);
+        String langSpecificPath = COMPRESSED_LOCALES_DIR + "#lang_" + androidSplitLanguage;
         String defaultLocalePakName =
                 LocalizationUtils.getDefaultCompressedPakLocaleForLanguage(uiLanguage) + ".pak";
 
@@ -217,6 +210,10 @@ public class ResourceExtractor {
                            assetManager, COMPRESSED_LOCALES_DIR, activeLocales.get(0) + ".pak")) {
             // This is a regular APK, and all pak files are available.
             localesSrcDir = COMPRESSED_LOCALES_DIR;
+        } else if (assetPathHasFile(assetManager, COMPRESSED_LOCALES_FALLBACK_DIR,
+                           activeLocales.get(0) + ".pak")) {
+            // This is a fallback language pak file.
+            localesSrcDir = COMPRESSED_LOCALES_FALLBACK_DIR;
         } else {
             // This is an app bundle, but the split containing the pak files for the current UI
             // locale is *not* installed yet. This should never happen in theory, and there is
@@ -332,7 +329,7 @@ public class ResourceExtractor {
      * AsyncTask. Call waitForCompletion() at the point resources
      * are needed to block until the task completes.
      */
-    public void startExtractingResources() {
+    public void startExtractingResources(String uiLanguage) {
         if (mExtractTask != null) {
             return;
         }
@@ -345,7 +342,7 @@ public class ResourceExtractor {
             return;
         }
 
-        mExtractTask = new ExtractTask();
+        mExtractTask = new ExtractTask(uiLanguage);
         mExtractTask.executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR);
     }
 

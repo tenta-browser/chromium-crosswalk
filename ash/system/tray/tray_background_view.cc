@@ -9,14 +9,13 @@
 
 #include "ash/focus_cycler.h"
 #include "ash/login/ui/lock_screen.h"
-#include "ash/login/ui/lock_window.h"
 #include "ash/public/cpp/ash_constants.h"
 #include "ash/public/cpp/shell_window_ids.h"
-#include "ash/shelf/shelf.h"
 #include "ash/shelf/shelf_constants.h"
 #include "ash/shelf/shelf_layout_manager.h"
 #include "ash/shelf/shelf_widget.h"
 #include "ash/shell.h"
+#include "ash/system/model/system_tray_model.h"
 #include "ash/system/status_area_widget.h"
 #include "ash/system/status_area_widget_delegate.h"
 #include "ash/system/tray/system_tray_notifier.h"
@@ -42,6 +41,7 @@
 #include "ui/views/background.h"
 #include "ui/views/layout/fill_layout.h"
 #include "ui/views/painter.h"
+#include "ui/views/view_properties.h"
 #include "ui/wm/core/window_animations.h"
 
 namespace {
@@ -69,10 +69,8 @@ void MirrorInsetsIfNecessary(gfx::Insets* insets) {
 gfx::Insets GetMirroredBackgroundInsets(bool is_shelf_horizontal) {
   gfx::Insets insets;
   // "Primary" is the same direction as the shelf, "secondary" is orthogonal.
-  const int primary_padding =
-      chromeos::switches::ShouldUseShelfNewUi() ? 0 : ash::kHitRegionPadding;
-  const int secondary_padding =
-      chromeos::switches::ShouldUseShelfNewUi() ? -ash::kHitRegionPadding : 0;
+  const int primary_padding = 0;
+  const int secondary_padding = -ash::kHitRegionPadding;
   const int separator_width = ash::TrayConstants::separator_width();
 
   if (is_shelf_horizontal) {
@@ -87,8 +85,6 @@ gfx::Insets GetMirroredBackgroundInsets(bool is_shelf_horizontal) {
 }
 
 }  // namespace
-
-using views::TrayBubbleView;
 
 namespace ash {
 
@@ -119,12 +115,9 @@ class TrayBackgroundView::TrayWidgetObserver : public views::WidgetObserver {
 class TrayBackground : public views::Background {
  public:
   explicit TrayBackground(TrayBackgroundView* tray_background_view)
-      : tray_background_view_(tray_background_view),
-        color_(SK_ColorTRANSPARENT) {}
+      : tray_background_view_(tray_background_view) {}
 
   ~TrayBackground() override = default;
-
-  void set_color(SkColor color) { color_ = color; }
 
  private:
   // Overridden from views::Background.
@@ -133,12 +126,8 @@ class TrayBackground : public views::Background {
     cc::PaintFlags background_flags;
     background_flags.setAntiAlias(true);
     int border_radius = kTrayRoundedBorderRadius;
-    if (chromeos::switches::ShouldUseShelfNewUi()) {
-      background_flags.setColor(kShelfControlPermanentHighlightBackground);
-      border_radius = ShelfConstants::control_border_radius();
-    } else {
-      background_flags.setColor(color_);
-    }
+    background_flags.setColor(kShelfControlPermanentHighlightBackground);
+    border_radius = ShelfConstants::control_border_radius();
 
     gfx::Rect bounds = tray_background_view_->GetBackgroundBounds();
     const float dsf = canvas->UndoDeviceScaleFactor();
@@ -149,29 +138,7 @@ class TrayBackground : public views::Background {
   // Reference to the TrayBackgroundView for which this is a background.
   TrayBackgroundView* tray_background_view_;
 
-  SkColor color_;
-
   DISALLOW_COPY_AND_ASSIGN(TrayBackground);
-};
-
-// CloseBubbleObserver is used to delay closing the tray bubbles until the
-// animation completes.
-class CloseBubbleObserver : public ui::ImplicitAnimationObserver {
- public:
-  explicit CloseBubbleObserver(TrayBackgroundView* tray_background_view)
-      : tray_background_view_(tray_background_view) {}
-
-  ~CloseBubbleObserver() override = default;
-
-  void OnImplicitAnimationsCompleted() override {
-    tray_background_view_->CloseBubble();
-    delete this;
-  }
-
- private:
-  TrayBackgroundView* tray_background_view_ = nullptr;
-
-  DISALLOW_COPY_AND_ASSIGN(CloseBubbleObserver);
 };
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -179,12 +146,14 @@ class CloseBubbleObserver : public ui::ImplicitAnimationObserver {
 
 TrayBackgroundView::TrayBackgroundView(Shelf* shelf)
     // Note the ink drop style is ignored.
-    : ActionableView(nullptr, TrayPopupInkDropStyle::FILL_BOUNDS),
+    : ActionableView(TrayPopupInkDropStyle::FILL_BOUNDS),
       shelf_(shelf),
       tray_container_(new TrayContainer(shelf)),
       background_(new TrayBackground(this)),
       is_active_(false),
       separator_visible_(true),
+      visible_preferred_(false),
+      show_with_virtual_keyboard_(false),
       widget_observer_(new TrayWidgetObserver(this)) {
   DCHECK(shelf_);
   set_notify_enter_exit_on_child(true);
@@ -193,6 +162,9 @@ TrayBackgroundView::TrayBackgroundView(Shelf* shelf)
 
   SetLayoutManager(std::make_unique<views::FillLayout>());
   SetBackground(std::unique_ptr<views::Background>(background_));
+  SetInstallFocusRingOnFocus(true);
+  focus_ring()->SetColor(kFocusBorderColor);
+  SetFocusPainter(nullptr);
 
   AddChildView(tray_container_);
 
@@ -205,6 +177,7 @@ TrayBackgroundView::TrayBackgroundView(Shelf* shelf)
 }
 
 TrayBackgroundView::~TrayBackgroundView() {
+  Shell::Get()->system_tray_model()->virtual_keyboard()->RemoveObserver(this);
   if (GetWidget())
     GetWidget()->RemoveObserver(widget_observer_.get());
   StopObservingImplicitAnimations();
@@ -212,6 +185,7 @@ TrayBackgroundView::~TrayBackgroundView() {
 
 void TrayBackgroundView::Initialize() {
   GetWidget()->AddObserver(widget_observer_.get());
+  Shell::Get()->system_tray_model()->virtual_keyboard()->AddObserver(this);
 }
 
 // static
@@ -226,6 +200,16 @@ void TrayBackgroundView::InitializeBubbleAnimations(
 }
 
 void TrayBackgroundView::SetVisible(bool visible) {
+  visible_preferred_ = visible;
+
+  // If virtual keyboard is visible and TrayBackgroundView is hidden because of
+  // that, ignore SetVisible() call. |visible_preferred_|  will be restored
+  // in OnVirtualKeyboardVisibilityChanged() when virtual keyboard is hidden.
+  if (!show_with_virtual_keyboard_ &&
+      Shell::Get()->system_tray_model()->virtual_keyboard()->visible()) {
+    return;
+  }
+
   if (visible == layer()->GetTargetVisibility())
     return;
 
@@ -275,29 +259,8 @@ void TrayBackgroundView::SetVisible(bool visible) {
   }
 }
 
-void TrayBackgroundView::Layout() {
-  ActionableView::Layout();
-
-  // The tray itself expands to the right and bottom edge of the screen to make
-  // sure clicking on the edges brings up the popup. However, the focus border
-  // should be only around the container.
-  gfx::Rect paint_bounds(GetBackgroundBounds());
-  paint_bounds.Inset(gfx::Insets(-kFocusBorderThickness));
-  SetFocusPainter(views::Painter::CreateSolidFocusPainter(
-      kFocusBorderColor, kFocusBorderThickness,
-      GetLocalBounds().InsetsFrom(paint_bounds)));
-}
-
 const char* TrayBackgroundView::GetClassName() const {
   return kViewClassName;
-}
-
-void TrayBackgroundView::OnGestureEvent(ui::GestureEvent* event) {
-  if (drag_controller())
-    drag_controller_->ProcessGestureEvent(event, this);
-
-  if (!event->handled())
-    ActionableView::OnGestureEvent(event);
 }
 
 void TrayBackgroundView::AboutToRequestFocusFromTabTraversal(bool reverse) {
@@ -325,7 +288,7 @@ void TrayBackgroundView::GetAccessibleNodeData(ui::AXNodeData* node_data) {
 
   if (LockScreen::HasInstance()) {
     int next_id = views::AXAuraObjCache::GetInstance()->GetID(
-        static_cast<views::Widget*>(LockScreen::Get()->window()));
+        LockScreen::Get()->widget());
     node_data->AddIntAttribute(ax::mojom::IntAttribute::kNextFocusId, next_id);
   }
 
@@ -367,38 +330,22 @@ TrayBackgroundView::CreateInkDropHighlight() const {
   return highlight;
 }
 
-void TrayBackgroundView::PaintButtonContents(gfx::Canvas* canvas) {
-  if (shelf()->GetBackgroundType() ==
-          ShelfBackgroundType::SHELF_BACKGROUND_DEFAULT ||
-      !separator_visible_) {
+void TrayBackgroundView::OnVirtualKeyboardVisibilityChanged() {
+  if (show_with_virtual_keyboard_) {
+    // The view always shows up when virtual keyboard is visible if
+    // |show_with_virtual_keyboard| is true.
+    views::View::SetVisible(
+        Shell::Get()->system_tray_model()->virtual_keyboard()->visible() ||
+        visible_preferred_);
     return;
   }
-  // In the given |canvas|, for a horizontal shelf draw a separator line to the
-  // right or left of the TrayBackgroundView when the system is LTR or RTL
-  // aligned, respectively. For a vertical shelf draw the separator line
-  // underneath the items instead.
-  const gfx::Rect local_bounds = GetLocalBounds();
-  const SkColor color = SkColorSetA(SK_ColorWHITE, 0x4D);
-  const int shelf_size = ShelfConstants::shelf_size();
-  const int separator_width = ash::TrayConstants::separator_width();
 
-  if (shelf_->IsHorizontalAlignment()) {
-    const gfx::PointF point(
-        base::i18n::IsRTL() ? 0 : (local_bounds.width() - separator_width),
-        (shelf_size - kTrayItemSize) / 2);
-    const gfx::Vector2dF vector(0, kTrayItemSize);
-    canvas->Draw1pxLine(point, point + vector, color);
-  } else {
-    const gfx::PointF point((shelf_size - kTrayItemSize) / 2,
-                            local_bounds.height() - separator_width);
-    const gfx::Vector2dF vector(kTrayItemSize, 0);
-    canvas->Draw1pxLine(point, point + vector, color);
-  }
-}
-
-void TrayBackgroundView::ProcessGestureEventForBubble(ui::GestureEvent* event) {
-  if (drag_controller())
-    drag_controller_->ProcessGestureEvent(event, this);
+  // If virtual keyboard is hidden and current preferred visibility is true,
+  // set the visibility to true. We call base class' SetVisible because we don't
+  // want |visible_preferred_| to be updated here.
+  views::View::SetVisible(
+      !Shell::Get()->system_tray_model()->virtual_keyboard()->visible() &&
+      visible_preferred_);
 }
 
 TrayBubbleView* TrayBackgroundView::GetBubbleView() {
@@ -419,13 +366,7 @@ void TrayBackgroundView::UpdateAfterRootWindowBoundsChange(
   // Do nothing by default. Child class may do something.
 }
 
-void TrayBackgroundView::AnchorUpdated() {
-  if (GetBubbleView())
-    UpdateClippingWindowBounds();
-}
-
-void TrayBackgroundView::BubbleResized(
-    const views::TrayBubbleView* bubble_view) {}
+void TrayBackgroundView::BubbleResized(const TrayBubbleView* bubble_view) {}
 
 void TrayBackgroundView::OnImplicitAnimationsCompleted() {
   // If there is another animation in the queue, the reverse animation was
@@ -474,14 +415,8 @@ void TrayBackgroundView::SetIsActive(bool is_active) {
                  nullptr);
 }
 
-void TrayBackgroundView::UpdateBubbleViewArrow(
-    views::TrayBubbleView* bubble_view) {
+void TrayBackgroundView::UpdateBubbleViewArrow(TrayBubbleView* bubble_view) {
   // Nothing to do here.
-}
-
-void TrayBackgroundView::UpdateShelfItemBackground(SkColor color) {
-  background_->set_color(color);
-  SchedulePaint();
 }
 
 views::View* TrayBackgroundView::GetBubbleAnchor() const {
@@ -500,66 +435,26 @@ gfx::Insets TrayBackgroundView::GetBubbleAnchorInsets() const {
   }
 }
 
-void TrayBackgroundView::UpdateClippingWindowBounds() {
-  if (clipping_window_.get())
-    clipping_window_->SetBounds(shelf_->GetUserWorkAreaBounds());
-}
-
 aura::Window* TrayBackgroundView::GetBubbleWindowContainer() {
-  aura::Window* container = Shell::GetContainer(
+  return Shell::GetContainer(
       tray_container()->GetWidget()->GetNativeWindow()->GetRootWindow(),
       kShellWindowId_SettingBubbleContainer);
-
-  // Place the bubble in |container|, or in a window clipped to the work area
-  // in maximize mode, to avoid tray bubble and shelf overlap when dragging the
-  // bubble from the tray.
-  if (Shell::Get()
-          ->tablet_mode_controller()
-          ->IsTabletModeWindowManagerEnabled() &&
-      drag_controller()) {
-    if (!clipping_window_.get()) {
-      clipping_window_ = window_factory::NewWindow();
-      clipping_window_->Init(ui::LAYER_NOT_DRAWN);
-      clipping_window_->layer()->SetMasksToBounds(true);
-      container->AddChild(clipping_window_.get());
-      clipping_window_->Show();
-    }
-    clipping_window_->SetBounds(shelf_->GetUserWorkAreaBounds());
-    return clipping_window_.get();
-  }
-  return container;
-}
-
-void TrayBackgroundView::AnimateToTargetBounds(const gfx::Rect& target_bounds,
-                                               bool close_bubble) {
-  const int kAnimationDurationMS = 200;
-
-  ui::ScopedLayerAnimationSettings settings(
-      GetBubbleView()->GetWidget()->GetNativeView()->layer()->GetAnimator());
-  settings.SetTransitionDuration(
-      base::TimeDelta::FromMilliseconds(kAnimationDurationMS));
-  settings.SetTweenType(gfx::Tween::EASE_OUT);
-  settings.SetPreemptionStrategy(
-      ui::LayerAnimator::IMMEDIATELY_ANIMATE_TO_NEW_TARGET);
-  if (close_bubble)
-    settings.AddObserver(new CloseBubbleObserver(this));
-  GetBubbleView()->GetWidget()->SetBounds(target_bounds);
 }
 
 gfx::Rect TrayBackgroundView::GetBackgroundBounds() const {
-  gfx::Insets insets = GetBackgroundInsets();
   gfx::Rect bounds = GetLocalBounds();
-  bounds.Inset(insets);
+  bounds.Inset(GetBackgroundInsets());
   return bounds;
 }
 
-std::unique_ptr<views::InkDropMask> TrayBackgroundView::CreateInkDropMask()
-    const {
-  const int border_radius = chromeos::switches::ShouldUseShelfNewUi()
-                                ? ShelfConstants::control_border_radius()
-                                : kTrayRoundedBorderRadius;
-  return std::make_unique<views::RoundRectInkDropMask>(
-      size(), GetBackgroundInsets(), border_radius);
+void TrayBackgroundView::OnBoundsChanged(const gfx::Rect& previous_bounds) {
+  const int border_radius = ShelfConstants::control_border_radius();
+  auto path = std::make_unique<SkPath>();
+  path->addRoundRect(gfx::RectToSkRect(GetBackgroundBounds()), border_radius,
+                     border_radius);
+  SetProperty(views::kHighlightPathKey, path.release());
+  // Bypass ActionableView::OnBoundsChanged which sets its own highlight path.
+  Button::OnBoundsChanged(previous_bounds);
 }
 
 bool TrayBackgroundView::ShouldEnterPushedState(const ui::Event& event) {

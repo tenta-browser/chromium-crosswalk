@@ -16,11 +16,11 @@
 #include "chrome/browser/chromeos/login/ui/login_display_host.h"
 #include "chrome/browser/chromeos/login/wizard_controller.h"
 #include "chrome/browser/chromeos/profiles/profile_helper.h"
-#include "chrome/browser/chromeos/settings/install_attributes.h"
 #include "chrome/browser/ui/webui/chromeos/login/signin_screen_handler.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/test/base/in_process_browser_test.h"
-#include "chromeos/chromeos_switches.h"
+#include "chromeos/constants/chromeos_switches.h"
+#include "chromeos/tpm/install_attributes.h"
 #include "components/policy/core/common/cloud/device_management_service.h"
 #include "components/policy/core/common/policy_switches.h"
 #include "components/policy/proto/device_management_backend.pb.h"
@@ -166,9 +166,7 @@ class BlockingLoginTest
     std::unique_ptr<net::test_server::HttpResponse> response;
 
     GaiaUrls* gaia = GaiaUrls::GetInstance();
-    if (request.relative_url ==
-            gaia->deprecated_client_login_to_oauth2_url().path() ||
-        request.relative_url == gaia->oauth2_token_url().path() ||
+    if (request.relative_url == gaia->oauth2_token_url().path() ||
         base::StartsWith(request.relative_url, kDMRegisterRequest,
                          base::CompareCase::SENSITIVE) ||
         base::StartsWith(request.relative_url, kDMPolicyRequest,

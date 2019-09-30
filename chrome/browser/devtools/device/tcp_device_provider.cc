@@ -10,13 +10,19 @@
 #include "base/single_thread_task_runner.h"
 #include "base/stl_util.h"
 #include "base/strings/string_number_conversions.h"
+#include "base/task/post_task.h"
 #include "base/threading/thread_task_runner_handle.h"
+#include "chrome/browser/browser_process.h"
 #include "chrome/browser/devtools/device/adb/adb_client_socket.h"
+#include "chrome/browser/net/system_network_context_manager.h"
+#include "content/public/browser/browser_task_traits.h"
+#include "mojo/public/cpp/bindings/binding.h"
 #include "net/base/net_errors.h"
-#include "net/dns/host_resolver.h"
 #include "net/log/net_log_source.h"
 #include "net/log/net_log_with_source.h"
 #include "net/socket/tcp_client_socket.h"
+#include "services/network/public/cpp/resolve_host_client_base.h"
+#include "services/network/public/mojom/network_context.mojom.h"
 
 namespace {
 
@@ -30,7 +36,7 @@ static void RunSocketCallback(
   callback.Run(result, std::move(socket));
 }
 
-class ResolveHostAndOpenSocket final {
+class ResolveHostAndOpenSocket final : public network::ResolveHostClientBase {
  public:
   ResolveHostAndOpenSocket(const net::HostPortPair& address,
                            const AdbClientSocket::SocketCallback& callback)
@@ -137,4 +143,20 @@ void TCPDeviceProvider::set_release_callback_for_test(
 }
 
 TCPDeviceProvider::~TCPDeviceProvider() {
+}
+
+void TCPDeviceProvider::InitializeHostResolver() {
+  base::PostTaskWithTraits(
+      FROM_HERE, {content::BrowserThread::UI},
+      base::BindOnce(&TCPDeviceProvider::InitializeHostResolverOnUI, this,
+                     mojo::MakeRequest(&host_resolver_)));
+  host_resolver_.set_connection_error_handler(base::BindOnce(
+      &TCPDeviceProvider::InitializeHostResolver, base::Unretained(this)));
+}
+
+void TCPDeviceProvider::InitializeHostResolverOnUI(
+    network::mojom::HostResolverRequest request) {
+  g_browser_process->system_network_context_manager()
+      ->GetContext()
+      ->CreateHostResolver(base::nullopt, std::move(request));
 }

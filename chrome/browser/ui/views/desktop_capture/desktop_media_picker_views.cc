@@ -5,6 +5,7 @@
 #include "chrome/browser/ui/views/desktop_capture/desktop_media_picker_views.h"
 
 #include "base/callback.h"
+#include "base/task/post_task.h"
 #include "chrome/browser/media/webrtc/desktop_media_list.h"
 #include "chrome/browser/ui/browser_dialogs.h"
 #include "chrome/browser/ui/browser_finder.h"
@@ -17,6 +18,7 @@
 #include "components/constrained_window/constrained_window_views.h"
 #include "components/strings/grit/components_strings.h"
 #include "components/web_modal/web_contents_modal_dialog_manager.h"
+#include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/web_contents_delegate.h"
@@ -297,6 +299,12 @@ views::View* DesktopMediaPickerDialogView::GetInitiallyFocusedView() {
   return list_views_[0];
 }
 
+int DesktopMediaPickerDialogView::GetDefaultDialogButton() const {
+  // To prevent permissions being accepted accidentally, permission prompts
+  // should not be accepted as the default action.
+  return ui::DIALOG_BUTTON_CANCEL;
+}
+
 base::string16 DesktopMediaPickerDialogView::GetDialogButtonLabel(
     ui::DialogButton button) const {
   return l10n_util::GetStringUTF16(button == ui::DIALOG_BUTTON_OK
@@ -348,6 +356,10 @@ bool DesktopMediaPickerDialogView::Accept() {
   return true;
 }
 
+bool DesktopMediaPickerDialogView::ShouldShowCloseButton() const {
+  return false;
+}
+
 void DesktopMediaPickerDialogView::DeleteDelegate() {
   // If the dialog is being closed then notify the parent about it.
   if (parent_)
@@ -375,12 +387,23 @@ void DesktopMediaPickerDialogView::SelectTab(
 }
 
 void DesktopMediaPickerDialogView::OnMediaListRowsChanged() {
-  gfx::Rect widget_bound = GetWidget()->GetWindowBoundsInScreen();
+  PreferredSizeChanged();
+  // TODO(pbos): Ideally this would use shared logic similar to
+  // BubbleDialogDelegateView::SizeToContents() instead of implementing sizing
+  // logic in-place.
+  const gfx::Size new_size = GetWidget()->GetRootView()->GetPreferredSize();
+  if (modality_ == ui::ModalType::MODAL_TYPE_CHILD) {
+    // For the web-modal dialog resize the dialog in place.
+    // TODO(pbos): This should ideally use UpdateWebContentsModalDialogPosition
+    // to keep the widget centered horizontally. As this dialog is fixed-width
+    // we're effectively only changing the height, so reusing the current
+    // widget origin should be equivalent.
+    GetWidget()->SetSize(new_size);
+    return;
+  }
 
-  int new_height = widget_bound.height() - pane_->height() +
-                   pane_->GetPreferredSize().height();
-
-  GetWidget()->CenterWindow(gfx::Size(widget_bound.width(), new_height));
+  // When not using the web-modal dialog, center the dialog with its new size.
+  GetWidget()->CenterWindow(new_size);
 }
 
 DesktopMediaListView* DesktopMediaPickerDialogView::GetMediaListViewForTesting()
@@ -442,8 +465,8 @@ void DesktopMediaPickerViews::NotifyDialogResult(DesktopMediaID source) {
 
   // Notify the |callback_| asynchronously because it may need to destroy
   // DesktopMediaPicker.
-  content::BrowserThread::PostTask(content::BrowserThread::UI, FROM_HERE,
-                                   base::BindOnce(callback_, source));
+  base::PostTaskWithTraits(FROM_HERE, {content::BrowserThread::UI},
+                           base::BindOnce(callback_, source));
   callback_.Reset();
 }
 

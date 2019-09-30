@@ -19,13 +19,14 @@ import org.junit.Test;
 import org.junit.runner.RunWith;
 
 import org.chromium.base.test.util.CommandLineFlags;
+import org.chromium.base.test.util.DisabledTest;
 import org.chromium.base.test.util.Feature;
 import org.chromium.base.test.util.Restriction;
 import org.chromium.base.test.util.RetryOnFailure;
 import org.chromium.chrome.browser.ChromeSwitches;
 import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
-import org.chromium.content.browser.test.util.JavaScriptUtils;
+import org.chromium.content_public.browser.test.util.JavaScriptUtils;
 import org.chromium.media.MediaSwitches;
 
 import java.util.Date;
@@ -83,6 +84,7 @@ public class CastPositionTransferTest {
 
     /** Test for crbug.com/428409 */
     @Test
+    @DisabledTest // crbug.com/907307
     @Feature({"VideoFling"})
     @LargeTest
     @Restriction(RESTRICTION_TYPE_NON_LOW_END_DEVICE) // crbug.com/652872
@@ -114,6 +116,7 @@ public class CastPositionTransferTest {
 
     /** Test for crbug.com/428409 */
     @Test
+    @DisabledTest // crbug.com/907307
     @Feature({"VideoFling"})
     @LargeTest
     @Restriction(RESTRICTION_TYPE_NON_LOW_END_DEVICE) // crbug.com/652872
@@ -163,6 +166,7 @@ public class CastPositionTransferTest {
 
     /** Test for crbug.com/425105 */
     @Test
+    @DisabledTest // crbug.com/907307
     @Feature({"VideoFling"})
     @LargeTest
     @Restriction(RESTRICTION_TYPE_NON_LOW_END_DEVICE) // crbug.com/593840, crbug.com/652872

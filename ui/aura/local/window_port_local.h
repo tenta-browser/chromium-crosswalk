@@ -49,12 +49,16 @@ class AURA_EXPORT WindowPortLocal : public WindowPort,
                          std::unique_ptr<ui::PropertyData> data) override;
   std::unique_ptr<cc::LayerTreeFrameSink> CreateLayerTreeFrameSink() override;
   void AllocateLocalSurfaceId() override;
-  bool IsLocalSurfaceIdAllocationSuppressed() const override;
   viz::ScopedSurfaceIdAllocator GetSurfaceIdAllocator(
       base::OnceCallback<void()> allocation_task) override;
-  const viz::LocalSurfaceId& GetLocalSurfaceId() override;
+  void InvalidateLocalSurfaceId() override;
+  void UpdateLocalSurfaceIdFromEmbeddedClient(
+      const viz::LocalSurfaceIdAllocation&
+          embedded_client_local_surface_id_allocation) override;
+  const viz::LocalSurfaceIdAllocation& GetLocalSurfaceIdAllocation() override;
   void OnEventTargetingPolicyChanged() override;
   bool ShouldRestackTransientChildren() override;
+  void TrackOcclusionState() override;
 
   // viz::HostFrameSinkClient:
   void OnFirstSurfaceActivation(const viz::SurfaceInfo& surface_info) override;
@@ -62,7 +66,8 @@ class AURA_EXPORT WindowPortLocal : public WindowPort,
 
  private:
   void UpdateLocalSurfaceId();
-  const viz::LocalSurfaceId& GetCurrentLocalSurfaceId() const;
+  const viz::LocalSurfaceIdAllocation& GetCurrentLocalSurfaceIdAllocation()
+      const;
   bool IsEmbeddingExternalContent() const;
 
   Window* const window_;

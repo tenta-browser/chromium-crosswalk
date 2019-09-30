@@ -43,6 +43,7 @@ class DataMessageStanza;
 }  // namespace mcs_proto
 
 namespace network {
+class NetworkConnectionTracker;
 class SharedURLLoaderFactory;
 }  // namespace network
 
@@ -72,7 +73,8 @@ class GCMInternalsBuilder {
       base::RepeatingCallback<
           void(network::mojom::ProxyResolvingSocketFactoryRequest)>
           get_socket_factory_callback,
-      GCMStatsRecorder* recorder);
+      GCMStatsRecorder* recorder,
+      network::NetworkConnectionTracker* network_connection_tracker);
 };
 
 // Implements the GCM Client. It is used to coordinate MCS Client (communication
@@ -114,16 +116,15 @@ class GCMClientImpl
           void(network::mojom::ProxyResolvingSocketFactoryRequest)>
           get_socket_factory_callback,
       const scoped_refptr<network::SharedURLLoaderFactory>& url_loader_factory,
+      network::NetworkConnectionTracker* network_connection_tracker,
       std::unique_ptr<Encryptor> encryptor,
       GCMClient::Delegate* delegate) override;
   void Start(StartMode start_mode) override;
   void Stop() override;
-  void Register(const linked_ptr<RegistrationInfo>& registration_info) override;
-  bool ValidateRegistration(
-      const linked_ptr<RegistrationInfo>& registration_info,
-      const std::string& registration_id) override;
-  void Unregister(
-      const linked_ptr<RegistrationInfo>& registration_info) override;
+  void Register(scoped_refptr<RegistrationInfo> registration_info) override;
+  bool ValidateRegistration(scoped_refptr<RegistrationInfo> registration_info,
+                            const std::string& registration_id) override;
+  void Unregister(scoped_refptr<RegistrationInfo> registration_info) override;
   void Send(const std::string& app_id,
             const std::string& receiver_id,
             const OutgoingMessage& message) override;
@@ -195,7 +196,7 @@ class GCMClientImpl
   // instance, while values are pending registration requests to obtain a
   // registration ID for requesting application.
   using PendingRegistrationRequests =
-      std::map<linked_ptr<RegistrationInfo>,
+      std::map<scoped_refptr<RegistrationInfo>,
                std::unique_ptr<RegistrationRequest>,
                RegistrationInfoComparer>;
 
@@ -203,7 +204,7 @@ class GCMClientImpl
   // instance, while values are pending unregistration requests to disable the
   // registration ID currently assigned to the application.
   using PendingUnregistrationRequests =
-      std::map<linked_ptr<RegistrationInfo>,
+      std::map<scoped_refptr<RegistrationInfo>,
                std::unique_ptr<UnregistrationRequest>,
                RegistrationInfoComparer>;
 
@@ -282,15 +283,13 @@ class GCMClientImpl
   void ResetStoreCallback(bool success);
 
   // Completes the registration request.
-  void OnRegisterCompleted(
-      const linked_ptr<RegistrationInfo>& registration_info,
-      RegistrationRequest::Status status,
-      const std::string& registration_id);
+  void OnRegisterCompleted(scoped_refptr<RegistrationInfo> registration_info,
+                           RegistrationRequest::Status status,
+                           const std::string& registration_id);
 
   // Completes the unregistration request.
-  void OnUnregisterCompleted(
-      const linked_ptr<RegistrationInfo>& registration_info,
-      UnregistrationRequest::Status status);
+  void OnUnregisterCompleted(scoped_refptr<RegistrationInfo> registration_info,
+                             UnregistrationRequest::Status status);
 
   // Completes the GCM store destroy request.
   void OnGCMStoreDestroyed(bool success);
@@ -373,6 +372,8 @@ class GCMClientImpl
       get_socket_factory_callback_;
 
   scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory_;
+
+  network::NetworkConnectionTracker* network_connection_tracker_;
 
   // Controls receiving and sending of packets and reliable message queueing.
   // Must be destroyed before |network_session_|.

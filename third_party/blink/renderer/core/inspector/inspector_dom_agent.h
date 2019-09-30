@@ -161,6 +161,7 @@ class CORE_EXPORT InspectorDOMAgent final
       protocol::Maybe<int> node_id,
       protocol::Maybe<int> backend_node_id,
       protocol::Maybe<String> object_group,
+      protocol::Maybe<int> execution_context_id,
       std::unique_ptr<v8_inspector::protocol::Runtime::API::RemoteObject>*)
       override;
   protocol::Response getAttributes(
@@ -200,7 +201,8 @@ class CORE_EXPORT InspectorDOMAgent final
       int x,
       int y,
       protocol::Maybe<bool> include_user_agent_shadow_dom,
-      int* out_node_id) override;
+      int* backend_node_id,
+      protocol::Maybe<int>* node_id) override;
   protocol::Response getRelayoutBoundary(int node_id,
                                          int* out_node_id) override;
   protocol::Response describeNode(
@@ -212,7 +214,11 @@ class CORE_EXPORT InspectorDOMAgent final
       std::unique_ptr<protocol::DOM::Node>*) override;
 
   protocol::Response getFrameOwner(const String& frame_id,
-                                   int* node_id) override;
+                                   int* backend_node_id,
+                                   protocol::Maybe<int>* node_id) override;
+
+  protocol::Response getFileInfo(const String& object_id,
+                                 String* path) override;
 
   bool Enabled() const;
   void ReleaseDanglingNodes();
@@ -298,6 +304,7 @@ class CORE_EXPORT InspectorDOMAgent final
   void PushChildNodesToFrontend(int node_id,
                                 int depth = 1,
                                 bool traverse_frames = false);
+  void DOMNodeRemoved(Node*);
 
   void InvalidateFrameOwnerElement(HTMLFrameOwnerElement*);
 

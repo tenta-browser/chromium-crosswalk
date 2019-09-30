@@ -59,7 +59,7 @@ class CORE_EXPORT V0InsertionPoint : public HTMLElement {
   void RebuildDistributedChildrenLayoutTrees(WhitespaceAttacher&);
 
   size_t DistributedNodesSize() const { return distributed_nodes_.size(); }
-  Node* DistributedNodeAt(size_t index) const {
+  Node* DistributedNodeAt(wtf_size_t index) const {
     return distributed_nodes_.at(index);
   }
   Node* FirstDistributedNode() const {
@@ -75,7 +75,7 @@ class CORE_EXPORT V0InsertionPoint : public HTMLElement {
     return distributed_nodes_.PreviousTo(node);
   }
 
-  void Trace(blink::Visitor*) override;
+  void Trace(Visitor*) override;
 
  protected:
   V0InsertionPoint(const QualifiedName&, Document&);

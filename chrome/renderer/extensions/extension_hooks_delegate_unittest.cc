@@ -41,7 +41,7 @@ class ExtensionHooksDelegateTest
     bindings_system()->api_system()->GetHooksForAPI("runtime")->SetDelegate(
         std::make_unique<RuntimeHooksDelegate>(messaging_service_.get()));
 
-    scoped_refptr<Extension> mutable_extension = BuildExtension();
+    scoped_refptr<const Extension> mutable_extension = BuildExtension();
     RegisterExtension(mutable_extension);
     extension_ = mutable_extension;
 
@@ -61,7 +61,7 @@ class ExtensionHooksDelegateTest
   }
   bool UseStrictIPCMessageSender() override { return true; }
 
-  virtual scoped_refptr<Extension> BuildExtension() {
+  virtual scoped_refptr<const Extension> BuildExtension() {
     return ExtensionBuilder("foo").Build();
   }
 
@@ -113,7 +113,7 @@ TEST_F(ExtensionHooksDelegateTest, MessagingSanityChecks) {
 TEST_F(ExtensionHooksDelegateTest, SendRequestDisabled) {
   // Construct an extension for which sendRequest is disabled (unpacked
   // extension with an event page).
-  scoped_refptr<Extension> extension =
+  scoped_refptr<const Extension> extension =
       ExtensionBuilder("foo")
           .SetBackgroundPage(ExtensionBuilder::BackgroundPage::EVENT)
           .SetLocation(Manifest::UNPACKED)
@@ -193,9 +193,9 @@ TEST_F(ExtensionHooksDelegateTest, SendRequestChannelLeftOpenToReplyAsync) {
   // Open a receiver for the message.
   EXPECT_CALL(*ipc_message_sender(),
               SendOpenMessagePort(MSG_ROUTING_NONE, port_id));
-  messaging_service()->DispatchOnConnect(
-      *script_context_set(), port_id, kChannel, tab_connection_info,
-      external_connection_info, std::string(), nullptr);
+  messaging_service()->DispatchOnConnect(*script_context_set(), port_id,
+                                         kChannel, tab_connection_info,
+                                         external_connection_info, nullptr);
   ::testing::Mock::VerifyAndClearExpectations(ipc_message_sender());
   EXPECT_TRUE(
       messaging_service()->HasPortForTesting(script_context(), port_id));

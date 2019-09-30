@@ -41,6 +41,7 @@ enum LoadPhase {
 class GURL;
 
 namespace web {
+class NavigationItem;
 class WebState;
 class WebStateImpl;
 }
@@ -91,17 +92,16 @@ class WebStateImpl;
 // Returns the x, y offset the content has been scrolled.
 @property(nonatomic, readonly) CGPoint scrollPosition;
 
-// YES if JavaScript dialogs and window open requests should be suppressed.
-// Default is NO. When dialog is suppressed
-// |WebStateObserver::DidSuppressDialog| will be called.
-@property(nonatomic, assign) BOOL shouldSuppressDialogs;
-
 // YES if the web process backing WebView is believed to currently be crashed.
 @property(nonatomic, assign, getter=isWebProcessCrashed) BOOL webProcessCrashed;
 
 // Whether the WebController is visible. Returns YES after wasShown call and
 // NO after wasHidden() call.
 @property(nonatomic, assign, getter=isVisible) BOOL visible;
+
+// A Boolean value indicating whether horizontal swipe gestures will trigger
+// back-forward list navigations.
+@property(nonatomic) BOOL allowsBackForwardNavigationGestures;
 
 // Designated initializer. Initializes web controller with |webState|. The
 // calling code must retain the ownership of |webState|.
@@ -149,15 +149,19 @@ class WebStateImpl;
 // appropriate, as this method won't display any error to the user.
 - (GURL)currentURLWithTrustLevel:(web::URLVerificationTrustLevel*)trustLevel;
 
-// Methods for navigation and properties to interrogate state.
-- (void)reload;
+// Reloads web view. |isRendererInitiated| is YES for renderer-initiated
+// navigation. |isRendererInitiated| is NO for browser-initiated navigation.
+- (void)reloadWithRendererInitiatedNavigation:(BOOL)isRendererInitiated;
+
+// Stops web view loading.
 - (void)stopLoading;
 
 // Loads the URL indicated by current session state.
 - (void)loadCurrentURL;
 
 // Loads the URL indicated by current session state if the current page has not
-// loaded yet.
+// loaded yet. This method should never be called directly. Use
+// NavigationManager::LoadIfNecessary() instead.
 - (void)loadCurrentURLIfNecessary;
 
 // Loads HTML in the page and presents it as if it was originating from an
@@ -179,19 +183,12 @@ class WebStateImpl;
 // Records the state (scroll position, form values, whatever can be harvested)
 // from the current page into the current session entry.
 - (void)recordStateInHistory;
-// Restores the state for this page from session history.
-// TODO(stuartmorgan): This is public only temporarily; once refactoring is
-// complete it will be handled internally.
-- (void)restoreStateFromHistory;
 
 // Notifies the CRWWebController that it has been shown.
 - (void)wasShown;
 
 // Notifies the CRWWebController that it has been hidden.
 - (void)wasHidden;
-
-// Returns |YES| if the current page should should the location bar hint text.
-- (BOOL)wantsLocationBarHintText;
 
 // Adds |recognizer| as a gesture recognizer to the web view.
 - (void)addGestureRecognizerToWebView:(UIGestureRecognizer*)recognizer;
@@ -209,6 +206,21 @@ class WebStateImpl;
 - (void)didFinishGoToIndexSameDocumentNavigationWithType:
             (web::NavigationInitiationType)type
                                           hasUserGesture:(BOOL)hasUserGesture;
+
+// Instructs WKWebView to navigate to the given navigation item. |wk_item| and
+// |item| must point to the same navigation item. Calling this method may
+// result in an iframe navigation.
+- (void)goToBackForwardListItem:(WKBackForwardListItem*)item
+                 navigationItem:(web::NavigationItem*)item
+       navigationInitiationType:(web::NavigationInitiationType)type
+                 hasUserGesture:(BOOL)hasUserGesture;
+
+// Takes snapshot of web view with |rect|. |rect| should be in self.view's
+// coordinate system.  |completion| is always called, but |snapshot| may be nil.
+// Prior to iOS 11, |completion| is called with a nil
+// snapshot.
+- (void)takeSnapshotWithRect:(CGRect)rect
+                  completion:(void (^)(UIImage* snapshot))completion;
 
 @end
 

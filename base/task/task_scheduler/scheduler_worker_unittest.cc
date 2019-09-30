@@ -180,14 +180,16 @@ class TaskSchedulerWorkerTest : public testing::TestWithParam<size_t> {
       }
 
       // Create a Sequence with TasksPerSequence() Tasks.
-      scoped_refptr<Sequence> sequence(new Sequence);
+      scoped_refptr<Sequence> sequence = MakeRefCounted<Sequence>(TaskTraits());
+      Sequence::Transaction sequence_transaction(sequence->BeginTransaction());
       for (size_t i = 0; i < outer_->TasksPerSequence(); ++i) {
         Task task(FROM_HERE,
                   BindOnce(&TaskSchedulerWorkerTest::RunTaskCallback,
                            Unretained(outer_)),
-                  TaskTraits(), TimeDelta());
-        EXPECT_TRUE(outer_->task_tracker_.WillPostTask(&task));
-        sequence->PushTask(std::move(task));
+                  TimeDelta());
+        EXPECT_TRUE(outer_->task_tracker_.WillPostTask(
+            &task, sequence->shutdown_behavior()));
+        sequence_transaction.PushTask(std::move(task));
       }
 
       ExpectCallToDidRunTask();
@@ -198,9 +200,8 @@ class TaskSchedulerWorkerTest : public testing::TestWithParam<size_t> {
         outer_->created_sequences_.push_back(sequence);
       }
 
-      sequence = outer_->task_tracker_.WillScheduleSequence(std::move(sequence),
-                                                            nullptr);
-      EXPECT_TRUE(sequence);
+      EXPECT_TRUE(outer_->task_tracker_.WillScheduleSequence(
+          sequence_transaction, nullptr));
       return sequence;
     }
 
@@ -220,8 +221,11 @@ class TaskSchedulerWorkerTest : public testing::TestWithParam<size_t> {
 
       // Verify that |sequence| contains TasksPerSequence() - 1 Tasks.
       for (size_t i = 0; i < outer_->TasksPerSequence() - 1; ++i) {
-        EXPECT_TRUE(sequence->TakeTask());
-        EXPECT_EQ(i == outer_->TasksPerSequence() - 2, sequence->Pop());
+        Sequence::Transaction sequence_transaction(
+            sequence->BeginTransaction());
+        EXPECT_TRUE(sequence_transaction.TakeTask());
+        EXPECT_EQ(i == outer_->TasksPerSequence() - 2,
+                  sequence_transaction.Pop());
       }
 
       // Add |sequence| to |re_enqueued_sequences_|.
@@ -440,7 +444,8 @@ class ControllableCleanupDelegate : public SchedulerWorkerDefaultDelegate {
     }
 
     controls_->work_requested_ = true;
-    scoped_refptr<Sequence> sequence(new Sequence);
+    scoped_refptr<Sequence> sequence = MakeRefCounted<Sequence>(TaskTraits(
+        WithBaseSyncPrimitives(), TaskShutdownBehavior::CONTINUE_ON_SHUTDOWN));
     Task task(
         FROM_HERE,
         BindOnce(
@@ -450,13 +455,13 @@ class ControllableCleanupDelegate : public SchedulerWorkerDefaultDelegate {
             },
             Unretained(&controls_->work_processed_),
             Unretained(&controls_->work_running_)),
-        {WithBaseSyncPrimitives(), TaskShutdownBehavior::CONTINUE_ON_SHUTDOWN},
         TimeDelta());
-    EXPECT_TRUE(task_tracker_->WillPostTask(&task));
-    sequence->PushTask(std::move(task));
-    sequence =
-        task_tracker_->WillScheduleSequence(std::move(sequence), nullptr);
-    EXPECT_TRUE(sequence);
+    EXPECT_TRUE(
+        task_tracker_->WillPostTask(&task, sequence->shutdown_behavior()));
+    Sequence::Transaction sequence_transaction(sequence->BeginTransaction());
+    sequence_transaction.PushTask(std::move(task));
+    EXPECT_TRUE(
+        task_tracker_->WillScheduleSequence(sequence_transaction, nullptr));
     return sequence;
   }
 
@@ -772,7 +777,7 @@ class VerifyCallsToObserverDelegate : public SchedulerWorkerDefaultDelegate {
   }
 
   void OnMainExit(SchedulerWorker* worker) override {
-    EXPECT_CALL(*observer_, OnSchedulerWorkerMainExit());
+    observer_->AllowCallsOnMainExit(1);
   }
 
  private:

@@ -30,9 +30,9 @@ bool GetIsInMultiWindowModeValue() {
   return is_in_multi_window_mode;
 }
 
-bool GetIsChromeModernDesignEnabled() {
+bool IsDownloadAutoResumptionEnabledInNative() {
   JNIEnv* env = base::android::AttachCurrentThread();
-  return Java_FeatureUtilities_isChromeModernDesignEnabled(env);
+  return Java_FeatureUtilities_isDownloadAutoResumptionEnabledInNative(env);
 }
 
 } // namespace android
@@ -40,7 +40,6 @@ bool GetIsChromeModernDesignEnabled() {
 
 static void JNI_FeatureUtilities_SetCustomTabVisible(
     JNIEnv* env,
-    const JavaParamRef<jclass>& clazz,
     jboolean visible) {
   custom_tab_visible = visible;
   ukm::UkmSource::SetCustomTabVisible(visible);
@@ -48,7 +47,6 @@ static void JNI_FeatureUtilities_SetCustomTabVisible(
 
 static void JNI_FeatureUtilities_SetIsInMultiWindowMode(
     JNIEnv* env,
-    const JavaParamRef<jclass>& clazz,
     jboolean j_is_in_multi_window_mode) {
   is_in_multi_window_mode = j_is_in_multi_window_mode;
 }

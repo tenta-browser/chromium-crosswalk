@@ -14,9 +14,9 @@
 #include "base/files/file_enumerator.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
-#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/run_loop.h"
+#include "base/stl_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/thread_test_helper.h"
 #include "base/threading/thread_restrictions.h"
@@ -63,7 +63,7 @@ class BrowsingDataLocalStorageHelperTest : public InProcessBrowserTest {
     base::CreateDirectory(storage_path);
     static constexpr const base::FilePath::CharType* kFilesToCreate[] = {
         kTestFile0, kTestFile1, kTestFileInvalid, kTestFileExtension};
-    for (size_t i = 0; i < arraysize(kFilesToCreate); ++i) {
+    for (size_t i = 0; i < base::size(kFilesToCreate); ++i) {
       base::FilePath file_path = storage_path.Append(kFilesToCreate[i]);
       base::WriteFile(file_path, nullptr, 0);
     }
@@ -90,9 +90,9 @@ class StopTestOnCallback {
     DCHECK_CURRENTLY_ON(BrowserThread::UI);
     // There's no guarantee on the order, ensure these files are there.
     const char* const kTestHosts[] = {"www.chromium.org", "www.google.com"};
-    bool test_hosts_found[arraysize(kTestHosts)] = {false, false};
-    ASSERT_EQ(arraysize(kTestHosts), local_storage_info.size());
-    for (size_t i = 0; i < arraysize(kTestHosts); ++i) {
+    bool test_hosts_found[base::size(kTestHosts)] = {false, false};
+    ASSERT_EQ(base::size(kTestHosts), local_storage_info.size());
+    for (size_t i = 0; i < base::size(kTestHosts); ++i) {
       for (const auto& info : local_storage_info) {
         ASSERT_TRUE(info.origin_url.SchemeIs("http"));
         if (info.origin_url.host_piece() == kTestHosts[i]) {
@@ -101,7 +101,7 @@ class StopTestOnCallback {
         }
       }
     }
-    for (size_t i = 0; i < arraysize(kTestHosts); ++i) {
+    for (size_t i = 0; i < base::size(kTestHosts); ++i) {
       ASSERT_TRUE(test_hosts_found[i]) << kTestHosts[i];
     }
     base::RunLoop::QuitCurrentWhenIdleDeprecated();
@@ -166,8 +166,7 @@ IN_PROC_BROWSER_TEST_F(BrowsingDataLocalStorageHelperTest,
       callback.result();
 
   ASSERT_EQ(2u, result.size());
-  std::list<BrowsingDataLocalStorageHelper::LocalStorageInfo>::iterator info =
-      result.begin();
+  auto info = result.begin();
   EXPECT_EQ(origin1, info->origin_url);
   info++;
   EXPECT_EQ(origin2, info->origin_url);

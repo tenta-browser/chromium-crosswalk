@@ -136,9 +136,6 @@ typedef void(GL_BINDING_CALL* glColorMaskProc)(GLboolean red,
                                                GLboolean blue,
                                                GLboolean alpha);
 typedef void(GL_BINDING_CALL* glCompileShaderProc)(GLuint shader);
-typedef void(GL_BINDING_CALL* glCompressedCopyTextureCHROMIUMProc)(
-    GLuint sourceId,
-    GLuint destId);
 typedef void(GL_BINDING_CALL* glCompressedTexImage2DProc)(GLenum target,
                                                           GLint level,
                                                           GLenum internalformat,
@@ -706,7 +703,7 @@ typedef void(GL_BINDING_CALL* glGetProgramPipelineInfoLogProc)(GLuint pipeline,
 typedef void(GL_BINDING_CALL* glGetProgramPipelineivProc)(GLuint pipeline,
                                                           GLenum pname,
                                                           GLint* params);
-typedef void(GL_BINDING_CALL* glGetProgramResourceIndexProc)(
+typedef GLuint(GL_BINDING_CALL* glGetProgramResourceIndexProc)(
     GLuint program,
     GLenum programInterface,
     const GLchar* name);
@@ -1023,9 +1020,33 @@ typedef void*(GL_BINDING_CALL* glMapBufferRangeProc)(GLenum target,
 typedef void(GL_BINDING_CALL* glMatrixLoadfEXTProc)(GLenum matrixMode,
                                                     const GLfloat* m);
 typedef void(GL_BINDING_CALL* glMatrixLoadIdentityEXTProc)(GLenum matrixMode);
+typedef void(GL_BINDING_CALL* glMaxShaderCompilerThreadsKHRProc)(GLuint count);
 typedef void(GL_BINDING_CALL* glMemoryBarrierByRegionProc)(GLbitfield barriers);
 typedef void(GL_BINDING_CALL* glMemoryBarrierEXTProc)(GLbitfield barriers);
 typedef void(GL_BINDING_CALL* glMinSampleShadingProc)(GLfloat value);
+typedef void(GL_BINDING_CALL* glMultiDrawArraysANGLEProc)(GLenum mode,
+                                                          const GLint* firsts,
+                                                          const GLsizei* counts,
+                                                          GLsizei drawcount);
+typedef void(GL_BINDING_CALL* glMultiDrawArraysInstancedANGLEProc)(
+    GLenum mode,
+    const GLint* firsts,
+    const GLsizei* counts,
+    const GLsizei* instanceCounts,
+    GLsizei drawcount);
+typedef void(GL_BINDING_CALL* glMultiDrawElementsANGLEProc)(
+    GLenum mode,
+    const GLsizei* counts,
+    GLenum type,
+    const GLvoid* const* indices,
+    GLsizei drawcount);
+typedef void(GL_BINDING_CALL* glMultiDrawElementsInstancedANGLEProc)(
+    GLenum mode,
+    const GLsizei* counts,
+    GLenum type,
+    const GLvoid* const* indices,
+    const GLsizei* instanceCounts,
+    GLsizei drawcount);
 typedef void(GL_BINDING_CALL* glObjectLabelProc)(GLenum identifier,
                                                  GLuint name,
                                                  GLsizei length,
@@ -1752,6 +1773,7 @@ struct ExtensionsGL {
   bool b_GL_ANGLE_framebuffer_blit;
   bool b_GL_ANGLE_framebuffer_multisample;
   bool b_GL_ANGLE_instanced_arrays;
+  bool b_GL_ANGLE_multi_draw;
   bool b_GL_ANGLE_multiview;
   bool b_GL_ANGLE_request_extension;
   bool b_GL_ANGLE_robust_client_memory;
@@ -1778,8 +1800,6 @@ struct ExtensionsGL {
   bool b_GL_ARB_transform_feedback2;
   bool b_GL_ARB_vertex_array_object;
   bool b_GL_CHROMIUM_bind_uniform_location;
-  bool b_GL_CHROMIUM_compressed_copy_texture;
-  bool b_GL_CHROMIUM_copy_compressed_texture;
   bool b_GL_CHROMIUM_copy_texture;
   bool b_GL_CHROMIUM_framebuffer_mixed_samples;
   bool b_GL_CHROMIUM_gles_depth_binding_hack;
@@ -1812,6 +1832,7 @@ struct ExtensionsGL {
   bool b_GL_INTEL_framebuffer_CMAA;
   bool b_GL_KHR_blend_equation_advanced;
   bool b_GL_KHR_debug;
+  bool b_GL_KHR_parallel_shader_compile;
   bool b_GL_KHR_robustness;
   bool b_GL_NV_blend_equation_advanced;
   bool b_GL_NV_fence;
@@ -1871,7 +1892,6 @@ struct ProcsGL {
   glClientWaitSyncProc glClientWaitSyncFn;
   glColorMaskProc glColorMaskFn;
   glCompileShaderProc glCompileShaderFn;
-  glCompressedCopyTextureCHROMIUMProc glCompressedCopyTextureCHROMIUMFn;
   glCompressedTexImage2DProc glCompressedTexImage2DFn;
   glCompressedTexImage2DRobustANGLEProc glCompressedTexImage2DRobustANGLEFn;
   glCompressedTexImage3DProc glCompressedTexImage3DFn;
@@ -2116,9 +2136,14 @@ struct ProcsGL {
   glMapBufferRangeProc glMapBufferRangeFn;
   glMatrixLoadfEXTProc glMatrixLoadfEXTFn;
   glMatrixLoadIdentityEXTProc glMatrixLoadIdentityEXTFn;
+  glMaxShaderCompilerThreadsKHRProc glMaxShaderCompilerThreadsKHRFn;
   glMemoryBarrierByRegionProc glMemoryBarrierByRegionFn;
   glMemoryBarrierEXTProc glMemoryBarrierEXTFn;
   glMinSampleShadingProc glMinSampleShadingFn;
+  glMultiDrawArraysANGLEProc glMultiDrawArraysANGLEFn;
+  glMultiDrawArraysInstancedANGLEProc glMultiDrawArraysInstancedANGLEFn;
+  glMultiDrawElementsANGLEProc glMultiDrawElementsANGLEFn;
+  glMultiDrawElementsInstancedANGLEProc glMultiDrawElementsInstancedANGLEFn;
   glObjectLabelProc glObjectLabelFn;
   glObjectPtrLabelProc glObjectPtrLabelFn;
   glPathCommandsNVProc glPathCommandsNVFn;
@@ -2416,8 +2441,6 @@ class GL_EXPORT GLApi {
                              GLboolean blue,
                              GLboolean alpha) = 0;
   virtual void glCompileShaderFn(GLuint shader) = 0;
-  virtual void glCompressedCopyTextureCHROMIUMFn(GLuint sourceId,
-                                                 GLuint destId) = 0;
   virtual void glCompressedTexImage2DFn(GLenum target,
                                         GLint level,
                                         GLenum internalformat,
@@ -2920,9 +2943,9 @@ class GL_EXPORT GLApi {
   virtual void glGetProgramPipelineivFn(GLuint pipeline,
                                         GLenum pname,
                                         GLint* params) = 0;
-  virtual void glGetProgramResourceIndexFn(GLuint program,
-                                           GLenum programInterface,
-                                           const GLchar* name) = 0;
+  virtual GLuint glGetProgramResourceIndexFn(GLuint program,
+                                             GLenum programInterface,
+                                             const GLchar* name) = 0;
   virtual void glGetProgramResourceivFn(GLuint program,
                                         GLenum programInterface,
                                         GLuint index,
@@ -3194,9 +3217,31 @@ class GL_EXPORT GLApi {
                                    GLbitfield access) = 0;
   virtual void glMatrixLoadfEXTFn(GLenum matrixMode, const GLfloat* m) = 0;
   virtual void glMatrixLoadIdentityEXTFn(GLenum matrixMode) = 0;
+  virtual void glMaxShaderCompilerThreadsKHRFn(GLuint count) = 0;
   virtual void glMemoryBarrierByRegionFn(GLbitfield barriers) = 0;
   virtual void glMemoryBarrierEXTFn(GLbitfield barriers) = 0;
   virtual void glMinSampleShadingFn(GLfloat value) = 0;
+  virtual void glMultiDrawArraysANGLEFn(GLenum mode,
+                                        const GLint* firsts,
+                                        const GLsizei* counts,
+                                        GLsizei drawcount) = 0;
+  virtual void glMultiDrawArraysInstancedANGLEFn(GLenum mode,
+                                                 const GLint* firsts,
+                                                 const GLsizei* counts,
+                                                 const GLsizei* instanceCounts,
+                                                 GLsizei drawcount) = 0;
+  virtual void glMultiDrawElementsANGLEFn(GLenum mode,
+                                          const GLsizei* counts,
+                                          GLenum type,
+                                          const GLvoid* const* indices,
+                                          GLsizei drawcount) = 0;
+  virtual void glMultiDrawElementsInstancedANGLEFn(
+      GLenum mode,
+      const GLsizei* counts,
+      GLenum type,
+      const GLvoid* const* indices,
+      const GLsizei* instanceCounts,
+      GLsizei drawcount) = 0;
   virtual void glObjectLabelFn(GLenum identifier,
                                GLuint name,
                                GLsizei length,
@@ -3916,8 +3961,6 @@ class GL_EXPORT GLApi {
 #define glClientWaitSync ::gl::g_current_gl_context->glClientWaitSyncFn
 #define glColorMask ::gl::g_current_gl_context->glColorMaskFn
 #define glCompileShader ::gl::g_current_gl_context->glCompileShaderFn
-#define glCompressedCopyTextureCHROMIUM \
-  ::gl::g_current_gl_context->glCompressedCopyTextureCHROMIUMFn
 #define glCompressedTexImage2D \
   ::gl::g_current_gl_context->glCompressedTexImage2DFn
 #define glCompressedTexImage2DRobustANGLE \
@@ -4269,10 +4312,20 @@ class GL_EXPORT GLApi {
 #define glMatrixLoadfEXT ::gl::g_current_gl_context->glMatrixLoadfEXTFn
 #define glMatrixLoadIdentityEXT \
   ::gl::g_current_gl_context->glMatrixLoadIdentityEXTFn
+#define glMaxShaderCompilerThreadsKHR \
+  ::gl::g_current_gl_context->glMaxShaderCompilerThreadsKHRFn
 #define glMemoryBarrierByRegion \
   ::gl::g_current_gl_context->glMemoryBarrierByRegionFn
 #define glMemoryBarrierEXT ::gl::g_current_gl_context->glMemoryBarrierEXTFn
 #define glMinSampleShading ::gl::g_current_gl_context->glMinSampleShadingFn
+#define glMultiDrawArraysANGLE \
+  ::gl::g_current_gl_context->glMultiDrawArraysANGLEFn
+#define glMultiDrawArraysInstancedANGLE \
+  ::gl::g_current_gl_context->glMultiDrawArraysInstancedANGLEFn
+#define glMultiDrawElementsANGLE \
+  ::gl::g_current_gl_context->glMultiDrawElementsANGLEFn
+#define glMultiDrawElementsInstancedANGLE \
+  ::gl::g_current_gl_context->glMultiDrawElementsInstancedANGLEFn
 #define glObjectLabel ::gl::g_current_gl_context->glObjectLabelFn
 #define glObjectPtrLabel ::gl::g_current_gl_context->glObjectPtrLabelFn
 #define glPathCommandsNV ::gl::g_current_gl_context->glPathCommandsNVFn

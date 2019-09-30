@@ -217,7 +217,7 @@ bool PrinterJobHandler::OnJobCompleted(JobStatusUpdater* updater) {
   base::subtle::NoBarrier_AtomicIncrement(&g_total_jobs_done, 1);
   job_queue_handler_.JobDone(job_details_.job_id_);
 
-  for (JobStatusUpdaterList::iterator it = job_status_updater_list_.begin();
+  for (auto it = job_status_updater_list_.begin();
        it != job_status_updater_list_.end(); ++it) {
     if (it->get() == updater) {
       job_status_updater_list_.erase(it);
@@ -256,18 +256,14 @@ void PrinterJobHandler::OnJobChanged() {
 
 void PrinterJobHandler::OnJobSpoolSucceeded(const PlatformJobId& job_id) {
   DCHECK(CurrentlyOnPrintThread());
-  job_spooler_->AddRef();
-  print_thread_.task_runner()->ReleaseSoon(FROM_HERE, job_spooler_.get());
-  job_spooler_ = NULL;
+  print_thread_.task_runner()->ReleaseSoon(FROM_HERE, std::move(job_spooler_));
   job_handler_task_runner_->PostTask(
       FROM_HERE, base::BindOnce(&PrinterJobHandler::JobSpooled, this, job_id));
 }
 
 void PrinterJobHandler::OnJobSpoolFailed() {
   DCHECK(CurrentlyOnPrintThread());
-  job_spooler_->AddRef();
-  print_thread_.task_runner()->ReleaseSoon(FROM_HERE, job_spooler_.get());
-  job_spooler_ = NULL;
+  print_thread_.task_runner()->ReleaseSoon(FROM_HERE, std::move(job_spooler_));
   VLOG(1) << "CP_CONNECTOR: Job failed (spool failed)";
   job_handler_task_runner_->PostTask(
       FROM_HERE,

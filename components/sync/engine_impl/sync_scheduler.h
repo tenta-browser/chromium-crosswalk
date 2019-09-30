@@ -14,7 +14,7 @@
 #include "components/sync/base/invalidation_interface.h"
 #include "components/sync/engine_impl/cycle/sync_cycle.h"
 #include "components/sync/engine_impl/nudge_source.h"
-#include "net/base/network_change_notifier.h"
+#include "services/network/public/mojom/network_change_manager.mojom.h"
 
 namespace base {
 class Location;
@@ -26,8 +26,7 @@ struct ConfigurationParams {
   ConfigurationParams();
   ConfigurationParams(sync_pb::SyncEnums::GetUpdatesOrigin origin,
                       ModelTypeSet types_to_download,
-                      const base::Closure& ready_task,
-                      const base::Closure& retry_task);
+                      const base::Closure& ready_task);
   ConfigurationParams(const ConfigurationParams& other);
   ~ConfigurationParams();
 
@@ -37,8 +36,6 @@ struct ConfigurationParams {
   ModelTypeSet types_to_download;
   // Callback to invoke on configuration completion.
   base::Closure ready_task;
-  // Callback to invoke on configuration failure.
-  base::Closure retry_task;
 };
 
 struct ClearParams {
@@ -145,7 +142,7 @@ class SyncScheduler : public SyncCycle::Delegate {
 
   // Called when the network layer detects a connection status change.
   virtual void OnConnectionStatusChange(
-      net::NetworkChangeNotifier::ConnectionType type) = 0;
+      network::mojom::ConnectionType type) = 0;
 };
 
 }  // namespace syncer

@@ -70,7 +70,7 @@ void Home(Browser* browser, WindowOpenDisposition disposition);
 void OpenCurrentURL(Browser* browser);
 void Stop(Browser* browser);
 void NewWindow(Browser* browser);
-void NewIncognitoWindow(Browser* browser);
+void NewIncognitoWindow(Profile* profile);
 void CloseWindow(Browser* browser);
 void NewTab(Browser* browser);
 void CloseTab(Browser* browser);
@@ -105,6 +105,7 @@ void Translate(Browser* browser);
 void ManagePasswordsForPage(Browser* browser);
 void SavePage(Browser* browser);
 bool CanSavePage(const Browser* browser);
+void SendToMyDevices(Browser* browser);
 void ShowFindBar(Browser* browser);
 void Print(Browser* browser);
 bool CanPrint(Browser* browser);
@@ -150,9 +151,6 @@ void CopyURL(Browser* browser);
 // the tabbed Browser.
 Browser* OpenInChrome(Browser* hosted_app_browser);
 bool CanViewSource(const Browser* browser);
-#if defined(OS_WIN) || (defined(OS_LINUX) && !defined(OS_CHROMEOS))
-void ToggleConfirmToQuitOption(Browser* browser);
-#endif
 
 // Initiates user flow for creating a bookmark app for the current page.
 // Will install a PWA hosted app if the site meets installability requirements

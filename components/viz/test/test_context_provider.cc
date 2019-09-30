@@ -15,6 +15,7 @@
 #include "base/bind.h"
 #include "base/callback_helpers.h"
 #include "base/logging.h"
+#include "base/stl_util.h"
 #include "components/viz/common/gpu/context_cache_controller.h"
 #include "components/viz/test/test_gles2_interface.h"
 #include "gpu/command_buffer/client/raster_implementation_gles.h"
@@ -61,7 +62,7 @@ class TestGLES2InterfaceForContextProvider : public TestGLES2Interface {
     return nullptr;
   }
   const GrGLubyte* GetStringi(GrGLenum name, GrGLuint i) override {
-    if (name == GL_EXTENSIONS && i < arraysize(kExtensions))
+    if (name == GL_EXTENSIONS && i < base::size(kExtensions))
       return reinterpret_cast<const GLubyte*>(kExtensions[i]);
     return nullptr;
   }
@@ -94,7 +95,7 @@ class TestGLES2InterfaceForContextProvider : public TestGLES2Interface {
  private:
   static std::string BuildExtensionString(std::string additional_extensions) {
     std::string extension_string = kExtensions[0];
-    for (size_t i = 1; i < arraysize(kExtensions); ++i) {
+    for (size_t i = 1; i < base::size(kExtensions); ++i) {
       extension_string += " ";
       extension_string += kExtensions[i];
     }
@@ -111,6 +112,57 @@ class TestGLES2InterfaceForContextProvider : public TestGLES2Interface {
 };
 
 }  // namespace
+
+TestSharedImageInterface::TestSharedImageInterface() = default;
+TestSharedImageInterface::~TestSharedImageInterface() = default;
+
+gpu::Mailbox TestSharedImageInterface::CreateSharedImage(
+    ResourceFormat format,
+    const gfx::Size& size,
+    const gfx::ColorSpace& color_space,
+    uint32_t usage) {
+  auto mailbox = gpu::Mailbox::GenerateForSharedImage();
+  shared_images_.insert(mailbox);
+  return mailbox;
+}
+
+gpu::Mailbox TestSharedImageInterface::CreateSharedImage(
+    ResourceFormat format,
+    const gfx::Size& size,
+    const gfx::ColorSpace& color_space,
+    uint32_t usage,
+    base::span<const uint8_t> pixel_data) {
+  auto mailbox = gpu::Mailbox::GenerateForSharedImage();
+  shared_images_.insert(mailbox);
+  return mailbox;
+}
+
+gpu::Mailbox TestSharedImageInterface::CreateSharedImage(
+    gfx::GpuMemoryBuffer* gpu_memory_buffer,
+    gpu::GpuMemoryBufferManager* gpu_memory_buffer_manager,
+    const gfx::ColorSpace& color_space,
+    uint32_t usage) {
+  auto mailbox = gpu::Mailbox::GenerateForSharedImage();
+  shared_images_.insert(mailbox);
+  return mailbox;
+}
+
+void TestSharedImageInterface::UpdateSharedImage(
+    const gpu::SyncToken& sync_token,
+    const gpu::Mailbox& mailbox) {
+  DCHECK(shared_images_.find(mailbox) != shared_images_.end());
+}
+
+void TestSharedImageInterface::DestroySharedImage(
+    const gpu::SyncToken& sync_token,
+    const gpu::Mailbox& mailbox) {
+  shared_images_.erase(mailbox);
+}
+
+gpu::SyncToken TestSharedImageInterface::GenUnverifiedSyncToken() {
+  return gpu::SyncToken(gpu::CommandBufferNamespace::GPU_IO,
+                        gpu::CommandBufferId(), ++release_id_);
+}
 
 // static
 scoped_refptr<TestContextProvider> TestContextProvider::Create(
@@ -179,6 +231,7 @@ TestContextProvider::TestContextProvider(
     bool support_locking)
     : support_(std::move(support)),
       context_gl_(std::move(gl)),
+      shared_image_interface_(std::make_unique<TestSharedImageInterface>()),
       support_locking_(support_locking),
       weak_ptr_factory_(this) {
   DCHECK(main_thread_checker_.CalledOnValidThread());
@@ -186,7 +239,7 @@ TestContextProvider::TestContextProvider(
   context_thread_checker_.DetachFromThread();
   context_gl_->set_test_support(support_.get());
   raster_context_ = std::make_unique<gpu::raster::RasterImplementationGLES>(
-      context_gl_.get(), nullptr, context_gl_->test_capabilities());
+      context_gl_.get());
   // Just pass nullptr to the ContextCacheController for its task runner.
   // Idle handling is tested directly in ContextCacheController's
   // unittests, and isn't needed here.
@@ -269,6 +322,10 @@ class GrContext* TestContextProvider::GrContext() {
     gr_context_->get()->abandonContext();
 
   return gr_context_->get();
+}
+
+TestSharedImageInterface* TestContextProvider::SharedImageInterface() {
+  return shared_image_interface_.get();
 }
 
 ContextCacheController* TestContextProvider::CacheController() {

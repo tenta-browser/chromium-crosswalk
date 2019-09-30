@@ -5,8 +5,9 @@
     "isolated_scripts": [
       {
         "args": [
+          "--num-retries=3",
           "--additional-expectations",
-          "../../third_party/WebKit/LayoutTests/ASANExpectations",
+          "../../third_party/blink/web_tests/ASANExpectations",
           "--time-out-ms",
           "48000",
           "--enable-sanitizer"
@@ -36,8 +37,9 @@
     "isolated_scripts": [
       {
         "args": [
+          "--num-retries=3",
           "--additional-expectations",
-          "../../third_party/WebKit/LayoutTests/LeakExpectations",
+          "../../third_party/blink/web_tests/LeakExpectations",
           "--time-out-ms",
           "48000",
           "--enable-leak-detection"
@@ -67,8 +69,9 @@
     "isolated_scripts": [
       {
         "args": [
+          "--num-retries=3",
           "--additional-expectations",
-          "../../third_party/WebKit/LayoutTests/MSANExpectations",
+          "../../third_party/blink/web_tests/MSANExpectations",
           "--time-out-ms",
           "66000",
           "--enable-sanitizer"
@@ -100,6 +103,9 @@
   "WebKit Mac10.13 (retina)": {
     "isolated_scripts": [
       {
+        "args": [
+          "--num-retries=3"
+        ],
         "isolate_name": "webkit_layout_tests_exparchive",
         "merge": {
           "args": [
@@ -127,6 +133,9 @@
   "WebKit Win10": {
     "isolated_scripts": [
       {
+        "args": [
+          "--num-retries=3"
+        ],
         "isolate_name": "webkit_layout_tests_exparchive",
         "merge": {
           "args": [

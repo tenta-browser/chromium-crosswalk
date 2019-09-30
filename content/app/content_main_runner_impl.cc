@@ -39,11 +39,14 @@
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/trace_event/trace_event.h"
+#include "components/download/public/common/download_task_runner.h"
 #include "components/tracing/common/trace_startup.h"
 #include "content/app/mojo/mojo_init.h"
 #include "content/browser/browser_process_sub_thread.h"
 #include "content/browser/browser_thread_impl.h"
+#include "content/browser/scheduler/browser_task_executor.h"
 #include "content/browser/startup_data_impl.h"
+#include "content/browser/startup_helper.h"
 #include "content/common/content_constants_internal.h"
 #include "content/common/url_schemes.h"
 #include "content/public/app/content_main_delegate.h"
@@ -53,11 +56,13 @@
 #include "content/public/common/content_paths.h"
 #include "content/public/common/content_switches.h"
 #include "content/public/common/main_function_params.h"
+#include "content/public/common/network_service_util.h"
 #include "content/public/common/sandbox_init.h"
 #include "gin/v8_initializer.h"
 #include "media/base/media.h"
 #include "media/media_buildflags.h"
 #include "ppapi/buildflags/buildflags.h"
+#include "services/network/public/cpp/features.h"
 #include "services/service_manager/embedder/switches.h"
 #include "services/service_manager/sandbox/sandbox_type.h"
 #include "services/service_manager/sandbox/switches.h"
@@ -150,6 +155,10 @@
 #include "services/service_manager/zygote/host/zygote_host_impl_linux.h"
 #endif
 
+#if defined(OS_ANDROID)
+#include "content/browser/android/browser_startup_controller.h"
+#endif
+
 namespace content {
 extern int GpuMain(const content::MainFunctionParams&);
 #if BUILDFLAG(ENABLE_PLUGINS)
@@ -194,8 +203,9 @@ void LoadV8SnapshotFile() {
   base::ScopedFD fd =
       file_descriptor_store.MaybeTakeFD(snapshot_data_descriptor, &region);
   if (fd.is_valid()) {
-    gin::V8Initializer::LoadV8SnapshotFromFD(fd.get(), region.offset,
-                                             region.size, kSnapshotType);
+    base::File file(fd.release());
+    gin::V8Initializer::LoadV8SnapshotFromFile(std::move(file), &region,
+                                               kSnapshotType);
     return;
   }
 #endif  // OS_POSIX && !OS_MACOSX
@@ -213,8 +223,8 @@ void LoadV8NativesFile() {
   base::ScopedFD fd =
       file_descriptor_store.MaybeTakeFD(kV8NativesDataDescriptor, &region);
   if (fd.is_valid()) {
-    gin::V8Initializer::LoadV8NativesFromFD(fd.get(), region.offset,
-                                            region.size);
+    base::File file(fd.release());
+    gin::V8Initializer::LoadV8NativesFromFile(std::move(file), &region);
     return;
   }
 #endif  // OS_POSIX && !OS_MACOSX
@@ -277,10 +287,12 @@ void InitializeZygoteSandboxForBrowserProcess(
   // zygote are both disabled. It initializes the sandboxed process socket.
   SandboxHostLinux::GetInstance()->Init();
 
-  if (parsed_command_line.HasSwitch(switches::kNoZygote) &&
-      !parsed_command_line.HasSwitch(service_manager::switches::kNoSandbox)) {
-    LOG(ERROR) << "--no-sandbox should be used together with --no--zygote";
-    exit(EXIT_FAILURE);
+  if (parsed_command_line.HasSwitch(switches::kNoZygote)) {
+    if (!parsed_command_line.HasSwitch(service_manager::switches::kNoSandbox)) {
+      LOG(ERROR) << "--no-sandbox should be used together with --no--zygote";
+      exit(EXIT_FAILURE);
+    }
+    return;
   }
 
   // Tickle the zygote host so it forks now.
@@ -395,12 +407,6 @@ void PreSandboxInit() {
 
 #endif  // OS_LINUX
 
-bool IsRootProcess() {
-  const base::CommandLine& command_line =
-      *base::CommandLine::ForCurrentProcess();
-  return command_line.GetSwitchValueASCII(switches::kProcessType).empty();
-}
-
 }  // namespace
 
 class ContentClientInitializer {
@@ -484,6 +490,7 @@ int RunZygote(ContentMainDelegate* delegate) {
   main_params.zygote_child = true;
 
   InitializeFieldTrialAndFeatureList();
+  delegate->PostFieldTrialInitialization();
 
   service_manager::SandboxType sandbox_type =
       service_manager::SandboxTypeFromCommandLine(command_line);
@@ -657,14 +664,6 @@ int ContentMainRunnerImpl::Initialize(const ContentMainParams& params) {
   if (delegate_->BasicStartupComplete(&exit_code))
     return exit_code;
   completed_basic_startup_ = true;
-
-  // We will need to use data from resources.pak in later cl, so load the file
-  // now.
-  if (IsRootProcess()) {
-    ui::DataPack* data_pack = delegate_->LoadServiceManifestDataPack();
-    // TODO(ranj): Read manifest from this data pack.
-    ignore_result(data_pack);
-  }
 
   const base::CommandLine& command_line =
       *base::CommandLine::ForCurrentProcess();
@@ -846,8 +845,10 @@ int ContentMainRunnerImpl::Run(bool start_service_manager_only) {
   // Run this logic on all child processes. Zygotes will run this at a later
   // point in time when the command line has been updated.
   if (!process_type.empty() &&
-      process_type != service_manager::switches::kZygoteProcess)
+      process_type != service_manager::switches::kZygoteProcess) {
     InitializeFieldTrialAndFeatureList();
+    delegate_->PostFieldTrialInitialization();
+  }
 #endif
 
   MainFunctionParams main_params(command_line);
@@ -862,25 +863,32 @@ int ContentMainRunnerImpl::Run(bool start_service_manager_only) {
   RegisterMainThreadFactories();
 
 #if !defined(CHROME_MULTIPLE_DLL_CHILD)
-  // The thread used to start the ServiceManager is handed-off to
-  // BrowserMain() which may elect to promote it (e.g. to BrowserThread::IO).
-  if (process_type.empty()) {
-    startup_data_ = std::make_unique<StartupDataImpl>();
-    startup_data_->thread = BrowserProcessSubThread::CreateIOThread();
-    main_params.startup_data = startup_data_.get();
+  if (process_type.empty())
+    return RunServiceManager(main_params, start_service_manager_only);
+#endif  // !defined(CHROME_MULTIPLE_DLL_CHILD)
 
-    if (GetContentClient()->browser()->ShouldCreateTaskScheduler()) {
-      // Create the TaskScheduler early to allow upcoming code to use
-      // the post_task.h API. Note: This is okay because RunBrowserProcessMain()
-      // will soon result in invoking TaskScheduler::GetInstance()->Start().
-      // The TaskScheduler being started soon is a strict requirement (delaying
-      // this start would result in posted tasks not running).
-      base::TaskScheduler::Create("Browser");
+  return RunOtherNamedProcessTypeMain(process_type, main_params, delegate_);
+}
+
+#if !defined(CHROME_MULTIPLE_DLL_CHILD)
+int ContentMainRunnerImpl::RunServiceManager(MainFunctionParams& main_params,
+                                             bool start_service_manager_only) {
+  if (is_browser_main_loop_started_)
+    return -1;
+
+  bool should_start_service_manager_only = start_service_manager_only;
+  if (!service_manager_context_) {
+    if (delegate_->ShouldCreateFeatureList()) {
+      DCHECK(!field_trial_list_);
+      field_trial_list_ = SetUpFieldTrialsAndFeatureList();
+      delegate_->PostFieldTrialInitialization();
     }
 
-    // Register the TaskExecutor for posting task to the BrowserThreads. It is
-    // incorrect to post to a BrowserThread before this point.
-    BrowserThreadImpl::CreateTaskExecutor();
+    if (GetContentClient()->browser()->ShouldCreateTaskScheduler()) {
+      // Create and start the TaskScheduler early to allow upcoming code to use
+      // the post_task.h API.
+      base::TaskScheduler::Create("Browser");
+    }
 
     delegate_->PreCreateMainMessageLoop();
 
@@ -890,13 +898,53 @@ int ContentMainRunnerImpl::Run(bool start_service_manager_only) {
     if (!base::MessageLoopCurrentForUI::IsSet())
       main_message_loop_ = std::make_unique<base::MessageLoopForUI>();
 
-    delegate_->PostEarlyInitialization();
-    return RunBrowserProcessMain(main_params, delegate_);
-  }
-#endif  // !defined(CHROME_MULTIPLE_DLL_CHILD)
+    delegate_->PostEarlyInitialization(main_params.ui_task != nullptr);
 
-  return RunOtherNamedProcessTypeMain(process_type, main_params, delegate_);
+    if (GetContentClient()->browser()->ShouldCreateTaskScheduler()) {
+      // The FeatureList needs to create before starting the TaskScheduler.
+      StartBrowserTaskScheduler();
+    }
+
+    // Register the TaskExecutor for posting task to the BrowserThreads. It is
+    // incorrect to post to a BrowserThread before this point.
+    BrowserTaskExecutor::Create();
+
+    if (!base::FeatureList::IsEnabled(
+            features::kAllowStartingServiceManagerOnly)) {
+      should_start_service_manager_only = false;
+    }
+
+    if (should_start_service_manager_only &&
+        base::FeatureList::IsEnabled(network::features::kNetworkService)) {
+      // This must be called before creating the ServiceManagerContext.
+      ForceInProcessNetworkService(true);
+    }
+
+    // The thread used to start the ServiceManager is handed-off to
+    // BrowserMain() which may elect to promote it (e.g. to BrowserThread::IO).
+    service_manager_thread_ = BrowserProcessSubThread::CreateIOThread();
+    service_manager_context_.reset(
+        new ServiceManagerContext(service_manager_thread_->task_runner()));
+    download::SetIOTaskRunner(service_manager_thread_->task_runner());
+#if defined(OS_ANDROID)
+    if (start_service_manager_only) {
+      base::ThreadTaskRunnerHandle::Get()->PostTask(
+          FROM_HERE, base::BindOnce(&ServiceManagerStartupComplete));
+    }
+#endif
+  }
+
+  if (should_start_service_manager_only)
+    return -1;
+
+  is_browser_main_loop_started_ = true;
+  startup_data_ = std::make_unique<StartupDataImpl>();
+  startup_data_->thread = std::move(service_manager_thread_);
+  startup_data_->service_manager_context = service_manager_context_.get();
+  main_params.startup_data = startup_data_.get();
+  return RunBrowserProcessMain(main_params, delegate_);
 }
+#endif  // !defined(CHROME_MULTIPLE_DLL_CHILD)
 
 void ContentMainRunnerImpl::Shutdown() {
   DCHECK(is_initialized_);
@@ -911,8 +959,10 @@ void ContentMainRunnerImpl::Shutdown() {
     delegate_->ProcessExiting(process_type);
   }
 
+#if !defined(CHROME_MULTIPLE_DLL_CHILD)
   // The message loop needs to be destroyed before |exit_manager_|.
   main_message_loop_.reset();
+#endif  // !defined(CHROME_MULTIPLE_DLL_CHILD)
 
 #if defined(OS_WIN)
 #ifdef _CRTDBG_MAP_ALLOC
